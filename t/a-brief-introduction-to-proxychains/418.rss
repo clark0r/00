@@ -1,0 +1,444 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>A brief introduction to ProxyChains</title>
+    <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418</link>
+    <description>Hello everyone of 0x00! 
+
+I figured why not make my first contribution, so heres a quick one :beers:
+
+Today, im going to brush the topic of proxies, followed by how to set up [ProxyChains](http://proxychains.sourceforge.net/) to make being tracked a bit harder.
+
+So first things first. What is a proxy?
+
+`In computer networks, a proxy server is a server (a computer system or an application) that acts as an intermediary for requests from clients seeking resources from other servers.`  --[Proxy Server - Wikipedia](https://en.wikipedia.org/wiki/Proxy_server)
+
+What a proxy does, is essentially performs the connection for you, putting another computer between you and your destination. For example. I wish to connect to https://0x00sec.org. Normally, when i enter the address in my search bar in my browser, my computer firstly resolves the hostname to an ip address, from which point my computer would attempt to make a connection and retrieve the webpage. Which would leave my IP address in the access log of said webpage. Not good for anyone hoping to be anonymous. 
+ Now, when using a proxy server in the above example, the order of connection would go My Computer -&gt; Proxy Server -&gt; 0x00sec. Thus leaving the IP of the proxy in any logs as opposed to my IP address.
+
+A proxy is all well and good. However, the proxy has my IP address, so if I were to do anything bad, anyone trying to unmask me could contact said proxy,(given they have legal right to do so) and trace my IP back to me. 
+
+Enter ProxyChains. 
+
+What is ProxyChains? 
+
+&gt; proxychains - a tool that forces any TCP connection made by any given application
+&gt; to follow through proxy like TOR or any other SOCKS4, SOCKS5 or HTTP(S) proxy. 
+&gt; Supported auth-types: &quot;user/pass&quot; for SOCKS4/5, &quot;basic&quot; for HTTP.                          
+
+--[ProxyChains - SourceForge](http://proxychains.sourceforge.net/howto.html)
+
+What ProxyChains does is send your connection through multiple SOCKS/HTTP(S) proxy servers.
+So, using the above example, instead of Me -&gt; Proxy -&gt; 0x00sec.org
+It would be more as follows, Me -&gt; Proxy1.us -&gt; Proxy2.ru -&gt; Proxy3.se -&gt; Proxy4.uk -&gt; 0x00sec
+
+Now, why is this important? If you recall, each proxy retains the previous connecting address, So Proxy1 has my IP, Proxy2 has Proxy1 IP, and so on and so forth. 
+So, in a scenario of anonymity in the case of someone trying to unmask you, They have to jump through many more hoops to try to get back to your original IP.
+
+ProxyChains can be used with [TOR](https://www.torproject.org/), but im not getting into that due to anyone who hasnt used TOR before would require me doing a guide on that. Maybe another time.
+
+Also, one final note before I get into installation and configuration.
+
+Proxies are not perfect, and by no means 100% anonymity. This not only depends on the proxy you are using, where it is located, the laws in the country and its personal logging. Some Proxies are [Transparent](https://en.wikipedia.org/wiki/Proxy_server#Transparent_proxy), some are not. For the sake of staying an introduction ill leave further research into proxies (SOCKS, HTTP, Transparent, Reverse, etc.) to the reader. I cant give it all to you :) however maybe in a follow up post. 
+
+I Personally would recommend using a handful of proxies, and making sure of a few of them are outside your countries jurisdiction. So in the US, i would use a few in the russian federation and sweden for example. 
+
+Here are some lists of proxies that show their country, *DISCLAIMER* I have not used these proxies nor can i verify their integrity, they are here for examples sake, i recommend researching which proxies youd like to use before relying on them too heavily!**
+[Socks Proxies](https://www.socks-proxy.net/)
+[HTTP(S) Proxies](https://www.sslproxies.org/)
+
+In the future ill update this post with some reliable proxy lists if there is enough response for such.
+
+Now onto ProxyChains!
+
+ProxyChains runs on *nix OS&#39;s, so for this example, im running lubuntu.
+
+So to install proxy chains, were going to open up a terminal and fire off the command 
+`sudo apt-get install proxychains`
+I already have proxychains installed or i would show the install screenshot.
+
+After installation finishes, you can check proxychains is installed by simply typing proxychains into your terminal. Which if installed, should yield the usage screen as shown below:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/10326ed92369d9b841dc54d4ec223c8ac3f21dd9.png&quot; width=&quot;398&quot; height=&quot;56&quot;&gt;
+
+Now, to get proxychains up and running. If you arent sure where to find your proxychains config file, you can run the 
+`locate proxychains`  command, which will yield:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/1c4572651f68625f4fdae89e64d76bde1b335472.png&quot; width=&quot;516&quot; height=&quot;320&quot;&gt;
+
+However, to my knowledge it is normally located at `/etc/proxychains.conf`
+so go ahead and type `sudo vim  /etc/proxychains.conf`   in your terminal which will bring you to: 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/c002ec9d9247969e849513314b4a0b3c803641ca.png&quot; width=&quot;535&quot; height=&quot;408&quot;&gt;
+
+(if you dont have vim installed its just a `sudo apt-get install vim` away!)
+
+
+In this how-to were going to be setting up a dynamic_chain. Which will run through your list of proxies and if any are offline, it will skip them. ProxyChains also has strict_chain mode, which will try every proxy in the list and all must be online for it to route. 
+
+Also, take note of the random_chain option, which when used will use proxies from your config file in a random series.
+
+*Note, only one of the &quot;option&quot;_chain options can be used at one time*
+
+Press I for insert mode, and go ahead and comment the strict_chain line and uncomment the dynamic_chain option in your conf file so it looks like this:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/efde10e534a40cbb64396203982f88e80f9fd8bb.png&quot; width=&quot;515&quot; height=&quot;389&quot;&gt;
+
+now press press ` esc` and type ` :save /etc/proxychains.conf`
+
+So now proxychains will use dynamic chaining when we get around to running it.
+
+Open your conf file back up.
+If you hit page down, you&#39;ll notice proxy_dns is already set by default. This will route all attempts at resolving domain names through your proxy, which If im not mistaken can AID in stopping [DNS leaks](https://dnsleaktest.com/what-is-a-dns-leak.html). Anyone feel free to chime in if im incorrect :blush:   If you hit page down again, it will take you to the `[ProxyList]` section. This is where you will list all of your proxies you want proxychains to connect through.
+
+*Note it defaults to TOR*
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/93ffd6fa724088150134807b84291bb801ad9993.png&quot; width=&quot;601&quot; height=&quot;195&quot;&gt;
+
+
+So here were going to comment out the default entry, same as before, i for insert, comment out the line.
+
+Now were going to add a few proxies.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/5509bac89d67de75fdae035185f26edad1c5d42e.png&quot; width=&quot;425&quot; height=&quot;155&quot;&gt;
+
+then backout with ` esc` , ` :save /etc/proxychains.conf`
+
+
+Okay, all set! Now, to give her a test run!
+
+To run a program through proxychains, you use `proxychains &lt;program&gt; &lt;program parameters&gt;` 
+
+For example, you could run ` proxychains nmap &lt;IP address&gt;`,  firefox, ssh, or wget just to name a few.
+
+Now, the proxies i used in my screenshot are invalid :&#39;( So you wont have luck with them.
+
+Running nmap through proxychains:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/9b5252bd0ffe6d938fb942754447ba8e5a19b783.png&quot; width=&quot;615&quot; height=&quot;213&quot;&gt;
+
+So final words, Find yourself some proxies, and get out there with proxychains!
+
+*If anyone has any questions, comments, or areas where you feel im incorrect/need more detail, reach out and ill edit as necessary :)</description>
+    
+    <lastBuildDate>Tue, 11 Jul 2017 02:42:05 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/31">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/31</link>
+        <pubDate>Sun, 21 Jan 2018 00:37:56 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-31</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[chrisdr2]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi,</p>
+<p>Thanks for the interesting tutorial, got it working with TOR.  I have a list of socks proxies, but don’t know whether they are socks4 or socks5.  Is it possible to add to the configuration without knowing the exact socks type?</p>
+<p>Thanks</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/30">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/30</link>
+        <pubDate>Tue, 11 Jul 2017 02:42:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-30</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[Barbarossa]]></dc:creator>
+        <description><![CDATA[
+            <p>oilSlick this is really good… keep it coming <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/29">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/29</link>
+        <pubDate>Sat, 28 May 2016 15:46:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-29</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s a snazzy idea. I found you can use the  servers at <a href="http://koding.com">koding.com</a> for a similar use. Of course setting up your account behind a VPN.</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/28">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/28</link>
+        <pubDate>Wed, 25 May 2016 11:35:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-28</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[Ninja243]]></dc:creator>
+        <description><![CDATA[
+            <p>Great idea, I can confirm it works <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<p>Speed seems to be an issue on those servers though</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/27">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/27</link>
+        <pubDate>Wed, 25 May 2016 06:58:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-27</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>I see, i was going to guess overthewires bandit challenges <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/26">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/26</link>
+        <pubDate>Tue, 24 May 2016 01:21:29 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-26</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[Ninja243]]></dc:creator>
+        <description><![CDATA[
+            <p>The link leads to one of the servers <img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"></p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/25">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/25</link>
+        <pubDate>Mon, 23 May 2016 05:43:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-25</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>That reminds me, I should reupload the VIM tutorial</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/24">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/24</link>
+        <pubDate>Mon, 23 May 2016 00:15:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-24</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>DUDE! That’s slick. I was thinking about SSHing like that too.</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/23">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/23</link>
+        <pubDate>Fri, 20 May 2016 20:23:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-23</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>Slick! <img src="https://0x00sec.org/images/emoji/twitter/beers.png?v=9" title=":beers:" class="emoji" alt=":beers:"> If you ever feel lik sharing those servers <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/22">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/22</link>
+        <pubDate>Fri, 20 May 2016 16:43:24 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-22</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[Ninja243]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey, thanks for a great article!</p>
+<p>To stay under the radar, I use some, umm, unorthodox methods. There are some old CTF servers I found like <a href="https://picoctf.com/" rel="nofollow noopener">this one</a> that have levels on the server. To solve the levels and get the flags, the user has to SSH into the server.</p>
+<p>To anonymise myself, I SSH into the CTF server. From the server, I SSH into a personal server running proxychains and from there, I do whatever I need to.</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/21">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/21</link>
+        <pubDate>Fri, 20 May 2016 15:49:31 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-21</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[The_Philosopher]]></dc:creator>
+        <description><![CDATA[
+            <p>great tutorial ! thanks<br>
+<a class="mention" href="https://0x00sec.org/u/pry0cc">@pry0cc</a> maybe this list of <a href="http://cryto.net/~joepie91/bitcoinvps.html" rel="nofollow noopener">VPS hosts that accept Bitcoin</a>  can help you</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/20">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/20</link>
+        <pubDate>Fri, 20 May 2016 13:24:38 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-20</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>I personally use this, i just figured for anyone new to vim, using the spelled out <code>:save</code> and <code>/filename</code> would allow them to “see” what was going on, as opposed to anyone who blindly follows a guide without learning would end up using <code>:wq</code> not  knowing what it does. Just because those people do exist.</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/19">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/19</link>
+        <pubDate>Fri, 20 May 2016 12:00:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-19</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>Of course, im not saying itd be perfect. youd need to use a less than respectable/optimal vps service and take the time to set it up anonymously if at all possible. Merely saying for examples sake  where theres a will theres a way <em>shrugs</em></p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/18</link>
+        <pubDate>Fri, 20 May 2016 11:57:00 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-18</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Surely the VPS would point back to you? I know Vultr offers Bitcoin, but they log everything.</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/17</link>
+        <pubDate>Fri, 20 May 2016 11:31:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-17</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Nah man. Only on servers xD</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/16</link>
+        <pubDate>Fri, 20 May 2016 11:29:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-16</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[Neo]]></dc:creator>
+        <description><![CDATA[
+            <p>Or, you know, you could join the <span class="hashtag">#nanomasterrace</span> <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/15</link>
+        <pubDate>Fri, 20 May 2016 08:56:44 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-15</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[Neo]]></dc:creator>
+        <description><![CDATA[
+            <p>That’d be great, free proxies and tor are often blocked by irc-providers. A workaround would help a lot.</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/14</link>
+        <pubDate>Fri, 20 May 2016 08:55:23 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-14</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>True that. When I figured out I could do that for the first time I freaked out <img src="https://0x00sec.org/images/emoji/twitter/joy.png?v=9" title=":joy:" class="emoji" alt=":joy:"></p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/13</link>
+        <pubDate>Fri, 20 May 2016 06:02:25 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-13</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice tut!</p>
+<aside class="quote no-group" data-username="OilSlick" data-post="1" data-topic="418">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/oilslick/40/440_2.png" class="avatar"> OilSlick:</div>
+<blockquote>
+<p>now press press esc and type :save /etc/proxychains.conf</p>
+</blockquote>
+</aside>
+<p>You can just type <code>:wq</code> to save (write) and leave (q) vi, without typing any file name. Even if you want to change the file name, you can just type <code>:w filename</code>.</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/12</link>
+        <pubDate>Fri, 20 May 2016 05:31:32 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-12</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>Right, i saw they block IPs of proxies, that sometimes people can get away with connecting with a nonblacklisted ip. Im just saying im sure theres a work around in terms of PC -&gt; proxychains -&gt; vps -&gt;IRC bouncer -&gt; IRC or something of the sorts, you know?</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/11</link>
+        <pubDate>Fri, 20 May 2016 01:21:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-11</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>They have a DB of all the IPs TOR uses, as well as some IPs found on free proxy sites. They then block these IPs.</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/10</link>
+        <pubDate>Fri, 20 May 2016 00:58:57 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-10</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>Ill see what i can find out. Im not sure of freenodes standards, but theres always a work around <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/9</link>
+        <pubDate>Fri, 20 May 2016 00:21:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-9</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[Gh0stPacket]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks…Terrific Info!!</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/8</link>
+        <pubDate>Fri, 20 May 2016 00:20:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-8</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+      <item>
+        <title>A brief introduction to ProxyChains</title>
+        <dc:creator><![CDATA[n3xUs]]></dc:creator>
+        <description><![CDATA[
+            <p>Great post. I’ve been looking for something like this for a while!<br>
+Thanks.</p>
+          <p><a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-brief-introduction-to-proxychains/418/7</link>
+        <pubDate>Fri, 20 May 2016 00:12:29 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-418-7</guid>
+        <source url="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418.rss">A brief introduction to ProxyChains</source>
+      </item>
+  </channel>
+</rss>

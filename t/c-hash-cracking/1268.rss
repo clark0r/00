@@ -1,0 +1,527 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>C# Hash Cracking</title>
+    <link>https://0x00sec.org/t/c-hash-cracking/1268</link>
+    <description>(this was made with the help of google translate)
+
+Today we will go into the topic of hash cracking in c# i made the program to have two different modes piped input and file input this made it easier to do dictionary and brute force attacks (with the help of my gen command).
+
+First we sort out the args and then start the programm.
+
+#Main
+```c#
+        static void Main(string[] args)
+        {
+
+        if (args.Length != 0 &amp;&amp; args[0] != &quot;-h&quot;)//hashCracker [type] [input type] [hash]
+            {
+                hashtype HType = getType(args[0]);
+                string InputType = args[1];
+                string HASH = args[2];
+
+                if (InputType == &quot;*&quot;)
+                {
+                    start_piped(HType, HASH);
+                }
+                else
+                {
+                    start_file(HType, HASH, InputType);
+                }
+            }
+            else //if there are no args or if the first arg is &quot;-h&quot; (help)
+            PrintHelp();//prints help text to screen
+        }
+```
+Now that we have the arguments sorted we have to sort out the helpers
+
+```c#
+ #region helpers
+        private static hashtype getType(string s)//prase hashtype
+        {
+            if (s == &quot;md5&quot;) return hashtype.md5;
+            if (s == &quot;sha512&quot;) return hashtype.sha512;
+            if (s == &quot;sha1&quot;) return hashtype.sha1;
+
+            return hashtype.unknown;
+        }
+        
+        private static void PrintHelp()//help text to console
+        {
+            Console.WriteLine(&quot;&quot;);
+            Console.WriteLine(&quot;hashCracker [type] [input type] [hash]&quot;);
+            Console.WriteLine(&quot;&quot;);
+            Console.WriteLine(&quot;type&#39;s:&quot;);
+            Console.WriteLine(&quot;md5&quot;);
+            Console.WriteLine(&quot;sha512&quot;);
+            Console.WriteLine(&quot;sha1&quot;);
+            Console.WriteLine(&quot;&quot;);
+            Console.WriteLine(&quot;input type:&quot;);
+            Console.WriteLine(&quot;pipe: *&quot;);
+            Console.WriteLine(&quot;file: filename.txt&quot;);
+            Console.WriteLine(&quot;&quot;);
+            Console.WriteLine(&quot;examples:&quot;);
+            Console.WriteLine(&quot;hashCracker md5 * [md5 hash]&quot;);
+            Console.WriteLine(&quot;gets input from a piped programm and then looks if it is the right password&quot;);
+            Console.WriteLine(&quot;&quot;);
+            Console.WriteLine(&quot;hashCracker md5 list.txt [md5 hash]&quot;);
+            Console.WriteLine(&quot;reads the file line by line and looks if it is the right password&quot;);
+            Console.WriteLine(&quot;&quot;);
+        }
+        #endregion
+```
+And the lists
+```c#
+        #region lists
+        private enum hashtype//list of all hashes available
+        {
+            md5,
+            sha512,
+            sha1,
+            unknown,
+        }
+        #endregion
+```
+Now that that&#39;s out of the way we need to check if the hash matches a hashed password
+```c#
+#region hash testers
+        private static bool check_md5(string input, string HASH)//vrfy md5
+        {
+            
+            MD5 _md5 = new MD5CryptoServiceProvider();
+            byte[] data = _md5.ComputeHash(Encoding.Default.GetBytes(input));//create hash
+
+            StringBuilder sBuilder = new StringBuilder();
+            for (int i = 0; i &lt; data.Length; i++)
+            {
+                sBuilder.Append(data[i].ToString(&quot;x2&quot;));//get hash value
+            }
+
+            if (sBuilder.ToString() == HASH)
+                return true;
+            else
+                return false;
+
+        }
+        private static bool check_sha512(string input, string HASH)//vrfy sha512
+        {
+
+            SHA512 sha512 = new SHA512Managed();
+            byte[] data = sha512.ComputeHash(Encoding.Default.GetBytes(input));//create hash
+
+            StringBuilder sBuilder = new StringBuilder();
+            for (int i = 0; i &lt; data.Length; i++)
+            {
+                sBuilder.Append(data[i].ToString(&quot;x2&quot;));//get hash value
+            }
+
+            if (sBuilder.ToString() == HASH)
+                return true;
+            else
+                return false;
+        }
+        private static bool check_sha1(string input, string HASH)//vrfy sha1
+        {
+
+            SHA1Managed sha1 = new SHA1Managed();
+            byte[] data = sha1.ComputeHash(Encoding.Default.GetBytes(input));//create hash
+
+            StringBuilder sBuilder = new StringBuilder();
+            for (int i = 0; i &lt; data.Length; i++)
+            {
+                sBuilder.Append(data[i].ToString(&quot;x2&quot;));//get hash value
+            }
+
+            if (sBuilder.ToString() == HASH)
+                return true;
+            else
+                return false;
+        }
+        
+        #endregion
+```
+
+And now for the main algorithm or just starters for the algorithm
+```c#
+#region starters
+        private static void start_piped(hashtype HType, string HASH)//get input from Console
+        {
+
+            if (HType != hashtype.unknown &amp;&amp; HASH.Length &gt; 0)
+            {
+                
+                int _checked = 0;
+                DateTime gentmr = DateTime.Now;
+
+                DateTime tmr = DateTime.Now;
+                bool found = false;
+
+                while (!(DateTime.Now - tmr &gt; TimeSpan.FromSeconds(10)))
+                {
+                    if (Console.In.Peek() &gt; 0)
+                    {
+                        bool result = false;
+                        string input = Console.ReadLine();
+                        result = WORK(HType, HASH, result, input);
+
+                        if (result)
+                        {
+                            Console.WriteLine(&quot;[+]PASSWORD FOUND: &quot; + input);
+                            found = true;
+                            break;
+                        }
+                        else if(DateTime.Now - gentmr &gt; TimeSpan.FromSeconds(1))
+                        {
+                            Console.WriteLine(&quot;[*]Checked:&quot; + _checked + &quot; so far.&quot;);
+                            gentmr = DateTime.Now;
+                        }
+                        tmr = DateTime.Now;
+                        _checked++;
+                    }
+                }
+
+                if (!found)
+                    Console.WriteLine(&quot;[-]no password mached&quot;);
+            }
+            else throw new ArgumentException();
+        }
+        private static void start_file(hashtype HType, string HASH, string file)//get input from file
+        {
+            if (HType != hashtype.unknown &amp;&amp; HASH.Length &gt; 0 &amp;&amp; file.Contains(&quot;.&quot;))
+            {
+                int _checked = 0;
+                DateTime gentmr = DateTime.Now;
+
+                StreamReader fileR = new StreamReader(file);//R = read
+                bool found = false;
+
+                while (fileR.Peek() &gt; 0)
+                {
+
+                        bool result = false;
+                        string input = fileR.ReadLine();
+                        result = WORK(HType, HASH, result, input);
+
+
+                        if (result)
+                        {
+                            Console.WriteLine(&quot;[+]PASSWORD FOUND: &quot; + input);
+                            found = true;
+                            break;
+                        }
+                        else if (DateTime.Now - gentmr &gt; TimeSpan.FromSeconds(1))
+                        {
+                            Console.WriteLine(&quot;[*]Checked:&quot; + _checked + &quot; so far.&quot;);
+                            gentmr = DateTime.Now;
+                        }
+                        _checked++;
+                }
+
+                if (!found)
+                    Console.WriteLine(&quot;[-]no password mached&quot;);
+            }
+            else throw new ArgumentException();
+        }
+
+        private static bool WORK(hashtype HType, string HASH, bool result, string input)//get result
+        {
+            if (HType == hashtype.md5)
+                result = check_md5(input, HASH);
+
+            if (HType == hashtype.sha512)
+                result = check_sha512(input, HASH);
+
+            if (HType == hashtype.sha1)
+                result = check_sha1(input, HASH);
+
+            return result;
+        }
+        #endregion
+```
+#Basic concept
+
+The main concept of this program is that you get a list of passwords and then you hash those passwords and look if the hash is the same if the hash isn&#39;t the same then its no the same password, if the hash is the same then it is the same password.
+
+What hashing does is turn a string or byte array to a fixed hash if the string or byte array is the same then the hash will turn out the same but if the string or byte array is slightly different then the hash is completely different.
+
+example of md5 hash:
+example = 1a79a4d60de6718e8e5b326e338ae533
+exbmple = 3a47dd959c3bb212527bee38cce45fc1
+example1 = c1285a470f0fc8f14f54851c5d8eb32f
+example2 = 66b375b08fc869632935c9e6a9c7f8da
+
+See how all the hashes are completely different but the password is only slightly different.
+
+
+If you want the program: [LINK](https://www.dropbox.com/s/a7avejtdojk4hpy/hashCracker_code1.3.cs?dl=1)
+If you want the source code : [LINK](https://www.dropbox.com/s/2p22tqyw3pef1wo/hashCracker.exe?dl=1)
+
+I hope you learnt something about hashes and that you learnt something about c#</description>
+    
+    <lastBuildDate>Tue, 05 Jul 2022 05:58:30 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/c-hash-cracking/1268.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>C# Hash Cracking</title>
+        <dc:creator><![CDATA[darklord888]]></dc:creator>
+        <description><![CDATA[
+            <p>I am not a programmer but a mathematician.<br>
+I notice there is an alternative method for hash crack that I am not aware exists in the hacking community.</p>
+<p>Are you or anyone else aware of this?</p>
+          <p><a href="https://0x00sec.org/t/c-hash-cracking/1268/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/c-hash-cracking/1268/2</link>
+        <pubDate>Tue, 05 Jul 2022 05:58:30 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1268-2</guid>
+        <source url="https://0x00sec.org/t/c-hash-cracking/1268.rss">C# Hash Cracking</source>
+      </item>
+      <item>
+        <title>C# Hash Cracking</title>
+        <dc:creator><![CDATA[dedady157]]></dc:creator>
+        <description><![CDATA[
+            <p>(this was made with the help of google translate)</p>
+<p>Today we will go into the topic of hash cracking in c# i made the program to have two different modes piped input and file input this made it easier to do dictionary and brute force attacks (with the help of my gen command).</p>
+<p>First we sort out the args and then start the programm.</p>
+<p><span class="hashtag">#Main</span></p>
+<pre><code class="lang-auto">        static void Main(string[] args)
+        {
+
+        if (args.Length != 0 &amp;&amp; args[0] != "-h")//hashCracker [type] [input type] [hash]
+            {
+                hashtype HType = getType(args[0]);
+                string InputType = args[1];
+                string HASH = args[2];
+
+                if (InputType == "*")
+                {
+                    start_piped(HType, HASH);
+                }
+                else
+                {
+                    start_file(HType, HASH, InputType);
+                }
+            }
+            else //if there are no args or if the first arg is "-h" (help)
+            PrintHelp();//prints help text to screen
+        }
+</code></pre>
+<p>Now that we have the arguments sorted we have to sort out the helpers</p>
+<pre><code class="lang-auto"> #region helpers
+        private static hashtype getType(string s)//prase hashtype
+        {
+            if (s == "md5") return hashtype.md5;
+            if (s == "sha512") return hashtype.sha512;
+            if (s == "sha1") return hashtype.sha1;
+
+            return hashtype.unknown;
+        }
+        
+        private static void PrintHelp()//help text to console
+        {
+            Console.WriteLine("");
+            Console.WriteLine("hashCracker [type] [input type] [hash]");
+            Console.WriteLine("");
+            Console.WriteLine("type's:");
+            Console.WriteLine("md5");
+            Console.WriteLine("sha512");
+            Console.WriteLine("sha1");
+            Console.WriteLine("");
+            Console.WriteLine("input type:");
+            Console.WriteLine("pipe: *");
+            Console.WriteLine("file: filename.txt");
+            Console.WriteLine("");
+            Console.WriteLine("examples:");
+            Console.WriteLine("hashCracker md5 * [md5 hash]");
+            Console.WriteLine("gets input from a piped programm and then looks if it is the right password");
+            Console.WriteLine("");
+            Console.WriteLine("hashCracker md5 list.txt [md5 hash]");
+            Console.WriteLine("reads the file line by line and looks if it is the right password");
+            Console.WriteLine("");
+        }
+        #endregion
+</code></pre>
+<p>And the lists</p>
+<pre><code class="lang-auto">        #region lists
+        private enum hashtype//list of all hashes available
+        {
+            md5,
+            sha512,
+            sha1,
+            unknown,
+        }
+        #endregion
+</code></pre>
+<p>Now that that’s out of the way we need to check if the hash matches a hashed password</p>
+<pre><code class="lang-auto">#region hash testers
+        private static bool check_md5(string input, string HASH)//vrfy md5
+        {
+            
+            MD5 _md5 = new MD5CryptoServiceProvider();
+            byte[] data = _md5.ComputeHash(Encoding.Default.GetBytes(input));//create hash
+
+            StringBuilder sBuilder = new StringBuilder();
+            for (int i = 0; i &lt; data.Length; i++)
+            {
+                sBuilder.Append(data[i].ToString("x2"));//get hash value
+            }
+
+            if (sBuilder.ToString() == HASH)
+                return true;
+            else
+                return false;
+
+        }
+        private static bool check_sha512(string input, string HASH)//vrfy sha512
+        {
+
+            SHA512 sha512 = new SHA512Managed();
+            byte[] data = sha512.ComputeHash(Encoding.Default.GetBytes(input));//create hash
+
+            StringBuilder sBuilder = new StringBuilder();
+            for (int i = 0; i &lt; data.Length; i++)
+            {
+                sBuilder.Append(data[i].ToString("x2"));//get hash value
+            }
+
+            if (sBuilder.ToString() == HASH)
+                return true;
+            else
+                return false;
+        }
+        private static bool check_sha1(string input, string HASH)//vrfy sha1
+        {
+
+            SHA1Managed sha1 = new SHA1Managed();
+            byte[] data = sha1.ComputeHash(Encoding.Default.GetBytes(input));//create hash
+
+            StringBuilder sBuilder = new StringBuilder();
+            for (int i = 0; i &lt; data.Length; i++)
+            {
+                sBuilder.Append(data[i].ToString("x2"));//get hash value
+            }
+
+            if (sBuilder.ToString() == HASH)
+                return true;
+            else
+                return false;
+        }
+        
+        #endregion
+</code></pre>
+<p>And now for the main algorithm or just starters for the algorithm</p>
+<pre><code class="lang-auto">#region starters
+        private static void start_piped(hashtype HType, string HASH)//get input from Console
+        {
+
+            if (HType != hashtype.unknown &amp;&amp; HASH.Length &gt; 0)
+            {
+                
+                int _checked = 0;
+                DateTime gentmr = DateTime.Now;
+
+                DateTime tmr = DateTime.Now;
+                bool found = false;
+
+                while (!(DateTime.Now - tmr &gt; TimeSpan.FromSeconds(10)))
+                {
+                    if (Console.In.Peek() &gt; 0)
+                    {
+                        bool result = false;
+                        string input = Console.ReadLine();
+                        result = WORK(HType, HASH, result, input);
+
+                        if (result)
+                        {
+                            Console.WriteLine("[+]PASSWORD FOUND: " + input);
+                            found = true;
+                            break;
+                        }
+                        else if(DateTime.Now - gentmr &gt; TimeSpan.FromSeconds(1))
+                        {
+                            Console.WriteLine("[*]Checked:" + _checked + " so far.");
+                            gentmr = DateTime.Now;
+                        }
+                        tmr = DateTime.Now;
+                        _checked++;
+                    }
+                }
+
+                if (!found)
+                    Console.WriteLine("[-]no password mached");
+            }
+            else throw new ArgumentException();
+        }
+        private static void start_file(hashtype HType, string HASH, string file)//get input from file
+        {
+            if (HType != hashtype.unknown &amp;&amp; HASH.Length &gt; 0 &amp;&amp; file.Contains("."))
+            {
+                int _checked = 0;
+                DateTime gentmr = DateTime.Now;
+
+                StreamReader fileR = new StreamReader(file);//R = read
+                bool found = false;
+
+                while (fileR.Peek() &gt; 0)
+                {
+
+                        bool result = false;
+                        string input = fileR.ReadLine();
+                        result = WORK(HType, HASH, result, input);
+
+
+                        if (result)
+                        {
+                            Console.WriteLine("[+]PASSWORD FOUND: " + input);
+                            found = true;
+                            break;
+                        }
+                        else if (DateTime.Now - gentmr &gt; TimeSpan.FromSeconds(1))
+                        {
+                            Console.WriteLine("[*]Checked:" + _checked + " so far.");
+                            gentmr = DateTime.Now;
+                        }
+                        _checked++;
+                }
+
+                if (!found)
+                    Console.WriteLine("[-]no password mached");
+            }
+            else throw new ArgumentException();
+        }
+
+        private static bool WORK(hashtype HType, string HASH, bool result, string input)//get result
+        {
+            if (HType == hashtype.md5)
+                result = check_md5(input, HASH);
+
+            if (HType == hashtype.sha512)
+                result = check_sha512(input, HASH);
+
+            if (HType == hashtype.sha1)
+                result = check_sha1(input, HASH);
+
+            return result;
+        }
+        #endregion
+</code></pre>
+<p><span class="hashtag">#Basic</span> concept</p>
+<p>The main concept of this program is that you get a list of passwords and then you hash those passwords and look if the hash is the same if the hash isn’t the same then its no the same password, if the hash is the same then it is the same password.</p>
+<p>What hashing does is turn a string or byte array to a fixed hash if the string or byte array is the same then the hash will turn out the same but if the string or byte array is slightly different then the hash is completely different.</p>
+<p>example of md5 hash:<br>
+example = 1a79a4d60de6718e8e5b326e338ae533<br>
+exbmple = 3a47dd959c3bb212527bee38cce45fc1<br>
+example1 = c1285a470f0fc8f14f54851c5d8eb32f<br>
+example2 = 66b375b08fc869632935c9e6a9c7f8da</p>
+<p>See how all the hashes are completely different but the password is only slightly different.</p>
+<p>If you want the program: <a href="https://www.dropbox.com/s/a7avejtdojk4hpy/hashCracker_code1.3.cs?dl=1" rel="nofollow noopener">LINK</a><br>
+If you want the source code : <a href="https://www.dropbox.com/s/2p22tqyw3pef1wo/hashCracker.exe?dl=1" rel="nofollow noopener">LINK</a></p>
+<p>I hope you learnt something about hashes and that you learnt something about c#</p>
+          <p><a href="https://0x00sec.org/t/c-hash-cracking/1268/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/c-hash-cracking/1268/1</link>
+        <pubDate>Sun, 06 Nov 2016 17:51:32 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1268-1</guid>
+        <source url="https://0x00sec.org/t/c-hash-cracking/1268.rss">C# Hash Cracking</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>A journey into the native lands of windows PART 2 :The closest you can get to absolute power</title>
+    <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471</link>
+    <description>Here we meet again , cheerz
+beloved readers ,I write to you with very welcoming hands ,buckle up .
+not long ago i posted the first part on a subject about creating a native process you can look it up [here](https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685) ,today we meet to code that very native program we&#39;re going to run using our previously coded loader,I&#39;ll try my best explaining every detail,and if by any chance I&#39;ve missed something or you guys wanted a little bit more explanation feel free to ask.
+
+**INTRO**
+a native process in my opinion is the closest you can get to launching a kernel driver without the hurdles that come with the latter , and it might be used in a malicious intent *wink wink* 
+our POC program is simple it&#39;s going to create an empty text file on my desktop, very simple hah .but ain&#39;t the sky is the limit they say.
+you must know that compiling such native apps is not an easy task like clicking a compiler button , the code itself is saved in a *.c extension .sadly I&#39;m not going to explain how to compile the program in this topic but there is a lot of methods to do that either by using gcc compiler or windows driver&#39;s kit.
+ first of all we must include our native libraries
+```
+#include &quot;ntddk.h&quot;
+#include &quot;ntifs.h&quot;
+```
+our entrypoint can be anything but i chose to go with the traditions and name it NTprocessStartup
+with PPEB structure as a parametere, and we will be using the native variant of the function CreateFile() that is NtCreateFile()
+the functions parameters are pretty easy and understandable you can read about it [here](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile).
+there is a structure that we need to initialize with a function called RtlInitializeObjectAttributes() named OBJECT_ATTRIBUTES , this structure have the following members :sweat_smile:
+```
+ULONG Length
+HANDLE RootDirectory
+PUNICODE_STRING ObjectName
+ULONG Attributes
+PSECURITY_DESCRIPTOR SecurityDescriptor
+PSECURITY_QUALITY_OF_SERVICE SecurityQualityOfService
+```
+anyhow I wanted to make this topic as short as possible and open the door for discussions so here is the final product
+```
+#include &quot;ntddk.h&quot;
+#include &quot;ntifs.h&quot;
+
+
+void NtProcessStartup(PPEB peb) {
+	HANDLE fileh;
+	IO_STATUS_BLOCK statusblock;
+
+	NTSTATUS status;
+	OBJECT_ATTRIBUTES ITACHI_ATT;
+	UNICODE_STRING SASUKE;
+	RtlInitUnicodeString(&amp;SASUKE, L&quot;\\DosDevices\\C:\\********* \\fromme.txt&quot;);
+	InitializeObjectAttributes(&amp;ITACHI_ATT, &amp;SASUKE, OBJ_CASE_INSENSITIVE, NULL,NULL);
+	status = NtCreateFile(&amp;fileh, (GENERIC_WRITE | SYNCHRONIZE), &amp;ITACHI_ATT, &amp;statusblock, 0, FILE_ATTRIBUTE_NORMAL, 0, FILE_SUPERSEDE, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+
+}
+```
+if we try to run our native app directly by double clicking it we will encounter this error
+
+![fourth|552x145](upload://3Xt3bDgwCvTEWIwboYnq8qifPAp.png)
+
+sorry the error is in french :sweat_smile: but it basically says you cannot run this app in win32 mode
+
+but upon launching it using our loader we get this
+
+i had to put a break-point because the process quickly terminates itself
+![firstone|690x215](upload://vO5AQl7lhM4dw1AFWJuir8sVBof.png)
+
+and i get this in process hacker
+![runnnnn|242x56](upload://dPxMqb7lsTv4WZJcdImM5ob8rw6.png)
+
+and finally the text file we created
+![third|68x59](upload://2Y0fh1ic41LqrQ4XuVhLnBsUyFT.png)
+
+I hope this humble topic made you excited or curious to know more about the native applications
+see you soon</description>
+    
+    <lastBuildDate>Sat, 07 Oct 2023 22:06:19 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>A journey into the native lands of windows PART 2 :The closest you can get to absolute power</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/8</link>
+        <pubDate>Mon, 18 Dec 2023 12:58:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36471-8</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471.rss">A journey into the native lands of windows PART 2 :The closest you can get to absolute power</source>
+      </item>
+      <item>
+        <title>A journey into the native lands of windows PART 2 :The closest you can get to absolute power</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>we got ourselves a weapon hahahaha, unfortunately the first topic couldn’t be integrated for the simple fact that he uses not the right libraries for the native environment<br>
+but nice share i will definetly look more into it , I’m working on a little project that this might come in handy<br>
+thank you <a class="mention" href="https://0x00sec.org/u/c0z">@c0z</a></p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/6</link>
+        <pubDate>Tue, 03 Oct 2023 18:57:17 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36471-6</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471.rss">A journey into the native lands of windows PART 2 :The closest you can get to absolute power</source>
+      </item>
+      <item>
+        <title>A journey into the native lands of windows PART 2 :The closest you can get to absolute power</title>
+        <dc:creator><![CDATA[c0z]]></dc:creator>
+        <description><![CDATA[
+            <p><img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> Integrate <a href="https://github.com/ldpreload/BlackLotus/tree/main/src/Shared" rel="noopener nofollow ugc">this</a> and <a href="https://github.com/asmjit/asmjit" rel="noopener nofollow ugc">this</a> and we have ourselves an absolute banger</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/5</link>
+        <pubDate>Mon, 02 Oct 2023 14:14:16 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36471-5</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471.rss">A journey into the native lands of windows PART 2 :The closest you can get to absolute power</source>
+      </item>
+      <item>
+        <title>A journey into the native lands of windows PART 2 :The closest you can get to absolute power</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>hello Deltaeus,<br>
+indeed m working on part 3 ,concerning the compiling stage ,you asked about the headers you can find them on github for example or if you’re familiar with driver development you’d know that they come in a package with the WDD (windows driver’s kit), I intentionaly didn’t put the compiling stage so the people really interested in the topic could go that far to have a full executable , it is a bit tricky not hard and i’ve put clues on how to do that all over my last topics and if you want any leads contact me ,and just to put it out there I am in no means a professional or someone who’s expert in kernel ,I’m just an enthusiast driven by curiosity and still has a lote to learn and i hope to do so from you guys and a lote of talented people in this forum</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/4</link>
+        <pubDate>Fri, 29 Sep 2023 17:37:06 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36471-4</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471.rss">A journey into the native lands of windows PART 2 :The closest you can get to absolute power</source>
+      </item>
+      <item>
+        <title>A journey into the native lands of windows PART 2 :The closest you can get to absolute power</title>
+        <dc:creator><![CDATA[Deltaeus]]></dc:creator>
+        <description><![CDATA[
+            <p>Fantastisk!<br>
+Do you have part 3 already planned? I’d love to see more on compiling at some stage. That has been a major hurdle, either finding the necessary headers or the compiler itself. Are they found on a normal windows machine? if not where do you acquire them? Its also relevant to file size: compiling with the wrong approach could make the executable very much larger than it needs to be, no?<br>
+Things are so much simpler on *nix <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/3</link>
+        <pubDate>Fri, 29 Sep 2023 06:06:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36471-3</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471.rss">A journey into the native lands of windows PART 2 :The closest you can get to absolute power</source>
+      </item>
+      <item>
+        <title>A journey into the native lands of windows PART 2 :The closest you can get to absolute power</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>I mean 2.2 k views and no replies<br>
+come on guys hype me up to write another part <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=12" title=":sweat_smile:" class="emoji" alt=":sweat_smile:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/2</link>
+        <pubDate>Thu, 28 Sep 2023 16:48:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36471-2</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471.rss">A journey into the native lands of windows PART 2 :The closest you can get to absolute power</source>
+      </item>
+      <item>
+        <title>A journey into the native lands of windows PART 2 :The closest you can get to absolute power</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>Here we meet again , cheerz<br>
+beloved readers ,I write to you with very welcoming hands ,buckle up .<br>
+not long ago i posted the first part on a subject about creating a native process you can look it up <a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685">here</a> ,today we meet to code that very native program we’re going to run using our previously coded loader,I’ll try my best explaining every detail,and if by any chance I’ve missed something or you guys wanted a little bit more explanation feel free to ask.</p>
+<p><strong>INTRO</strong><br>
+a native process in my opinion is the closest you can get to launching a kernel driver without the hurdles that come with the latter , and it might be used in a malicious intent <em>wink wink</em><br>
+our POC program is simple it’s going to create an empty text file on my desktop, very simple hah .but ain’t the sky is the limit they say.<br>
+you must know that compiling such native apps is not an easy task like clicking a compiler button , the code itself is saved in a *.c extension .sadly I’m not going to explain how to compile the program in this topic but there is a lot of methods to do that either by using gcc compiler or windows driver’s kit.<br>
+first of all we must include our native libraries</p>
+<pre><code class="lang-auto">#include "ntddk.h"
+#include "ntifs.h"
+</code></pre>
+<p>our entrypoint can be anything but i chose to go with the traditions and name it NTprocessStartup<br>
+with PPEB structure as a parametere, and we will be using the native variant of the function CreateFile() that is NtCreateFile()<br>
+the functions parameters are pretty easy and understandable you can read about it <a href="https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile" rel="noopener nofollow ugc">here</a>.<br>
+there is a structure that we need to initialize with a function called RtlInitializeObjectAttributes() named OBJECT_ATTRIBUTES , this structure have the following members <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=12" title=":sweat_smile:" class="emoji" alt=":sweat_smile:" loading="lazy" width="20" height="20"></p>
+<pre><code class="lang-auto">ULONG Length
+HANDLE RootDirectory
+PUNICODE_STRING ObjectName
+ULONG Attributes
+PSECURITY_DESCRIPTOR SecurityDescriptor
+PSECURITY_QUALITY_OF_SERVICE SecurityQualityOfService
+</code></pre>
+<p>anyhow I wanted to make this topic as short as possible and open the door for discussions so here is the final product</p>
+<pre><code class="lang-auto">#include "ntddk.h"
+#include "ntifs.h"
+
+
+void NtProcessStartup(PPEB peb) {
+	HANDLE fileh;
+	IO_STATUS_BLOCK statusblock;
+
+	NTSTATUS status;
+	OBJECT_ATTRIBUTES ITACHI_ATT;
+	UNICODE_STRING SASUKE;
+	RtlInitUnicodeString(&amp;SASUKE, L"\\DosDevices\\C:\\********* \\fromme.txt");
+	InitializeObjectAttributes(&amp;ITACHI_ATT, &amp;SASUKE, OBJ_CASE_INSENSITIVE, NULL,NULL);
+	status = NtCreateFile(&amp;fileh, (GENERIC_WRITE | SYNCHRONIZE), &amp;ITACHI_ATT, &amp;statusblock, 0, FILE_ATTRIBUTE_NORMAL, 0, FILE_SUPERSEDE, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+
+}
+</code></pre>
+<p>if we try to run our native app directly by double clicking it we will encounter this error</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/1/b/1bbf70cec13c434fb849c26ecf4b3de7562a8505.png" alt="fourth" data-base62-sha1="3Xt3bDgwCvTEWIwboYnq8qifPAp" width="552" height="145"></p>
+<p>sorry the error is in french <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=12" title=":sweat_smile:" class="emoji" alt=":sweat_smile:" loading="lazy" width="20" height="20"> but it basically says you cannot run this app in win32 mode</p>
+<p>but upon launching it using our loader we get this</p>
+<p>i had to put a break-point because the process quickly terminates itself<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/d/e/deeceb2b456890e4be6ebc0d1fe24cbf46b64d2b.png" data-download-href="/uploads/short-url/vO5AQl7lhM4dw1AFWJuir8sVBof.png?dl=1" title="firstone" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/d/e/deeceb2b456890e4be6ebc0d1fe24cbf46b64d2b.png" alt="firstone" data-base62-sha1="vO5AQl7lhM4dw1AFWJuir8sVBof" width="690" height="215" data-dominant-color="262525"></a></div><p></p>
+<p>and i get this in process hacker<br>
+<img src="https://0x00sec.s3.amazonaws.com/original/3X/6/0/60efe1acf6b5ddfccf0aee957a82a601b9f3f5e2.png" alt="runnnnn" data-base62-sha1="dPxMqb7lsTv4WZJcdImM5ob8rw6" width="242" height="56"></p>
+<p>and finally the text file we created<br>
+<img src="https://0x00sec.s3.amazonaws.com/original/3X/1/4/14ccc2a416a814818b1c7f2f6acabb7dfb54dd4d.png" alt="third" data-base62-sha1="2Y0fh1ic41LqrQ4XuVhLnBsUyFT" width="68" height="59"></p>
+<p>I hope this humble topic made you excited or curious to know more about the native applications<br>
+see you soon</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471/1</link>
+        <pubDate>Fri, 18 Aug 2023 20:58:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36471-1</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-2-the-closest-you-can-get-to-absolute-power/36471.rss">A journey into the native lands of windows PART 2 :The closest you can get to absolute power</source>
+      </item>
+  </channel>
+</rss>

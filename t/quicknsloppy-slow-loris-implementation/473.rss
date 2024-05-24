@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+    <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473</link>
+    <description>  Hello! So the other night I tried to learn some more about the Slow-Loris style of DOS attack. I couldn&#39;t tell you much about EXACTLY how the original slow-loris.pl worked, but here&#39;s what I found to be effective against an Apache2. I figured I&#39;d go through the process of what I did to share some of the knowledge I gained through it. Plus, I thought it would be a nice and simpler first post. 
+
+So first of all, for those who aren&#39;t a little bit familiar with the Slow-Loris type of DOS attack, the main point is that it is low-bandwidth, and only takes one computer running multiple threads. Alot of DOS/DDOS attacks revolve around sending an unmanageable amount of information to the server. This works, but also at the expense of the attacking resources. What is great about this kind of attack, and the Slow-Loris concept is that it does not use a ridiculous amount of bandwidth. Instead, it takes up all of the web servers possible connections. So let&#39;s take a look at the server-status page of our Apache2 server while its running normally. 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/e26017a59e32aef8b4325d1310e3c3e0873f87b7.png&quot; width=&quot;690&quot; height=&quot;388&quot;&gt;
+
+As we can see, the server is currently only handling one request. One important thing to know is that HTTP is considered a &quot;connectionless&quot; protocol. What this means is that a client will establish a TCP connection to an HTTP server, send its request, then the server will send its reply and close the connection. This makes sense, especially considering that a website may serve many people at once, and many concurrent socket connections can bog down a less capable box. Now suppose our goal is to halt this server from serving anyone. We might first think to send a bunch of UDP packets at random ports and try to take up as much resources from the server as possible, but the Slow-Loris type attack targets the server&#39;s web-server software itself instead. Our goal, for the attack, is to take up all the allowed connections for the webserver, and keep those sockets connected for as long as possible. So let&#39;s open up a connection with this server and see how long it takes before it closes our connection because we sent it no request. This can be done quickly and simple with netcat. Just open up a connection, send part of a request, and see how long it takes before the server disconnects us. We get the following html response.
+
+&lt;!DOCTYPE HTML PUBLIC &quot;-//IETF//DTD HTML 2.0//EN&quot;&gt;
+&lt;html&gt;&lt;head&gt;
+&lt;title&gt;408 Request Time-out&lt;/title&gt;
+&lt;/head&gt;&lt;body&gt;
+&lt;h1&gt;Request Time-out&lt;/h1&gt;
+&lt;p&gt;Server timeout waiting for the HTTP request from the client.&lt;/p&gt;
+&lt;hr&gt;
+&lt;address&gt;Apache/2.2.22 (Debian) Server at 127.0.1.1 Port 80&lt;/address&gt;
+&lt;/body&gt;&lt;/html&gt;
+
+
+For this particular Apache, it took about 20 seconds before the server sent us a &quot;you took too long&quot; html response. So, we know we can open a socket and connect, then waste about 20 seconds of the servers time before we get disconnected. So far so good, but we can do a little more to be more effective. We can send, as a header in the HTTP request, a &quot;Keep-Alive&quot; request. Keep in mind that it is up the server whether or not it wants to listen and follow our wish, but this is basically asking the server not to close our connection for a little while. I&#39;m not exactly sure why this is implemented in HTTP protocol, but I believe it is for the better performance of some clients. You may want to read more on that if you&#39;re interested. Also, if you want to learn more about HTTP in general, I suggest you check out the RFC documents, they proved useful to me. So let&#39;s send a request with a keep alive header in there and see how it responds. Let&#39;s fire up python and check it out. Here is the first part of the response we get.
+
+HTTP/1.1 200 OK
+Date: Tue, 24 May 2016 06:00:09 GMT
+Server: Apache/2.2.22 (Debian)
+Last-Modified: Fri, 15 Apr 2016 21:00:37 GMT
+ETag: &quot;1ff92-329-5308c4d87d9fc&quot;
+Accept-Ranges: bytes
+Content-Length: 809
+Vary: Accept-Encoding
+Keep-Alive: timeout=5, max=100   &lt;------------Important!
+Connection: Keep-Alive       &lt;---------- Important!
+Content-Type: text/html
+
+We now know that this web server does indeed listen to Keep-Alive requests, and it will give us 5 more seconds until it closes our connection. Let&#39;s implement that into our attack too. Here is a pastebin link to the python script I tossed together for this. Keep in mind, it is by no means refined, and I have made no improvements from the time it was written around 5-am :stuck_out_tongue: Basically, it takes advantage of the keep-alive and how long it takes before the server closes client sockets to keep attacking sockets connected for a while. Also, for fun, it will send various user agents to the server. At least for this particular Apache, it took it over almost immediately. I hope you enjoyed reading this, and hopefully the script might give you a bit more knowledge about HTTP. Thanks! Of course, as you all already know, don&#39;t go using it against some vulnerable public web server. (Note: I tried this also on an XMPP server running on Windows, and it disrupted it, but was not as effective since XAMPP doesn&#39;t listen to keep-alive header requests)
+
+PasteBin link : http://pastebin.com/ABdrzZtW</description>
+    
+    <lastBuildDate>Wed, 25 May 2016 20:16:13 +0000</lastBuildDate>
+    <category>Web Hacking</category>
+    <atom:link href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/14</link>
+        <pubDate>Sun, 21 Jan 2018 00:40:51 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-14</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>The <em>love</em> stage went away many years ago… <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/13</link>
+        <pubDate>Wed, 25 May 2016 20:16:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-13</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[random-man]]></dc:creator>
+        <description><![CDATA[
+            <p>yeah definitely worthy of some attention. you gotta love the RFCs.</p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/12</link>
+        <pubDate>Wed, 25 May 2016 19:17:44 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-12</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>I think you need SOCKS4a or SOCK5 to support UDP:</p>
+<aside class="onebox wikipedia">
+  <header class="source">
+      <a href="https://en.wikipedia.org/wiki/SOCKS" target="_blank" rel="nofollow noopener">en.wikipedia.org</a>
+  </header>
+  <article class="onebox-body">
+    
+
+<h3><a href="https://en.wikipedia.org/wiki/SOCKS" target="_blank" rel="nofollow noopener">SOCKS</a></h3>
+
+<p>SOCKS is an Internet protocol that exchanges network packets between a client and server through a proxy server. SOCKS5 optionally provides authentication so only authorized users may access a server. Practically, a SOCKS server proxies TCP connections to an arbitrary IP address, and provides a means for UDP packets to be forwarded.
+ SOCKS performs at Layer 5 of the OSI model (the session layer, an intermediate layer between the presentation layer and the transport layer). A SOCKS server accepts ...</p>
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p>However, there is a negotiation going on between the client and the server. Apparently that is done over a normal TCP connection (not fully sure), but in any case, in order to bind an UDP port you need to interchange information with the server and therefore, that will be logged (in general).</p>
+<p>I quickly went through the RFC but looks like it need some serious reading.</p>
+<p><a href="https://tools.ietf.org/html/rfc1928" class="onebox" target="_blank" rel="nofollow noopener">https://tools.ietf.org/html/rfc1928</a></p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/11</link>
+        <pubDate>Wed, 25 May 2016 16:16:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-11</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[random-man]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah. But maybe if you were doing some thing UDP, spoofing the IP from a proxy? I don’t think any normal socks proxy would allow that kind of control though.</p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/10</link>
+        <pubDate>Wed, 25 May 2016 13:12:58 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-10</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>In general, you cannot spoof your ip and use a standard proxy. Normal proxies requires the client to establish a full connection and that is not possible when you spoof your IP, unless you are in a local network (where you can sniff the traffic) or the proxy is running a 15 years old operating system. The first case is useless, the second one is quite unlikely</p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/9</link>
+        <pubDate>Tue, 24 May 2016 21:27:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-9</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>I believe that if a machine gets a <em>wrong</em> packet it will respond with a <code>RST</code>, terminating the connection. I’m not fully sure, it has been a while since I do not have to go that down in the TCP/IP stack.</p>
+<p>In that case, you have to be sure that you are spoofing an off-line machine so it will not send the RST packet back to the server… which will actually free the connection</p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/8</link>
+        <pubDate>Tue, 24 May 2016 21:21:57 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-8</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[random-man]]></dc:creator>
+        <description><![CDATA[
+            <p>Ah I see. Yeah. I’d say, if someone in the evil mindset, spoofing the ip and using proxies would basically move it impossible to find the source. At least, I couldn’t think of any way someone could.</p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/7</link>
+        <pubDate>Tue, 24 May 2016 15:13:49 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-7</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>Well it becomes problematic when it’s connection based indeed.<br>
+I meant as a comment to pry0cc, the synflooder.<br>
+You can spoof the IP then.</p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/6</link>
+        <pubDate>Tue, 24 May 2016 15:05:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-6</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[random-man]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah. I tested it on XAMPP and it was somewhat effective in the fact that it was a pain to get on the site, but it definitely did not completely kill it like Apache 2. I’m trying to tweak the attack a bit so it can work on XAMPP better. Spoof the IP over a TCP connection? By packet forging? I didn’t know that was possible.</p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/5</link>
+        <pubDate>Tue, 24 May 2016 15:02:10 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-5</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[random-man]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks man! Yeah I’ll have to check that out!</p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/4</link>
+        <pubDate>Tue, 24 May 2016 14:59:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-4</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>Ye that one is kinda deprecated nowadays, you can spoof the IP by the way.<br>
+SlowLoris is specific for the HTTP protocol though/</p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/3</link>
+        <pubDate>Tue, 24 May 2016 10:29:30 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-3</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Man! This is sweet! I used to use a tool called sockstress which was very similar to this in design, but with tcp, sending a syn, and never responding to the server with an ack.</p>
+<p>This is a really good share! Nice work <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/2</link>
+        <pubDate>Tue, 24 May 2016 08:05:02 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-2</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+      <item>
+        <title>Quick&#39;n&#39;sloppy Slow-Loris implementation</title>
+        <dc:creator><![CDATA[random-man]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello! So the other night I tried to learn some more about the Slow-Loris style of DOS attack. I couldn’t tell you much about EXACTLY how the original slow-loris.pl worked, but here’s what I found to be effective against an Apache2. I figured I’d go through the process of what I did to share some of the knowledge I gained through it. Plus, I thought it would be a nice and simpler first post.</p>
+<p>So first of all, for those who aren’t a little bit familiar with the Slow-Loris type of DOS attack, the main point is that it is low-bandwidth, and only takes one computer running multiple threads. Alot of DOS/DDOS attacks revolve around sending an unmanageable amount of information to the server. This works, but also at the expense of the attacking resources. What is great about this kind of attack, and the Slow-Loris concept is that it does not use a ridiculous amount of bandwidth. Instead, it takes up all of the web servers possible connections. So let’s take a look at the server-status page of our Apache2 server while its running normally.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/e26017a59e32aef8b4325d1310e3c3e0873f87b7.png" width="690" height="388"></p>
+<p>As we can see, the server is currently only handling one request. One important thing to know is that HTTP is considered a “connectionless” protocol. What this means is that a client will establish a TCP connection to an HTTP server, send its request, then the server will send its reply and close the connection. This makes sense, especially considering that a website may serve many people at once, and many concurrent socket connections can bog down a less capable box. Now suppose our goal is to halt this server from serving anyone. We might first think to send a bunch of UDP packets at random ports and try to take up as much resources from the server as possible, but the Slow-Loris type attack targets the server’s web-server software itself instead. Our goal, for the attack, is to take up all the allowed connections for the webserver, and keep those sockets connected for as long as possible. So let’s open up a connection with this server and see how long it takes before it closes our connection because we sent it no request. This can be done quickly and simple with netcat. Just open up a connection, send part of a request, and see how long it takes before the server disconnects us. We get the following html response.</p>
+
+
+408 Request Time-out
+
+<h1>Request Time-out</h1>
+<p>Server timeout waiting for the HTTP request from the client.</p>
+<hr>
+Apache/2.2.22 (Debian) Server at 127.0.1.1 Port 80
+
+<p>For this particular Apache, it took about 20 seconds before the server sent us a “you took too long” html response. So, we know we can open a socket and connect, then waste about 20 seconds of the servers time before we get disconnected. So far so good, but we can do a little more to be more effective. We can send, as a header in the HTTP request, a “Keep-Alive” request. Keep in mind that it is up the server whether or not it wants to listen and follow our wish, but this is basically asking the server not to close our connection for a little while. I’m not exactly sure why this is implemented in HTTP protocol, but I believe it is for the better performance of some clients. You may want to read more on that if you’re interested. Also, if you want to learn more about HTTP in general, I suggest you check out the RFC documents, they proved useful to me. So let’s send a request with a keep alive header in there and see how it responds. Let’s fire up python and check it out. Here is the first part of the response we get.</p>
+<p>HTTP/1.1 200 OK<br>
+Date: Tue, 24 May 2016 06:00:09 GMT<br>
+Server: Apache/2.2.22 (Debian)<br>
+Last-Modified: Fri, 15 Apr 2016 21:00:37 GMT<br>
+ETag: “1ff92-329-5308c4d87d9fc”<br>
+Accept-Ranges: bytes<br>
+Content-Length: 809<br>
+Vary: Accept-Encoding<br>
+Keep-Alive: timeout=5, max=100   &lt;------------Important!<br>
+Connection: Keep-Alive       &lt;---------- Important!<br>
+Content-Type: text/html</p>
+<p>We now know that this web server does indeed listen to Keep-Alive requests, and it will give us 5 more seconds until it closes our connection. Let’s implement that into our attack too. Here is a pastebin link to the python script I tossed together for this. Keep in mind, it is by no means refined, and I have made no improvements from the time it was written around 5-am <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"> Basically, it takes advantage of the keep-alive and how long it takes before the server closes client sockets to keep attacking sockets connected for a while. Also, for fun, it will send various user agents to the server. At least for this particular Apache, it took it over almost immediately. I hope you enjoyed reading this, and hopefully the script might give you a bit more knowledge about HTTP. Thanks! Of course, as you all already know, don’t go using it against some vulnerable public web server. (Note: I tried this also on an XMPP server running on Windows, and it disrupted it, but was not as effective since XAMPP doesn’t listen to keep-alive header requests)</p>
+<p>PasteBin link : <a href="http://pastebin.com/ABdrzZtW" rel="noopener nofollow ugc">http://pastebin.com/ABdrzZtW</a></p>
+          <p><a href="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473/1</link>
+        <pubDate>Tue, 24 May 2016 06:24:14 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-473-1</guid>
+        <source url="https://0x00sec.org/t/quicknsloppy-slow-loris-implementation/473.rss">Quick&#39;n&#39;sloppy Slow-Loris implementation</source>
+      </item>
+  </channel>
+</rss>

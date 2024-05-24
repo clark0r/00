@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Simple Buffer Overflow Demonstration - Programming - 0x00sec - The Home of the Hacker</title>
+<meta name="description" content="Hi 0x00’ers :smiley: 
+I was messing around with C and I decided to replicate a buffer overflow attack. What is a buffer overflow? 
+In simple terms, a buffer overflow is when input goes past the &amp;quot;cap&amp;quot; that is allowed for &amp;hellip;">
+<meta name="generator" content="Discourse 3.1.0.beta6 - https://github.com/discourse/discourse version 80a1709965fa59da824b2e3392976fc6fc898f80">
+<link rel="icon" type="image/png" href="../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.png">
+<link rel="apple-touch-icon" type="image/png" href="../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.png">
+<meta name="theme-color" media="all" content="#171616">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+<link rel="canonical" href="1131.html" />
+<link rel="search" type="application/opensearchdescription+xml" href="../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+<link href="../../stylesheets/color_definitions_0x00sec-v2_15_57_a5ef387651921c3e4c7aa1108536015ba8299efb.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" class="light-scheme" />
+<link href="../../stylesheets/desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop" />
+<link href="../../stylesheets/chat_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="chat" />
+<link href="../../stylesheets/discourse-details_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-details" />
+<link href="../../stylesheets/discourse-lazy-videos_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-lazy-videos" />
+<link href="../../stylesheets/discourse-local-dates_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-local-dates" />
+<link href="../../stylesheets/discourse-narrative-bot_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-narrative-bot" />
+<link href="../../stylesheets/discourse-presence_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-presence" />
+<link href="../../stylesheets/discourse-spoiler-alert_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-spoiler-alert" />
+<link href="../../stylesheets/docker_manager_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="docker_manager" />
+<link href="../../stylesheets/poll_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="poll" />
+<link href="../../stylesheets/chat_desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="chat_desktop" />
+<link href="../../stylesheets/poll_desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="poll_desktop" />
+<link href="../../stylesheets/desktop_theme_46_f36ade55bf80933494fe3b5fab518f477de3bd4e.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2" />
+<link href="../../stylesheets/desktop_theme_57_8c0e890a61cdb4c5833a9f9c96664ed164e7d645.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop_theme" data-theme-id="57" data-theme-name="0x00sec-v2" />
+<link rel="stylesheet" href="https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="https://s3.amazonaws.com/0x00sec/highlight.pack.js"></script>
+<link rel="preload" href="../../theme-javascripts/440fd21108f5ba9e5dfe06cca9fc842569d5a874.js%3F__ws=0x00sec.org" as="script">
+<script defer src="../../theme-javascripts/440fd21108f5ba9e5dfe06cca9fc842569d5a874.js%3F__ws=0x00sec.org" data-theme-id="40"></script>
+<link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;Simple Buffer Overflow Demonstration&#39;" href="1131.rss" />
+<meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://0x00sec.org/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:image" content="https://0x00sec.org/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:url" content="https://0x00sec.org/t/simple-buffer-overflow-demonstration/1131" />
+<meta name="twitter:url" content="https://0x00sec.org/t/simple-buffer-overflow-demonstration/1131" />
+<meta property="og:title" content="Simple Buffer Overflow Demonstration" />
+<meta name="twitter:title" content="Simple Buffer Overflow Demonstration" />
+<meta property="og:description" content="Hi 0x00’ers 😃  I was messing around with C and I decided to replicate a buffer overflow attack. What is a buffer overflow?  In simple terms, a buffer overflow is when input goes past the &quot;cap&quot; that is allowed for the input to have.  In more advanced terms, a buffer overflow is when the user inputs more data into a buffer than it had been allocated for.  Here is a simple script to demonstrate.  #include &lt;stdio.h&gt;  // Include the library you need to input and output things.  int main(){ // ..." />
+<meta name="twitter:description" content="Hi 0x00’ers 😃  I was messing around with C and I decided to replicate a buffer overflow attack. What is a buffer overflow?  In simple terms, a buffer overflow is when input goes past the &quot;cap&quot; that is allowed for the input to have.  In more advanced terms, a buffer overflow is when the user inputs more data into a buffer than it had been allocated for.  Here is a simple script to demonstrate.  #include &lt;stdio.h&gt;  // Include the library you need to input and output things.  int main(){ // ..." />
+<meta property="og:article:section" content="Programming" />
+<meta property="og:article:section:color" content="92278F" />
+<meta property="og:article:tag" content="exploit" />
+<meta property="og:article:tag" content="hacking" />
+<meta name="twitter:label1" value="Reading time" />
+<meta name="twitter:data1" value="2 mins 🕑" />
+<meta name="twitter:label2" value="Likes" />
+<meta name="twitter:data2" value="25 ❤" />
+<meta property="article:published_time" content="2016-09-24T04:02:53+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+</head>
+<body class="crawler ">
+<div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+
+<a href="https://init.0x00sec.org" class="dow-menu">Init</a>
+<a href="https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+<a href="https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+<header>
+<a href="../../index.html">
+0x00sec - The Home of the Hacker
+</a>
+</header>
+<div id="main-outlet" class="wrap" role="main">
+<div id="topic-title">
+<h1>
+<a href="1131.html">Simple Buffer Overflow Demonstration</a>
+</h1>
+<div class="topic-category" itemscope itemtype="http://schema.org/BreadcrumbList">
+<span itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+<a href="../../c/programming/61.html" class="badge-wrapper bullet" itemprop="item">
+<span class="badge-category-bg" style="background-color: #92278F"></span>
+<span class="badge-category clear-badge">
+<span class="category-name" itemprop="name">Programming</span>
+</span>
+</a>
+<meta itemprop="position" content="1" />
+</span>
+</div>
+<div class="topic-category">
+<div class="discourse-tags list-tags">
+<a href="../../tag/exploit.html" class="discourse-tag" rel="tag">exploit</a>,
+<a href="../../tag/hacking.html" class="discourse-tag" rel="tag">hacking</a>
+</div>
+</div>
+</div>
+<div itemscope itemtype="http://schema.org/DiscussionForumPosting">
+<meta itemprop="headline" content="Simple Buffer Overflow Demonstration">
+<meta itemprop="articleSection" content="Programming">
+<meta itemprop="keywords" content="exploit, hacking">
+<div itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+<meta itemprop="name" content="0x00sec - The Home of the Hacker">
+<div itemprop="logo" itemscope itemtype="http://schema.org/ImageObject">
+<meta itemprop="url" content="https://0x00sec.org/uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.png">
+</div>
+</div>
+<div id="post_1" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/Fust3rCluck"><span itemprop="name">Fust3rCluck</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-24T04:02:53Z" class="post-time">
+September 24, 2016, 4:02am
+</time>
+<meta itemprop="dateModified" content="2016-10-13T22:41:19Z">
+<span itemprop="position">1</span>
+</span>
+</div>
+<div class="post" itemprop="articleBody">
+<p>Hi 0x00’ers <img src="../../images/emoji/twitter/smiley.png%3Fv=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<p>I was messing around with C and I decided to replicate a buffer overflow attack. What is a buffer overflow?</p>
+<p>In simple terms, <code>a buffer overflow is when input goes past the "cap" that is allowed for the input to have.</code></p>
+<p>In more advanced terms, <code>a buffer overflow is when the user inputs more data into a buffer than it had been allocated for.</code></p>
+<p>Here is a simple script to demonstrate.</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;  // Include the library you need to input and output things.
+
+int main(){ // Define the main function. The "int" signifies it will return an integer(in this case zero to signify the end).
+    int key = 0; // Set a variable "key" of the data type integer to zero (the name "key" can be anything).
+    char typy[5]; // Create a character array of the name "typy" that allocates 5 bytes for stdin (input) ("typy" can be any name you want).
+    printf("Type something: "); // A function that lets the user input data.
+    gets(typy); // "Gets" the input that the user typed and stores it in typy.
+    printf(typy); // Prints what you typed (the data stored in typy).
+    printf("\n"); // Prints a new line to make it look neater when the program exits (purely cosmetic. I use it to make it look neater in my linux terminal.)
+    if (key){ // If the value of key is true (non zero)
+        printf("It worked\n"); // Print "It worked. Notice the new line character. This is, once again, to make my terminal look neat as the program executes."
+    }
+    return 0; // Exits the program cleanly. (You are returning an integer to the function. That is why you start it off with "int" main()).
+}
+</code></pre>
+<p>Now save the script and compile it with your favorite compiler.<br>
+For example, I would do <code>gcc buffer_overflow_demo.c</code> then run it with <code>./a.out</code>.</p>
+<p>Let’s evaluate what the script does. First, it tells you to type something. Let’s type a word under five characters such as “dog”. It prints dog back out to you. Everything runs normal and as expected. Now run it again and this time type something over 5 such as “0x00sec Rocks”. What happens? This time it should output the line “It worked”. Why does that happen? <code>Simply because the character array ran out of room (allocated memory) to store what you typed in, so it "overflowed" and overwrote the variable "key" to make it non-zero.</code> Remember any thing non-zero is true. When you ran the program the first time and typed dog it was under the size of allocated memory so everything ran fine and nothing was overwritten.</p>
+<p>I hope that helped you understand what a buffer overflow was, how it works, and how it is executed.<br>
+As always,</p>
+<p>Stay Frosty <img src="../../images/emoji/twitter/snowman.png%3Fv=9" title=":snowman:" class="emoji" alt=":snowman:"></p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="5" />
+<span class="post-likes">5 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_2" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/dtm"><span itemprop="name">dtm</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-24T06:34:30Z" class="post-time">
+September 24, 2016, 6:34am
+</time>
+<meta itemprop="dateModified" content="2016-09-24T06:34:30Z">
+<span itemprop="position">2</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Nice. Try to spot the other vulnerability in your code.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_3" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/0x00pf"><span itemprop="name">0x00pf</span></a>
+(pico)
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-24T07:54:36Z" class="post-time">
+September 24, 2016, 7:54am
+</time>
+<meta itemprop="dateModified" content="2016-09-24T07:54:36Z">
+<span itemprop="position">3</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Good example.</p>
+<p>You will probably have to compile with something like this, to actually test the program.</p>
+<p><code>gcc -Wall -o bdemo buffer_overflow_demo.c -fno-stack-protector</code></p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_4" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/_py"><span itemprop="name">_py</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-27T16:23:19Z" class="post-time">
+September 27, 2016, 4:23pm
+</time>
+<meta itemprop="dateModified" content="2016-09-27T16:23:19Z">
+<span itemprop="position">4</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>This is a buffer overflow vulnerability but not the one that can modify the state of a variable. Get a pen and draw the stack on a paper. The declaration of the variables in the source code says it all.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="2" />
+</div>
+<div class="crawler-linkback-list" itemscope itemtype="http://schema.org/ItemList">
+<div itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+<a itemprop="url" href="../programming-for-wannabes-part-iv/22421.html">Programming for Wannabes. Part IV</a>
+<meta itemprop="position" content="1">
+</div>
+</div>
+</div>
+<div id="post_5" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/dtm"><span itemprop="name">dtm</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-28T03:02:53Z" class="post-time">
+September 28, 2016, 3:02am
+</time>
+<meta itemprop="dateModified" content="2016-09-28T03:02:53Z">
+<span itemprop="position">5</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>I’m not sure if there’s a guaranteed way of knowing how the stack will turn out since that entirely depends on the compiler and what it believes is the most optimal solution. But yes, most, if not all, of my encounters were the other way around.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_6" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/0x00pf"><span itemprop="name">0x00pf</span></a>
+(pico)
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-28T16:50:59Z" class="post-time">
+September 28, 2016, 4:50pm
+</time>
+<meta itemprop="dateModified" content="2016-09-28T16:50:59Z">
+<span itemprop="position">6</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p><a class="mention" href="https://0x00sec.org/u/dtm">@dtm</a> pointed it out.</p>
+<p>Apparently, gcc sorts local variables in the stack according to its type and not the declaration order. Looks like <code>int</code> goes first and actually the arrays goes last. It does not matter where do you put the <code>int</code>, it will always will go first, at least, right now with gcc.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_7" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/_py"><span itemprop="name">_py</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-28T17:41:50Z" class="post-time">
+September 28, 2016, 5:41pm
+</time>
+<meta itemprop="dateModified" content="2016-09-28T17:57:38Z">
+<span itemprop="position">7</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Sure, compiler optimization plays a big role but I’ve messed with these kind of buffer overflows and I was unable to change the value of a certain variable unless the buffer was declared in a specific way/order.</p>
+<p>Just an fyi to those who aren’t getting the expected result.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_8" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/oaktree"><span itemprop="name">oaktree</span></a>
+(oaktree)
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-28T20:51:40Z" class="post-time">
+September 28, 2016, 8:51pm
+</time>
+<meta itemprop="dateModified" content="2016-09-28T20:51:40Z">
+<span itemprop="position">8</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p><a class="mention" href="https://0x00sec.org/u/_py">@_py</a> I bet that article you linked me (<a href="http://www.catb.org/esr/structure-packing/" rel="nofollow noopener">here</a>) applies to this… There is likely padding between the variables in memory.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_9" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/_py"><span itemprop="name">_py</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-28T22:07:44Z" class="post-time">
+September 28, 2016, 10:07pm
+</time>
+<meta itemprop="dateModified" content="2016-09-28T22:07:44Z">
+<span itemprop="position">9</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p><a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a> yes, padding is indeed applied but in this case it’s more important which variable gets stored below/above the another. If the buffer gets stored below the “key” variable, then it can indeed overflow and affect key’s value, otherwise the affected variables would be instruction pointers, frame pointers, auxiliary vectors and much more (keep in mind the stack grows downwards and the buffer will be growing upwards).</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_10" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/oaktree"><span itemprop="name">oaktree</span></a>
+(oaktree)
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-28T23:22:39Z" class="post-time">
+September 28, 2016, 11:22pm
+</time>
+<meta itemprop="dateModified" content="2016-09-28T23:22:39Z">
+<span itemprop="position">10</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<aside class="quote no-group" data-username="_py" data-post="9" data-topic="1131">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt width="20" height="20" src="../../user_avatar/0x00sec.org/_py/40/4275_2.png" class="avatar"> _py:</div>
+<blockquote>
+<p>(keep in mind the stack grows downwards and the buffer will be growing upwards)</p>
+</blockquote>
+</aside>
+<p>You’d think, visually, that the stack would grow upwards… Is this a universal thing or arch-dependent?</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="2" />
+</div>
+</div>
+<div id="post_11" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/dtm"><span itemprop="name">dtm</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-29T01:11:43Z" class="post-time">
+September 29, 2016, 1:11am
+</time>
+<meta itemprop="dateModified" content="2016-09-29T01:11:43Z">
+<span itemprop="position">11</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>As the name suggests, stacking things are placing items on top of another, therefore it implies the upwards direction.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="1" />
+<span class="post-likes">1 Like</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_12" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/oaktree"><span itemprop="name">oaktree</span></a>
+(oaktree)
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-29T01:13:18Z" class="post-time">
+September 29, 2016, 1:13am
+</time>
+<meta itemprop="dateModified" content="2016-09-29T01:13:18Z">
+<span itemprop="position">12</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>That’s what I thought…</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_13" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/_py"><span itemprop="name">_py</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-29T01:56:52Z" class="post-time">
+September 29, 2016, 1:56am
+</time>
+<meta itemprop="dateModified" content="2016-09-29T01:56:52Z">
+<span itemprop="position">13</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p><a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a>, IMO, the best way to find it out is through the legend GDB itself. Here’s a sample of ASM code if you want to play around with it. Nothing crazy, pretty self-explanatory, but it will help you visualise the whole upwards/downwards trick:</p>
+<pre><code class="lang-auto">global _start			
+
+section .text
+_start:
+
+	mov eax, 0x66778899
+	mov ebx, 0x0
+	mov ecx, 0x0
+
+	push ax
+	pop bx
+
+	push eax
+	pop ecx
+
+	push word [sample]
+	pop ecx
+
+	push dword [sample]
+	pop edx
+
+	; exit syscall
+
+	mov eax, 1
+	mov ebx, 0		
+	int 0x80
+
+
+section .data
+
+sample:	db 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22
+</code></pre>
+<p>Compilation: nasm -g -f elf32 -o stack.o stack.nasm ; ld -o stack stack.o</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="3" />
+<span class="post-likes">3 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_14" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/0x00pf"><span itemprop="name">0x00pf</span></a>
+(pico)
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-29T05:22:10Z" class="post-time">
+September 29, 2016, 5:22am
+</time>
+<meta itemprop="dateModified" content="2016-09-29T05:22:10Z">
+<span itemprop="position">14</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>It’s arch-dependent. For instance, PA-RISC stack grows upwards… Never worked with one though.</p>
+<p>Thinking about it as a physical stack may be confusing. Better consider it as a LIFO (Last In First out) collection. Then it doen’t matter in which direction it grows… the important thing is that the last to get in is the first to get out.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_15" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/Fust3rCluck"><span itemprop="name">Fust3rCluck</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-10-13T22:39:29Z" class="post-time">
+October 13, 2016, 10:39pm
+</time>
+<meta itemprop="dateModified" content="2016-10-13T22:39:29Z">
+<span itemprop="position">15</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Yes, you’re right. Fixing it.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_16" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/system"><span itemprop="name">system</span></a>
+(system)
+Closed
+</span>
+<link itemprop="mainEntityOfPage" href="1131.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-01-21T00:30:05Z" class="post-time">
+January 21, 2018, 12:30am
+</time>
+<meta itemprop="dateModified" content="2018-01-21T00:30:05Z">
+<span itemprop="position">16</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+</div>
+</div>
+<footer class="container wrap">
+<nav class="crawler-nav">
+<ul>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../index.html" itemprop="url">Home </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../categories.html" itemprop="url">Categories </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="https://0x00sec.org/guidelines" itemprop="url">FAQ/Guidelines </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../tos.html" itemprop="url">Terms of Service </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../privacy.html" itemprop="url">Privacy Policy </a>
+</span>
+</li>
+</ul>
+</nav>
+<p class="powered-by-link">Powered by <a href="https://www.discourse.org">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+<script src="https://instant.page/3.0.0" type="module" defer integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1"></script>
+</body>
+</html>

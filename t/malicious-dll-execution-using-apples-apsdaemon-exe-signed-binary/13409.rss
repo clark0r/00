@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Malicious DLL execution using Apple&#39;s APSDaemon.exe signed binary</title>
+    <link>https://0x00sec.org/t/malicious-dll-execution-using-apples-apsdaemon-exe-signed-binary/13409</link>
+    <description>This is going to be a short an easy one. I&#39;ve been very busy lately and wasn&#39;t able to keep working on the Python malware tutorial I but figured that might be useful to some of you. 
+
+This is a simple malicious DLL execution using an Apple&#39;s signed binary. However, it doesn&#39;t qualify as a proper signed binary proxy execution (according to MITRE ATT&amp;CK Matrix but whatever) as it&#39;s not part of the operating system. But, for that same reason, it can be very useful to misguide and fool monitoring analysts (especially the less experienced ones) into thinking that the execution is legitimate, unlike, let&#39;s say using `rundll32` which isn&#39;t signed and suspicious most times when executed by itself.
+
+The only caveat is that you have to drop both the malicious DLL and APSDaemon.exe on disk, but, if you were able to get a shell somehow or execute code on the machine using phishing or drive-by install, this won&#39;t be a problem.
+
+APSDaemon.exe is Apple&#39;s Push Notification service binary installed by iTunes. I tested a version from 2011 and a version from January 2019, and in both cases, it works. It doesn&#39;t seem to be reported, not publicly at least even though it&#39;s been around for a long time. That said it&#39;s not exceptional, I&#39;m pretty sure it&#39;s common with many signed binaries that don&#39;t use proper mechanism to check the integrity of loaded libraries.
+
+Here we&#39;ll use the binary created and signed on January 15, 2019. 
+SHA256: `F0B2EDBC23DD0DD0ADED9EE5F14985EB2FBF7E03A1FE86A5598DE58CA729E52D`
+
+![image|690x342](upload://z9dMT0mwhUiQ4eOqWPO7zq9MijQ.png)  
+
+If we open the binary in IDA and search for strings, we see an AppleVersions.dll.
+
+![image|644x244](upload://qw4Kw5Q71gtga63sLyy6Sz2X8CN.png)  
+
+If we follow xrefs to that string, we ultimately end up on that DLL&#39;s import table being pushed on the stack. 
+
+![image|690x165](upload://mr4WiWP9vCGUKJEO1jQvO8gWUx7.png) 
+
+This is followed by a call to a subroutine that we can safely assume will load the DLL in memory. If we look into that subroutine, we see further down a call to LoadLibraryA. We can set a breakpoint there in IDA or any debugger (I prefer x64dbg) and validate that it does load AppleVersions.dll.
+
+![image|690x137](upload://vsfF3y4oVc8JCxrJ7PgTc07jBDx.png) 
+
+As you can see there are a few problems here:
+- It doesn&#39;t require a fully qualified path for the library to load as it should to avoid being abused
+- It doesn&#39;t implement `SetDllDirectory` using `&quot;&quot;` as `lpPathName` to remove the current directory from the search order.
+- The original `AppleVersions.dll` is digitally signed, yet APSDaemon.exe doesn&#39;t use the `WinVerifyTrust` function to verify the signature. 
+
+So let&#39;s use this to execute malicious code. I first tried using a simple C# reverse shell but no luck. `GetLastError` is called and an exception is raised. We can identify the problem by looking at the value returned by the function in the `eax` register. In this case, 0x7F is returned which is the system error code for  `ERROR_PROC_NOT_FOUND`. It looks like LoadLibrary loads the DLL but cannot load the sections.
+
+![image|690x197](upload://9lUG5npm4sH63kq6AUkSfXLDQTr.png) 
+
+It was late and didn&#39;t want to waste time figuring out what went wrong so I figured I&#39;d try a simple reverse shell in C. Because I suck at C, I took a code sample from [here](https://github.com/Hood3dRob1n/Y.A.S.P./blob/master/payloads/reverse-dll/reverse_dll.c) and compiled it to a DLL with `cl /LD shell.c`.
+
+Then, after renaming it AppleVersions.dll, if we drop it in the same directory as APSDaemon.exe and start listening on the attacker&#39;s machine, we get a reverse shell executed through a signed Apple binary.
+
+![image|520x500](upload://cTtefW167HrNnIdadgwp8vhtrYH.png) 
+
+To make it look more legit, you can also rename APSDaemon.exe to something like iTunes.exe. Obviously, in real-life situations and to avoid detection, don&#39;t use an existing payload that can be found on GitHub. Make your own.</description>
+    
+    <lastBuildDate>Sat, 04 May 2019 11:55:23 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://0x00sec.org/t/malicious-dll-execution-using-apples-apsdaemon-exe-signed-binary/13409.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Malicious DLL execution using Apple&#39;s APSDaemon.exe signed binary</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/malicious-dll-execution-using-apples-apsdaemon-exe-signed-binary/13409/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/malicious-dll-execution-using-apples-apsdaemon-exe-signed-binary/13409/3</link>
+        <pubDate>Sun, 02 Jun 2019 19:57:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-13409-3</guid>
+        <source url="https://0x00sec.org/t/malicious-dll-execution-using-apples-apsdaemon-exe-signed-binary/13409.rss">Malicious DLL execution using Apple&#39;s APSDaemon.exe signed binary</source>
+      </item>
+      <item>
+        <title>Malicious DLL execution using Apple&#39;s APSDaemon.exe signed binary</title>
+        <dc:creator><![CDATA[tr4cefl0w]]></dc:creator>
+        <description><![CDATA[
+            <p>This is going to be a short an easy one. I’ve been very busy lately and wasn’t able to keep working on the Python malware tutorial I but figured that might be useful to some of you.</p>
+<p>This is a simple malicious DLL execution using an Apple’s signed binary. However, it doesn’t qualify as a proper signed binary proxy execution (according to MITRE ATT&amp;CK Matrix but whatever) as it’s not part of the operating system. But, for that same reason, it can be very useful to misguide and fool monitoring analysts (especially the less experienced ones) into thinking that the execution is legitimate, unlike, let’s say using <code>rundll32</code> which isn’t signed and suspicious most times when executed by itself.</p>
+<p>The only caveat is that you have to drop both the malicious DLL and APSDaemon.exe on disk, but, if you were able to get a shell somehow or execute code on the machine using phishing or drive-by install, this won’t be a problem.</p>
+<p>APSDaemon.exe is Apple’s Push Notification service binary installed by iTunes. I tested a version from 2011 and a version from January 2019, and in both cases, it works. It doesn’t seem to be reported, not publicly at least even though it’s been around for a long time. That said it’s not exceptional, I’m pretty sure it’s common with many signed binaries that don’t use proper mechanism to check the integrity of loaded libraries.</p>
+<p>Here we’ll use the binary created and signed on January 15, 2019.<br>
+SHA256: <code>F0B2EDBC23DD0DD0ADED9EE5F14985EB2FBF7E03A1FE86A5598DE58CA729E52D</code></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f656f82130fe9b5003cd3ac606b6da7d26336826.png" alt="image" data-base62-sha1="z9dMT0mwhUiQ4eOqWPO7zq9MijQ" width="690" height="342"></p>
+<p>If we open the binary in IDA and search for strings, we see an AppleVersions.dll.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/b/b9d8c40148043f2a8d256a1e1c6563ab38aa6ced.png" alt="image" data-base62-sha1="qw4Kw5Q71gtga63sLyy6Sz2X8CN" width="644" height="244"></p>
+<p>If we follow xrefs to that string, we ultimately end up on that DLL’s import table being pushed on the stack.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/9d3f77915cf295f76cf1083cd3fea7e24a1b2c15.png" alt="image" data-base62-sha1="mr4WiWP9vCGUKJEO1jQvO8gWUx7" width="690" height="165"></p>
+<p>This is followed by a call to a subroutine that we can safely assume will load the DLL in memory. If we look into that subroutine, we see further down a call to LoadLibraryA. We can set a breakpoint there in IDA or any debugger (I prefer x64dbg) and validate that it does load AppleVersions.dll.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/dc74f9b625b66c6e02c21e98b54d6e47d112fb7f.png" alt="image" data-base62-sha1="vsfF3y4oVc8JCxrJ7PgTc07jBDx" width="690" height="137"></p>
+<p>As you can see there are a few problems here:</p>
+<ul>
+<li>It doesn’t require a fully qualified path for the library to load as it should to avoid being abused</li>
+<li>It doesn’t implement <code>SetDllDirectory</code> using <code>""</code> as <code>lpPathName</code> to remove the current directory from the search order.</li>
+<li>The original <code>AppleVersions.dll</code> is digitally signed, yet APSDaemon.exe doesn’t use the <code>WinVerifyTrust</code> function to verify the signature.</li>
+</ul>
+<p>So let’s use this to execute malicious code. I first tried using a simple C# reverse shell but no luck. <code>GetLastError</code> is called and an exception is raised. We can identify the problem by looking at the value returned by the function in the <code>eax</code> register. In this case, 0x7F is returned which is the system error code for  <code>ERROR_PROC_NOT_FOUND</code>. It looks like LoadLibrary loads the DLL but cannot load the sections.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/418db975b840b302fcc7ede2d14c552a87b52a55.png" alt="image" data-base62-sha1="9lUG5npm4sH63kq6AUkSfXLDQTr" width="690" height="197"></p>
+<p>It was late and didn’t want to waste time figuring out what went wrong so I figured I’d try a simple reverse shell in C. Because I suck at C, I took a code sample from <a href="https://github.com/Hood3dRob1n/Y.A.S.P./blob/master/payloads/reverse-dll/reverse_dll.c" rel="noopener nofollow ugc">here</a> and compiled it to a DLL with <code>cl /LD shell.c</code>.</p>
+<p>Then, after renaming it AppleVersions.dll, if we drop it in the same directory as APSDaemon.exe and start listening on the attacker’s machine, we get a reverse shell executed through a signed Apple binary.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5a5f5627ff50b25b76e6a71399b5bee75c5554e7.png" alt="image" data-base62-sha1="cTtefW167HrNnIdadgwp8vhtrYH" width="520" height="500"></p>
+<p>To make it look more legit, you can also rename APSDaemon.exe to something like iTunes.exe. Obviously, in real-life situations and to avoid detection, don’t use an existing payload that can be found on GitHub. Make your own.</p>
+          <p><a href="https://0x00sec.org/t/malicious-dll-execution-using-apples-apsdaemon-exe-signed-binary/13409/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/malicious-dll-execution-using-apples-apsdaemon-exe-signed-binary/13409/1</link>
+        <pubDate>Fri, 03 May 2019 19:57:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-13409-1</guid>
+        <source url="https://0x00sec.org/t/malicious-dll-execution-using-apples-apsdaemon-exe-signed-binary/13409.rss">Malicious DLL execution using Apple&#39;s APSDaemon.exe signed binary</source>
+      </item>
+  </channel>
+</rss>

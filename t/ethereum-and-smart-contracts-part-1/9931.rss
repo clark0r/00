@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Ethereum and Smart Contracts (Part 1)</title>
+    <link>https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931</link>
+    <description>## Introduction
+
+In this article we&#39;ll be discussion the Ethereum blockchain and the technology of &quot;Smart Contracts&quot; that exist within that blockchain ecosystem. If you&#39;re brand new to Ethereum, the &quot;Ether&quot; cryptoasset and Smart Contracts, I recommend reading the [Ethereum Foundation&#39;s FAQ](https://www.ethereum.org/ether).
+
+For further reading:
+
+* https://blockgeeks.com/guides/what-is-blockchain-technology/
+* https://coinsutra.com/ethereum-beginners-guide/#Bitcoin_vsEthereum
+* https://www.mayowatudonu.com/blockchain/deep-dive-into-evm-intro
+* https://medium.com/ethereum-developers/the-ultimate-end-to-end-tutorial-to-create-and-deploy-a-fully-descentralized-dapp-in-ethereum-18f0cf6d7e0e
+* https://www.investopedia.com/terms/e/ether-cryptocurrency.asp
+* https://kb.myetherwallet.com/gas/what-is-gas-ethereum.html
+
+## What is Ethereum?
+
+Ethereum is a &quot;turing-complete&quot; open-source, distributed, p2p blockchain technology using modified [Nakamoto consensus](https://blockonomi.com/nakamoto-consensus/). It&#39;s essentially a simplified virtual computer, running across thousands of individual nodes who all agree on what the output should be. Anyone running an Ethereum node (a piece of software that communicates with the rest of the Ethereum network) is part of this global virtual computer. [Ethereum mining](https://www.coindesk.com/information/ethereum-mining-works) in concept is much like Bitcoin, securing the network and confirming blocks. There is a cryptoasset integrated directly into Ethereum called Ether. Miniscule amounts of Ether (referred to as Gas) are used to pay for transactions on the blockchain. With a maximum Gas limit per transaction (and the potential for you to run out of Gas, literally), this ensures that only the &quot;necessary&quot; transactions will continue to be computed on the chain. I use the term &quot;necessary&quot; here in the sense that someone or something is still paying for these transactions to be executed.
+
+### What does it look like to me?
+
+An Ethereum wallet address is of the format `0x999999cf1046e68e36E1aA2E0E07105eDDD1f08E`
+
+As an end user you&#39;d probably use a wallet application to keep track of your Ether as well as any other [ERC20 assets](https://theethereum.wiki/w/index.php/ERC20_Token_Standard) you&#39;ve collected.
+
+* [MetaMask](https://metamask.io/), the best Ethereum browser plugin (in my opinion)
+* [MyEtherWallet](https://www.myetherwallet.com/) is an online wallet for the Ethereum blockchain
+* [Exodus](https://www.exodus.io/) is a multi-functional wallet that supports lots of cryptoassets, including Ether
+
+You may also [run a full node](https://ethereum.gitbooks.io/frontier-guide/content/getting_a_client.html) which manages its own copy of the Ethereum blockchain (80Gb+ with full sync). Often it&#39;s a GUI-less daemon that you communicate with via RPC, much like the bitcoin daemon.
+
+You can [browse the Ethereum blockchain via EtherScan](https://etherscan.io/) or other blockchain explorers.
+
+## What is Ether?
+
+Ether is the name of the cryptoasset integrated directly into the Ethereum blockchain. It is both a cryptocurrency and -- since it&#39;s also used in tiny amounts as fuel for transactions on the chain --  a &quot;cryptoresource&quot;. Ether is traded on pretty much every big cryptoexchange market and several startups have their entire bankrolls invested in this stuff. As of the time of writing Ether is [trading at around $116 USD/1 ETH](https://ethereumprice.org/live/).
+
+### What does it look like to me?
+
+![image|397x188](upload://zmKaHLR6Ugbe6nNwjR6znVQtSoq.png)
+Some Ether. Also yes, those are CryptoKitties. 
+
+Or from a code perspective, it might look like this (simplified):
+```
+contract FakeEther {
+    address minter;
+    mapping (address =&gt; uint) balances;
+    function FakeEther() {
+        minter = msg.sender;
+    }
+    function mint(address owner, uint amount) {
+        if (msg.sender != minter) return;
+        balances[owner] += amount;
+    }
+    function send(address receiver, uint amount) {
+        if (balances[msg.sender] &lt; amount) return;
+        balances[msg.sender] -= amount;
+        balances[receiver] += amount;
+    }
+    function queryBalance(address addr) constant returns (uint balance) {
+        return balances[addr];
+    }
+}
+```
+
+The above Solidity code is a very simplified smart contract that allows one to mint a currency conveniently called FakeEther. You can mint some FakeEther, send it to other valid addresses, and check your FakeEther balance! Look at us, we just established a decentralized currency that can withstand even the most oppressive regime as long as they don&#39;t cut off electricity or internet access!
+
+## What is Gas?
+
+[Gas is the tiny amount of Ether](http://ethdocs.org/en/latest/ether.html#gas-and-ether) used to pay for transactions computed on the Ethereum blockchain. Gas is technically not another currency but simply a way to refer to the miniscule amounts of Ether used in these processes. Gas is measured in [Wei, the smallest unit of Ether](http://ethdocs.org/en/latest/ether.html#denominations). When sending a transaction on the Ethereum blockchain, you can set the maximum amount of Gas you&#39;re willing to spend on getting that transaction processed. Most clients will calculate a rough estimate for you, and the unused amount gets returned to your wallet. The reliance on Gas to send transactions means that smart contracts need a small supply of Ether in order to &quot;live&quot; on the blockchain, or their transactions will automatically fail.
+
+* [Check the average Gas price of transactions](https://ethgasstation.info/)
+* [A guide to Gas and why it&#39;s necessary](https://media.consensys.net/a-guide-to-gas-12b40d03605d)
+
+### What does it look like to me?
+Gas is a mostly behind-the-scenes thing but can rear its ugly head when you&#39;re trying to play around with smart contracts. Specifying Gas Limits, knowing Gas Prices, these are all things you&#39;ll become intimately familiar with as we venture further into the world of Smart Contracts. 
+
+![image|360x500](upload://4g67lV9xPy6FtgeRy09yR56L3x9.png) 
+MetaMask complaining about a lack of funds, Gas is still just Ether.
+
+## What is a Smart Contract?
+
+A Smart Contract on the Ethereum blockchain is simply compiled bytecode that&#39;s been inserted into the blockchain at an address. It operates as a program, with inputs and outputs, and you interact with it via Ethereum transactions.
+
+Normally when transacting on Ethereum, you&#39;d probably send some Ether from your wallet to Bill&#39;s wallet. With Smart Contracts, Bill&#39;s wallet might actually be a contract address that runs some code when it receives Ether. Maybe it pays Bill directly, maybe it sends money to his ex-wife first. By pasting the address into EtherScan and examining it further, one could see immediately that Bill&#39;s using a contract to receive his Ether.
+
+![image|690x413](upload://fqqJpUd1BICMa5kRaqu2EKa5hYP.png) 
+
+Notice that it says &quot;Contract&quot; right in the _To:_ field, this is because EtherScan knows immediately that this is a contract address. Aside from this it still functions like a normal Ethereum wallet. It can hold Ether and pay Gas prices.
+
+### What does it look like to me?
+
+Smart Contract developers today [write in Solidity](https://solidity.readthedocs.io/en/latest/). It&#39;s a statically-typed language designed for developing smart contracts on the Ethereum blockchain. As stated above, it compiles to bytecode that lives on the blockchain itself. It supports inheritance, structs, and some other pleasures of modern languages.
+
+Example:
+```solidity
+pragma solidity &gt;=0.4.22 &lt;0.6.0;
+
+contract Mortal {
+    /* Define variable owner of the type address */
+    address owner;
+
+    /* This constructor is executed at initialization and sets the owner of the contract */
+    constructor() public { owner = msg.sender; }
+
+    /* Function to recover the funds on the contract */
+    function kill() public { if (msg.sender == owner) selfdestruct(msg.sender); }
+}
+
+contract Greeter is Mortal {
+    /* Define variable greeting of the type string */
+    string greeting;
+
+    /* This runs when the contract is executed */
+    constructor(string memory _greeting) public {
+        greeting = _greeting;
+    }
+
+    /* Main function */
+    function greet() public view returns (string memory) {
+        return greeting;
+    }
+}
+```
+
+Thanks to [ReMix](https://remix.ethereum.org), we&#39;re able to [compile our Solidity smart contracts right on the web](https://remix.readthedocs.io/en/latest/). We can deploy them directly into the Ethereum ecosystem using a combination of ReMix and the [MetaMask browser plugin](https://metamask.io/).
+
+The Ethereum Foundation has some great tutorials on writing your first smart contracts, I highly recommend checking those out before we venture into too far into the realm of smart contract security.
+
+* [Create a Digital Greeter](https://www.ethereum.org/greeter)
+* [Issue your first token/currency](https://www.ethereum.org/token)
+* [Crowdfund a project using a smart contract](https://www.ethereum.org/crowdsale)
+* [Create a new Decentralized Autonomous Organization](https://www.ethereum.org/dao)
+
+And these are just the beginning!
+
+## Conclusion
+The light side of smart contracts is all these wonderful tools for creating decentralized communities, currencies, projects. The dark side is a lot of immutable ponzi and pyramid schemes. Guess which we&#39;ll be looking at in part 2? Stay tuned.
+
+This article is a work in progress. Please feel free to reply with corrections and I&#39;ll edit as necessary. I appreciate all feedback!</description>
+    
+    <lastBuildDate>Sun, 02 Dec 2018 19:59:51 +0000</lastBuildDate>
+    <category>Cryptology</category>
+    <atom:link href="https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Ethereum and Smart Contracts (Part 1)</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931/3</link>
+        <pubDate>Tue, 01 Jan 2019 19:49:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-9931-3</guid>
+        <source url="https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931.rss">Ethereum and Smart Contracts (Part 1)</source>
+      </item>
+      <item>
+        <title>Ethereum and Smart Contracts (Part 1)</title>
+        <dc:creator><![CDATA[Leeky]]></dc:creator>
+        <description><![CDATA[
+            <p>Great to see an article about smart contracts! Can’t wait for the next part <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931/2</link>
+        <pubDate>Sun, 02 Dec 2018 19:59:51 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-9931-2</guid>
+        <source url="https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931.rss">Ethereum and Smart Contracts (Part 1)</source>
+      </item>
+      <item>
+        <title>Ethereum and Smart Contracts (Part 1)</title>
+        <dc:creator><![CDATA[occupi]]></dc:creator>
+        <description><![CDATA[
+            <h2>Introduction</h2>
+<p>In this article we’ll be discussion the Ethereum blockchain and the technology of “Smart Contracts” that exist within that blockchain ecosystem. If you’re brand new to Ethereum, the “Ether” cryptoasset and Smart Contracts, I recommend reading the <a href="https://www.ethereum.org/ether" rel="noopener nofollow ugc">Ethereum Foundation’s FAQ</a>.</p>
+<p>For further reading:</p>
+<ul>
+<li><a href="https://blockgeeks.com/guides/what-is-blockchain-technology/" rel="noopener nofollow ugc">https://blockgeeks.com/guides/what-is-blockchain-technology/</a></li>
+<li><a href="https://coinsutra.com/ethereum-beginners-guide/#Bitcoin_vsEthereum" rel="noopener nofollow ugc">https://coinsutra.com/ethereum-beginners-guide/#Bitcoin_vsEthereum</a></li>
+<li><a href="https://www.mayowatudonu.com/blockchain/deep-dive-into-evm-intro" rel="noopener nofollow ugc">https://www.mayowatudonu.com/blockchain/deep-dive-into-evm-intro</a></li>
+<li><a href="https://medium.com/ethereum-developers/the-ultimate-end-to-end-tutorial-to-create-and-deploy-a-fully-descentralized-dapp-in-ethereum-18f0cf6d7e0e" rel="noopener nofollow ugc">https://medium.com/ethereum-developers/the-ultimate-end-to-end-tutorial-to-create-and-deploy-a-fully-descentralized-dapp-in-ethereum-18f0cf6d7e0e</a></li>
+<li><a href="https://www.investopedia.com/terms/e/ether-cryptocurrency.asp" rel="noopener nofollow ugc">https://www.investopedia.com/terms/e/ether-cryptocurrency.asp</a></li>
+<li><a href="https://kb.myetherwallet.com/gas/what-is-gas-ethereum.html" rel="noopener nofollow ugc">https://kb.myetherwallet.com/gas/what-is-gas-ethereum.html</a></li>
+</ul>
+<h2>What is Ethereum?</h2>
+<p>Ethereum is a “turing-complete” open-source, distributed, p2p blockchain technology using modified <a href="https://blockonomi.com/nakamoto-consensus/" rel="noopener nofollow ugc">Nakamoto consensus</a>. It’s essentially a simplified virtual computer, running across thousands of individual nodes who all agree on what the output should be. Anyone running an Ethereum node (a piece of software that communicates with the rest of the Ethereum network) is part of this global virtual computer. <a href="https://www.coindesk.com/information/ethereum-mining-works" rel="noopener nofollow ugc">Ethereum mining</a> in concept is much like Bitcoin, securing the network and confirming blocks. There is a cryptoasset integrated directly into Ethereum called Ether. Miniscule amounts of Ether (referred to as Gas) are used to pay for transactions on the blockchain. With a maximum Gas limit per transaction (and the potential for you to run out of Gas, literally), this ensures that only the “necessary” transactions will continue to be computed on the chain. I use the term “necessary” here in the sense that someone or something is still paying for these transactions to be executed.</p>
+<h3>What does it look like to me?</h3>
+<p>An Ethereum wallet address is of the format <code>0x999999cf1046e68e36E1aA2E0E07105eDDD1f08E</code></p>
+<p>As an end user you’d probably use a wallet application to keep track of your Ether as well as any other <a href="https://theethereum.wiki/w/index.php/ERC20_Token_Standard" rel="noopener nofollow ugc">ERC20 assets</a> you’ve collected.</p>
+<ul>
+<li>
+<a href="https://metamask.io/" rel="noopener nofollow ugc">MetaMask</a>, the best Ethereum browser plugin (in my opinion)</li>
+<li>
+<a href="https://www.myetherwallet.com/" rel="noopener nofollow ugc">MyEtherWallet</a> is an online wallet for the Ethereum blockchain</li>
+<li>
+<a href="https://www.exodus.io/" rel="noopener nofollow ugc">Exodus</a> is a multi-functional wallet that supports lots of cryptoassets, including Ether</li>
+</ul>
+<p>You may also <a href="https://ethereum.gitbooks.io/frontier-guide/content/getting_a_client.html" rel="noopener nofollow ugc">run a full node</a> which manages its own copy of the Ethereum blockchain (80Gb+ with full sync). Often it’s a GUI-less daemon that you communicate with via RPC, much like the bitcoin daemon.</p>
+<p>You can <a href="https://etherscan.io/" rel="noopener nofollow ugc">browse the Ethereum blockchain via EtherScan</a> or other blockchain explorers.</p>
+<h2>What is Ether?</h2>
+<p>Ether is the name of the cryptoasset integrated directly into the Ethereum blockchain. It is both a cryptocurrency and – since it’s also used in tiny amounts as fuel for transactions on the chain –  a “cryptoresource”. Ether is traded on pretty much every big cryptoexchange market and several startups have their entire bankrolls invested in this stuff. As of the time of writing Ether is <a href="https://ethereumprice.org/live/" rel="noopener nofollow ugc">trading at around $116 USD/1 ETH</a>.</p>
+<h3>What does it look like to me?</h3>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f7de48401327342b70dd9e6059d5a1001ae1433a.png" alt="image" data-base62-sha1="zmKaHLR6Ugbe6nNwjR6znVQtSoq" width="397" height="188"><br>
+Some Ether. Also yes, those are CryptoKitties.</p>
+<p>Or from a code perspective, it might look like this (simplified):</p>
+<pre><code class="lang-auto">contract FakeEther {
+    address minter;
+    mapping (address =&gt; uint) balances;
+    function FakeEther() {
+        minter = msg.sender;
+    }
+    function mint(address owner, uint amount) {
+        if (msg.sender != minter) return;
+        balances[owner] += amount;
+    }
+    function send(address receiver, uint amount) {
+        if (balances[msg.sender] &lt; amount) return;
+        balances[msg.sender] -= amount;
+        balances[receiver] += amount;
+    }
+    function queryBalance(address addr) constant returns (uint balance) {
+        return balances[addr];
+    }
+}
+</code></pre>
+<p>The above Solidity code is a very simplified smart contract that allows one to mint a currency conveniently called FakeEther. You can mint some FakeEther, send it to other valid addresses, and check your FakeEther balance! Look at us, we just established a decentralized currency that can withstand even the most oppressive regime as long as they don’t cut off electricity or internet access!</p>
+<h2>What is Gas?</h2>
+<p><a href="http://ethdocs.org/en/latest/ether.html#gas-and-ether" rel="noopener nofollow ugc">Gas is the tiny amount of Ether</a> used to pay for transactions computed on the Ethereum blockchain. Gas is technically not another currency but simply a way to refer to the miniscule amounts of Ether used in these processes. Gas is measured in <a href="http://ethdocs.org/en/latest/ether.html#denominations" rel="noopener nofollow ugc">Wei, the smallest unit of Ether</a>. When sending a transaction on the Ethereum blockchain, you can set the maximum amount of Gas you’re willing to spend on getting that transaction processed. Most clients will calculate a rough estimate for you, and the unused amount gets returned to your wallet. The reliance on Gas to send transactions means that smart contracts need a small supply of Ether in order to “live” on the blockchain, or their transactions will automatically fail.</p>
+<ul>
+<li><a href="https://ethgasstation.info/" rel="noopener nofollow ugc">Check the average Gas price of transactions</a></li>
+<li><a href="https://media.consensys.net/a-guide-to-gas-12b40d03605d" rel="noopener nofollow ugc">A guide to Gas and why it’s necessary</a></li>
+</ul>
+<h3>What does it look like to me?</h3>
+<p>Gas is a mostly behind-the-scenes thing but can rear its ugly head when you’re trying to play around with smart contracts. Specifying Gas Limits, knowing Gas Prices, these are all things you’ll become intimately familiar with as we venture further into the world of Smart Contracts.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/1dda907954248d698dd6725202981a1def21c99b.png" alt="image" data-base62-sha1="4g67lV9xPy6FtgeRy09yR56L3x9" width="360" height="500"><br>
+MetaMask complaining about a lack of funds, Gas is still just Ether.</p>
+<h2>What is a Smart Contract?</h2>
+<p>A Smart Contract on the Ethereum blockchain is simply compiled bytecode that’s been inserted into the blockchain at an address. It operates as a program, with inputs and outputs, and you interact with it via Ethereum transactions.</p>
+<p>Normally when transacting on Ethereum, you’d probably send some Ether from your wallet to Bill’s wallet. With Smart Contracts, Bill’s wallet might actually be a contract address that runs some code when it receives Ether. Maybe it pays Bill directly, maybe it sends money to his ex-wife first. By pasting the address into EtherScan and examining it further, one could see immediately that Bill’s using a contract to receive his Ether.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/6c1d7b7e295c15441de401483c30e61f23a5f2b7.png" alt="image" data-base62-sha1="fqqJpUd1BICMa5kRaqu2EKa5hYP" width="690" height="413"></p>
+<p>Notice that it says “Contract” right in the <em>To:</em> field, this is because EtherScan knows immediately that this is a contract address. Aside from this it still functions like a normal Ethereum wallet. It can hold Ether and pay Gas prices.</p>
+<h3>What does it look like to me?</h3>
+<p>Smart Contract developers today <a href="https://solidity.readthedocs.io/en/latest/" rel="noopener nofollow ugc">write in Solidity</a>. It’s a statically-typed language designed for developing smart contracts on the Ethereum blockchain. As stated above, it compiles to bytecode that lives on the blockchain itself. It supports inheritance, structs, and some other pleasures of modern languages.</p>
+<p>Example:</p>
+<pre><code class="lang-auto">pragma solidity &gt;=0.4.22 &lt;0.6.0;
+
+contract Mortal {
+    /* Define variable owner of the type address */
+    address owner;
+
+    /* This constructor is executed at initialization and sets the owner of the contract */
+    constructor() public { owner = msg.sender; }
+
+    /* Function to recover the funds on the contract */
+    function kill() public { if (msg.sender == owner) selfdestruct(msg.sender); }
+}
+
+contract Greeter is Mortal {
+    /* Define variable greeting of the type string */
+    string greeting;
+
+    /* This runs when the contract is executed */
+    constructor(string memory _greeting) public {
+        greeting = _greeting;
+    }
+
+    /* Main function */
+    function greet() public view returns (string memory) {
+        return greeting;
+    }
+}
+</code></pre>
+<p>Thanks to <a href="https://remix.ethereum.org" rel="noopener nofollow ugc">ReMix</a>, we’re able to <a href="https://remix.readthedocs.io/en/latest/" rel="noopener nofollow ugc">compile our Solidity smart contracts right on the web</a>. We can deploy them directly into the Ethereum ecosystem using a combination of ReMix and the <a href="https://metamask.io/" rel="noopener nofollow ugc">MetaMask browser plugin</a>.</p>
+<p>The Ethereum Foundation has some great tutorials on writing your first smart contracts, I highly recommend checking those out before we venture into too far into the realm of smart contract security.</p>
+<ul>
+<li><a href="https://www.ethereum.org/greeter" rel="noopener nofollow ugc">Create a Digital Greeter</a></li>
+<li><a href="https://www.ethereum.org/token" rel="noopener nofollow ugc">Issue your first token/currency</a></li>
+<li><a href="https://www.ethereum.org/crowdsale" rel="noopener nofollow ugc">Crowdfund a project using a smart contract</a></li>
+<li><a href="https://www.ethereum.org/dao" rel="noopener nofollow ugc">Create a new Decentralized Autonomous Organization</a></li>
+</ul>
+<p>And these are just the beginning!</p>
+<h2>Conclusion</h2>
+<p>The light side of smart contracts is all these wonderful tools for creating decentralized communities, currencies, projects. The dark side is a lot of immutable ponzi and pyramid schemes. Guess which we’ll be looking at in part 2? Stay tuned.</p>
+<p>This article is a work in progress. Please feel free to reply with corrections and I’ll edit as necessary. I appreciate all feedback!</p>
+          <p><a href="https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931/1</link>
+        <pubDate>Sun, 02 Dec 2018 19:49:08 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-9931-1</guid>
+        <source url="https://0x00sec.org/t/ethereum-and-smart-contracts-part-1/9931.rss">Ethereum and Smart Contracts (Part 1)</source>
+      </item>
+  </channel>
+</rss>

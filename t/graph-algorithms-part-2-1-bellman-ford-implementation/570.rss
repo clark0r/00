@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Graph Algorithms (Part 2.1): Bellman-Ford [Implementation]</title>
+    <link>https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570</link>
+    <description>Hey everyone! This article is a followup to my [last one](https://0x00sec.org/t/graph-algorithms-part-2-0-the-bellman-ford-algorithm-concept/557) about the Bellman Ford Algorithm.
+
+```c
+/*
+    Bellman-Ford with an Adjacency List
+*/
+#include &lt;vector&gt;
+#include &lt;iostream&gt;
+#include &lt;algorithm&gt;
+#include &lt;limits&gt;
+#include &lt;utility&gt;
+ 
+typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list;
+ 
+void bellman(const int start, const adj_list&amp; graph, std::vector&lt;int&gt;&amp; distances);
+ 
+int main() {
+    int n,m; std::cin &gt;&gt; n &gt;&gt; m;
+   
+    // adj-list using vector of size n holding a vector for
+    // each vertex.
+    adj_list graph(n);
+   
+    int f,s,w; // first, second, weight
+    for (int i = 0; i &lt; m; i++) {
+        std::cin &gt;&gt; f &gt;&gt; s &gt;&gt; w;
+
+        // graph is directed
+        graph[f-1].push_back( std::make_pair(s-1,w) );
+    }
+   
+    int start; std::cin &gt;&gt; start;
+   
+    std::vector&lt;int&gt; distances(n /* n = graph.size() */, std::numeric_limits&lt;int&gt;::max());
+    bellman(start - 1, graph, distances);
+ 
+    // print out the distances here
+    for (int i = 0; i &lt; n; i++)
+        std::cout &lt;&lt; &quot;The distance from &quot; &lt;&lt; start &lt;&lt; &quot; to &quot;
+            &lt;&lt; i+1 &lt;&lt; &quot; is &quot; &lt;&lt; distances[i] &lt;&lt; &quot;.\n&quot;;
+ 
+    return 0;
+}
+ 
+void bellman(const int start, const adj_list&amp; graph, std::vector&lt;int&gt;&amp; distances) {
+    // setting to infinity is done in main;
+    distances[start] = 0;
+ 
+    // for later.
+    std::vector&lt;int&gt; pred(graph.size());
+ 
+    // visit every node
+    // start with `start`
+    // keep track of predecessors
+ 
+    // do it V-1 times
+    bool changes_made = true;
+    for (int i = 1, n = graph.size(); i &lt; n; i++) {
+        // go through each node
+        for (int j = 0; j &lt; n; j++) {
+            if (distances[j] == std::numeric_limits&lt;int&gt;::max())
+                continue; // skip if we don&#39;t know how to reach a node yet.
+           
+            // go through a node&#39;s neighbors
+            for (auto&amp; neighbor : graph[j]) {
+                if (distances[neighbor.first] &gt; distances[j] + neighbor.second) {
+                    distances[neighbor.first] = distances[j] + neighbor.second;
+                    pred[neighbor.first] = j;
+                    changes_made = true;
+                }
+            }
+        }
+        if (!changes_made)
+            break;
+        changes_made = false;
+    }
+ 
+    // now we do it one more time to find any negative cycles
+    for (int i = 0, n = graph.size(); i &lt; n; i++) {
+        if (distances[i] == std::numeric_limits&lt;int&gt;::max())
+            continue; // skip if we don&#39;t know how to reach a node yet.
+       
+        // go through a node&#39;s neighbors
+        for (auto&amp; neighbor : graph[i]) {
+            if (distances[neighbor.first] &gt; distances[i] + neighbor.second)
+                std::cout &lt;&lt; &quot;Found negative cycle from &quot; &lt;&lt; i &lt;&lt; &quot; to &quot; &lt;&lt; neighbor.first &lt;&lt; &quot;.\n&quot;;
+        }
+    }
+}
+```
+The code is well-commented, so I won&#39;t talk much about it here. Review my [last article](https://0x00sec.org/t/graph-algorithms-part-2-0-the-bellman-ford-algorithm-concept/557) for an explanation of the underlying algorithm and the pseudocode.
+
+    6 8
+    1 2 10
+    1 6 8
+    2 4 2
+    3 2 1
+    4 3 -2
+    5 4 -1
+    6 5 1
+    5 2 -4
+    1
+
+The above is a sample input to use. It follows this convention. The first line has `n` and `m`, the number of vertices and number of edges, respectively. The next `m` lines are `f`, `s`, `w`, denoting an edge of weight `w` between nodes `f` and `s`. The last line takes one number, `start`, the node to start from.
+
+The program expects input of nodes labeled `1` through `n`. The code itself will convert this to `0` through `n-1` for easier storage.
+
+There is one final thing I must mention.
+
+---
+# Adjacency List
+
+This program utilizes a certain way of representing a graph. An __adjacency list__ has space complexity `|E|`, while an __adjacency matrix__ (remember [this article](https://0x00sec.org/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482/1)?) has `|V|*|V|` space complexity. If it wasn&#39;t obvious, _space complexity_ is how much space something takes up in memory.
+
+We design the adjacency list in this line:
+
+```c
+typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list;
+```
+
+It is a `vector` of `vector`s of `pair`s. Each index in the outer vector represents a node. Each element is a `vector` of edges connected to a node `f` at index `f`. The first value in the `pair` is a node `s` connected to `f` by an edge of weight `w` (the weight is the second value in the pair).
+
+Thus, if I did the following (making use of our `typedef`):
+
+```c
+// ...
+int f = 0, s = 1, w = 3;
+adj_list graph(n); // declares adjacency list for n elements
+graph[f].push_back( std::make_pair(s, w);
+//...
+```
+We add an edge between `f` and `s` with weight `w`. Specifically, we add an edge of weight `3` between nodes `0` and `1`.
+
+---
+# Conclusion
+
+I hope you can take some time to review the source code. Alternatively, you can find it [here](http://pastebin.com/NBNinvhp). If you have any questions, comment below or hit me up on IRC at ##0x00sec.
+
+@oaktree out.</description>
+    
+    <lastBuildDate>Tue, 21 Jun 2016 21:39:22 +0000</lastBuildDate>
+    <category>Algorithms</category>
+    <atom:link href="https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Graph Algorithms (Part 2.1): Bellman-Ford [Implementation]</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570/2</link>
+        <pubDate>Sun, 21 Jan 2018 00:37:39 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-570-2</guid>
+        <source url="https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570.rss">Graph Algorithms (Part 2.1): Bellman-Ford [Implementation]</source>
+      </item>
+      <item>
+        <title>Graph Algorithms (Part 2.1): Bellman-Ford [Implementation]</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey everyone! This article is a followup to my <a href="https://0x00sec.org/t/graph-algorithms-part-2-0-the-bellman-ford-algorithm-concept/557">last one</a> about the Bellman Ford Algorithm.</p>
+<pre><code class="lang-auto">/*
+    Bellman-Ford with an Adjacency List
+*/
+#include &lt;vector&gt;
+#include &lt;iostream&gt;
+#include &lt;algorithm&gt;
+#include &lt;limits&gt;
+#include &lt;utility&gt;
+ 
+typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list;
+ 
+void bellman(const int start, const adj_list&amp; graph, std::vector&lt;int&gt;&amp; distances);
+ 
+int main() {
+    int n,m; std::cin &gt;&gt; n &gt;&gt; m;
+   
+    // adj-list using vector of size n holding a vector for
+    // each vertex.
+    adj_list graph(n);
+   
+    int f,s,w; // first, second, weight
+    for (int i = 0; i &lt; m; i++) {
+        std::cin &gt;&gt; f &gt;&gt; s &gt;&gt; w;
+
+        // graph is directed
+        graph[f-1].push_back( std::make_pair(s-1,w) );
+    }
+   
+    int start; std::cin &gt;&gt; start;
+   
+    std::vector&lt;int&gt; distances(n /* n = graph.size() */, std::numeric_limits&lt;int&gt;::max());
+    bellman(start - 1, graph, distances);
+ 
+    // print out the distances here
+    for (int i = 0; i &lt; n; i++)
+        std::cout &lt;&lt; "The distance from " &lt;&lt; start &lt;&lt; " to "
+            &lt;&lt; i+1 &lt;&lt; " is " &lt;&lt; distances[i] &lt;&lt; ".\n";
+ 
+    return 0;
+}
+ 
+void bellman(const int start, const adj_list&amp; graph, std::vector&lt;int&gt;&amp; distances) {
+    // setting to infinity is done in main;
+    distances[start] = 0;
+ 
+    // for later.
+    std::vector&lt;int&gt; pred(graph.size());
+ 
+    // visit every node
+    // start with `start`
+    // keep track of predecessors
+ 
+    // do it V-1 times
+    bool changes_made = true;
+    for (int i = 1, n = graph.size(); i &lt; n; i++) {
+        // go through each node
+        for (int j = 0; j &lt; n; j++) {
+            if (distances[j] == std::numeric_limits&lt;int&gt;::max())
+                continue; // skip if we don't know how to reach a node yet.
+           
+            // go through a node's neighbors
+            for (auto&amp; neighbor : graph[j]) {
+                if (distances[neighbor.first] &gt; distances[j] + neighbor.second) {
+                    distances[neighbor.first] = distances[j] + neighbor.second;
+                    pred[neighbor.first] = j;
+                    changes_made = true;
+                }
+            }
+        }
+        if (!changes_made)
+            break;
+        changes_made = false;
+    }
+ 
+    // now we do it one more time to find any negative cycles
+    for (int i = 0, n = graph.size(); i &lt; n; i++) {
+        if (distances[i] == std::numeric_limits&lt;int&gt;::max())
+            continue; // skip if we don't know how to reach a node yet.
+       
+        // go through a node's neighbors
+        for (auto&amp; neighbor : graph[i]) {
+            if (distances[neighbor.first] &gt; distances[i] + neighbor.second)
+                std::cout &lt;&lt; "Found negative cycle from " &lt;&lt; i &lt;&lt; " to " &lt;&lt; neighbor.first &lt;&lt; ".\n";
+        }
+    }
+}
+</code></pre>
+<p>The code is well-commented, so I won’t talk much about it here. Review my <a href="https://0x00sec.org/t/graph-algorithms-part-2-0-the-bellman-ford-algorithm-concept/557">last article</a> for an explanation of the underlying algorithm and the pseudocode.</p>
+<pre><code>6 8
+1 2 10
+1 6 8
+2 4 2
+3 2 1
+4 3 -2
+5 4 -1
+6 5 1
+5 2 -4
+1
+</code></pre>
+<p>The above is a sample input to use. It follows this convention. The first line has <code>n</code> and <code>m</code>, the number of vertices and number of edges, respectively. The next <code>m</code> lines are <code>f</code>, <code>s</code>, <code>w</code>, denoting an edge of weight <code>w</code> between nodes <code>f</code> and <code>s</code>. The last line takes one number, <code>start</code>, the node to start from.</p>
+<p>The program expects input of nodes labeled <code>1</code> through <code>n</code>. The code itself will convert this to <code>0</code> through <code>n-1</code> for easier storage.</p>
+<p>There is one final thing I must mention.</p>
+<hr>
+<h1>Adjacency List</h1>
+<p>This program utilizes a certain way of representing a graph. An <strong>adjacency list</strong> has space complexity <code>|E|</code>, while an <strong>adjacency matrix</strong> (remember <a href="https://0x00sec.org/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482/1">this article</a>?) has <code>|V|*|V|</code> space complexity. If it wasn’t obvious, <em>space complexity</em> is how much space something takes up in memory.</p>
+<p>We design the adjacency list in this line:</p>
+<pre><code class="lang-auto">typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list;
+</code></pre>
+<p>It is a <code>vector</code> of <code>vector</code>s of <code>pair</code>s. Each index in the outer vector represents a node. Each element is a <code>vector</code> of edges connected to a node <code>f</code> at index <code>f</code>. The first value in the <code>pair</code> is a node <code>s</code> connected to <code>f</code> by an edge of weight <code>w</code> (the weight is the second value in the pair).</p>
+<p>Thus, if I did the following (making use of our <code>typedef</code>):</p>
+<pre><code class="lang-auto">// ...
+int f = 0, s = 1, w = 3;
+adj_list graph(n); // declares adjacency list for n elements
+graph[f].push_back( std::make_pair(s, w);
+//...
+</code></pre>
+<p>We add an edge between <code>f</code> and <code>s</code> with weight <code>w</code>. Specifically, we add an edge of weight <code>3</code> between nodes <code>0</code> and <code>1</code>.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>I hope you can take some time to review the source code. Alternatively, you can find it <a href="http://pastebin.com/NBNinvhp" rel="nofollow noopener">here</a>. If you have any questions, comment below or hit me up on IRC at #<a class="hashtag" href="https://0x00sec.org/tag/0x00sec">#<span>0x00sec</span></a>.</p>
+<p><a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a> out.</p>
+          <p><a href="https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570/1</link>
+        <pubDate>Wed, 08 Jun 2016 19:37:31 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-570-1</guid>
+        <source url="https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570.rss">Graph Algorithms (Part 2.1): Bellman-Ford [Implementation]</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,646 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Fuzzing projects with american fuzzy lop (AFL)</title>
+    <link>https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498</link>
+    <description>## Preface
+
+This quick article will give a short introduction on what fuzzers are, how they work and how to properly setup the afl - american fuzzy lop fuzzer to find flaws in arbitrary projects.
+
+Well known alternatives to afl (for the same or other purposes):
+
+* [boofuzz: Network Protocol Fuzzing for Humans](https://github.com/jtpereyda/boofuzz)
+* [Googles - OSS-Fuzz - Continuous Fuzzing for Open Source Software](https://github.com/google/oss-fuzz)
+* tbc...
+
+
+
+
+## What is fuzzing?
+
+ In short we can define fuzzing as the following
+
+	 &quot;Fuzzing is a Black Box software testing technique, which basically consists in finding implementation bugs using malformed/semi-malformed data injection in an automated fashion.&quot;
+
+
+This approach can be done on the whole application, specific protocols and even single file formats.
+Depending on the attack vector the output changes obviously and can lead to a varying number of bugs.
+
+
+
+### Cool stuff about fuzzing
+
+* simple design, hence a basic fuzzer can be easily implemented from scratch
+* finds possible bugs/flaws via a random approach, which often are overlooked by human QA
+* combinations of different input mutations and symbolic execution!
+
+
+
+### Not so cool stuff...
+
+* Often &#39;simple bugs&#39; only
+* black box testing makes it difficult to evaluate impact of found results
+* many fuzzers are limited to a certain protocol/architecture/...
+
+----------------------------------------------------------------------
+
+
+## How to set up afl for fuzzing with exploitable and gdb
+
+Let&#39;s get right into setting up our environment... Not much else to say before that.
+Juicy stuff ahead!
+
+### Get afl running by cloning the repos
+``` bash
+git clone https://github.com/mirrorer/afl.git afl
+cd afl
+make &amp;&amp; sudo make install
+su root
+echo core &gt;/proc/sys/kernel/core_pattern
+cd /sys/devices/system/cpu &amp;&amp; echo performance | tee cpu*/cpufreq/scaling_governor
+exit
+sudo apt install gnuplot
+# --------------------------------------------------------------------------- #
+git clone https://github.com/rc0r/afl-utils.git afl-utils
+cd afl-utils
+sudo python setup.py install
+# --------------------------------------------------------------------------- #
+# -----------------------------------optional-------------------------------- #
+# --------------------------------------------------------------------------- #
+# check the official git repo for needed/supported architectures #
+git clone https://github.com/shellphish/afl-other-arch.git afl-qemu-patch
+cd afl-qemu-patch
+./build.sh &lt;list,of,arches,you,need&gt;
+```
+
+
+
+Once installed you&#39;re ready to start fuzzing your favorite project.
+We&#39;ll come to this in the next paragraph by picking a random github project.
+I&#39;ll provide the used afl commands for the later shown results at the end of the article, but won&#39;t name the fuzzed repository for privacy reasons.
+
+
+
+### Instrument afl and  ~~start pwning~~ help securing GitHub repositories
+
+If the source code is available compile it with `CC=afl-gcc make`, or `CC=afl-gcc cmake CMakeLists.txt &amp;&amp; make` to instrument afl.
+
+``` bash
+$ cd targeted_application
+CC=afl-gcc cmake CMakeLists.txt &amp;&amp; make
+-- The C compiler identification is GNU 5.4.0
+-- Check for working C compiler: /usr/local/bin/afl-gcc
+-- Check for working C compiler: /usr/local/bin/afl-gcc -- works
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/lab/Git/&lt;target&gt;
+Scanning dependencies of target &lt;target&gt;
+[ 14%] Building C object &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+afl-as 2.52b by &lt;lcamtuf@google.com&gt;
+[+] Instrumented 5755 locations (64-bit, non-hardened mode, ratio 100%).
+[ 28%] Linking C static library &lt;target&gt;
+[ 28%] Built target &lt;target&gt;
+Scanning dependencies of target md2html
+[ 42%] Building C object &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+afl-as 2.52b by &lt;lcamtuf@google.com&gt;
+[+] Instrumented 165 locations (64-bit, non-hardened mode, ratio 100%).
+[ 57%] Building C object &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+afl-as 2.52b by &lt;lcamtuf@google.com&gt;
+[+] Instrumented 8 locations (64-bit, non-hardened mode, ratio 100%).
+[ 71%] Building C object &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+afl-as 2.52b by &lt;lcamtuf@google.com&gt;
+[+] Instrumented 58 locations (64-bit, non-hardened mode, ratio 100%).
+[ 85%] Building C object &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+afl-as 2.52b by &lt;lcamtuf@google.com&gt;
+[+] Instrumented 407 locations (64-bit, non-hardened mode, ratio 100%).
+[100%] Linking C executable &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+[100%] Built target &lt;target&gt;
+```
+
+To start local application fuzzing we can execute afl via the following command chain:
+
+``` bash
+$ afl-fuzz -i input_sample_dir -o output_crash_dir ./binary @@
+```
+
+	-i  defines a folder which holds sample data for the fuzzer to use
+	-o defines a folder where afl will save the fuzzing results
+	./binary describes the targeted application
+
+If you have the ressources to start more processes of afl keep in mind that each process takes up one CPU core and pretty much leverages 100% of its power.
+To do so a change up of the afl command chain is needed!
+
+``` bash
+$ afl-fuzz -i input_sample_dir -o output_crash_dir -M master ./binary @@
+$ afl-fuzz -i input_sample_dir -o output_crash_dir -S slaveX ./binary @@
+```
+
+
+The only difference between the master and slave modes is that the master instance will still perform deterministic checks.
+The slaves will proceed straight to random tweaks.
+If you don&#39;t want to do deterministic fuzzing at all you can straight up just spawn slaves.
+For statistic- and behavior-research having one master process is always a nice thing tho.
+
+&gt; Note: For programs that take input from a file, use &#39;@@&#39; to mark the location in the target&#39;s command line where the input file name should be placed. The fuzzer will substitute this for you.
+
+&gt; Note2: You can either provide an empty file in the input_sample_dir and let afl find some fitting input,  or give some context specfic input for the program you&#39;re fuzzing that is parsable!
+
+
+To [instrument afl-QEMU](https://github.com/mirrorer/afl/blob/master/qemu_mode/README.qemu) for blackbox fuzzing install needed dependencies `sudo apt-get install libtool libtool-bin automake bison libglib2.0-dev zlib1g-dev` and execute `./build_qemu_support.sh` within the afl repo [~/afl/qemu_mode/](https://github.com/mirrorer/afl.git).
+
+Next up compile target program **without** `CC=afl-gcc` and change the afl-fuzz command chain to:
+
+``` bash
+$ afl-fuzz -Q -i input_sample_dir -o output_crash_dir -M master ./binary @@
+```
+
+The emulation should work on its own already now.
+To support different, more exotic architectures in afl apply said patch from the prep work above!
+
+
+![afl_m](upload://lm30W7dCxxX6X1UGhqAK5UQcz8X.png)
+
+
+
+![afl_s](upload://ppJA7t66yjKwFAc6CnNMotCqcAH.png)
+
+
+Above we can see the difference between master and slaves as well as the general interface of afl after starting the fuzzing process.
+As displayed here, our slave found a bunch of unique crashes after only measly 12 minutes with its random fuzzing behavior.
+The master slave on the other hand didn&#39;t quite catch up to that yet...
+
+The crashes and hangs can be manually examined within the *output_crash_dir/process_name/crashes* and  *output_crash_dir/process_name/hangs* folders.
+Since this manual labor is neither interesting nor effective some smart people offered us the afl-utils package, which automatizes the crash analysis and pairs it with a sweet output from a gdb script.
+
+
+
+### Automatic analysis of produced crashes
+
+To automatically collect and analysis crashes with afl-collect + [exploitable](https://github.com/jfoote/exploitable) from the [afl-utils package](https://github.com/rc0r/afl-utils) do the following while the fuzzing processes are still up and running:
+
+``` bash
+$ afl-collect -d crashes.db -e gdb_script -r -rr ./output_crash_dir_from_afl_fuzz ./afl_collect_output_dir -j 8 -- /path/to/target
+```
+
+The only two parameters to change here  are the the *./output_crash_dir_from_afl_fuzz*, which is the folder where the afl-fuzz process stores its output.
+Next up is the */path/to/target*, which is the fuzzed application.
+Depending on your hardware you can adjust the *-j 8* parameter, which is used to specify the amount of threads to analyze the output.
+
+If everything works accordingly you&#39;ll stumble upon an output like this:
+
+``` bash
+afl-collect -d crashes.db -e gdb_script -r -rr ./out ./output_aflc -j 8 -- ./path/to/target
+afl-collect 1.33a by rc0r &lt;hlt99@blinkenshell.org&gt; # @_rc0r
+Crash sample collection and processing utility for afl-fuzz.
+
+[*] Going to collect crash samples from &#39;/home/lab/Git/code/path/to/target/out&#39;.
+[!] Table &#39;Data&#39; not found in existing database!
+[*] Creating new table &#39;Data&#39; in database &#39;/home/lab/Git/code/path/to/target/crashes.db&#39; to store data!
+[*] Found 3 fuzzers, collecting crash samples.
+[*] Successfully indexed 56 crash samples.
+*** Error in `/home/lab/Git/code/path/to/target&#39;: double free or corruption (out): 0x000000000146c5a0 ***
+======= Backtrace: =========
+/lib/x86_64-linux-gnu/libc.so.6(+0x777e5)[0x7f0acaeb67e5]
+/lib/x86_64-linux-gnu/libc.so.6(+0x8037a)[0x7f0acaebf37a]
+/lib/x86_64-linux-gnu/libc.so.6(cfree+0x4c)[0x7f0acaec353c]
+/home/lab/Git/code/path/to/target(&lt;func_a&gt;+0x93fd)[0x4627ed]
+/home/lab/Git/code/path/to/target(&lt;func_b&gt;+0xaa)[0x40e75a]
+/home/lab/Git/code/path/to/target(main+0x4c4)[0x4017f4]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0xf0)[0x7f0acae5f830]
+/home/lab/Git/code/path/to/target(_start+0x29)[0x402169]
+======= Memory map: ========
+00400000-00401000 r--p 00000000 fd:00 38669039                           /home/lab/Git/code/path/to/target/
+00401000-00476000 r-xp 00001000 fd:00 38669039                           /home/lab/Git/code/path/to/target/l
+00476000-0048a000 r--p 00076000 fd:00 38669039                           /home/lab/Git/code/path/to/target/
+0048a000-0048b000 r--p 00089000 fd:00 38669039                           /home/lab/Git/code/path/to/target
+0048b000-0048c000 rw-p 0008a000 fd:00 38669039                           /home/lab/Git/code/path/to/target
+01461000-0148a000 rw-p 00000000 00:00 0                                  [heap]
+7f0ac4000000-7f0ac4021000 rw-p 00000000 00:00 0
+7f0ac4021000-7f0ac8000000 ---p 00000000 00:00 0
+7f0acac29000-7f0acac3f000 r-xp 00000000 fd:00 40899039                   /lib/x86_64-linux-gnu/libgcc_s.so.1
+7f0acac3f000-7f0acae3e000 ---p 00016000 fd:00 40899039                   /lib/x86_64-linux-gnu/libgcc_s.so.1
+7f0acae3e000-7f0acae3f000 rw-p 00015000 fd:00 40899039                   /lib/x86_64-linux-gnu/libgcc_s.so.1
+7f0acae3f000-7f0acafff000 r-xp 00000000 fd:00 40895232                   /lib/x86_64-linux-gnu/libc-2.23.so
+7f0acafff000-7f0acb1ff000 ---p 001c0000 fd:00 40895232                   /lib/x86_64-linux-gnu/libc-2.23.so
+7f0acb1ff000-7f0acb203000 r--p 001c0000 fd:00 40895232                   /lib/x86_64-linux-gnu/libc-2.23.so
+7f0acb203000-7f0acb205000 rw-p 001c4000 fd:00 40895232                   /lib/x86_64-linux-gnu/libc-2.23.so
+7f0acb205000-7f0acb209000 rw-p 00000000 00:00 0
+7f0acb209000-7f0acb22f000 r-xp 00000000 fd:00 40895230                   /lib/x86_64-linux-gnu/ld-2.23.so
+7f0acb401000-7f0acb404000 rw-p 00000000 00:00 0
+7f0acb42d000-7f0acb42e000 rw-p 00000000 00:00 0
+7f0acb42e000-7f0acb42f000 r--p 00025000 fd:00 40895230                   /lib/x86_64-linux-gnu/ld-2.23.so
+7f0acb42f000-7f0acb430000 rw-p 00026000 fd:00 40895230                   /lib/x86_64-linux-gnu/ld-2.23.so
+7f0acb430000-7f0acb431000 rw-p 00000000 00:00 0
+7ffd1292a000-7ffd1294b000 rw-p 00000000 00:00 0                          [stack]
+7ffd129c9000-7ffd129cc000 r--p 00000000 00:00 0                          [vvar]
+7ffd129cc000-7ffd129ce000 r-xp 00000000 00:00 0                          [vdso]
+ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsyscall]
+```
+
+As you can see we are getting a memory map and a backtrace for every crash.
+Since 56 crash samples were shown here I shortened the output to make it more easy to follow, but I hope it visualizes the point well enough.
+The real beefy part follows now tho!
+
+
+![expl](upload://8QiU9yDrCjZu0ntSGO4XymhJeJG.png)
+
+
+We&#39;re getting a complete overview about which process and what algorithm produced the error.
+Additionally we can see the type of error coupled with an estimate on if it is exploitable or not.
+This gives us the chance dig deeper into the */afl_out/process_name/crash_id/*, which is the used input to generate certain crash.
+We can then analyze it and try to conclude why crash occured and maybe even produce one or multiple PoCs to abuse this behavior!
+A big disadvantage as of right now is that the exploitaple script can only handle the most common architecutres (x86 and ARM)!
+If you want to fuzz MIPS and PowerPC you need to fork the official repository and write your own logic for this!
+
+Creating a PoC for our target application gets even easier, since  we can directly jump into gdb and execute the crash on our fuzzed program!
+Simply run the following from the commandline:
+
+``` sh
+$ gdb ./fuzzed_application
+gdb&gt; run /path/to/crash_folder/crash_id
+```
+
+If we have a gdb extension like [pwndbg](https://github.com/pwndbg/pwndbg), or [gdb-peda](https://github.com/longld/peda) inspecting what went wrong makes it a breeze!
+
+
+![peda](upload://88cSQAox5C4MR1GDmbrvldJZyqH.png)
+
+We can see the state of the register at one glance, while also getting an overview of which function crashed from the generated input.
+Now we could dig through the actual source code and find an answer on why the heck it crashed there. Why did the used input make the program go haywire?
+When finding an answer to this you can manually create a malformed input yourself and write a PoC for this.
+
+To show you an overview on how much afl managed to deform my actual input for this crash I&#39;ll show you a side by side comparison of the original input and the one afl managed to produce to crash the target at the shown state:
+
+![hex](upload://rdCvzwpxSS1TytWX2752hIXFZC6.png)
+
+Green bytes indicate that the files are still indentical in that exact location.
+Red bytes indiciate a difference, meaning afl mutated theses bytes on its own accord (the ones on the right are the afl mutated ones).
+
+
+----------------------------------------------------------------------
+
+## Plotting the results from afl
+
+For those among us, who are number and statistic nerds, afl provides a great feature for us!
+For every spawned process we get plottable data!
+
+``` bash
+$ ls
+crashes  fuzz_bitmap  fuzzer_stats  hangs  out  plot_data  queue
+
+$ afl-plot --help
+progress plotting utility for afl-fuzz by &lt;lcamtuf@google.com&gt;
+
+This program generates gnuplot images from afl-fuzz output data. Usage:
+
+/usr/local/bin/afl-plot afl_state_dir graph_output_dir
+
+$ afl-plot . out
+progress plotting utility for afl-fuzz by &lt;lcamtuf@google.com&gt;
+
+[*] Generating plots...
+[*] Generating index.html...
+[+] All done - enjoy your charts!
+```
+
+
+This generates 3 plots:
+
+* One for the execution speed/sec,
+* One for the path coverage,
+* And one for the found crashes and hangs.
+
+For my particular fuzzing example for the sake of this article they look like this:
+
+![stat1](upload://73z7f7pLsmPfh2kbYlBRtZtCI0g.png)
+
+![stat1](upload://4RREL5w5ECDsO0nKPumWrwnwSuO.png)
+
+![stat1](upload://ysQFAOOtUhVVO7yyF5DvlK3qtPY.png)
+
+
+Final note on this: The stats shown in the afl fuzzing interface during the process fuzzing up until termination are stored for each process in a separate file too!
+
+----------------------------------------------------------------------
+
+# Conclusion
+
+Fuzzing creates a powerful way to test projects on faults and flaws within the code.
+Depending on the used fuzzer the generated output can directly be used to deduct a possible exploit or PoC.
+
+In the case of american fuzzy lop the base functionality already is great and definitely one of the faster fuzzing tools out there.
+The possible combination with afl-utils and the exploitable gdb script makes it even more awesome.
+
+Last but not least it would be nice to test OSS, boofuzz or other not mentioned fuzzing frameworks to see how they can compete against each other.
+
+
+I hope this quick and dirty overview showed that fuzzing is a strong approach to try to harden an application by finding critical flaws one could easily overlook with human QA.
+Please keep in mind that his demo presented here was done using a fairly broken repository..
+If you start fuzzing things and not much crashes come around that&#39;s a good thing and you should not be sad about that, especially if it is your code, or widely used one :) !
+
+With that in mind: Happy fuzzing!</description>
+    
+    <lastBuildDate>Mon, 30 Apr 2018 12:16:54 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Fuzzing projects with american fuzzy lop (AFL)</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498/3</link>
+        <pubDate>Wed, 30 May 2018 11:09:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6498-3</guid>
+        <source url="https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498.rss">Fuzzing projects with american fuzzy lop (AFL)</source>
+      </item>
+      <item>
+        <title>Fuzzing projects with american fuzzy lop (AFL)</title>
+        <dc:creator><![CDATA[Arrilius]]></dc:creator>
+        <description><![CDATA[
+            <p>Great tutorial! This is really comprehensive and shows QEMU mode and using afl-utils. I’ll definitely be coming back to this.</p>
+<p>Thanks for sharing!</p>
+          <p><a href="https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498/2</link>
+        <pubDate>Mon, 30 Apr 2018 12:16:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6498-2</guid>
+        <source url="https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498.rss">Fuzzing projects with american fuzzy lop (AFL)</source>
+      </item>
+      <item>
+        <title>Fuzzing projects with american fuzzy lop (AFL)</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <h2>Preface</h2>
+<p>This quick article will give a short introduction on what fuzzers are, how they work and how to properly setup the afl - american fuzzy lop fuzzer to find flaws in arbitrary projects.</p>
+<p>Well known alternatives to afl (for the same or other purposes):</p>
+<ul>
+<li><a href="https://github.com/jtpereyda/boofuzz">boofuzz: Network Protocol Fuzzing for Humans</a></li>
+<li><a href="https://github.com/google/oss-fuzz">Googles - OSS-Fuzz - Continuous Fuzzing for Open Source Software</a></li>
+<li>tbc…</li>
+</ul>
+<h2>What is fuzzing?</h2>
+<p>In short we can define fuzzing as the following</p>
+<pre><code> "Fuzzing is a Black Box software testing technique, which basically consists in finding implementation bugs using malformed/semi-malformed data injection in an automated fashion."
+</code></pre>
+<p>This approach can be done on the whole application, specific protocols and even single file formats.<br>
+Depending on the attack vector the output changes obviously and can lead to a varying number of bugs.</p>
+<h3>Cool stuff about fuzzing</h3>
+<ul>
+<li>simple design, hence a basic fuzzer can be easily implemented from scratch</li>
+<li>finds possible bugs/flaws via a random approach, which often are overlooked by human QA</li>
+<li>combinations of different input mutations and symbolic execution!</li>
+</ul>
+<h3>Not so cool stuff…</h3>
+<ul>
+<li>Often ‘simple bugs’ only</li>
+<li>black box testing makes it difficult to evaluate impact of found results</li>
+<li>many fuzzers are limited to a certain protocol/architecture/…</li>
+</ul>
+<hr>
+<h2>How to set up afl for fuzzing with exploitable and gdb</h2>
+<p>Let’s get right into setting up our environment… Not much else to say before that.<br>
+Juicy stuff ahead!</p>
+<h3>Get afl running by cloning the repos</h3>
+<pre><code class="lang-bash">git clone https://github.com/mirrorer/afl.git afl
+cd afl
+make &amp;&amp; sudo make install
+su root
+echo core &gt;/proc/sys/kernel/core_pattern
+cd /sys/devices/system/cpu &amp;&amp; echo performance | tee cpu*/cpufreq/scaling_governor
+exit
+sudo apt install gnuplot
+# --------------------------------------------------------------------------- #
+git clone https://github.com/rc0r/afl-utils.git afl-utils
+cd afl-utils
+sudo python setup.py install
+# --------------------------------------------------------------------------- #
+# -----------------------------------optional-------------------------------- #
+# --------------------------------------------------------------------------- #
+# check the official git repo for needed/supported architectures #
+git clone https://github.com/shellphish/afl-other-arch.git afl-qemu-patch
+cd afl-qemu-patch
+./build.sh &lt;list,of,arches,you,need&gt;
+</code></pre>
+<p>Once installed you’re ready to start fuzzing your favorite project.<br>
+We’ll come to this in the next paragraph by picking a random github project.<br>
+I’ll provide the used afl commands for the later shown results at the end of the article, but won’t name the fuzzed repository for privacy reasons.</p>
+<h3>Instrument afl and  <s>start pwning</s> help securing GitHub repositories</h3>
+<p>If the source code is available compile it with <code>CC=afl-gcc make</code>, or <code>CC=afl-gcc cmake CMakeLists.txt &amp;&amp; make</code> to instrument afl.</p>
+<pre><code class="lang-bash">$ cd targeted_application
+CC=afl-gcc cmake CMakeLists.txt &amp;&amp; make
+-- The C compiler identification is GNU 5.4.0
+-- Check for working C compiler: /usr/local/bin/afl-gcc
+-- Check for working C compiler: /usr/local/bin/afl-gcc -- works
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/lab/Git/&lt;target&gt;
+Scanning dependencies of target &lt;target&gt;
+[ 14%] Building C object &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+afl-as 2.52b by &lt;lcamtuf@google.com&gt;
+[+] Instrumented 5755 locations (64-bit, non-hardened mode, ratio 100%).
+[ 28%] Linking C static library &lt;target&gt;
+[ 28%] Built target &lt;target&gt;
+Scanning dependencies of target md2html
+[ 42%] Building C object &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+afl-as 2.52b by &lt;lcamtuf@google.com&gt;
+[+] Instrumented 165 locations (64-bit, non-hardened mode, ratio 100%).
+[ 57%] Building C object &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+afl-as 2.52b by &lt;lcamtuf@google.com&gt;
+[+] Instrumented 8 locations (64-bit, non-hardened mode, ratio 100%).
+[ 71%] Building C object &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+afl-as 2.52b by &lt;lcamtuf@google.com&gt;
+[+] Instrumented 58 locations (64-bit, non-hardened mode, ratio 100%).
+[ 85%] Building C object &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+afl-as 2.52b by &lt;lcamtuf@google.com&gt;
+[+] Instrumented 407 locations (64-bit, non-hardened mode, ratio 100%).
+[100%] Linking C executable &lt;target&gt;
+afl-cc 2.52b by &lt;lcamtuf@google.com&gt;
+[100%] Built target &lt;target&gt;
+</code></pre>
+<p>To start local application fuzzing we can execute afl via the following command chain:</p>
+<pre><code class="lang-bash">$ afl-fuzz -i input_sample_dir -o output_crash_dir ./binary @@
+</code></pre>
+<pre><code>-i  defines a folder which holds sample data for the fuzzer to use
+-o defines a folder where afl will save the fuzzing results
+./binary describes the targeted application
+</code></pre>
+<p>If you have the ressources to start more processes of afl keep in mind that each process takes up one CPU core and pretty much leverages 100% of its power.<br>
+To do so a change up of the afl command chain is needed!</p>
+<pre><code class="lang-bash">$ afl-fuzz -i input_sample_dir -o output_crash_dir -M master ./binary @@
+$ afl-fuzz -i input_sample_dir -o output_crash_dir -S slaveX ./binary @@
+</code></pre>
+<p>The only difference between the master and slave modes is that the master instance will still perform deterministic checks.<br>
+The slaves will proceed straight to random tweaks.<br>
+If you don’t want to do deterministic fuzzing at all you can straight up just spawn slaves.<br>
+For statistic- and behavior-research having one master process is always a nice thing tho.</p>
+<blockquote>
+<p>Note: For programs that take input from a file, use ‘@@’ to mark the location in the target’s command line where the input file name should be placed. The fuzzer will substitute this for you.</p>
+</blockquote>
+<blockquote>
+<p>Note2: You can either provide an empty file in the input_sample_dir and let afl find some fitting input,  or give some context specfic input for the program you’re fuzzing that is parsable!</p>
+</blockquote>
+<p>To <a href="https://github.com/mirrorer/afl/blob/master/qemu_mode/README.qemu">instrument afl-QEMU</a> for blackbox fuzzing install needed dependencies <code>sudo apt-get install libtool libtool-bin automake bison libglib2.0-dev zlib1g-dev</code> and execute <code>./build_qemu_support.sh</code> within the afl repo <a href="https://github.com/mirrorer/afl.git">~/afl/qemu_mode/</a>.</p>
+<p>Next up compile target program <strong>without</strong> <code>CC=afl-gcc</code> and change the afl-fuzz command chain to:</p>
+<pre><code class="lang-bash">$ afl-fuzz -Q -i input_sample_dir -o output_crash_dir -M master ./binary @@
+</code></pre>
+<p>The emulation should work on its own already now.<br>
+To support different, more exotic architectures in afl apply said patch from the prep work above!</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/95abb3f90f7243113f1e1be37248fed642a70dd7.png" alt="afl_m" data-base62-sha1="lm30W7dCxxX6X1UGhqAK5UQcz8X" width="" height=""></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/b/b21f14fd0c7287936740fc8ab7d632e20b8e7603.png" alt="afl_s" data-base62-sha1="ppJA7t66yjKwFAc6CnNMotCqcAH" width="" height=""></p>
+<p>Above we can see the difference between master and slaves as well as the general interface of afl after starting the fuzzing process.<br>
+As displayed here, our slave found a bunch of unique crashes after only measly 12 minutes with its random fuzzing behavior.<br>
+The master slave on the other hand didn’t quite catch up to that yet…</p>
+<p>The crashes and hangs can be manually examined within the <em>output_crash_dir/process_name/crashes</em> and  <em>output_crash_dir/process_name/hangs</em> folders.<br>
+Since this manual labor is neither interesting nor effective some smart people offered us the afl-utils package, which automatizes the crash analysis and pairs it with a sweet output from a gdb script.</p>
+<h3>Automatic analysis of produced crashes</h3>
+<p>To automatically collect and analysis crashes with afl-collect + <a href="https://github.com/jfoote/exploitable">exploitable</a> from the <a href="https://github.com/rc0r/afl-utils">afl-utils package</a> do the following while the fuzzing processes are still up and running:</p>
+<pre><code class="lang-bash">$ afl-collect -d crashes.db -e gdb_script -r -rr ./output_crash_dir_from_afl_fuzz ./afl_collect_output_dir -j 8 -- /path/to/target
+</code></pre>
+<p>The only two parameters to change here  are the the <em>./output_crash_dir_from_afl_fuzz</em>, which is the folder where the afl-fuzz process stores its output.<br>
+Next up is the <em>/path/to/target</em>, which is the fuzzed application.<br>
+Depending on your hardware you can adjust the <em>-j 8</em> parameter, which is used to specify the amount of threads to analyze the output.</p>
+<p>If everything works accordingly you’ll stumble upon an output like this:</p>
+<pre><code class="lang-bash">afl-collect -d crashes.db -e gdb_script -r -rr ./out ./output_aflc -j 8 -- ./path/to/target
+afl-collect 1.33a by rc0r &lt;hlt99@blinkenshell.org&gt; # @_rc0r
+Crash sample collection and processing utility for afl-fuzz.
+
+[*] Going to collect crash samples from '/home/lab/Git/code/path/to/target/out'.
+[!] Table 'Data' not found in existing database!
+[*] Creating new table 'Data' in database '/home/lab/Git/code/path/to/target/crashes.db' to store data!
+[*] Found 3 fuzzers, collecting crash samples.
+[*] Successfully indexed 56 crash samples.
+*** Error in `/home/lab/Git/code/path/to/target': double free or corruption (out): 0x000000000146c5a0 ***
+======= Backtrace: =========
+/lib/x86_64-linux-gnu/libc.so.6(+0x777e5)[0x7f0acaeb67e5]
+/lib/x86_64-linux-gnu/libc.so.6(+0x8037a)[0x7f0acaebf37a]
+/lib/x86_64-linux-gnu/libc.so.6(cfree+0x4c)[0x7f0acaec353c]
+/home/lab/Git/code/path/to/target(&lt;func_a&gt;+0x93fd)[0x4627ed]
+/home/lab/Git/code/path/to/target(&lt;func_b&gt;+0xaa)[0x40e75a]
+/home/lab/Git/code/path/to/target(main+0x4c4)[0x4017f4]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0xf0)[0x7f0acae5f830]
+/home/lab/Git/code/path/to/target(_start+0x29)[0x402169]
+======= Memory map: ========
+00400000-00401000 r--p 00000000 fd:00 38669039                           /home/lab/Git/code/path/to/target/
+00401000-00476000 r-xp 00001000 fd:00 38669039                           /home/lab/Git/code/path/to/target/l
+00476000-0048a000 r--p 00076000 fd:00 38669039                           /home/lab/Git/code/path/to/target/
+0048a000-0048b000 r--p 00089000 fd:00 38669039                           /home/lab/Git/code/path/to/target
+0048b000-0048c000 rw-p 0008a000 fd:00 38669039                           /home/lab/Git/code/path/to/target
+01461000-0148a000 rw-p 00000000 00:00 0                                  [heap]
+7f0ac4000000-7f0ac4021000 rw-p 00000000 00:00 0
+7f0ac4021000-7f0ac8000000 ---p 00000000 00:00 0
+7f0acac29000-7f0acac3f000 r-xp 00000000 fd:00 40899039                   /lib/x86_64-linux-gnu/libgcc_s.so.1
+7f0acac3f000-7f0acae3e000 ---p 00016000 fd:00 40899039                   /lib/x86_64-linux-gnu/libgcc_s.so.1
+7f0acae3e000-7f0acae3f000 rw-p 00015000 fd:00 40899039                   /lib/x86_64-linux-gnu/libgcc_s.so.1
+7f0acae3f000-7f0acafff000 r-xp 00000000 fd:00 40895232                   /lib/x86_64-linux-gnu/libc-2.23.so
+7f0acafff000-7f0acb1ff000 ---p 001c0000 fd:00 40895232                   /lib/x86_64-linux-gnu/libc-2.23.so
+7f0acb1ff000-7f0acb203000 r--p 001c0000 fd:00 40895232                   /lib/x86_64-linux-gnu/libc-2.23.so
+7f0acb203000-7f0acb205000 rw-p 001c4000 fd:00 40895232                   /lib/x86_64-linux-gnu/libc-2.23.so
+7f0acb205000-7f0acb209000 rw-p 00000000 00:00 0
+7f0acb209000-7f0acb22f000 r-xp 00000000 fd:00 40895230                   /lib/x86_64-linux-gnu/ld-2.23.so
+7f0acb401000-7f0acb404000 rw-p 00000000 00:00 0
+7f0acb42d000-7f0acb42e000 rw-p 00000000 00:00 0
+7f0acb42e000-7f0acb42f000 r--p 00025000 fd:00 40895230                   /lib/x86_64-linux-gnu/ld-2.23.so
+7f0acb42f000-7f0acb430000 rw-p 00026000 fd:00 40895230                   /lib/x86_64-linux-gnu/ld-2.23.so
+7f0acb430000-7f0acb431000 rw-p 00000000 00:00 0
+7ffd1292a000-7ffd1294b000 rw-p 00000000 00:00 0                          [stack]
+7ffd129c9000-7ffd129cc000 r--p 00000000 00:00 0                          [vvar]
+7ffd129cc000-7ffd129ce000 r-xp 00000000 00:00 0                          [vdso]
+ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsyscall]
+</code></pre>
+<p>As you can see we are getting a memory map and a backtrace for every crash.<br>
+Since 56 crash samples were shown here I shortened the output to make it more easy to follow, but I hope it visualizes the point well enough.<br>
+The real beefy part follows now tho!</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.org/uploads/default/original/2X/3/3dfb01caaf0d1e94ccc95daed20601ed866a9430.png" data-download-href="/uploads/short-url/8QiU9yDrCjZu0ntSGO4XymhJeJG.png?dl=1" title="expl"><img src="/uploads/default/original/2X/3/3dfb01caaf0d1e94ccc95daed20601ed866a9430.png" alt="expl" data-base62-sha1="8QiU9yDrCjZu0ntSGO4XymhJeJG" width="510" height="500" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/3/3dfb01caaf0d1e94ccc95daed20601ed866a9430_2_10x10.png"></a></div><p></p>
+<p>We’re getting a complete overview about which process and what algorithm produced the error.<br>
+Additionally we can see the type of error coupled with an estimate on if it is exploitable or not.<br>
+This gives us the chance dig deeper into the <em>/afl_out/process_name/crash_id/</em>, which is the used input to generate certain crash.<br>
+We can then analyze it and try to conclude why crash occured and maybe even produce one or multiple PoCs to abuse this behavior!<br>
+A big disadvantage as of right now is that the exploitaple script can only handle the most common architecutres (x86 and ARM)!<br>
+If you want to fuzz MIPS and PowerPC you need to fork the official repository and write your own logic for this!</p>
+<p>Creating a PoC for our target application gets even easier, since  we can directly jump into gdb and execute the crash on our fuzzed program!<br>
+Simply run the following from the commandline:</p>
+<pre><code class="lang-auto">$ gdb ./fuzzed_application
+gdb&gt; run /path/to/crash_folder/crash_id
+</code></pre>
+<p>If we have a gdb extension like <a href="https://github.com/pwndbg/pwndbg">pwndbg</a>, or <a href="https://github.com/longld/peda">gdb-peda</a> inspecting what went wrong makes it a breeze!</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.org/uploads/default/original/2X/3/38fee97499e015dbaaa2be6084dadb52700c3207.png" data-download-href="/uploads/short-url/88cSQAox5C4MR1GDmbrvldJZyqH.png?dl=1" title="peda"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/3/38fee97499e015dbaaa2be6084dadb52700c3207_2_561x499.png" alt="peda" data-base62-sha1="88cSQAox5C4MR1GDmbrvldJZyqH" width="561" height="499" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/3/38fee97499e015dbaaa2be6084dadb52700c3207_2_561x499.png, https://0x00sec.s3.amazonaws.com/optimized/2X/3/38fee97499e015dbaaa2be6084dadb52700c3207_2_841x748.png 1.5x, /uploads/default/original/2X/3/38fee97499e015dbaaa2be6084dadb52700c3207.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/3/38fee97499e015dbaaa2be6084dadb52700c3207_2_10x10.png"></a></div><p></p>
+<p>We can see the state of the register at one glance, while also getting an overview of which function crashed from the generated input.<br>
+Now we could dig through the actual source code and find an answer on why the heck it crashed there. Why did the used input make the program go haywire?<br>
+When finding an answer to this you can manually create a malformed input yourself and write a PoC for this.</p>
+<p>To show you an overview on how much afl managed to deform my actual input for this crash I’ll show you a side by side comparison of the original input and the one afl managed to produce to crash the target at the shown state:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.org/uploads/default/original/2X/b/bec4de75d26ea8056a0c14b2799ca298b97d6756.png" data-download-href="/uploads/short-url/rdCvzwpxSS1TytWX2752hIXFZC6.png?dl=1" title="hex"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/b/bec4de75d26ea8056a0c14b2799ca298b97d6756_2_528x500.png" alt="hex" data-base62-sha1="rdCvzwpxSS1TytWX2752hIXFZC6" width="528" height="500" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/b/bec4de75d26ea8056a0c14b2799ca298b97d6756_2_528x500.png, https://0x00sec.s3.amazonaws.com/optimized/2X/b/bec4de75d26ea8056a0c14b2799ca298b97d6756_2_792x750.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/2X/b/bec4de75d26ea8056a0c14b2799ca298b97d6756_2_1056x1000.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/b/bec4de75d26ea8056a0c14b2799ca298b97d6756_2_10x10.png"></a></div><p></p>
+<p>Green bytes indicate that the files are still indentical in that exact location.<br>
+Red bytes indiciate a difference, meaning afl mutated theses bytes on its own accord (the ones on the right are the afl mutated ones).</p>
+<hr>
+<h2>Plotting the results from afl</h2>
+<p>For those among us, who are number and statistic nerds, afl provides a great feature for us!<br>
+For every spawned process we get plottable data!</p>
+<pre><code class="lang-bash">$ ls
+crashes  fuzz_bitmap  fuzzer_stats  hangs  out  plot_data  queue
+
+$ afl-plot --help
+progress plotting utility for afl-fuzz by &lt;lcamtuf@google.com&gt;
+
+This program generates gnuplot images from afl-fuzz output data. Usage:
+
+/usr/local/bin/afl-plot afl_state_dir graph_output_dir
+
+$ afl-plot . out
+progress plotting utility for afl-fuzz by &lt;lcamtuf@google.com&gt;
+
+[*] Generating plots...
+[*] Generating index.html...
+[+] All done - enjoy your charts!
+</code></pre>
+<p>This generates 3 plots:</p>
+<ul>
+<li>One for the execution speed/sec,</li>
+<li>One for the path coverage,</li>
+<li>And one for the found crashes and hangs.</li>
+</ul>
+<p>For my particular fuzzing example for the sake of this article they look like this:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.org/uploads/default/original/2X/3/31766c5e7110c5c3e68a2dbf419ebe3cedfa5b80.png" data-download-href="/uploads/short-url/73z7f7pLsmPfh2kbYlBRtZtCI0g.png?dl=1" title="stat1"><img src="/uploads/default/original/2X/3/31766c5e7110c5c3e68a2dbf419ebe3cedfa5b80.png" alt="stat1" data-base62-sha1="73z7f7pLsmPfh2kbYlBRtZtCI0g" width="690" height="138" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/3/31766c5e7110c5c3e68a2dbf419ebe3cedfa5b80_2_10x10.png"></a></div><p></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.org/uploads/default/original/2X/2/221f783b09f9c7d85bf8611294bf1cc2cf23b67e.png" data-download-href="/uploads/short-url/4RREL5w5ECDsO0nKPumWrwnwSuO.png?dl=1" title="stat1"><img src="/uploads/default/original/2X/2/221f783b09f9c7d85bf8611294bf1cc2cf23b67e.png" alt="stat1" data-base62-sha1="4RREL5w5ECDsO0nKPumWrwnwSuO" width="690" height="138" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/2/221f783b09f9c7d85bf8611294bf1cc2cf23b67e_2_10x10.png"></a></div><p></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.org/uploads/default/original/2X/f/f18cc560af58f594c9262bfdda7aa8541fca0e6a.png" data-download-href="/uploads/short-url/ysQFAOOtUhVVO7yyF5DvlK3qtPY.png?dl=1" title="stat1"><img src="/uploads/default/original/2X/f/f18cc560af58f594c9262bfdda7aa8541fca0e6a.png" alt="stat1" data-base62-sha1="ysQFAOOtUhVVO7yyF5DvlK3qtPY" width="690" height="206" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/f/f18cc560af58f594c9262bfdda7aa8541fca0e6a_2_10x10.png"></a></div><p></p>
+<p>Final note on this: The stats shown in the afl fuzzing interface during the process fuzzing up until termination are stored for each process in a separate file too!</p>
+<hr>
+<h1>Conclusion</h1>
+<p>Fuzzing creates a powerful way to test projects on faults and flaws within the code.<br>
+Depending on the used fuzzer the generated output can directly be used to deduct a possible exploit or PoC.</p>
+<p>In the case of american fuzzy lop the base functionality already is great and definitely one of the faster fuzzing tools out there.<br>
+The possible combination with afl-utils and the exploitable gdb script makes it even more awesome.</p>
+<p>Last but not least it would be nice to test OSS, boofuzz or other not mentioned fuzzing frameworks to see how they can compete against each other.</p>
+<p>I hope this quick and dirty overview showed that fuzzing is a strong approach to try to harden an application by finding critical flaws one could easily overlook with human QA.<br>
+Please keep in mind that his demo presented here was done using a fairly broken repository…<br>
+If you start fuzzing things and not much crashes come around that’s a good thing and you should not be sad about that, especially if it is your code, or widely used one <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> !</p>
+<p>With that in mind: Happy fuzzing!</p>
+          <p><a href="https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498/1</link>
+        <pubDate>Mon, 30 Apr 2018 11:09:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6498-1</guid>
+        <source url="https://0x00sec.org/t/fuzzing-projects-with-american-fuzzy-lop-afl/6498.rss">Fuzzing projects with american fuzzy lop (AFL)</source>
+      </item>
+  </channel>
+</rss>

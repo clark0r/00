@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>The Importance of Enumeration</title>
+    <link>https://0x00sec.org/t/the-importance-of-enumeration/25314</link>
+    <description>We all love Exploitation and gaining access to a machine elevate our privileges and gain that SYSTEM, Administrator, Domain Admin Shell. It’s a rush that us as hackers love to see when we try to gain access to a box “Meterpreter Session 1 Opened”, Beacon, Grunt, etc. Oof hasn’t that been one of the most awesome sentences that you can see on your terminal when something you’ve been working on just works.
+
+But how do we get here?. We don’t magically know the payload that needs to be used, or the exploit to use against our victim machine.
+
+**Enumeration** , that one very important step taken before we continue with our hacks around the network. Can we access the machine?. Enumeration. Can we exploit it?. Enumeration. What about Privesc, Enumeration. Anything on Persistence? Yep let’s enumerate to see what’s allowed as a user OR where to leave our backdoor that can blend with the environment, need to move around the Environment?, lets enumerate and see what is available.
+
+Here I will demonstrate how enumeration can be achieved in many ways and also the variety of tools used for the same category so that you don’t have to be limited to this very well-known tools. For example nmap, everyone uses nmap the famous port scanning tool with incredible functionality that works well everywhere, but let’s not forget we have other tools, **unicornscan, masscan, amap, rustscan.** Let me work on an environment and show a variety of ways to enumerate and reach our goal and not be dependent on well-known tools.
+
+**Initial Access**
+
+My target machine is 10.0.2.24 I will start enumerating and search for access here see a way to gain an initial foothold.
+
+As my scan from different tools finished these were my results.
+
+**Nmap:**
+
+![](upload://tANy2GgUWHiSHTVpjl9tMhoLNgU.png)
+
+**Rustscan:**
+
+![](upload://tANy2GgUWHiSHTVpjl9tMhoLNgU.png)
+
+**And amap:**
+
+![](upload://1fTiKh8kaJDX4zLMieTB5uGFpba.png)
+
+With different tools for enumeration this may help in confirmation on what is going on, tools might use different methods to acquire information about a specific target. In this matter I can confirm that these ports are open as different tools have confirmed this now I can move forward and attack these ports or gain more information on them to lower my chances of failure when try to exploit these targets.
+
+So let’s approach 135/139:
+
+Rpcclient we will approach this port and enumerate with and without credentials (realistically this wouldn’t be available since it would most likely be a Blackbox test).
+
+![](upload://1fTiKh8kaJDX4zLMieTB5uGFpba.png)
+
+![](upload://80uCSlSeQzyzVDjT0KpFp3tz0RX.png)
+
+As seen above I am trying to enumerate users but this is most likely not going to happen with an anonymous user we will try with someone with credentials.
+
+![](upload://6CwL9UoWSivv3Mj8GtCyEl5AzKq.png)
+
+![](upload://nshAoi4Fy46PPlAmbiwUmxqQphk.png)
+
+No luck with rpcclient as the user is not part of a Domain and only from the local machine, we can continue grabbing more info that is needed from the local machine but we will stop here.
+
+Now let’s approach the 445 port (SMB):
+
+I have used 3 different tools with the approach on anonymous enumeration but I had no luck finding shares **smbclient, smpmap, smbclient.py from impacket**
+
+![](upload://nshAoi4Fy46PPlAmbiwUmxqQphk.png)
+
+I can also use the **crackmapexec** tool and I can see that the anonymous user has access to a share named Scans
+
+![](upload://9AMGWmGJ137ssxwwYRrekl6B4P3.png)
+
+From here you can choose your favorite tool to access the share and start exploring what is going on in that share.
+
+![](upload://kqwoYybbJh57PuvX5nnjiC5A40h.png)
+
+Seems that we have a File that advises people to upload there work so it can be reviewed at the end of the day, the fact that we know this means that there is a user accessing this share at A certain time we can use this to taint the share and have it send us an NTLMv2 hash and try to crack it, so let us try and grab the hash of this user with the help of Responder.
+
+I will build a LNK file with the ICON of the LNK pointing to my Machine so when Windows tries to load it, it will reach responder now I wait until the user browses the Share once that happens I will have responder listening on my attacking machine and capture the NTLM hash
+
+![](upload://de1oDUcbYM1nedAPUijjtCPxjH6.png)
+
+Then I use PUT from smbclient and move the file on the share with my anonymous access to the share utilizing SMBCLIENT
+
+![](upload://fdrLeTYyYovS2vwNAEr8A5Bm31d.png)
+
+I add the file (LNK) and once the share is browsed Windows will search for the ICO that is pointing to my attacking machine
+
+![](upload://apvl71Nj4DoLak9NFIJ5Y5e7xIT.png)
+
+And hashes are captured
+
+![](upload://z2REL1v2tVKu5dhfzqo2BrjzAGc.png)
+
+Now we will use these hashes to crack the password, my favorite is using hashcat and a few rules “One_rule_to_rule_them_all” (Do let me know if I messed up the name). And here I like using Windows for hashcat
+
+And we managed to crack the Hash
+
+![](upload://8nrN5ESaHJ2zU3IZeItK4MKADOQ.png)
+
+Once we have the credentials let us try them and see what Adrian’s permissions are on the machine. Will utilize crackmapexec.
+
+![](upload://3BsrJLEPASRr9veoMok6UYHyjDp.png)
+
+Fantastic we have credentials, but now from our limited options let us try and get a Shell on the machine from checking out nmap again we see that there is PSRemote available
+
+![](upload://vqXVa7frSjbUNte02c7STK5qPCB.png)
+
+Let’s use this and get a connection.
+
+![](upload://jz4n6MLidNwNOREqmblYJRbrzmi.png)
+
+Now I will upgrade my Shell to a Grunt from Covenant C2 (Just my taste). Now that we have our Grunt With Medium Integrity and running on PowerShell with the user anovoa time to Privesc to a higher user.
+
+![](upload://nV8yV4MwoAHJBrOL7NKEDx8s17q.png)
+
+I will use the SharpUp Task to gain information on how to Privesc but I will also use another favorite as I really love the output and the details check it has PrivescCheck.
+
+![](upload://67L3W5rnAl3trpWrcOXva2dZuEL.png)
+
+AlwaysInstall Elevated Key OK good sign we can use this, I always have the option to validate with PrivescCheck or by querying the Registry Keys manually
+
+PrivescCheck
+
+![](upload://9m9fFYsv9s2MuaQN3mApwqvn4SS.png)
+
+Now let us upload our MSI Installer built from VS with a GruntSMB and grab a higher privileged Grunt.
+
+![](upload://2hAwCUv0vXQZGYs7RBIkMcOakkN.png)
+
+I will execute using msiexec and connect back to the Grunt with higher privileges
+
+![](upload://luxrOzSVVEb5JWtXtnY2z6otJ2C.png)
+
+No worries if it hangs on Tasked its normal behavior, we can see our new grunt as SYSTEM
+
+![](upload://y6ZjUv3NQlqMRsBgSAmUT4DHMeI.png)
+
+And from here we can continue our enumeration and move forward with Compromising the Domain or leaving a persistent access or much more, the reason for this was to demonstrate the importance of enumeration as (Myself as well) I read that various people are just trying to throw exploits to machines and saying, “It doesn’t work”. Trying to search for ports, users, services, privilege escalation methods and others. I hope this has been helpful and maybe learned something from it.
+
+Dumping Hashes from SAM (Got an error because Covenant is using and older version of Mimikatz, well the version I am using)
+
+![](upload://bjinvh5e4oeQ9LCpnEKhgw5CgCK.png)
+
+Happy Hacking!</description>
+    
+    <lastBuildDate>Wed, 24 Mar 2021 21:40:42 +0000</lastBuildDate>
+    <category>Red-Team</category>
+    <atom:link href="https://0x00sec.org/t/the-importance-of-enumeration/25314.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>The Importance of Enumeration</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/the-importance-of-enumeration/25314/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-importance-of-enumeration/25314/4</link>
+        <pubDate>Tue, 20 Jul 2021 14:45:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-25314-4</guid>
+        <source url="https://0x00sec.org/t/the-importance-of-enumeration/25314.rss">The Importance of Enumeration</source>
+      </item>
+      <item>
+        <title>The Importance of Enumeration</title>
+        <dc:creator><![CDATA[dmcxblue]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you, I will try to add more details into what I am talking about.</p>
+          <p><a href="https://0x00sec.org/t/the-importance-of-enumeration/25314/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-importance-of-enumeration/25314/3</link>
+        <pubDate>Wed, 24 Mar 2021 21:40:42 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-25314-3</guid>
+        <source url="https://0x00sec.org/t/the-importance-of-enumeration/25314.rss">The Importance of Enumeration</source>
+      </item>
+      <item>
+        <title>The Importance of Enumeration</title>
+        <dc:creator><![CDATA[c0z]]></dc:creator>
+        <description><![CDATA[
+            <p>Great level of instruction along the lines of enumeration with different tools to effectively utilize a wide range of views to build a better picture of your attack surface. Though I would elaborate more on what <a href="https://github.com/cobbr/Covenant" rel="noopener nofollow ugc">Covenant</a> is, what the importance of grunts are, how <a href="https://github.com/GhostPack/SharpUp" rel="noopener nofollow ugc">SharpUp</a> would be used with a <a href="https://bestestredteam.com/2020/02/19/interacting-with-covenant-c2/" rel="noopener nofollow ugc">grunt</a>, along with <a href="https://github.com/TheWover/donut" rel="noopener nofollow ugc">donut</a>, how you build the <a href="https://samsclass.info/123/proj10/LNK-exploit.htm" rel="noopener nofollow ugc">LNK</a> file with a simple callback, what the reverse shell payload <a href="https://hackersinterview.com/oscp/reverse-shell-one-liners-oscp-cheatsheet/" rel="noopener nofollow ugc">was</a> and I would make sure you include the commands you used to generate those pictures (as in include the command and the output).</p>
+          <p><a href="https://0x00sec.org/t/the-importance-of-enumeration/25314/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-importance-of-enumeration/25314/2</link>
+        <pubDate>Wed, 24 Mar 2021 20:55:29 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-25314-2</guid>
+        <source url="https://0x00sec.org/t/the-importance-of-enumeration/25314.rss">The Importance of Enumeration</source>
+      </item>
+      <item>
+        <title>The Importance of Enumeration</title>
+        <dc:creator><![CDATA[dmcxblue]]></dc:creator>
+        <description><![CDATA[
+            <p>We all love Exploitation and gaining access to a machine elevate our privileges and gain that SYSTEM, Administrator, Domain Admin Shell. It’s a rush that us as hackers love to see when we try to gain access to a box “Meterpreter Session 1 Opened”, Beacon, Grunt, etc. Oof hasn’t that been one of the most awesome sentences that you can see on your terminal when something you’ve been working on just works.</p>
+<p>But how do we get here?. We don’t magically know the payload that needs to be used, or the exploit to use against our victim machine.</p>
+<p><strong>Enumeration</strong> , that one very important step taken before we continue with our hacks around the network. Can we access the machine?. Enumeration. Can we exploit it?. Enumeration. What about Privesc, Enumeration. Anything on Persistence? Yep let’s enumerate to see what’s allowed as a user OR where to leave our backdoor that can blend with the environment, need to move around the Environment?, lets enumerate and see what is available.</p>
+<p>Here I will demonstrate how enumeration can be achieved in many ways and also the variety of tools used for the same category so that you don’t have to be limited to this very well-known tools. For example nmap, everyone uses nmap the famous port scanning tool with incredible functionality that works well everywhere, but let’s not forget we have other tools, <strong>unicornscan, masscan, amap, rustscan.</strong> Let me work on an environment and show a variety of ways to enumerate and reach our goal and not be dependent on well-known tools.</p>
+<p><strong>Initial Access</strong></p>
+<p>My target machine is 10.0.2.24 I will start enumerating and search for access here see a way to gain an initial foothold.</p>
+<p>As my scan from different tools finished these were my results.</p>
+<p><strong>Nmap:</strong></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344.png" data-download-href="/uploads/short-url/tANy2GgUWHiSHTVpjl9tMhoLNgU.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344_2_506x500.png" alt="" data-base62-sha1="tANy2GgUWHiSHTVpjl9tMhoLNgU" width="506" height="500" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344_2_506x500.png, https://0x00sec.s3.amazonaws.com/original/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344_2_10x10.png"></a></div><p></p>
+<p><strong>Rustscan:</strong></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344.png" data-download-href="/uploads/short-url/tANy2GgUWHiSHTVpjl9tMhoLNgU.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344_2_506x500.png" alt="" data-base62-sha1="tANy2GgUWHiSHTVpjl9tMhoLNgU" width="506" height="500" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344_2_506x500.png, https://0x00sec.s3.amazonaws.com/original/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/c/f/cf67f34d522d9ad78193aeef5840a45df29d2344_2_10x10.png"></a></div><p></p>
+<p><strong>And amap:</strong></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/0/8/08ce0f7d4ee58bdb67692494022a8048acf13c70.png" alt="" data-base62-sha1="1fTiKh8kaJDX4zLMieTB5uGFpba" width="624" height="158"></p>
+<p>With different tools for enumeration this may help in confirmation on what is going on, tools might use different methods to acquire information about a specific target. In this matter I can confirm that these ports are open as different tools have confirmed this now I can move forward and attack these ports or gain more information on them to lower my chances of failure when try to exploit these targets.</p>
+<p>So let’s approach 135/139:</p>
+<p>Rpcclient we will approach this port and enumerate with and without credentials (realistically this wouldn’t be available since it would most likely be a Blackbox test).</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/0/8/08ce0f7d4ee58bdb67692494022a8048acf13c70.png" alt="" data-base62-sha1="1fTiKh8kaJDX4zLMieTB5uGFpba" width="624" height="158"></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/3/8/381fafd367808a5108dce9c8a823e7a42457f129.png" alt="" data-base62-sha1="80uCSlSeQzyzVDjT0KpFp3tz0RX" width="624" height="170"></p>
+<p>As seen above I am trying to enumerate users but this is most likely not going to happen with an anonymous user we will try with someone with credentials.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/2/e/2e67fd5ff31953365b5885b4e36673ed93995a5a.png" alt="" data-base62-sha1="6CwL9UoWSivv3Mj8GtCyEl5AzKq" width="485" height="99"></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/a/4/a4647b67fbcd8378cc0125bf170a940bb79878f6.png" alt="" data-base62-sha1="nshAoi4Fy46PPlAmbiwUmxqQphk" width="422" height="82"></p>
+<p>No luck with rpcclient as the user is not part of a Domain and only from the local machine, we can continue grabbing more info that is needed from the local machine but we will stop here.</p>
+<p>Now let’s approach the 445 port (SMB):</p>
+<p>I have used 3 different tools with the approach on anonymous enumeration but I had no luck finding shares <strong>smbclient, smpmap, smbclient.py from impacket</strong></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/a/4/a4647b67fbcd8378cc0125bf170a940bb79878f6.png" alt="" data-base62-sha1="nshAoi4Fy46PPlAmbiwUmxqQphk" width="422" height="82"></p>
+<p>I can also use the <strong>crackmapexec</strong> tool and I can see that the anonymous user has access to a share named Scans</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/4/3/433c123e279402b6215fe43af0aa995054d26705.png" alt="" data-base62-sha1="9AMGWmGJ137ssxwwYRrekl6B4P3" width="624" height="144"></p>
+<p>From here you can choose your favorite tool to access the share and start exploring what is going on in that share.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/8/f/8f2affb38420370a347d76c1553e73312035b291.png" alt="" data-base62-sha1="kqwoYybbJh57PuvX5nnjiC5A40h" width="624" height="445"></p>
+<p>Seems that we have a File that advises people to upload there work so it can be reviewed at the end of the day, the fact that we know this means that there is a user accessing this share at A certain time we can use this to taint the share and have it send us an NTLMv2 hash and try to crack it, so let us try and grab the hash of this user with the help of Responder.</p>
+<p>I will build a LNK file with the ICON of the LNK pointing to my Machine so when Windows tries to load it, it will reach responder now I wait until the user browses the Share once that happens I will have responder listening on my attacking machine and capture the NTLM hash</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/5/c/5cb20cc7a373e8d54a69498deda6d128ae443ce4.png" alt="" data-base62-sha1="de1oDUcbYM1nedAPUijjtCPxjH6" width="624" height="304"></p>
+<p>Then I use PUT from smbclient and move the file on the share with my anonymous access to the share utilizing SMBCLIENT</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/6/a/6aa5c3dd229bf254264109d27a8e25dbed2a2457.png" alt="" data-base62-sha1="fdrLeTYyYovS2vwNAEr8A5Bm31d" width="624" height="166"></p>
+<p>I add the file (LNK) and once the share is browsed Windows will search for the ICO that is pointing to my attacking machine</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/4/8/48f7d334cbbd6a97e87c4756d055f448a48660eb.png" alt="" data-base62-sha1="apvl71Nj4DoLak9NFIJ5Y5e7xIT" width="624" height="193"></p>
+<p>And hashes are captured</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/f/5/f59f0288a6205f61c2c8c386e61aa171406f90c0.png" alt="" data-base62-sha1="z2REL1v2tVKu5dhfzqo2BrjzAGc" width="624" height="343"></p>
+<p>Now we will use these hashes to crack the password, my favorite is using hashcat and a few rules “One_rule_to_rule_them_all” (Do let me know if I messed up the name). And here I like using Windows for hashcat</p>
+<p>And we managed to crack the Hash</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/3/a/3ab7f1b35aaa54a618a12ea779d82188735bccac.png" alt="" data-base62-sha1="8nrN5ESaHJ2zU3IZeItK4MKADOQ" width="624" height="98"></p>
+<p>Once we have the credentials let us try them and see what Adrian’s permissions are on the machine. Will utilize crackmapexec.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/1/9/1942842fb6c1710895994578a4ac6d1426616df7.png" alt="" data-base62-sha1="3BsrJLEPASRr9veoMok6UYHyjDp" width="624" height="141"></p>
+<p>Fantastic we have credentials, but now from our limited options let us try and get a Shell on the machine from checking out nmap again we see that there is PSRemote available</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/d/c/dc4fc1c7cce1e82f441b1b1a634c626f769138a5.png" alt="" data-base62-sha1="vqXVa7frSjbUNte02c7STK5qPCB" width="624" height="343"></p>
+<p>Let’s use this and get a connection.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/8/9/89202fbf2eb2a4672dd2b5140f0f491563c56d6a.png" alt="" data-base62-sha1="jz4n6MLidNwNOREqmblYJRbrzmi" width="624" height="204"></p>
+<p>Now I will upgrade my Shell to a Grunt from Covenant C2 (Just my taste). Now that we have our Grunt With Medium Integrity and running on PowerShell with the user anovoa time to Privesc to a higher user.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/a/7/a7a77b0ce139f704be57beea44f97bcaf5248a10.png" alt="" data-base62-sha1="nV8yV4MwoAHJBrOL7NKEDx8s17q" width="624" height="141"></p>
+<p>I will use the SharpUp Task to gain information on how to Privesc but I will also use another favorite as I really love the output and the details check it has PrivescCheck.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/2/a/2aed941d304ada848123f4dbd4edbd1a6923f3ff.png" alt="" data-base62-sha1="67L3W5rnAl3trpWrcOXva2dZuEL" width="407" height="121"></p>
+<p>AlwaysInstall Elevated Key OK good sign we can use this, I always have the option to validate with PrivescCheck or by querying the Registry Keys manually</p>
+<p>PrivescCheck</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/4/1/419486dea53167c0a2636b0b6867047d9b83e3d2.png" alt="" data-base62-sha1="9m9fFYsv9s2MuaQN3mApwqvn4SS" width="624" height="345"></p>
+<p>Now let us upload our MSI Installer built from VS with a GruntSMB and grab a higher privileged Grunt.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/1/0/100158ed2a4343cb68689e1bcbd359a5e0a7b0a9.png" alt="" data-base62-sha1="2hAwCUv0vXQZGYs7RBIkMcOakkN" width="503" height="101"></p>
+<p>I will execute using msiexec and connect back to the Grunt with higher privileges</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/9/6/96a16a013c69f506a733b54fa39e294c5a8de4ee.png" alt="" data-base62-sha1="luxrOzSVVEb5JWtXtnY2z6otJ2C" width="537" height="199"></p>
+<p>No worries if it hangs on Tasked its normal behavior, we can see our new grunt as SYSTEM</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/e/f/ef142a86d6a794349ad9cf784e6506252d9d25a8.png" alt="" data-base62-sha1="y6ZjUv3NQlqMRsBgSAmUT4DHMeI" width="624" height="54"></p>
+<p>And from here we can continue our enumeration and move forward with Compromising the Domain or leaving a persistent access or much more, the reason for this was to demonstrate the importance of enumeration as (Myself as well) I read that various people are just trying to throw exploits to machines and saying, “It doesn’t work”. Trying to search for ports, users, services, privilege escalation methods and others. I hope this has been helpful and maybe learned something from it.</p>
+<p>Dumping Hashes from SAM (Got an error because Covenant is using and older version of Mimikatz, well the version I am using)</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/4/f/4f4651cdf3325f7ac84f7f62ae3d193c59999c42.png" alt="" data-base62-sha1="bjinvh5e4oeQ9LCpnEKhgw5CgCK" width="401" height="383"></p>
+<p>Happy Hacking!</p>
+          <p><a href="https://0x00sec.org/t/the-importance-of-enumeration/25314/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-importance-of-enumeration/25314/1</link>
+        <pubDate>Sat, 20 Mar 2021 22:45:37 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-25314-1</guid>
+        <source url="https://0x00sec.org/t/the-importance-of-enumeration/25314.rss">The Importance of Enumeration</source>
+      </item>
+  </channel>
+</rss>

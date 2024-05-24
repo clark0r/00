@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>B01lers CTF: Jumpdrive Writeup</title>
+    <link>https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887</link>
+    <description>&lt;h1&gt;Bo1lers CTF: Jumpdrive Write&lt;/h1&gt;
+Hey everyone, welcome to my write-up for the PWN challenge: Jumpdrive from the b01lers CTF! This is my first ever write-up, and my first timed CTF on a team. It was a ton of fun, and I learned a whole lot from this experience even though I personally only solved one challenge.
+
+&lt;h1&gt;Starting Out&lt;/h1&gt;
+&lt;p&gt;Looking at the challenge we are given a host and a port to connect to as well as a link to download the binary. &lt;/p&gt;
+
+![Jumpdrive_Chal_Details|499x479, 75%](upload://p9vf1OEYIJRx6EeUga80An9L8px.png) 
+I&#39;m first going to connect with nc to test what the program is doing.
+
+![NC_Run_Command|390x140, 75%](upload://9a1L1V7YZRmD4DRqE1gjc9U2Dhi.png) 
+
+Looking at that we can see the program is just printing back our input. Hmm okay, we can work with that. Let&#39;s download the binary, and gather some info on it.
+
+&lt;h1&gt;Binary Examination&lt;/h1&gt;
+&lt;p&gt;Once the binary is downloaded I&#39;m going to run strings on it for some basic info, and if we&#39;re lucky we can grab the flag that way.&lt;/p&gt;
+
+![Jumpdrive_Strings_Output|429x448, 75%](upload://bAyltZfLOlmKvVw75qK05i2871n.png) 
+ 
+We get a good bit of detail out of this!
+1. We see fopen and flag.txt. I think it&#39;s safe to assume the binary will open the flag file, and store the contents somewhere in memory. Perfect!
+2. Aha, there it is, printf. There are definitely some vulnerabilities in printf if we aren&#39;t careful, which I&#39;ll discuss a little bit later.
+3. We see __stack_chk_fail. Being a noob it took me a bit of research to get this one. We have a stack canary, so that means we can&#39;t overflow this binary. If you&#39;re like I was, and had no clue what a stack canary was you can read about it here: [Stack Canary](https://en.wikipedia.org/wiki/Canary_value)
+
+Let&#39;s try to run the file locally. Since there is a stack canary we&#39;ll see if we can work with a format string vuln. We&#39;ll first need to create a dummy flag.txt file in the same folder as the jumpdrive binary since it is reading the file. We&#39;ll then run the program, and try see if there is a format string vuln in printf.
+
+![Fmt_Str_Vuln_Initial_Find|553x171, 75%](upload://A2lvBDIwLvAza6pVeH6zyDR1Jkg.png) 
+
+Lookie there, it&#39;s vulnerable! We successfully read from the stack! But wait, why does this work? Well there&#39;s a safe way, and an unsafe way to use printf let&#39;s take a look at both of them below.
+
+* Safe way     -&gt; `printf(&quot;This is my string: %s&quot;, myString)`
+* Unsafe way -&gt; `printf(myString)`
+
+As for the why, I&#39;ll let someone far more knowledgeable than me explain it: [Printf Vuln](https://www.geeksforgeeks.org/format-string-vulnerability-and-prevention-with-example/)
+
+This is all great news, but how do we actually use any of this information to exploit this program. Stay tuned for the next paragraph to see.
+
+&lt;h1&gt;Exploitation&lt;/h1&gt;
+Let&#39;s test our local binary once more, but this time let&#39;s read as much of the stack as we can.
+Tip: One thing we do know from the CTF organizer&#39;s is that ASLR is enabled for all PWN challenges.
+
+![Fmt_String_Local_Address_Check(Edited)|690x101](upload://zWEbM2uFozE5ZtUMq2Xo3Cu1EfT.png) 
+
+From an initial look we can see that there seems to be 3 addresses that hold the same data each time (highlighted in previous image). We can also see our input at the end of the output! Keep in mind we are looking at Little Endian ordering, so when we look at the end of the output we can see that `0x252e702541414141` is actually `4141414125702e25` which corresponds with the beginning of our intput: `AAAA%p.%`. Let&#39;s run gdb, and take a look at what&#39;s going on.
+
+![GDB_Main|576x500, 100%](upload://2J9H2d993muWB6soYliVCNB7cUZ.png) 
+
+At `main + 112` we see the call to fopen, at `main + 144` we see 0xdeadbeef that we saw when reading from memory, and at `main + 294` we see a call to printf. If we set a break point at printf `break *main + 294` and then run the program we can view some info. I&#39;m using  [gdb peda](https://github.com/longld/peda) to enhance the display of gdb, and because I like the output. Let&#39;s take a look at the stack.
+
+![Jumpdrive_Stack|690x163](upload://3fsAEeLRL3XJjoolN5ibn0zLvfN.png)
+
+Awesome! We see the three common outputs we saw from printing memory, and right after that we see our flag! So, if we&#39;re correct we should be able to read the flag from the memory address&#39; directly following `0x400911d14e3bcd36`! Let&#39;s check it out locally.
+
+![Jumpdrive_Read_Flag_Local|690x56](upload://vZ1OYjeA14i2iUWDSGYDT3ywCZJ.png) 
+
+So, considering Little Endianess, if we hex to ascii the two memory blocks following known output we get our flag! `5468697369736d79 74657374666c6167 == Thisismytestflag`! We got it! Let&#39;s run this on the server, and see if we get the flag there!
+
+![Jumpdrive_Remote_Flag|690x55](upload://fwkGvcDIV2K2Ga3al0YsJfoyAFp.png) 
+
+Now if we take the 3 memory blocks + the beginning of the fourth we get the flag for the challenge!
+`706374667b707231 6e54665f317a5f34 5f537434525f6d34 707d == pctf{pr1nTf_1z_4_St4R_m4p}`. Challenge pwned!
+
+&lt;h1&gt;Conclusion&lt;/h1&gt;
+If you made it this far, thanks for reading my write up of Jumpdrive! As stated at the beginning this is my first write up, so if you have comments, suggestions, or criticism please let me know! Also, if there is any incorrect info let me know as well!</description>
+    
+    <lastBuildDate>Tue, 17 Mar 2020 18:39:47 +0000</lastBuildDate>
+    <category>CTF</category>
+    <atom:link href="https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>B01lers CTF: Jumpdrive Writeup</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887/4</link>
+        <pubDate>Fri, 17 Jul 2020 10:08:21 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-19887-4</guid>
+        <source url="https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887.rss">B01lers CTF: Jumpdrive Writeup</source>
+      </item>
+      <item>
+        <title>B01lers CTF: Jumpdrive Writeup</title>
+        <dc:creator><![CDATA[0xDilydali]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s awesome! I didn’t know that, really appreciate it! I’ll make sure to read that article <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887/3</link>
+        <pubDate>Tue, 17 Mar 2020 18:39:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-19887-3</guid>
+        <source url="https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887.rss">B01lers CTF: Jumpdrive Writeup</source>
+      </item>
+      <item>
+        <title>B01lers CTF: Jumpdrive Writeup</title>
+        <dc:creator><![CDATA[exploit]]></dc:creator>
+        <description><![CDATA[
+            <p>Information exfiltration using <em>Format string attacks</em>, <em>miss those</em>!<br>
+Good first writeup, <strong>keep going</strong>!<br>
+A small tip:<br>
+<em>You can easily index the data you’d like to extract: %p.%p.%p -&gt; %3$p</em><br>
+Also, check out <a class="mention" href="https://0x00sec.org/u/_py">@_py</a>’s <a href="https://0x00sec.org/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920">article</a>, I’m sure you’ll like it. <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887/2</link>
+        <pubDate>Tue, 17 Mar 2020 18:23:14 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-19887-2</guid>
+        <source url="https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887.rss">B01lers CTF: Jumpdrive Writeup</source>
+      </item>
+      <item>
+        <title>B01lers CTF: Jumpdrive Writeup</title>
+        <dc:creator><![CDATA[0xDilydali]]></dc:creator>
+        <description><![CDATA[
+            <h1>Bo1lers CTF: Jumpdrive Write</h1>
+Hey everyone, welcome to my write-up for the PWN challenge: Jumpdrive from the b01lers CTF! This is my first ever write-up, and my first timed CTF on a team. It was a ton of fun, and I learned a whole lot from this experience even though I personally only solved one challenge.
+<h1>Starting Out</h1>
+<p>Looking at the challenge we are given a host and a port to connect to as well as a link to download the binary. </p>
+<p><span alt="Jumpdrive_Chal_Details" data-base62-sha1="p9vf1OEYIJRx6EeUga80An9L8px" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span><br>
+I’m first going to connect with nc to test what the program is doing.</p>
+<p><span alt="NC_Run_Command" data-base62-sha1="9a1L1V7YZRmD4DRqE1gjc9U2Dhi" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Looking at that we can see the program is just printing back our input. Hmm okay, we can work with that. Let’s download the binary, and gather some info on it.</p>
+<h1>Binary Examination</h1>
+<p>Once the binary is downloaded I'm going to run strings on it for some basic info, and if we're lucky we can grab the flag that way.</p>
+<p><span alt="Jumpdrive_Strings_Output" data-base62-sha1="bAyltZfLOlmKvVw75qK05i2871n" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>We get a good bit of detail out of this!</p>
+<ol>
+<li>We see fopen and flag.txt. I think it’s safe to assume the binary will open the flag file, and store the contents somewhere in memory. Perfect!</li>
+<li>Aha, there it is, printf. There are definitely some vulnerabilities in printf if we aren’t careful, which I’ll discuss a little bit later.</li>
+<li>We see __stack_chk_fail. Being a noob it took me a bit of research to get this one. We have a stack canary, so that means we can’t overflow this binary. If you’re like I was, and had no clue what a stack canary was you can read about it here: <a href="https://en.wikipedia.org/wiki/Canary_value" rel="nofollow noopener">Stack Canary</a>
+</li>
+</ol>
+<p>Let’s try to run the file locally. Since there is a stack canary we’ll see if we can work with a format string vuln. We’ll first need to create a dummy flag.txt file in the same folder as the jumpdrive binary since it is reading the file. We’ll then run the program, and try see if there is a format string vuln in printf.</p>
+<p><span alt="Fmt_Str_Vuln_Initial_Find" data-base62-sha1="A2lvBDIwLvAza6pVeH6zyDR1Jkg" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Lookie there, it’s vulnerable! We successfully read from the stack! But wait, why does this work? Well there’s a safe way, and an unsafe way to use printf let’s take a look at both of them below.</p>
+<ul>
+<li>Safe way     -&gt; <code>printf("This is my string: %s", myString)</code>
+</li>
+<li>Unsafe way -&gt; <code>printf(myString)</code>
+</li>
+</ul>
+<p>As for the why, I’ll let someone far more knowledgeable than me explain it: <a href="https://www.geeksforgeeks.org/format-string-vulnerability-and-prevention-with-example/" rel="nofollow noopener">Printf Vuln</a></p>
+<p>This is all great news, but how do we actually use any of this information to exploit this program. Stay tuned for the next paragraph to see.</p>
+<h1>Exploitation</h1>
+Let's test our local binary once more, but this time let's read as much of the stack as we can.
+Tip: One thing we do know from the CTF organizer's is that ASLR is enabled for all PWN challenges.
+<p><span alt="Fmt_String_Local_Address_Check(Edited)" data-base62-sha1="zWEbM2uFozE5ZtUMq2Xo3Cu1EfT" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>From an initial look we can see that there seems to be 3 addresses that hold the same data each time (highlighted in previous image). We can also see our input at the end of the output! Keep in mind we are looking at Little Endian ordering, so when we look at the end of the output we can see that <code>0x252e702541414141</code> is actually <code>4141414125702e25</code> which corresponds with the beginning of our intput: <code>AAAA%p.%</code>. Let’s run gdb, and take a look at what’s going on.</p>
+<p><span alt="GDB_Main" data-base62-sha1="2J9H2d993muWB6soYliVCNB7cUZ" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>At <code>main + 112</code> we see the call to fopen, at <code>main + 144</code> we see 0xdeadbeef that we saw when reading from memory, and at <code>main + 294</code> we see a call to printf. If we set a break point at printf <code>break *main + 294</code> and then run the program we can view some info. I’m using  <a href="https://github.com/longld/peda" rel="nofollow noopener">gdb peda</a> to enhance the display of gdb, and because I like the output. Let’s take a look at the stack.</p>
+<p><span alt="Jumpdrive_Stack" data-base62-sha1="3fsAEeLRL3XJjoolN5ibn0zLvfN" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Awesome! We see the three common outputs we saw from printing memory, and right after that we see our flag! So, if we’re correct we should be able to read the flag from the memory address’ directly following <code>0x400911d14e3bcd36</code>! Let’s check it out locally.</p>
+<p><span alt="Jumpdrive_Read_Flag_Local" data-base62-sha1="vZ1OYjeA14i2iUWDSGYDT3ywCZJ" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>So, considering Little Endianess, if we hex to ascii the two memory blocks following known output we get our flag! <code>5468697369736d79 74657374666c6167 == Thisismytestflag</code>! We got it! Let’s run this on the server, and see if we get the flag there!</p>
+<p><span alt="Jumpdrive_Remote_Flag" data-base62-sha1="fwkGvcDIV2K2Ga3al0YsJfoyAFp" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Now if we take the 3 memory blocks + the beginning of the fourth we get the flag for the challenge!<br>
+<code>706374667b707231 6e54665f317a5f34 5f537434525f6d34 707d == pctf{pr1nTf_1z_4_St4R_m4p}</code>. Challenge pwned!</p>
+<h1>Conclusion</h1>
+If you made it this far, thanks for reading my write up of Jumpdrive! As stated at the beginning this is my first write up, so if you have comments, suggestions, or criticism please let me know! Also, if there is any incorrect info let me know as well!
+          <p><a href="https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887/1</link>
+        <pubDate>Tue, 17 Mar 2020 18:08:02 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-19887-1</guid>
+        <source url="https://0x00sec.org/t/b01lers-ctf-jumpdrive-writeup/19887.rss">B01lers CTF: Jumpdrive Writeup</source>
+      </item>
+  </channel>
+</rss>

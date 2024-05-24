@@ -1,0 +1,619 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>CAPTCHA - OCR breaker</title>
+    <link>https://0x00sec.org/t/captcha-ocr-breaker/764</link>
+    <description>Hi fellas, 
+
+Today I will show you how to bypass [OCR](https://en.wikipedia.org/wiki/Optical_character_recognition) based CAPTCHA. The first thing that you have to keep in mind is that every CAPTCHAs are different and require an adapted image processing. For the sake of this article, I selected two distinct types of CAPTCHA, each of them needing a specific approach to be resolved.
+
+## Theory
+
+OCR based CAPTCHA flooded the market around 2000 with aim was to secure any web services online against abuses such as ticket scalping, automatic submission URL or spams.
+ 
+Those CAPTCHAs consist on the recognition of a string of characters in order to achieve, as its acronym say, a [Reverse Turing Test](https://en.wikipedia.org/wiki/Reverse_Turing_test) to verify that the end user is human, preventing bots usage.
+
+To make it works and avoid automation, companies process randomized strings by applying distortion, rotation and background randomization. However, for usability concern, those transformations have to be carefully balanced to not reduce its usability and it&#39;s this weakness that we will exploit to thwart it. 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/6dfdf398a328204e6764de60b608d0f7b06fdce9.png&quot; width=&quot;382&quot; height=&quot;150&quot;&gt;
+
+OCR based CAPTCHA are all about image processing. Our aim is to isolate the string to recognized in order to validate the authentication. The methodology is as follow :
+
+    load image
+
+    remove background
+
+    if OCR successful
+        then submit the result
+    else if rotation or distortion
+        then rotation / distortion attenuation
+            if OCR successful
+                then submit the result
+            else
+                isolate each letter to improve the OCR result. Once the string recognized, submit the result
+
+As you can see in the pseudo code above,  the methodology depends completely on your CAPTCHA and the degree of distortion and randomization which have been applied to the image. That is why, it is almost impossible to develop an universal CAPTCHA breaker. Indeed, there are too many factors to take into consideration and only a modular approach will be successful to reach this goal.
+
+## Practical cases
+
+The codes below have been developed, for practical reasons, with NodeJS. Indeed, this language is very easy to handle and provides a colossal amount of modules, reducing the development time.
+
+### Example 1
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/892cc406c4cfef39dadd95e86248c3cc5cb0625f.png&quot; width=&quot;312&quot; height=&quot;102&quot;&gt;
+
+This example is quite straightforward and trivial. Indeed, the string color is completely different from the background and a simple loop, replacing each pixel value other than 15 or above (black) by 255 (white) will be enough to isolate the data.
+
+```js
+for (var y = this.height * 4; y &gt;= 0; y--) {
+    for (var x = 0; x &lt; this.width; x++) {
+        let idx = (this.width * y + x);
+
+        if (this.data[idx] &gt; 15) {
+            this.data[idx] = 255;
+        }
+    }
+}
+```
+
+#### Result 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/14054b926d45f618a5278d9c96e37fae9ccb62cf.png&quot; width=&quot;312&quot; height=&quot;102&quot;&gt;
+
+### Example 2
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/1f999636852f259b9ed764e9560175ea3a327e36.png&quot; width=&quot;360&quot; height=&quot;126&quot;&gt;
+
+This time, it is well more complicated. Indeed, the background is truly random and uses the same colors than the characters that we have to isolate. To resolve this issue and reduce the impact of the processing on the string, I calculated the image color threshold, by excluding, prior, pixels close to the white color. Then I replaced the pixels value inferior to this threshold by 255.
+
+```js
+for (var y = this.height * 4; y &gt;= 0; y--) {
+    for (var x = 0; x &lt; this.width; x++) {
+        let idx = (this.width * y + x);
+
+        if (this.data[idx] &lt; 234) {
+            threshold += this.data[idx];
+            ++counter;
+        }
+    }
+}
+
+for (var y = this.height * 4; y &gt;= 0; y--) {
+    for (var x = 0; x &lt; this.width; x++) {
+        let idx = (this.width * y + x);
+
+        if (this.data[idx] &lt; threshold / counter - 2) {
+            this.data[idx] = 255;
+        }
+    }
+}
+```
+#### Result
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/9ded97a4867b5e5bba17c6f7b1d8f306269acdd4.png&quot; width=&quot;360&quot; height=&quot;126&quot;&gt;
+
+## Real case
+
+In order to show you a well more concrete application, I picked a CAPTCHA challenge on http://canyouhack.it  and developed a tool to resolve it, following the methodology stated earlier.
+
+```js
+&#39;use strict&#39;;
+
+const fs = require(&#39;fs&#39;);
+const PNG = require(&#39;pngjs&#39;).PNG;
+const request = require(&#39;request&#39;);
+const tesseract = require(&#39;node-tesseract&#39;);
+
+const FILENAME = &#39;captcha.png&#39;;
+
+/**
+ * Remove the background image in order to isolate the string to recognize
+ * @param name Image name
+ */
+function removeBackgroung(name) {
+    fs.createReadStream(name)
+      .pipe(new PNG())
+      .on(&#39;parsed&#39;, function() {
+
+        for (var y = this.height * 4; y &gt;= 0; y--) {
+            for (var x = 0; x &lt; this.width; x++) {
+                let idx = (this.width * y + x);
+
+                if (this.data[idx] != 0) {
+                    this.data[idx] = 255;
+                }
+            }
+        }
+
+        this.pack().pipe(fs.createWriteStream(name));
+    });
+}
+
+/**
+ * Perform string recognization through tesseract node module.
+ */
+function ocr() {
+    tesseract.process(__dirname + &#39;/../&#39; + FILENAME, (err, text) =&gt; {
+        if (err) {
+            console.error(err);
+        } else {
+            let char = &#39;abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890&#39;;
+            let value = &quot;&quot;;
+
+            for (var i = 0; i &lt; text.length; i++) {
+                if (char.indexOf(text[i]) &gt; -1) {
+                    value += text[i];
+                }
+            }
+
+            request.get(options.url + &quot;?text=&quot; + value, {jar: jar}).pipe(fs.createWriteStream(&#39;result.png&#39;));
+        }
+    });
+}
+
+let options = {
+    url: &#39;http://canyouhack.it/Content/Challenges/Captcha/Captcha1.php&#39;
+}
+
+let jar = request.jar();
+let cookie = &quot;&quot;;
+
+// Get the image and save the session cookie.
+let stream = request.get(options)
+    .on(&#39;response&#39;, (res) =&gt; {
+        cookie = request.cookie(res.headers[&quot;set-cookie&quot;].toString());
+    })
+    .pipe(fs.createWriteStream(FILENAME));
+
+// Once the image saved, call the image processing and string recognization functions.
+stream.on(&#39;finish&#39;, () =&gt; {
+    setTimeout(function() {
+        jar.setCookie(cookie, options.url);
+        removeBackgroung(FILENAME);
+        ocr();
+    }, 1000);
+});
+```
+#### Original CAPTCHA
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/990d72a94a1c01c4d45ec2dcc32672dad98486e2.png&quot; width=&quot;400&quot; height=&quot;100&quot;&gt;
+
+#### Post processing
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/24920b008cb5a538cca0045d951cdc982c02a9ab.png&quot; width=&quot;400&quot; height=&quot;100&quot;&gt;
+
+#### Token
+
+[spoiler]&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/3d9df176c6f289f7f710c94ce2f1f3f1e3477d33.png&quot; width=&quot;400&quot; height=&quot;100&quot;&gt;[/spoiler]
+
+## Notes
+
+Once again, every CAPTCHAs are different and require a specific image processing. Consequently, this tool will not work with other types of CAPTCHA ! However, you now have all the keys to create your own CAPTCHA breaker. Lastly, keep in mind that OCR engines such as tesseract or openCV are not perfect and false positives can occur. Nonetheless, it easy to reach 60% of success, which is enough in most case. Indeed, according to researchers, if a CAPTCHA can be bypassed by a percentage above 1%, it is considered as broken and not safe to use.
+
+That’s it for today.
+
+See you for the next tutorial of this series.
+
+Best,
+Nitrax</description>
+    
+    <lastBuildDate>Wed, 20 Jul 2016 18:43:06 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/captcha-ocr-breaker/764.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/16</link>
+        <pubDate>Sun, 21 Jan 2018 00:30:20 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-16</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Yes, sad really. <img src="https://0x00sec.org/images/emoji/twitter/frowning.png?v=9" title=":frowning:" class="emoji" alt=":frowning:"></p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/15</link>
+        <pubDate>Wed, 20 Jul 2016 18:43:06 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-15</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="0x00pf" data-post="11" data-topic="764">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/0x00pf/40/199_2.png" class="avatar"> 0x00pf:</div>
+<blockquote>
+<p>I would say, the library converts the image to 32bits representation, so you have 4 bytes per pixel.</p>
+</blockquote>
+</aside>
+<p>Yeah. Probably R G B A, then – a byte for each.</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/14</link>
+        <pubDate>Wed, 20 Jul 2016 17:52:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-14</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>A lot of CAPTCHA used nowadays are, security speaking, as poor as the examples above ^^ I know it’s a shame but it’s the reality ^^</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/13</link>
+        <pubDate>Wed, 20 Jul 2016 17:29:10 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-13</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>I didn’t think about that. Thanks for your input ! You solved it <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/12</link>
+        <pubDate>Wed, 20 Jul 2016 17:19:51 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-12</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote group-VIP" data-username="Nitrax" data-post="8" data-topic="764">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/nitrax/40/788_2.png" class="avatar"> Nitrax:</div>
+<blockquote>
+<p>This part was weird for me too but the size of the image downloaded and accessible from this callback was simply divided by 4</p>
+</blockquote>
+</aside>
+<p>I would say, the library converts the image to 32bits representation, so you have 4 bytes per pixel. That would mean that what you actually have to multiply by 4 is the width. As you are applying the threshold to each of the pixels components individually it just works, but if you try to get the colour of the pixel you will get something strange.</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/11</link>
+        <pubDate>Wed, 20 Jul 2016 17:15:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-11</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>It’s honestly great. Seems it’s died down though, although I can imagine it being extremely popular in the 2000s.</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/10</link>
+        <pubDate>Wed, 20 Jul 2016 17:14:24 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-10</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Yep, it is and it has been wrapped in several languages e.g. NodeJS, C++, Go, …</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/9</link>
+        <pubDate>Wed, 20 Jul 2016 17:03:46 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-9</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m happy to see that you enjoyed this tut mate <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>You are right about the weakness of the algorithm implemented. In fact, it was more like a proof of concept that something else and this code base can be easily improved by the implementation of the algorithms that you pointed out in your comment.</p>
+<aside class="quote no-group" data-username="0x00pf" data-post="5" data-topic="764">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/0x00pf/40/199_2.png" class="avatar"> 0x00pf:</div>
+<blockquote>
+<p>Why do you loop height*4 instead of height?. I’m not familiar with the environment you used so may be a stupid question.</p>
+</blockquote>
+</aside>
+<p>This part was weird for me too but the size of the image downloaded and accessible from this callback was simply divided by 4 … I didn’t see anything on the internet about this bug and due to a lack of time, I wasn’t able to dive deeper on this way.</p>
+<aside class="quote no-group" data-username="0x00pf" data-post="5" data-topic="764">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/0x00pf/40/199_2.png" class="avatar"> 0x00pf:</div>
+<blockquote>
+<p>What is the Token image in your last example?. This may also be a stupid question <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=9" title=":sweat_smile:" class="emoji" alt=":sweat_smile:"></p>
+</blockquote>
+</aside>
+<p>That was just to prove that the tool created was functional and allows to validate this challenge.</p>
+<p>P.S : No questions are stupid ^^</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/8</link>
+        <pubDate>Wed, 20 Jul 2016 17:00:00 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-8</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Isn’t tesseract some kind optical recognition software? Upon further study it does actually seem like a good option. And a good name to boot. (Been supported by Google since 2006) - (Open source since 2005 after Hewlett Packard released it) - (popular on Ubuntu and Windows). And it lacks a GUI, so you’d have to run it from the command line.<br>
+Here’s the architecture:<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/b97015671da309b4fac2beb4a7ff88e95e5b9b91.png" width="646" height="500"></p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/7</link>
+        <pubDate>Wed, 20 Jul 2016 16:49:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-7</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Exactly ! In most case, removing the background is enough for OCR API or libraries to process the image, which is, by the way, well performed by tesseract ! However, in C++, openCV provides a lot of powerful functionalities which improve considerably the recognition performances. Moreover, splitting the image ‘manually’ is only necessary if a failure occurs and quite trivial to develop (processing that I can add to this tut if you find it relevant).</p>
+<p>I will not be able to explain to you how works in details tesseract. I just heard that it was one of the most well known OCR library available.</p>
+<p>I hope it answers your question.</p>
+<p>Best,<br>
+Nitrax</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/6</link>
+        <pubDate>Wed, 20 Jul 2016 16:48:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-6</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote group-VIP" data-username="Nitrax" data-post="1" data-topic="764">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/nitrax/40/788_2.png" class="avatar"> Nitrax:</div>
+<blockquote>
+<p>To resolve this issue and reduce the impact of the processing on the string, I calculated the image color threshold, by excluding, prior, pixels close to the white color. Then I replaced the pixels value inferior to this threshold by 255.</p>
+</blockquote>
+</aside>
+<p>In that case it will probably work better to use some <a href="https://en.wikipedia.org/wiki/Mathematical_morphology" rel="nofollow noopener">mathematical morphology</a> or rank filters if you prefer. A combination of erosions and dilatations operators and maybe a median filter at the end should help you to get a clean image. Actually a median filter applied to the result of your processing should remote all that <a href="https://en.wikipedia.org/wiki/Salt-and-pepper_noise" rel="nofollow noopener">salt and pepper noise</a>.</p>
+<p>I have a couple of questions:</p>
+<ol>
+<li>Why do you loop <code>height*4</code> instead of <code>height</code>?. I’m not familiar with the environment you used so may be a stupid question.</li>
+<li>What is the Token image in your last example?. This may also be a stupid question <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=9" title=":sweat_smile:" class="emoji" alt=":sweat_smile:">
+</li>
+</ol>
+<p>The threshold algorithm you are using will fail miserably with many images.<a href="https://en.wikipedia.org/wiki/Otsu%27s_Method" rel="nofollow noopener"> Otsu’s method</a> works pretty well in many cases, as it is based on image statistical parameters… well it basically splits the histogram at the right place <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>Congrats. Nice tut mate!</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/5</link>
+        <pubDate>Wed, 20 Jul 2016 16:27:26 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-5</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Wait, hold on.</p>
+<p>So what you’ve done here is clear up the image. What I’m missing is… where is the actual character/letter parsing going on and how is that accomplished? Or is that the tessaract module? How does tessaract work?</p>
+<p>I saw a lecture once (on the internet) about training a CNN to recognize slightly altered characters/letters…</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/4</link>
+        <pubDate>Wed, 20 Jul 2016 15:48:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-4</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote group-VIP" data-username="pry0cc" data-post="2" data-topic="764">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/pry0cc/40/6_2.png" class="avatar"> pry0cc:</div>
+<blockquote>
+<p>Have you written your own captcha module?</p>
+</blockquote>
+</aside>
+<p>Did you mean a CAPTCHA  generator ?</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/3</link>
+        <pubDate>Wed, 20 Jul 2016 12:31:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-3</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Pretty decent article! Have you written your own captcha module?</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/2</link>
+        <pubDate>Wed, 20 Jul 2016 12:28:16 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-2</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+      <item>
+        <title>CAPTCHA - OCR breaker</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi fellas,</p>
+<p>Today I will show you how to bypass <a href="https://en.wikipedia.org/wiki/Optical_character_recognition" rel="noopener nofollow ugc">OCR</a> based CAPTCHA. The first thing that you have to keep in mind is that every CAPTCHAs are different and require an adapted image processing. For the sake of this article, I selected two distinct types of CAPTCHA, each of them needing a specific approach to be resolved.</p>
+<h2>Theory</h2>
+<p>OCR based CAPTCHA flooded the market around 2000 with aim was to secure any web services online against abuses such as ticket scalping, automatic submission URL or spams.</p>
+<p>Those CAPTCHAs consist on the recognition of a string of characters in order to achieve, as its acronym say, a <a href="https://en.wikipedia.org/wiki/Reverse_Turing_test" rel="noopener nofollow ugc">Reverse Turing Test</a> to verify that the end user is human, preventing bots usage.</p>
+<p>To make it works and avoid automation, companies process randomized strings by applying distortion, rotation and background randomization. However, for usability concern, those transformations have to be carefully balanced to not reduce its usability and it’s this weakness that we will exploit to thwart it.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/6dfdf398a328204e6764de60b608d0f7b06fdce9.png" width="382" height="150"></p>
+<p>OCR based CAPTCHA are all about image processing. Our aim is to isolate the string to recognized in order to validate the authentication. The methodology is as follow :</p>
+<pre><code>load image
+
+remove background
+
+if OCR successful
+    then submit the result
+else if rotation or distortion
+    then rotation / distortion attenuation
+        if OCR successful
+            then submit the result
+        else
+            isolate each letter to improve the OCR result. Once the string recognized, submit the result
+</code></pre>
+<p>As you can see in the pseudo code above,  the methodology depends completely on your CAPTCHA and the degree of distortion and randomization which have been applied to the image. That is why, it is almost impossible to develop an universal CAPTCHA breaker. Indeed, there are too many factors to take into consideration and only a modular approach will be successful to reach this goal.</p>
+<h2>Practical cases</h2>
+<p>The codes below have been developed, for practical reasons, with NodeJS. Indeed, this language is very easy to handle and provides a colossal amount of modules, reducing the development time.</p>
+<h3>Example 1</h3>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/892cc406c4cfef39dadd95e86248c3cc5cb0625f.png" width="312" height="102"></p>
+<p>This example is quite straightforward and trivial. Indeed, the string color is completely different from the background and a simple loop, replacing each pixel value other than 15 or above (black) by 255 (white) will be enough to isolate the data.</p>
+<pre><code class="lang-auto">for (var y = this.height * 4; y &gt;= 0; y--) {
+    for (var x = 0; x &lt; this.width; x++) {
+        let idx = (this.width * y + x);
+
+        if (this.data[idx] &gt; 15) {
+            this.data[idx] = 255;
+        }
+    }
+}
+</code></pre>
+<h4>Result</h4>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/14054b926d45f618a5278d9c96e37fae9ccb62cf.png" width="312" height="102"></p>
+<h3>Example 2</h3>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/1f999636852f259b9ed764e9560175ea3a327e36.png" width="360" height="126"></p>
+<p>This time, it is well more complicated. Indeed, the background is truly random and uses the same colors than the characters that we have to isolate. To resolve this issue and reduce the impact of the processing on the string, I calculated the image color threshold, by excluding, prior, pixels close to the white color. Then I replaced the pixels value inferior to this threshold by 255.</p>
+<pre><code class="lang-auto">for (var y = this.height * 4; y &gt;= 0; y--) {
+    for (var x = 0; x &lt; this.width; x++) {
+        let idx = (this.width * y + x);
+
+        if (this.data[idx] &lt; 234) {
+            threshold += this.data[idx];
+            ++counter;
+        }
+    }
+}
+
+for (var y = this.height * 4; y &gt;= 0; y--) {
+    for (var x = 0; x &lt; this.width; x++) {
+        let idx = (this.width * y + x);
+
+        if (this.data[idx] &lt; threshold / counter - 2) {
+            this.data[idx] = 255;
+        }
+    }
+}
+</code></pre>
+<h4>Result</h4>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/9ded97a4867b5e5bba17c6f7b1d8f306269acdd4.png" width="360" height="126"></p>
+<h2>Real case</h2>
+<p>In order to show you a well more concrete application, I picked a CAPTCHA challenge on <a href="http://canyouhack.it" rel="noopener nofollow ugc">http://canyouhack.it</a>  and developed a tool to resolve it, following the methodology stated earlier.</p>
+<pre><code class="lang-auto">'use strict';
+
+const fs = require('fs');
+const PNG = require('pngjs').PNG;
+const request = require('request');
+const tesseract = require('node-tesseract');
+
+const FILENAME = 'captcha.png';
+
+/**
+ * Remove the background image in order to isolate the string to recognize
+ * @param name Image name
+ */
+function removeBackgroung(name) {
+    fs.createReadStream(name)
+      .pipe(new PNG())
+      .on('parsed', function() {
+
+        for (var y = this.height * 4; y &gt;= 0; y--) {
+            for (var x = 0; x &lt; this.width; x++) {
+                let idx = (this.width * y + x);
+
+                if (this.data[idx] != 0) {
+                    this.data[idx] = 255;
+                }
+            }
+        }
+
+        this.pack().pipe(fs.createWriteStream(name));
+    });
+}
+
+/**
+ * Perform string recognization through tesseract node module.
+ */
+function ocr() {
+    tesseract.process(__dirname + '/../' + FILENAME, (err, text) =&gt; {
+        if (err) {
+            console.error(err);
+        } else {
+            let char = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
+            let value = "";
+
+            for (var i = 0; i &lt; text.length; i++) {
+                if (char.indexOf(text[i]) &gt; -1) {
+                    value += text[i];
+                }
+            }
+
+            request.get(options.url + "?text=" + value, {jar: jar}).pipe(fs.createWriteStream('result.png'));
+        }
+    });
+}
+
+let options = {
+    url: 'http://canyouhack.it/Content/Challenges/Captcha/Captcha1.php'
+}
+
+let jar = request.jar();
+let cookie = "";
+
+// Get the image and save the session cookie.
+let stream = request.get(options)
+    .on('response', (res) =&gt; {
+        cookie = request.cookie(res.headers["set-cookie"].toString());
+    })
+    .pipe(fs.createWriteStream(FILENAME));
+
+// Once the image saved, call the image processing and string recognization functions.
+stream.on('finish', () =&gt; {
+    setTimeout(function() {
+        jar.setCookie(cookie, options.url);
+        removeBackgroung(FILENAME);
+        ocr();
+    }, 1000);
+});
+</code></pre>
+<h4>Original CAPTCHA</h4>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/990d72a94a1c01c4d45ec2dcc32672dad98486e2.png" width="400" height="100"></p>
+<h4>Post processing</h4>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/24920b008cb5a538cca0045d951cdc982c02a9ab.png" width="400" height="100"></p>
+<h4>Token</h4>
+<div class="spoiler"><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/1">spoiler</a></div>
+<h2>Notes</h2>
+<p>Once again, every CAPTCHAs are different and require a specific image processing. Consequently, this tool will not work with other types of CAPTCHA ! However, you now have all the keys to create your own CAPTCHA breaker. Lastly, keep in mind that OCR engines such as tesseract or openCV are not perfect and false positives can occur. Nonetheless, it easy to reach 60% of success, which is enough in most case. Indeed, according to researchers, if a CAPTCHA can be bypassed by a percentage above 1%, it is considered as broken and not safe to use.</p>
+<p>That’s it for today.</p>
+<p>See you for the next tutorial of this series.</p>
+<p>Best,<br>
+Nitrax</p>
+          <p><a href="https://0x00sec.org/t/captcha-ocr-breaker/764/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/captcha-ocr-breaker/764/1</link>
+        <pubDate>Wed, 20 Jul 2016 12:24:26 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-764-1</guid>
+        <source url="https://0x00sec.org/t/captcha-ocr-breaker/764.rss">CAPTCHA - OCR breaker</source>
+      </item>
+  </channel>
+</rss>

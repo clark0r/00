@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>User Mode Rootkits: IAT and Inline Hooking - Malware - 0x00sec - The Home of the Hacker</title>
+<meta name="description" content="Since we’ve recently covered DLLs and, in a timely manner, @0x00pf has given us a brilliant paper on infecting processes, I thought that I’d contribute my piece on IAT hooking using a method called DLL injection. In this&amp;hellip;">
+<meta name="generator" content="Discourse 3.1.0.beta6 - https://github.com/discourse/discourse version 80a1709965fa59da824b2e3392976fc6fc898f80">
+<link rel="icon" type="image/png" href="../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.png">
+<link rel="apple-touch-icon" type="image/png" href="../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.png">
+<meta name="theme-color" media="all" content="#171616">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+<link rel="canonical" href="index.html" />
+<link rel="search" type="application/opensearchdescription+xml" href="../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+<link href="../../stylesheets/color_definitions_0x00sec-v2_15_57_a5ef387651921c3e4c7aa1108536015ba8299efb.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" class="light-scheme" />
+<link href="../../stylesheets/desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop" />
+<link href="../../stylesheets/chat_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="chat" />
+<link href="../../stylesheets/discourse-details_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-details" />
+<link href="../../stylesheets/discourse-lazy-videos_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-lazy-videos" />
+<link href="../../stylesheets/discourse-local-dates_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-local-dates" />
+<link href="../../stylesheets/discourse-narrative-bot_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-narrative-bot" />
+<link href="../../stylesheets/discourse-presence_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-presence" />
+<link href="../../stylesheets/discourse-spoiler-alert_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-spoiler-alert" />
+<link href="../../stylesheets/docker_manager_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="docker_manager" />
+<link href="../../stylesheets/poll_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="poll" />
+<link href="../../stylesheets/chat_desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="chat_desktop" />
+<link href="../../stylesheets/poll_desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="poll_desktop" />
+<link href="../../stylesheets/desktop_theme_46_f36ade55bf80933494fe3b5fab518f477de3bd4e.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2" />
+<link href="../../stylesheets/desktop_theme_57_8c0e890a61cdb4c5833a9f9c96664ed164e7d645.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop_theme" data-theme-id="57" data-theme-name="0x00sec-v2" />
+<link rel="stylesheet" href="https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="https://s3.amazonaws.com/0x00sec/highlight.pack.js"></script>
+<link rel="preload" href="../../theme-javascripts/440fd21108f5ba9e5dfe06cca9fc842569d5a874.js%3F__ws=0x00sec.org" as="script">
+<script defer src="../../theme-javascripts/440fd21108f5ba9e5dfe06cca9fc842569d5a874.js%3F__ws=0x00sec.org" data-theme-id="40"></script>
+<link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;User Mode Rootkits: IAT and Inline Hooking&#39;" href="1108.rss" />
+<meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:image" content="https://0x00sec.s3.amazonaws.com/original/2X/a/a84f27ca27596463b36e7ac288cbc7dc9e1ff5ad.png" />
+<meta property="og:image" content="https://0x00sec.s3.amazonaws.com/original/2X/a/a84f27ca27596463b36e7ac288cbc7dc9e1ff5ad.png" />
+<meta property="og:url" content="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108" />
+<meta name="twitter:url" content="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108" />
+<meta property="og:title" content="User Mode Rootkits: IAT and Inline Hooking" />
+<meta name="twitter:title" content="User Mode Rootkits: IAT and Inline Hooking" />
+<meta property="og:description" content="Since we’ve recently covered DLLs and, in a timely manner, @0x00pf has given us a brilliant paper on infecting processes, I thought that I’d contribute my piece on IAT hooking using a method called DLL injection. In this paper, I will be detailing an implementation of a simple user mode rootkit as an example.  As usual, recommended pre-requisites for this paper are as follows:  C/C++ and Assembly WinAPI DLLs and DLL Injection Windows Memory  I will briefly cover the necessary material.  Disclaim..." />
+<meta name="twitter:description" content="Since we’ve recently covered DLLs and, in a timely manner, @0x00pf has given us a brilliant paper on infecting processes, I thought that I’d contribute my piece on IAT hooking using a method called DLL injection. In this paper, I will be detailing an implementation of a simple user mode rootkit as an example.  As usual, recommended pre-requisites for this paper are as follows:  C/C++ and Assembly WinAPI DLLs and DLL Injection Windows Memory  I will briefly cover the necessary material.  Disclaim..." />
+<meta property="og:article:section" content="Malware" />
+<meta property="og:article:section:color" content="F7941D" />
+<meta property="og:article:tag" content="malware" />
+<meta property="og:article:tag" content="rootkit" />
+<meta property="og:article:tag" content="injection" />
+<meta property="og:article:tag" content="winapi" />
+<meta name="twitter:label1" value="Reading time" />
+<meta name="twitter:data1" value="3 mins 🕑" />
+<meta name="twitter:label2" value="Likes" />
+<meta name="twitter:data2" value="24 ❤" />
+<meta property="article:published_time" content="2016-09-18T04:16:15+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+</head>
+<body class="crawler ">
+<div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+
+<a href="https://init.0x00sec.org" class="dow-menu">Init</a>
+<a href="https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+<a href="https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+<header>
+<a href="../../index.html">
+0x00sec - The Home of the Hacker
+</a>
+</header>
+<div id="main-outlet" class="wrap" role="main">
+<div id="topic-title">
+<h1>
+<a href="index.html">User Mode Rootkits: IAT and Inline Hooking</a>
+</h1>
+<div class="topic-category" itemscope itemtype="http://schema.org/BreadcrumbList">
+<span itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+<a href="../../c/malware.html" class="badge-wrapper bullet" itemprop="item">
+<span class="badge-category-bg" style="background-color: #F7941D"></span>
+<span class="badge-category clear-badge">
+<span class="category-name" itemprop="name">Malware</span>
+</span>
+</a>
+<meta itemprop="position" content="1" />
+</span>
+</div>
+<div class="topic-category">
+<div class="discourse-tags list-tags">
+<a href="../../tag/malware.html" class="discourse-tag" rel="tag">malware</a>,
+<a href="../../tag/rootkit.html" class="discourse-tag" rel="tag">rootkit</a>,
+<a href="../../tag/injection.html" class="discourse-tag" rel="tag">injection</a>,
+<a href="../../tag/winapi.html" class="discourse-tag" rel="tag">winapi</a>
+</div>
+</div>
+</div>
+<div itemscope itemtype="http://schema.org/DiscussionForumPosting">
+<meta itemprop="headline" content="User Mode Rootkits: IAT and Inline Hooking">
+<meta itemprop="articleSection" content="Malware">
+<meta itemprop="keywords" content="malware, rootkit, injection, winapi">
+<div itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+<meta itemprop="name" content="0x00sec - The Home of the Hacker">
+<div itemprop="logo" itemscope itemtype="http://schema.org/ImageObject">
+<meta itemprop="url" content="https://0x00sec.org/uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.png">
+</div>
+</div>
+<div id="post_1" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/dtm"><span itemprop="name">dtm</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="index.html">
+<link itemprop="image" href="https://0x00sec.s3.amazonaws.com/original/2X/a/a84f27ca27596463b36e7ac288cbc7dc9e1ff5ad.png">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-18T04:16:15Z" class="post-time">
+September 18, 2016, 4:16am
+</time>
+<meta itemprop="dateModified" content="2017-01-31T03:20:40Z">
+<span itemprop="position">1</span>
+</span>
+</div>
+<div class="post" itemprop="articleBody">
+<p>Since we’ve recently covered DLLs and, in a timely manner, <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a> has given us a brilliant paper on <a href="../linux-infecting-running-processes/1097/2.html">infecting processes</a>, I thought that I’d contribute my piece on IAT hooking using a method called DLL injection. In this paper, I will be detailing an implementation of a simple <em>user mode rootkit</em> as an example.</p>
+<p>As usual, recommended pre-requisites for this paper are as follows:</p>
+<pre><code class="lang-makefile">C/C++ and Assembly
+WinAPI
+DLLs and DLL Injection
+Windows Memory
+</code></pre>
+<p>I will briefly cover the necessary material.</p>
+<p>Disclaimer: This is not a how to on making malware but rather a report on my research with malware technology so I apologize in advance for any incorrect information.</p>
+<hr>
+<h2>DLL Injection</h2>
+<p>What is DLL injection? DLL injection is the procedure of <em>injecting</em> a DLL into the memory space of a process and then having it execute as a part of it. Doing this means that the DLL code has all access to the process’s memory and can manipulate it for whatever reason but more importantly, it also acquires all the permissions of the process. For example, you wish to communicate to the outside world but you don’t have permissions through the firewall. With DLL injection, you can inject and execute your code into a process which <em>does</em> have the permissions (e.g. Internet Explorer) and it will be able to do what it needs.</p>
+<pre><code class="lang-makefile">+--------------+               +--------------------+
+| DLL Injector |               |       Target       |
++--------------+               |      process's     |
+        |                      |       address      |
+        |                      |        space       |
+        |                      |                    |
+        |                      |--------------------|
+        +-----------------------&gt;   Injected DLL    |
+                               |--------------------|
+                               +--------------------+
+</code></pre>
+<p>If anyone is interested on how to code a basic DLL injector, please let me know down below.</p>
+<hr>
+<h2>User Mode Rootkits</h2>
+<p>User mode rootkits are <em>rootkits</em> (though not technically) which provide similar functionalities as kernel mode rootkits, such as masking and disabling access to files, but operate at the user level. We call this level <em>ring 3</em> whereas kernel mode rootkits are <em>ring 0</em>. What are these rings? Here’s a diagram for visual aid.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a84f27ca27596463b36e7ac288cbc7dc9e1ff5ad.png"></p>
+<p>As we can see, the green is user mode and the red in the center is kernel mode. Although rings 1 and 2 do exist, they are actually not used so we just refer to either 0 or 3.</p>
+<p>The WinAPI function calls are called from ring 3 which must go inwards to ring 0 through a series of privilege checks since ring 3 cannot directly communicate with the CPU. Once in ring 0, the OS executes the instructions to perform what’s necessary for the function call. By doing this, the API <em>trusts</em> that the parameters passed from ring 3 to 0 and back will maintain its integrity and not be modified.</p>
+<hr>
+<h2>The Import Address Table and Exported DLL Functions</h2>
+<p>What is the IAT? The IAT is the Import Address Table. I’ve very briefly introduced this concept in <a href="../understanding-a-win32-virus-background-material/1043/7.html">Understanding a Win32 Virus: Background Material</a> but I will explain in more depth this time. The IAT is the table which contains <em>imports</em> of a DLL’s exports and these two tables are pretty similar in structure. Here’s an example of an IAT of an application:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/c337746f698a53ffceaf493f534958f76aa935da.PNG" width="690" height="354"></p>
+<p>What we’re interested in is the Directory Table just a bit below the address table.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/b/b2f53a1149d746e33c1e6e7e185972384d645b00.PNG" width="690" height="352"></p>
+<p>Here, we can see a few details about each of the imported DLLs which correspond to the following struct (which I believe is undocumented for some reason):</p>
+<pre><code class="lang-cpp">typedef struct _IMAGE_IMPORT_DESCRIPTOR {
+    DWORD OriginalFirstThunk;
+    DWORD TimeDateStamp;
+    DWORD ForwarderChain;
+    DWORD Name;
+    DWORD FirstThunk;
+} IMAGE_IMPORT_DESCRIPTOR, *PIMAGE_IMPORT_DESCRIPTOR;
+</code></pre>
+<p>If we have a look at the <code>OriginalFirstThunk</code> member, we will see that it is <em>exactly</em> the same as the <code>FirstThunk</code> member which are both arrays of <code>IMAGE_THUNK_DATA</code>.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/522512a07f5a60c8375b607a76127d20fa44840b.PNG" width="690" height="354"></p>
+<p>Having these duplicates is not a matter of inefficiency because the <code>FirstThunk</code> will be replaced on runtime by the Windows loader with the actual address of the DLLs’ exported functions. Here’s the comparison of the memory dump of both the <code>OriginalFirstThunk</code> and the <code>FirstThunk</code> juxtaposed with the PEview of the <code>FirstThunk</code>.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2c8d5cebd637221c5fc8014afb4c1782342b79f9.PNG" width="690" height="274"></p>
+<p>We can see that the memory dump of RVA <code>0x2000</code> no longer holds the value of <code>0x2890</code> but instead holds <code>0x75BB5414</code> which corresponds to the address of the <code>GetFileAttributesA</code> function in <code>kernel32</code> whereas the memory dump of the <code>OriginalFirstThunk</code> remains the same <code>0x2890</code>.</p>
+<p>Now that we have an idea of how DLLs’ exported functions are substituted into the import table of an executable, let’s now examine what the function looks like and how it works.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a91e204711018db1a9fd72bf14d3e8589f19d75f.PNG" width="602" height="289"></p>
+<p>Most WinAPI wrapper functions usually have the five byte stub at the beginning:</p>
+<pre><code class="lang-makefile">mov    edi, edi
+push   ebp
+mov    ebp, esp
+</code></pre>
+<p>After this comes the actual function itself which is just a <code>jmp</code> but for this paper, we will not actually be going any deeper than this. What’s interesting about this is the stub at the beginning because it allows us to overwrite the bytes to place in a method to <em>hook</em> the function call which then means we can potentially modify the parameters. This is breaking the trust between the API calls from ring 3 to ring 0.</p>
+<hr>
+<h2>Example Implementation</h2>
+<p>For the DLL, it will not be exporting any functions since its purpose is to modify the stub in the wrapper of a target function in its own process. First, we will need to define <a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms682583(v=vs.85).aspx"><code>DllMain</code></a> like so:</p>
+<pre><code class="lang-auto">BOOL APIENTRY DllMain(HANDLE hInstance, DWORD fdwReason, LPVOID lpReserved) {
+    switch (fdwReason) {
+        case DLL_PROCESS_ATTACH:
+            SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)MyUnhandledExceptionFilter);
+            HookFunction();
+            break;
+    }
+
+    return TRUE;
+}
+</code></pre>
+<p><code>DllMain</code> will be called when the DLL has been executed so just think of it as a normal <code>main</code> for now. The <code>fdwReason</code> is used to detect under which circumstance the <code>DllMain</code> has been called, so for this purpose we will only initialize the hooking when it has been attached to a process. In this method we will be raising exceptions to detect <code>RIP</code> (Instruction Pointer) executing in the target function’s entry so we set up a custom defined exception handler <code>MyUnhandledExceptionFilter</code> and then we will set up the hook. Let’s take a look at the exception filter function.</p>
+<pre><code class="lang-auto">LONG WINAPI MyUnhandledExceptionFilter(LPEXCEPTION_POINTERS lpException) {
+    if (lpException-&gt;ContextRecord-&gt;Rip == (DWORD_PTR)fpCreateProcessW)
+        lpException-&gt;ContextRecord-&gt;Rip = (DWORD_PTR)MyCreateProcessW;
+
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+</code></pre>
+<p>Once an exception has occurred, program flow will enter this function first. It checks to see if it has entered our target function <code>CreateProcessW</code> and if it has, we will point <code>RIP</code> to our intercepting function for extra processing, otherwise, it will continue execution normally. For the routine to hook the target function, we will simply set the <em>first</em> byte of the stub to an <code>int 3h</code> which is the debuggers’ method of placing a breakpoint.</p>
+<pre><code class="lang-auto">VOID HookFunction(VOID) {
+    fpCreateProcessW = GetProcAddress(LoadLibrary(L"kernel32"), "CreateProcessW");
+    if (fpCreateProcessW == NULL) {
+        Debug(L"Get CreateFile error: %lu", GetLastError()); 
+        return;
+    }
+
+    bSavedByte = *(LPBYTE)fpCreateProcessW;
+
+    const BYTE bInt3 = 0xCC;
+    if (WriteMemory(fpCreateProcessW, &amp;bInt3, sizeof(BYTE)) == FALSE) {
+        Debug(L"Write memory error: %lu", GetLastError());
+        ExitThread(0);
+    }
+}
+</code></pre>
+<p>It needs to get the address of the function first through <code>GetProcAddress</code> and <code>LoadLibraryW</code> with <code>kernel32</code> and <code>CreateProcessW</code> so that it knows where to modify the stub. Before placing the exception, it must save the original first byte so that it can restore it if our hook function (<code>MyCreateProcessW</code>, not <code>HookFunction</code>) actually calls the function. If you don’t understand this, don’t worry, it will make sense when we analyze <code>MyCreateProcessW</code>. To place the <code>int 3h</code> byte (<code>0xCC</code>) we need to <em>unprotect</em> the memory and then write to it, then <em>reprotect</em> it like so:</p>
+<pre><code class="lang-auto">BOOL WriteMemory(FARPROC fpFunc, LPCBYTE b, SIZE_T size) {
+    DWORD dwOldProt = 0;
+    if (VirtualProtect(fpFunc, size, PAGE_EXECUTE_READWRITE, &amp;dwOldProt) == FALSE)
+        return FALSE;
+
+    MoveMemory(fpFunc, b, size);
+
+    return VirtualProtect(fpFunc, size, dwOldProt, &amp;dwOldProt);
+}
+</code></pre>
+<p>Using <code>VirtualProtect</code>, we can do this with ease. We’ll modify the permissions of the memory space to be able to write to it, write the byte in, then restore the original permissions. Now, when the target process tries to use <code>CreateProcessW</code>, it will trigger the exception on the <code>int 3h</code> byte and enter our exception handler. Our exception handler will then redirect execution flow to <code>MyCreateProcessW</code>:</p>
+<pre><code class="lang-auto">BOOL WINAPI MyCreateProcessW(LPCWSTR lpApplicationName, LPWSTR lpCommandLine, LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes, BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment, LPCWSTR lpCurrentDirectory, LPSTARTUPINFO lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation) {
+    WCHAR szLowerCase[MAX_PATH];
+    StringToLowerCase(szLowerCase, lpApplicationName);
+
+    if (wcsstr(szLowerCase, L"taskmgr.exe") != NULL ||
+        wcsstr(szLowerCase, L"cmd.exe") != NULL) {
+        Debug(L"Open %s denied", lpApplicationName);
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+
+    if (WriteMemory(fpCreateProcessW, &amp;bSavedByte, sizeof(BYTE)) == FALSE) {
+        Debug(L"MyCreateProcessW WriteMemory error: %lu", GetLastError());
+        ExitThread(0);
+    }
+    
+    BOOL b = CreateProcessW(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation);
+
+    HookFunction();
+    return b;
+}
+</code></pre>
+<p>This function emulates the real function’s return value, the calling convention and the arguments so nothing breaks. We then check to see if the <code>lpApplicationName</code> matches any of the programs which we want to deny access to and if it does, it will spawn a <code>Debug</code> message (this is optional) and then set the error to an access denied, then return FALSE (as the actual function would on failure). Otherwise, we will simply restore the original byte in <code>CreateProcessW</code>'s stub and then call it by directly passing the arguments. We will re-hook the function to reset the <code>int 3h</code> byte so that it will trigger again on the next call, then return its return value.</p>
+<hr>
+<h2>Demonstration</h2>
+<p>Let’s do a demonstration and see this DLL in action. We will try injecting the DLL into <code>explorer.exe</code> and see what happens when we open some applications.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/27017903f8025f1b30d8b6d6115f1e1aa62c4ad0.PNG" width="690" height="285"></p>
+<p>Don’t mind me, just using a public injector because I’m too lazy to write my own (I should get paid for advertising this). Anyway… Let’s try something that isn’t on the list of denied applications:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/4781fe8d981ffdf52b909e97fd10e518ace18a1b.PNG" width="671" height="336"></p>
+<p>Looking good so far. How about something that we’re expecting to be denied?</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/c18a6e6156df116cdf030348c0ca35d901a3e3ad.PNG" width="560" height="304"></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/fbb23456fb1d34bc0904a805210d0b50686516d9.PNG" width="644" height="266"></p>
+<p>or…</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/e8a71e082011e60f149b53164a8b37fcf4288d46.PNG" width="520" height="307"></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/d50be8e3c6427c82195110916045b70dcce29b9a.PNG" width="622" height="332"></p>
+<hr>
+<h2>Conclusion</h2>
+<p>So there we have it, IAT hooking with DLL injections to intercept API function calls. There are other ways to hook the function such as placing a direct jump to the hook function but I found that this particular method was easier to implement. This is a pretty well-known technique so don’t expect this to work in every scenario and not get caught by antivirus.</p>
+<p>Hope that you’ve all enjoyed and learned something from this. Until next time.</p>
+<p><em>– dtm</em></p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="16" />
+<span class="post-likes">16 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+<div class="crawler-linkback-list" itemscope itemtype="http://schema.org/ItemList">
+<div itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+<a itemprop="url" href="../dll-load-proxying/39031/3.html">DLL-Load Proxying</a>
+<meta itemprop="position" content="4">
+</div>
+</div>
+</div>
+<div id="post_2" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/pry0cc"><span itemprop="name">pry0cc</span></a>
+(Leader &amp; Offsec Engineer &amp; Forum Daddy)
+</span>
+<link itemprop="mainEntityOfPage" href="index.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-18T07:50:31Z" class="post-time">
+September 18, 2016, 7:50am
+</time>
+<meta itemprop="dateModified" content="2016-09-18T07:50:31Z">
+<span itemprop="position">2</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>BRUH. WINAPI THO. Really awesome. Really Really awesome.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="3" />
+<span class="post-likes">3 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_3" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/TheDoctor"><span itemprop="name">TheDoctor</span></a>
+(The C# Dude)
+</span>
+<link itemprop="mainEntityOfPage" href="index.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-18T09:23:08Z" class="post-time">
+September 18, 2016, 9:23am
+</time>
+<meta itemprop="dateModified" content="2016-09-18T09:23:08Z">
+<span itemprop="position">3</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>I would <strong>greatly</strong> appreciate a tutorial on DLL-Injection! Big thanks for your Low-level series <img src="../../images/emoji/twitter/slight_smile.png%3Fv=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="4" />
+<span class="post-likes">4 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_4" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/Fust3rCluck"><span itemprop="name">Fust3rCluck</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="index.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2016-09-24T04:18:07Z" class="post-time">
+September 24, 2016, 4:18am
+</time>
+<meta itemprop="dateModified" content="2016-09-24T04:18:07Z">
+<span itemprop="position">4</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>if (post_is_awesome){<br>
+gestures.thumbs_up();<br>
+}</p>
+<p><code>STDOUT: THUMBS UP</code></p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="1" />
+<span class="post-likes">1 Like</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_5" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/Malware_Info"><span itemprop="name">Malware_Info</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="index.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2017-11-27T07:19:29Z" class="post-time">
+November 27, 2017, 7:19am
+</time>
+<meta itemprop="dateModified" content="2017-11-27T07:19:29Z">
+<span itemprop="position">5</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Your tutorial is great! Do malware’s detect hooks before executing? I’m using Detours from Microsoft,I’ve tested it on a simple application and it is working.Same technique when applied on real malware not working much</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_6" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/pry0cc"><span itemprop="name">pry0cc</span></a>
+(Leader &amp; Offsec Engineer &amp; Forum Daddy)
+Closed
+</span>
+<link itemprop="mainEntityOfPage" href="index.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2017-12-02T18:00:14Z" class="post-time">
+December 2, 2017, 6:00pm
+</time>
+<meta itemprop="dateModified" content="2017-12-02T18:00:14Z">
+<span itemprop="position">6</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>This topic was automatically closed after 5 days. New replies are no longer allowed.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_7" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/dtm"><span itemprop="name">dtm</span></a>
+Opened
+</span>
+<link itemprop="mainEntityOfPage" href="index.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2017-12-22T00:42:09Z" class="post-time">
+December 22, 2017, 12:42am
+</time>
+<meta itemprop="dateModified" content="2017-12-22T00:42:09Z">
+<span itemprop="position">7</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_8" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/oaktree"><span itemprop="name">oaktree</span></a>
+(oaktree)
+Closed
+</span>
+<link itemprop="mainEntityOfPage" href="index.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2017-12-22T00:57:32Z" class="post-time">
+December 22, 2017, 12:57am
+</time>
+<meta itemprop="dateModified" content="2017-12-22T00:57:32Z">
+<span itemprop="position">8</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+</div>
+</div>
+<footer class="container wrap">
+<nav class="crawler-nav">
+<ul>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../index.html" itemprop="url">Home </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../categories.html" itemprop="url">Categories </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="https://0x00sec.org/guidelines" itemprop="url">FAQ/Guidelines </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../tos.html" itemprop="url">Terms of Service </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../privacy.html" itemprop="url">Privacy Policy </a>
+</span>
+</li>
+</ul>
+</nav>
+<p class="powered-by-link">Powered by <a href="https://www.discourse.org">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+<script src="https://instant.page/3.0.0" type="module" defer integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1"></script>
+</body>
+</html>

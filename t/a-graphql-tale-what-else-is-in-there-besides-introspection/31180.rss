@@ -1,0 +1,641 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>A GraphQL tale: What else is in there besides introspection?</title>
+    <link>https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180</link>
+    <description>__TL;DR:__ Finding and extracting GraphQL endpoints / queries / mutations / data types (partially) without relying on introspection or fuzzing, from publicly available javascript files.
+
+Story time: A couple days ago I was hanging out on Reddit when I saw someone talking about this one event I wanted to attend. As it had just been confirmed, I quickly went to the website so I could check the venue, but unfortunately couldn&#39;t find the location. I rapidly learnt that I had to first (surprise, surprise), setup an account and agree with all the terms and conditions in order to see the address. 
+
+The thing is, I hate going around the web setting up accounts in websites I rarely go back to and sadly, this was one of those situations. I went for the no-brainer first: Got myself a disposable email and tried setting a dummy account. Kid&#39;s stuff. Problem was, it didn&#39;t work. They had whitelisted the email providers so unless you had gmail, outlook, etc you just couldn&#39;t do it. &quot;What an absolute bummer&quot;, I thought to myself. 
+
+Eventually, fed up with the whole thing, I decided to do what any reasonable person in my position would: Proxy the app through BurpSuite and see if they were somehow leaking the damn address. 
+
+## Investigatin&#39;.......
+
+I put my hoodie on lol and after dodging an inexplicable amount of requests crafted solely with the intention of extracting every piece of information available, with the excuse of _bETTer uNdErsTanDiNg uSeR bEhAviOur_, I noticed a few requests flying over my proxy history tab, all referring to this `/gql` endpoint. Immediately, I knew this was the place I should probably be focusing on. 
+
+The __gql__ is short for GraphQL. I&#39;ve read a few things about GraphQL here and there when it first came out, but I didn&#39;t pay much attention. Now, as you can imagine, approaching it took some probing and experimentation, which is usually a good recipe for an interesting article. I don&#39;t think anything you will see here is actually groundbreaking but there&#39;s definitely some nuggets you can benefit from, especially when it comes to analysing javascript files.
+
+Anyways, interested in finding out if I ever manage to get that address without setting up an account while learning some GraphQL shenanigans along the way? If so, grab yourself a piece of that 4 formaggi pizza sitting on your desk for the last three days and keep on reading, because you are in for a ride.
+
+## A GraphQL prime (not really)
+
+Let me first, set the stage to make sure we are all in the same page: If you haven&#39;t been around web development for the last couple of years or don&#39;t necessarily care because well, you actually have healthy and balanced life, let me fill you in: GraphQL stands for __Graph Query Language__ and it was initially created by some folks from that social media platform &amp; company &lt;s&gt;which almost had democracy dismantled&lt;/s&gt; responsible for creating / maintaining technologies such as React. It serves as an alternative to REST architecture, which became popular around the time single page apps became a thing (maybe).
+
+The general idea is that you can basically tweak queries and adapt them to your needs, removing the necessity of creating multiple endpoints just to fulfil corner cases that you might eventually require. This is probably a very grotesque simplification and I&#39;m sure there&#39;s a whole lot more to cover, but I won&#39;t.
+
+So yeah, right, these are just... words. What does that __actually__ mean? Alright, let&#39;s say you want to fetch data from an user endpoint, something like `GET /user/1000`. In a classic REST app, this can be directly translated into &quot;get data from user where its ID equals to 1000&quot;:
+
+```
+GET /user/1000
+```
+
+Response:
+```http
+HTTP/2 200 OK
+Content-Type: application/json
+X-Other-Headers: idunno
+Content-Length: 100
+
+{
+    &quot;user&quot;: {
+        &quot;id&quot;: 1000,
+        &quot;name&quot;: &quot;Mevin Kitnick&quot;,
+        &quot;address&quot;: {
+            &quot;street&quot;: &quot;Whatever street&quot;,
+            &quot;zipCode&quot;: 1234,
+            &quot;city&quot;: &quot;Los Angeles&quot;
+            &quot;additionalInfo&quot;: {
+                ...
+            }
+        }
+    }
+}
+
+```
+
+The first thing to noticed when checking the server response is ~~it&#39;s 2022 so why the f*ck are you using incremental IDs~~ when the endpoint `/user/&lt;id&gt;` is called, it gives back the whole user whose id is 1000. Easy, right? However, let&#39;s say now we care only about the address piece from the same user, maybe for a different part of the website. What happens then? Well, we would have to either get the entire user again and then, manually extract the address or if the back-end kids were nice enough, we could ask them to have this new endpoint introduced: 
+
+```
+GET /user/1000/address
+```
+
+Response:
+```http
+HTTP/2 200 OK
+Content-Type: application/json
+X-Other-Headers: idunno
+Content-Length: 40
+
+{
+    &quot;address&quot;: {
+        &quot;street&quot;: &quot;Whatever street&quot;,
+        &quot;zipCode&quot;: 1234,
+        &quot;city&quot;: &quot;Los Angeles&quot;
+        &quot;additionalInfo&quot;: {
+            ...
+        }
+    }
+}
+
+```
+
+When tinkering with graphs and queries (?) however, we instead always send a `POST` request, which looks a little odd at first, but sort of makes sense considering GraphQL expects a little more information in order to provide what we need (see request&#39;s body below): 
+
+in GraphQL&#39;s fashion, this would be the equivalent `GET /user/1000` we previously saw:
+
+```http
+POST /graphql HTTP/2
+Host: www.someapp.com
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0
+Accept: */*
+Accept-Language: undefined
+Accept-Encoding: gzip, deflate
+Content-Type: application/json
+Origin: https://www.someapp.com
+
+{
+    &quot;query&quot;: { query { user(ID: $id) { username, lastUpdate }} },
+    &quot;variables&quot;: {
+        id: 1000
+    }
+}
+
+```
+Same for address `GET /user/1000/address`:
+
+```http
+POST /graphql HTTP/2
+Host: www.someapp.com
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0
+Accept: */*
+Accept-Language: undefined
+Accept-Encoding: gzip, deflate
+Content-Type: application/json
+Origin: https://www.someapp.com
+
+{
+    &quot;query&quot;: { query { user(ID: $id) { address }} },
+    &quot;variables&quot;: {
+        id: 1000
+    }
+}
+
+```
+
+Have you noticed the endpoint hasn&#39;t really changed? This means that once the schema is defined, we can easily request different subsets of data and the GraphQL server will gladly provide us just that, while the endpoint remains the same. Hopefully that makes sense. If it doesn&#39;t, I guess maybe... read the docs?
+
+GraphQL has massive adoption amongst the cool kids these days - considering you are reading this is 2022, I don&#39;t really know what the future holds -  so you won&#39;t have any trouble finding &lt;s&gt;a shit load of redundant&lt;/s&gt; content about it out there.
+
+Now that this is out of the way, we move on... 
+
+## GraphQL Recon - The classic medieval style
+
+Every once in a while when I&#39;m ~~dumbly typing things on Google and recklessly trying it out in the wild~~ performing a penetration test on a given application, whenever I come across a technology I&#39;m not necessarily knowledgeable about - as in, most cases - my approach is the following: I start by poking with it directly as soon as I can. No joke, that&#39;s it. 
+
+But if you allow me to elaborate: This is my attempt to get a sense of what it does without checking any other resources. In this case, it wasn&#39;t different although I knew beforehand that as GraphQL is an open-source project, it would have been so much easier to just dive in, checking the documentation - which I eventually did. But I like to believe there&#39;s some value in approaching things while clueless, as I&#39;m still fresh and not bound by any usage expectations. Ultimately, this gives me full permission to be deliberately stupid and I might try things which they haven&#39;t foreseen when designing the solution. Believe me when I say sometimes good things can come out of it (that&#39;s what I like telling myself, at least). However in this case, nothing necessarily weird popped out. So ugh, a bit of a waste, but not entirely because up to this point, I was already familiar with the syntax and noticed some GraphQL errors were quite informative, which definitely gave me some leverage.
+
+As my rEsEaRCh continued, I decided to take advantage of our collective brains and do some snooping. If there&#39;s a lesson to be taken from this is, in a world of 7.9 billion people, THERE&#39;S ALWAYS SOMEONE putting off the gym or bailing on their friends because they had convinced themselves there&#39;s this incredible idea that needs to be shared with the world, right here right now, right? Right. It&#39;s called functional procrastination, apparently. And as a matter of fact, this was no different. 
+
+So when I googled &quot;how do I Hakc GraphQL!11&quot;, a bunch of articles came up, where some slick folks who had already gone through the trouble, explained their methodology. One thing kept popping up however: They wouldn&#39;t shut up about this thing called _introspection_, so I thought there was maybe something in there. 
+
+### Toying with introspection for fun and zero profit
+
+[Introspection](https://graphql.org/learn/introspection/) gives you the ability to extract metadata out of the schema provided, or to put it simply, get information about the schema itself. Think of it as the [information_schema](https://en.wikipedia.org/wiki/Information_schema)&#39;s younger sibling, who never got the chance to hangout with his older bro because his family, the rich type, don&#39;t really want them to have anything to do with one another. But you don&#39;t have to stretch too far to know they do. Got it?
+
+Ok, equipped with this stupid analogy, I decided to give it a try:
+
+```http
+POST /graphql HTTP/2
+Host: www.secreteventapp.com
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0
+Accept: */*
+Accept-Language: en-us
+Accept-Encoding: gzip, deflate
+Content-Type: application/json
+Origin: https://www.secreteventapp.com
+
+{
+    &quot;query&quot;: { query __schema{types{name,fields{name}}} },
+    &quot;variables&quot;: {
+    }
+}
+```
+
+But it didn&#39;t work. I know this because the response said `Error: Unable to use introspection`, so I guess we can all agree it didn&#39;t. And I&#39;ll be telling you why in just a second but first, let me tell what we could&#39;ve done if things had been differently:  
+
+```http
+POST /graphql HTTP/2
+Host: www.secreteventapp.com
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0
+Accept: */*
+Accept-Language: undefined
+Accept-Encoding: gzip, deflate
+Content-Type: application/json
+Origin: https://www.secreteventapp.com
+
+{
+    &quot;query&quot;: { query __schema{types{name,fields{name, args{name,description,type{name, kind, ofType{name, kind}}}}}} },
+    &quot;variables&quot;: {
+    }
+}
+```
+
+Hopefully I haven&#39;t left you feeling alone and bamboozled with so many curly braces, but if that&#39;s the case, here&#39;s a quick walkthrough: When sending this query to the server, it immediately gives back all the graph&#39;s node names along with their respective fields and last but not least, every field&#39;s data type. Isn&#39;t that cute? They just purposefully give us information, free of charge. I mean, it doesn&#39;t give you the queries per see, but knowing the schema and the format expected, you can craft your own. Easy peasy.
+
+Now, going back to the point where it didn&#39;t work: Apparently, [people realized it doesn&#39;t make much of sense having introspection enabled for the most part](https://www.apollographql.com/blog/graphql/security/why-you-should-disable-graphql-introspection-in-production/), so the standard recommendation is actually disabling it. A bummer, but a tiny win for our broken little industry. 
+
+To wrap it up: Introspection might not work - as it didn&#39;t for me, because it was a technique discovered in the early 60&#39;s, so maybe a little outdated? But when testing, we have a moral obligation to give it a try. Seriously. It will take you seconds to figure whether it works or not and if does, it&#39;s just smiles from there. Moreover, every time you blindly assume something won&#39;t work and put it aside when it comes to infosec, a tree randomly burns into a flame. So if you truly care about saving earth, make sure to keep tabs on that. Regardless, chances are, it won&#39;t work.
+
+_Pr0 H4x0r t1p: If you&#39;ve got your recon done right, might be worth checking for dev / testing / staging environments as those have a better chance of having introspection enabled._
+
+What you do then? 
+
+## GraphQL Recon - The contemporary / artsy approach 
+
+So, introspection didn&#39;t work and I was back to stage 1. I thought about fuzzing GraphQL endpoints, but I didn&#39;t want to do it just yet. I wanted something easier. Everyone loves when things are easy, like when you randomly trip on something just find out there&#39;s five bucks sitting right next to it and you can get yourself that bag of greasy doritos without feeling guilty. So I set myself to answer the following questions: 
+
+* How does the client gets ahold of those queries? 
+* Is it being &quot;pre-mounted&quot; in the back-end and immediately sent out to the client when the app starts? 
+* Are the queries only available when interacting with the feature place?
+
+There&#39;s an old saying: &quot;If you don&#39;t see a piece of information coming from a previous request when analysing Burp&#39;s history, it probably means it&#39;s sitting in the client-side all along&quot;. It&#39;s very popular amongst prehistoric civilizations as you might have noticed based on the sentence&#39;s structure and outdated words. 
+
+I had BurpSuite fired up, remember? So I went back to it and this time, armed with ancient knowledge, checked to see if they were somehow retrieving queries as you navigate through pages. When I could not find any, it became obvious: Javascript files. 
+
+So back to my target&#39;s page, I opened up __Chrome Developer Tools__ and clicked in the __Console__ tab. Then, I fiercely typed:
+
+```js
+$$(&#39;script&#39;).map(script =&gt; script).filter(script =&gt; script !== &#39;&#39;)
+```
+
+This pretty little snippet brought me back a bunch of javascript URLs. After that, I threw this list into a file, did some _sed-fu_ to clean up all the unwanted characters and finally, dumped all the files while beautifying them because they were all ugly... as in, minified.
+
+```sh
+cat script-urls.txt | xargs -I@ sh -c &quot;curl -s @ | js-beautify | tee -a target.js&quot;
+```
+
+Isn&#39;t that nice? This appends every single javascript file&#39;s content into one big old file because I don&#39;t necessarily care about investigating functionality separately. I knew the GraphQL queries were there somewhere amongst that spaghetti code and I just needed to get them out of there. Next, my idea was to come up with a regex pattern that could spot queries, so I went back to the ones I previously saw to make sure and I didn&#39;t screw up the format and this is what I came up with:
+
+```sh
+cat target.js | grep -Eo &quot;query\s\w+\(.*?\)&quot;
+```
+
+Let me quickly walk you through this: 
+* Print the contents of __target.js__
+* Using the following regex (`-E`), extract only (`-o`) whatever matches instead of getting the entire line 
+* __Regex breakdown__: search for the word `query`, follow by a space (`\s`), follow by any alphanumeric chars (`\w+`), follow by any character(s) that exists between `(` and `)`.
+
+And as a result, I got something like this:
+
+```
+query eventById($eventId: ID)
+query userEventsById($userId: ID)
+... and a bunch of other things :)
+```
+
+Now we&#39;re talking. Maybe I should also take advantage of this hook to explain the difference between __queries__ and __mutations__. 
+
+### Queries and Mutations
+
+You see, GraphQL sees the world through a different set of lens when drawing a comparison with REST APIs. While REST APIs rely on HTTP methods to define and specify behavior (retrieve = `GET`, insert = `POST`, update = `PUT`, etc.), GraphQL always performs HTTP `POST` requests, communicating its intention through the usage __query__ or __mutation__ keywords, which are reserved. The first stands for retrieving data while the latter, for inserting / modifying data. 
+
+Finally, the sole purpose of having APIs is to provide the ability to access / modify data while keeping it consistent when distributing it through all clients. This application being just another client which can also modify data, meant mutations could also be found throughout the javascript files:
+
+```sh
+cat target.js | grep -Eo &quot;mutation\s\w+\(.*?\)&quot;
+```
+
+Here&#39;s what I&#39;ve got:
+
+```
+mutation createEvent($input: Event!)
+mutation updateEvent($input: Event!)
+... truncated
+```
+
+Ultimately, you can compose the patterns together by writing:
+
+```sh
+cat target.js | grep -Eo &#39;(query|mutation)\s\w+\(.*?\)\s{.*?\&quot;&#39;
+```
+
+which this time, yielded something like this:
+
+```
+query eventById($eventId: ID) { event(id: $eventId) { ...EventById } } &quot;
+```
+
+Attention-oriented fellows might have spotted a subtle difference between the pattern above and the ones before that. The reason is that I have expanded it to capture the entire queries / mutations instead of just signatures. I did this because I wanted to easily navigate through the app&#39;s functionalities while still being able to analyse queries separately when needed. This helps to summarize the features and gives me a direction to where / what to look for. 
+
+And speaking of entire queries: Have you noticed some of the expected arguments are like `$variable: Something` or sometimes a query has something like `{ ...Something }`. That __Something__ is the expected type (e.g. Int, String, complex types, etc.) and the exclamation point (`!`) means its mandatory. For strings, in order to fix the query you can basically throw something between quotes and call it a day. Even if the value you passed is wrong, query will still work given the type is correct. Same for numbers. But when it comes to complex types, it is harder to infer what is expecting (introspection would specially come handy here, but life ain&#39;t easy, am I right?). Which brings us to last worth covering topic I want to discuss here.
+
+### Fragments
+
+Again, what if you didn&#39;t actually have to guess anything? __Fragments__ are a subset of the fields associated with their existing type. Confusing? Maybe. But let&#39;s together, check this snippet which is gonna make things as clear as day: 
+
+```graphql
+fragment EventAdress on Event {
+  location
+  number
+  city
+}
+```
+
+Fragments encourage reusability (is that word?), so when you see something like `{ ...EventAddress }` as part of one query, it&#39;s actually being converted into `{ location number city }`. Why&#39;s that important? Well, you can also search for fragments and extract more information about each node and their respective fields. As always, here&#39;s a slick _oneliner_ to get you up to speed:
+
+```bash
+cat *.js | grep -Eo &#39;(fragment)\s\w+\s\w+\s\w+\s\{.*?\&quot;&#39;
+```
+
+which gets us:
+
+```
+fragment EventAdditionalInfo on Event {\n    id\n  baseUrl\n  }\n&quot;
+... truncated
+```
+
+Pheeeew. That&#39;s a whole lot of things. Some of you might be wondering if it was worth putting this much effort instead of creating the stupid account. You are right, it probably wasn&#39;t, which maybe now got you to think about your own life and how it isn&#39;t that bad after all, which lastly, somehow ties everything together since the whole secret point of this article is to be read as a meme. 
+
+## Wait, what were we talking about again? 
+
+So, all this information, countless hours of restless research (it was actually barely 5 hours with my ADHD hyperfocus on its best)... for what? To get an address for an event I was already considering bailing because of all the hassle I had to go through. But let&#39;s wrap it up so we can all go home with something new to talk about when starting off conversations with strangers in random bars.
+
+Here&#39;s the thing: If you made this far (I thank you advance for that), I&#39;m sure you&#39;ve already put 2 + 2 together and already has some ideas of what you can do with this. But maybe a couple of ideas if I may?
+
+## Couple of ideas
+
+### Expanding queries
+
+As in my case as you might recall, I only cared about that __address__ bit. I found the query I wanted and noticed that when the user was logged, it would add an additional field called `eventAddress`, which didn&#39;t show up when you just hit the event&#39;s page without having an account. Simple as that. As their API would still respond regardless, I just added the additional field to the query, replayed the request and voila. The lack of authentication didn&#39;t prevent the additional field being added to the query. It was omitted when the application was performing the request for us, so I guess security through obscurity as they say. 
+
+And that was it, I was as in...... (not really, because there was an additional field saying `confirmedAttendance` which was set to `false`), but you get the point.
+
+### Proxy all queries to map out the application&#39;s features
+
+Another thing I thought was, we could moved all the queries into a wordlist kinda of structure, and run a script against it, requesting everything while proxying it (maybe you can also do it with Burp Intruder, up to you). 
+
+One caveat is that if you immediately forward the requests, you will see some of the queries (the ones with arguments) will fail and that&#39;s expected, since we got those queries through static analysis and providing right arguments is the application&#39;s job, happening at runtime. You can still play around with the queries as you go. Moreover, now you have access to everything the application needs to communicate with the GraphQL server. 
+
+### Fuzzing
+
+I said earlier I didn&#39;t want to try fuzzing right at the beginning but there&#39;s definitely value in doing this once you know how the queries are structured along with their naming conventions. This can save you a lot of time. Maybe there was some endpoint that isn&#39;t there but your chances of finding out had now increase as you have a bit more understanding of their internals. 
+
+## Wrapping up
+
+You may be wondering how that event turned out in the end. Was it worth it? So funny thing: a friend of mine ended up setting up an account and added me as a +1, but I decided to take a nap before going and turns out it 6 hours don&#39;t fall into the nap category, so I missed it. I guess my conclusion is: The journey matters more than the outcome? I don&#39;t know. Bye.
+
+## Additional resources
+
+* [GraphQL documentation](https://graphql.org/learn/) 
+* [Pentest GraphQL - Hacktricks](https://book.hacktricks.xyz/network-services-pentesting/pentesting-web/graphql)
+* [GraphQL batching attacks turbo intruder](https://www.whiteoaksecurity.com/blog/graphql-batching-attacks-turbo-intruder/)</description>
+    
+    <lastBuildDate>Mon, 12 Sep 2022 14:20:54 +0000</lastBuildDate>
+    <category>Web Hacking</category>
+    <atom:link href="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>A GraphQL tale: What else is in there besides introspection?</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180/5</link>
+        <pubDate>Thu, 12 Jan 2023 02:49:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-31180-5</guid>
+        <source url="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180.rss">A GraphQL tale: What else is in there besides introspection?</source>
+      </item>
+      <item>
+        <title>A GraphQL tale: What else is in there besides introspection?</title>
+        <dc:creator><![CDATA[hatecomputers]]></dc:creator>
+        <description><![CDATA[
+            <p>Appreciate the feedback, folks. Glad it was somewhat useful <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180/4</link>
+        <pubDate>Mon, 12 Sep 2022 14:03:42 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-31180-4</guid>
+        <source url="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180.rss">A GraphQL tale: What else is in there besides introspection?</source>
+      </item>
+      <item>
+        <title>A GraphQL tale: What else is in there besides introspection?</title>
+        <dc:creator><![CDATA[vict0ni]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s actually pretty cool. Def helps my limited knowledge about graphql.</p>
+<p>Also, welcome!</p>
+          <p><a href="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180/3</link>
+        <pubDate>Mon, 12 Sep 2022 13:31:21 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-31180-3</guid>
+        <source url="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180.rss">A GraphQL tale: What else is in there besides introspection?</source>
+      </item>
+      <item>
+        <title>A GraphQL tale: What else is in there besides introspection?</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>Shoot, this has to be the best ever “first post” from a forum member.<br>
+Welcome to 0x00sec and Thank you for the post!.</p>
+          <p><a href="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180/2</link>
+        <pubDate>Mon, 12 Sep 2022 12:48:22 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-31180-2</guid>
+        <source url="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180.rss">A GraphQL tale: What else is in there besides introspection?</source>
+      </item>
+      <item>
+        <title>A GraphQL tale: What else is in there besides introspection?</title>
+        <dc:creator><![CDATA[hatecomputers]]></dc:creator>
+        <description><![CDATA[
+            <p><strong>TL;DR:</strong> Finding and extracting GraphQL endpoints / queries / mutations / data types (partially) without relying on introspection or fuzzing, from publicly available javascript files.</p>
+<p>Story time: A couple days ago I was hanging out on Reddit when I saw someone talking about this one event I wanted to attend. As it had just been confirmed, I quickly went to the website so I could check the venue, but unfortunately couldn’t find the location. I rapidly learnt that I had to first (surprise, surprise), setup an account and agree with all the terms and conditions in order to see the address.</p>
+<p>The thing is, I hate going around the web setting up accounts in websites I rarely go back to and sadly, this was one of those situations. I went for the no-brainer first: Got myself a disposable email and tried setting a dummy account. Kid’s stuff. Problem was, it didn’t work. They had whitelisted the email providers so unless you had gmail, outlook, etc you just couldn’t do it. “What an absolute bummer”, I thought to myself.</p>
+<p>Eventually, fed up with the whole thing, I decided to do what any reasonable person in my position would: Proxy the app through BurpSuite and see if they were somehow leaking the damn address.</p>
+<h2>
+<a name="investigatin-1" class="anchor" href="https://0x00sec.org#investigatin-1"></a>Investigatin’…</h2>
+<p>I put my hoodie on lol and after dodging an inexplicable amount of requests crafted solely with the intention of extracting every piece of information available, with the excuse of <em>bETTer uNdErsTanDiNg uSeR bEhAviOur</em>, I noticed a few requests flying over my proxy history tab, all referring to this <code>/gql</code> endpoint. Immediately, I knew this was the place I should probably be focusing on.</p>
+<p>The <strong>gql</strong> is short for GraphQL. I’ve read a few things about GraphQL here and there when it first came out, but I didn’t pay much attention. Now, as you can imagine, approaching it took some probing and experimentation, which is usually a good recipe for an interesting article. I don’t think anything you will see here is actually groundbreaking but there’s definitely some nuggets you can benefit from, especially when it comes to analysing javascript files.</p>
+<p>Anyways, interested in finding out if I ever manage to get that address without setting up an account while learning some GraphQL shenanigans along the way? If so, grab yourself a piece of that 4 formaggi pizza sitting on your desk for the last three days and keep on reading, because you are in for a ride.</p>
+<h2>
+<a name="a-graphql-prime-not-really-2" class="anchor" href="https://0x00sec.org#a-graphql-prime-not-really-2"></a>A GraphQL prime (not really)</h2>
+<p>Let me first, set the stage to make sure we are all in the same page: If you haven’t been around web development for the last couple of years or don’t necessarily care because well, you actually have healthy and balanced life, let me fill you in: GraphQL stands for <strong>Graph Query Language</strong> and it was initially created by some folks from that social media platform &amp; company <s>which almost had democracy dismantled</s> responsible for creating / maintaining technologies such as React. It serves as an alternative to REST architecture, which became popular around the time single page apps became a thing (maybe).</p>
+<p>The general idea is that you can basically tweak queries and adapt them to your needs, removing the necessity of creating multiple endpoints just to fulfil corner cases that you might eventually require. This is probably a very grotesque simplification and I’m sure there’s a whole lot more to cover, but I won’t.</p>
+<p>So yeah, right, these are just… words. What does that <strong>actually</strong> mean? Alright, let’s say you want to fetch data from an user endpoint, something like <code>GET /user/1000</code>. In a classic REST app, this can be directly translated into “get data from user where its ID equals to 1000”:</p>
+<pre><code class="lang-auto">GET /user/1000
+</code></pre>
+<p>Response:</p>
+<pre><code class="lang-http">HTTP/2 200 OK
+Content-Type: application/json
+X-Other-Headers: idunno
+Content-Length: 100
+
+{
+    "user": {
+        "id": 1000,
+        "name": "Mevin Kitnick",
+        "address": {
+            "street": "Whatever street",
+            "zipCode": 1234,
+            "city": "Los Angeles"
+            "additionalInfo": {
+                ...
+            }
+        }
+    }
+}
+
+</code></pre>
+<p>The first thing to noticed when checking the server response is <s>it’s 2022 so why the f*ck are you using incremental IDs</s> when the endpoint <code>/user/&lt;id&gt;</code> is called, it gives back the whole user whose id is 1000. Easy, right? However, let’s say now we care only about the address piece from the same user, maybe for a different part of the website. What happens then? Well, we would have to either get the entire user again and then, manually extract the address or if the back-end kids were nice enough, we could ask them to have this new endpoint introduced:</p>
+<pre><code class="lang-auto">GET /user/1000/address
+</code></pre>
+<p>Response:</p>
+<pre><code class="lang-http">HTTP/2 200 OK
+Content-Type: application/json
+X-Other-Headers: idunno
+Content-Length: 40
+
+{
+    "address": {
+        "street": "Whatever street",
+        "zipCode": 1234,
+        "city": "Los Angeles"
+        "additionalInfo": {
+            ...
+        }
+    }
+}
+
+</code></pre>
+<p>When tinkering with graphs and queries (?) however, we instead always send a <code>POST</code> request, which looks a little odd at first, but sort of makes sense considering GraphQL expects a little more information in order to provide what we need (see request’s body below):</p>
+<p>in GraphQL’s fashion, this would be the equivalent <code>GET /user/1000</code> we previously saw:</p>
+<pre><code class="lang-http">POST /graphql HTTP/2
+Host: www.someapp.com
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0
+Accept: */*
+Accept-Language: undefined
+Accept-Encoding: gzip, deflate
+Content-Type: application/json
+Origin: https://www.someapp.com
+
+{
+    "query": { query { user(ID: $id) { username, lastUpdate }} },
+    "variables": {
+        id: 1000
+    }
+}
+
+</code></pre>
+<p>Same for address <code>GET /user/1000/address</code>:</p>
+<pre><code class="lang-http">POST /graphql HTTP/2
+Host: www.someapp.com
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0
+Accept: */*
+Accept-Language: undefined
+Accept-Encoding: gzip, deflate
+Content-Type: application/json
+Origin: https://www.someapp.com
+
+{
+    "query": { query { user(ID: $id) { address }} },
+    "variables": {
+        id: 1000
+    }
+}
+
+</code></pre>
+<p>Have you noticed the endpoint hasn’t really changed? This means that once the schema is defined, we can easily request different subsets of data and the GraphQL server will gladly provide us just that, while the endpoint remains the same. Hopefully that makes sense. If it doesn’t, I guess maybe… read the docs?</p>
+<p>GraphQL has massive adoption amongst the cool kids these days - considering you are reading this is 2022, I don’t really know what the future holds -  so you won’t have any trouble finding <s>a shit load of redundant</s> content about it out there.</p>
+<p>Now that this is out of the way, we move on…</p>
+<h2>
+<a name="graphql-recon-the-classic-medieval-style-3" class="anchor" href="https://0x00sec.org#graphql-recon-the-classic-medieval-style-3"></a>GraphQL Recon - The classic medieval style</h2>
+<p>Every once in a while when I’m <s>dumbly typing things on Google and recklessly trying it out in the wild</s> performing a penetration test on a given application, whenever I come across a technology I’m not necessarily knowledgeable about - as in, most cases - my approach is the following: I start by poking with it directly as soon as I can. No joke, that’s it.</p>
+<p>But if you allow me to elaborate: This is my attempt to get a sense of what it does without checking any other resources. In this case, it wasn’t different although I knew beforehand that as GraphQL is an open-source project, it would have been so much easier to just dive in, checking the documentation - which I eventually did. But I like to believe there’s some value in approaching things while clueless, as I’m still fresh and not bound by any usage expectations. Ultimately, this gives me full permission to be deliberately stupid and I might try things which they haven’t foreseen when designing the solution. Believe me when I say sometimes good things can come out of it (that’s what I like telling myself, at least). However in this case, nothing necessarily weird popped out. So ugh, a bit of a waste, but not entirely because up to this point, I was already familiar with the syntax and noticed some GraphQL errors were quite informative, which definitely gave me some leverage.</p>
+<p>As my rEsEaRCh continued, I decided to take advantage of our collective brains and do some snooping. If there’s a lesson to be taken from this is, in a world of 7.9 billion people, THERE’S ALWAYS SOMEONE putting off the gym or bailing on their friends because they had convinced themselves there’s this incredible idea that needs to be shared with the world, right here right now, right? Right. It’s called functional procrastination, apparently. And as a matter of fact, this was no different.</p>
+<p>So when I googled “how do I Hakc GraphQL!11”, a bunch of articles came up, where some slick folks who had already gone through the trouble, explained their methodology. One thing kept popping up however: They wouldn’t shut up about this thing called <em>introspection</em>, so I thought there was maybe something in there.</p>
+<h3>
+<a name="toying-with-introspection-for-fun-and-zero-profit-4" class="anchor" href="https://0x00sec.org#toying-with-introspection-for-fun-and-zero-profit-4"></a>Toying with introspection for fun and zero profit</h3>
+<p><a href="https://graphql.org/learn/introspection/" rel="noopener nofollow ugc">Introspection</a> gives you the ability to extract metadata out of the schema provided, or to put it simply, get information about the schema itself. Think of it as the <a href="https://en.wikipedia.org/wiki/Information_schema" rel="noopener nofollow ugc">information_schema</a>’s younger sibling, who never got the chance to hangout with his older bro because his family, the rich type, don’t really want them to have anything to do with one another. But you don’t have to stretch too far to know they do. Got it?</p>
+<p>Ok, equipped with this stupid analogy, I decided to give it a try:</p>
+<pre><code class="lang-http">POST /graphql HTTP/2
+Host: www.secreteventapp.com
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0
+Accept: */*
+Accept-Language: en-us
+Accept-Encoding: gzip, deflate
+Content-Type: application/json
+Origin: https://www.secreteventapp.com
+
+{
+    "query": { query __schema{types{name,fields{name}}} },
+    "variables": {
+    }
+}
+</code></pre>
+<p>But it didn’t work. I know this because the response said <code>Error: Unable to use introspection</code>, so I guess we can all agree it didn’t. And I’ll be telling you why in just a second but first, let me tell what we could’ve done if things had been differently:</p>
+<pre><code class="lang-http">POST /graphql HTTP/2
+Host: www.secreteventapp.com
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0
+Accept: */*
+Accept-Language: undefined
+Accept-Encoding: gzip, deflate
+Content-Type: application/json
+Origin: https://www.secreteventapp.com
+
+{
+    "query": { query __schema{types{name,fields{name, args{name,description,type{name, kind, ofType{name, kind}}}}}} },
+    "variables": {
+    }
+}
+</code></pre>
+<p>Hopefully I haven’t left you feeling alone and bamboozled with so many curly braces, but if that’s the case, here’s a quick walkthrough: When sending this query to the server, it immediately gives back all the graph’s node names along with their respective fields and last but not least, every field’s data type. Isn’t that cute? They just purposefully give us information, free of charge. I mean, it doesn’t give you the queries per see, but knowing the schema and the format expected, you can craft your own. Easy peasy.</p>
+<p>Now, going back to the point where it didn’t work: Apparently, <a href="https://www.apollographql.com/blog/graphql/security/why-you-should-disable-graphql-introspection-in-production/" rel="noopener nofollow ugc">people realized it doesn’t make much of sense having introspection enabled for the most part</a>, so the standard recommendation is actually disabling it. A bummer, but a tiny win for our broken little industry.</p>
+<p>To wrap it up: Introspection might not work - as it didn’t for me, because it was a technique discovered in the early 60’s, so maybe a little outdated? But when testing, we have a moral obligation to give it a try. Seriously. It will take you seconds to figure whether it works or not and if does, it’s just smiles from there. Moreover, every time you blindly assume something won’t work and put it aside when it comes to infosec, a tree randomly burns into a flame. So if you truly care about saving earth, make sure to keep tabs on that. Regardless, chances are, it won’t work.</p>
+<p><em>Pr0 H4x0r t1p: If you’ve got your recon done right, might be worth checking for dev / testing / staging environments as those have a better chance of having introspection enabled.</em></p>
+<p>What you do then?</p>
+<h2>
+<a name="graphql-recon-the-contemporary-artsy-approach-5" class="anchor" href="https://0x00sec.org#graphql-recon-the-contemporary-artsy-approach-5"></a>GraphQL Recon - The contemporary / artsy approach</h2>
+<p>So, introspection didn’t work and I was back to stage 1. I thought about fuzzing GraphQL endpoints, but I didn’t want to do it just yet. I wanted something easier. Everyone loves when things are easy, like when you randomly trip on something just find out there’s five bucks sitting right next to it and you can get yourself that bag of greasy doritos without feeling guilty. So I set myself to answer the following questions:</p>
+<ul>
+<li>How does the client gets ahold of those queries?</li>
+<li>Is it being “pre-mounted” in the back-end and immediately sent out to the client when the app starts?</li>
+<li>Are the queries only available when interacting with the feature place?</li>
+</ul>
+<p>There’s an old saying: “If you don’t see a piece of information coming from a previous request when analysing Burp’s history, it probably means it’s sitting in the client-side all along”. It’s very popular amongst prehistoric civilizations as you might have noticed based on the sentence’s structure and outdated words.</p>
+<p>I had BurpSuite fired up, remember? So I went back to it and this time, armed with ancient knowledge, checked to see if they were somehow retrieving queries as you navigate through pages. When I could not find any, it became obvious: Javascript files.</p>
+<p>So back to my target’s page, I opened up <strong>Chrome Developer Tools</strong> and clicked in the <strong>Console</strong> tab. Then, I fiercely typed:</p>
+<pre data-code-wrap="js"><code class="lang-nohighlight">$$('script').map(script =&gt; script).filter(script =&gt; script !== '')
+</code></pre>
+<p>This pretty little snippet brought me back a bunch of javascript URLs. After that, I threw this list into a file, did some <em>sed-fu</em> to clean up all the unwanted characters and finally, dumped all the files while beautifying them because they were all ugly… as in, minified.</p>
+<pre data-code-wrap="sh"><code class="lang-nohighlight">cat script-urls.txt | xargs -I@ sh -c "curl -s @ | js-beautify | tee -a target.js"
+</code></pre>
+<p>Isn’t that nice? This appends every single javascript file’s content into one big old file because I don’t necessarily care about investigating functionality separately. I knew the GraphQL queries were there somewhere amongst that spaghetti code and I just needed to get them out of there. Next, my idea was to come up with a regex pattern that could spot queries, so I went back to the ones I previously saw to make sure and I didn’t screw up the format and this is what I came up with:</p>
+<pre data-code-wrap="sh"><code class="lang-nohighlight">cat target.js | grep -Eo "query\s\w+\(.*?\)"
+</code></pre>
+<p>Let me quickly walk you through this:</p>
+<ul>
+<li>Print the contents of <strong>target.js</strong>
+</li>
+<li>Using the following regex (<code>-E</code>), extract only (<code>-o</code>) whatever matches instead of getting the entire line</li>
+<li>
+<strong>Regex breakdown</strong>: search for the word <code>query</code>, follow by a space (<code>\s</code>), follow by any alphanumeric chars (<code>\w+</code>), follow by any character(s) that exists between <code>(</code> and <code>)</code>.</li>
+</ul>
+<p>And as a result, I got something like this:</p>
+<pre><code class="lang-auto">query eventById($eventId: ID)
+query userEventsById($userId: ID)
+... and a bunch of other things :)
+</code></pre>
+<p>Now we’re talking. Maybe I should also take advantage of this hook to explain the difference between <strong>queries</strong> and <strong>mutations</strong>.</p>
+<h3>
+<a name="queries-and-mutations-6" class="anchor" href="https://0x00sec.org#queries-and-mutations-6"></a>Queries and Mutations</h3>
+<p>You see, GraphQL sees the world through a different set of lens when drawing a comparison with REST APIs. While REST APIs rely on HTTP methods to define and specify behavior (retrieve = <code>GET</code>, insert = <code>POST</code>, update = <code>PUT</code>, etc.), GraphQL always performs HTTP <code>POST</code> requests, communicating its intention through the usage <strong>query</strong> or <strong>mutation</strong> keywords, which are reserved. The first stands for retrieving data while the latter, for inserting / modifying data.</p>
+<p>Finally, the sole purpose of having APIs is to provide the ability to access / modify data while keeping it consistent when distributing it through all clients. This application being just another client which can also modify data, meant mutations could also be found throughout the javascript files:</p>
+<pre data-code-wrap="sh"><code class="lang-nohighlight">cat target.js | grep -Eo "mutation\s\w+\(.*?\)"
+</code></pre>
+<p>Here’s what I’ve got:</p>
+<pre><code class="lang-auto">mutation createEvent($input: Event!)
+mutation updateEvent($input: Event!)
+... truncated
+</code></pre>
+<p>Ultimately, you can compose the patterns together by writing:</p>
+<pre data-code-wrap="sh"><code class="lang-nohighlight">cat target.js | grep -Eo '(query|mutation)\s\w+\(.*?\)\s{.*?\"'
+</code></pre>
+<p>which this time, yielded something like this:</p>
+<pre><code class="lang-auto">query eventById($eventId: ID) { event(id: $eventId) { ...EventById } } "
+</code></pre>
+<p>Attention-oriented fellows might have spotted a subtle difference between the pattern above and the ones before that. The reason is that I have expanded it to capture the entire queries / mutations instead of just signatures. I did this because I wanted to easily navigate through the app’s functionalities while still being able to analyse queries separately when needed. This helps to summarize the features and gives me a direction to where / what to look for.</p>
+<p>And speaking of entire queries: Have you noticed some of the expected arguments are like <code>$variable: Something</code> or sometimes a query has something like <code>{ ...Something }</code>. That <strong>Something</strong> is the expected type (e.g. Int, String, complex types, etc.) and the exclamation point (<code>!</code>) means its mandatory. For strings, in order to fix the query you can basically throw something between quotes and call it a day. Even if the value you passed is wrong, query will still work given the type is correct. Same for numbers. But when it comes to complex types, it is harder to infer what is expecting (introspection would specially come handy here, but life ain’t easy, am I right?). Which brings us to last worth covering topic I want to discuss here.</p>
+<h3>
+<a name="fragments-7" class="anchor" href="https://0x00sec.org#fragments-7"></a>Fragments</h3>
+<p>Again, what if you didn’t actually have to guess anything? <strong>Fragments</strong> are a subset of the fields associated with their existing type. Confusing? Maybe. But let’s together, check this snippet which is gonna make things as clear as day:</p>
+<pre data-code-wrap="graphql"><code class="lang-nohighlight">fragment EventAdress on Event {
+  location
+  number
+  city
+}
+</code></pre>
+<p>Fragments encourage reusability (is that word?), so when you see something like <code>{ ...EventAddress }</code> as part of one query, it’s actually being converted into <code>{ location number city }</code>. Why’s that important? Well, you can also search for fragments and extract more information about each node and their respective fields. As always, here’s a slick <em>oneliner</em> to get you up to speed:</p>
+<pre><code class="lang-bash">cat *.js | grep -Eo '(fragment)\s\w+\s\w+\s\w+\s\{.*?\"'
+</code></pre>
+<p>which gets us:</p>
+<pre><code class="lang-auto">fragment EventAdditionalInfo on Event {\n    id\n  baseUrl\n  }\n"
+... truncated
+</code></pre>
+<p>Pheeeew. That’s a whole lot of things. Some of you might be wondering if it was worth putting this much effort instead of creating the stupid account. You are right, it probably wasn’t, which maybe now got you to think about your own life and how it isn’t that bad after all, which lastly, somehow ties everything together since the whole secret point of this article is to be read as a meme.</p>
+<h2>
+<a name="wait-what-were-we-talking-about-again-8" class="anchor" href="https://0x00sec.org#wait-what-were-we-talking-about-again-8"></a>Wait, what were we talking about again?</h2>
+<p>So, all this information, countless hours of restless research (it was actually barely 5 hours with my ADHD hyperfocus on its best)… for what? To get an address for an event I was already considering bailing because of all the hassle I had to go through. But let’s wrap it up so we can all go home with something new to talk about when starting off conversations with strangers in random bars.</p>
+<p>Here’s the thing: If you made this far (I thank you advance for that), I’m sure you’ve already put 2 + 2 together and already has some ideas of what you can do with this. But maybe a couple of ideas if I may?</p>
+<h2>
+<a name="couple-of-ideas-9" class="anchor" href="https://0x00sec.org#couple-of-ideas-9"></a>Couple of ideas</h2>
+<h3>
+<a name="expanding-queries-10" class="anchor" href="https://0x00sec.org#expanding-queries-10"></a>Expanding queries</h3>
+<p>As in my case as you might recall, I only cared about that <strong>address</strong> bit. I found the query I wanted and noticed that when the user was logged, it would add an additional field called <code>eventAddress</code>, which didn’t show up when you just hit the event’s page without having an account. Simple as that. As their API would still respond regardless, I just added the additional field to the query, replayed the request and voila. The lack of authentication didn’t prevent the additional field being added to the query. It was omitted when the application was performing the request for us, so I guess security through obscurity as they say.</p>
+<p>And that was it, I was as in… (not really, because there was an additional field saying <code>confirmedAttendance</code> which was set to <code>false</code>), but you get the point.</p>
+<h3>
+<a name="proxy-all-queries-to-map-out-the-applications-features-11" class="anchor" href="https://0x00sec.org#proxy-all-queries-to-map-out-the-applications-features-11"></a>Proxy all queries to map out the application’s features</h3>
+<p>Another thing I thought was, we could moved all the queries into a wordlist kinda of structure, and run a script against it, requesting everything while proxying it (maybe you can also do it with Burp Intruder, up to you).</p>
+<p>One caveat is that if you immediately forward the requests, you will see some of the queries (the ones with arguments) will fail and that’s expected, since we got those queries through static analysis and providing right arguments is the application’s job, happening at runtime. You can still play around with the queries as you go. Moreover, now you have access to everything the application needs to communicate with the GraphQL server.</p>
+<h3>
+<a name="fuzzing-12" class="anchor" href="https://0x00sec.org#fuzzing-12"></a>Fuzzing</h3>
+<p>I said earlier I didn’t want to try fuzzing right at the beginning but there’s definitely value in doing this once you know how the queries are structured along with their naming conventions. This can save you a lot of time. Maybe there was some endpoint that isn’t there but your chances of finding out had now increase as you have a bit more understanding of their internals.</p>
+<h2>
+<a name="wrapping-up-13" class="anchor" href="https://0x00sec.org#wrapping-up-13"></a>Wrapping up</h2>
+<p>You may be wondering how that event turned out in the end. Was it worth it? So funny thing: a friend of mine ended up setting up an account and added me as a +1, but I decided to take a nap before going and turns out it 6 hours don’t fall into the nap category, so I missed it. I guess my conclusion is: The journey matters more than the outcome? I don’t know. Bye.</p>
+<h2>
+<a name="additional-resources-14" class="anchor" href="https://0x00sec.org#additional-resources-14"></a>Additional resources</h2>
+<ul>
+<li><a href="https://graphql.org/learn/" rel="noopener nofollow ugc">GraphQL documentation</a></li>
+<li><a href="https://book.hacktricks.xyz/network-services-pentesting/pentesting-web/graphql" rel="noopener nofollow ugc">Pentest GraphQL - Hacktricks</a></li>
+<li><a href="https://www.whiteoaksecurity.com/blog/graphql-batching-attacks-turbo-intruder/" rel="noopener nofollow ugc">GraphQL batching attacks turbo intruder</a></li>
+</ul>
+          <p><a href="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180/1</link>
+        <pubDate>Mon, 12 Sep 2022 10:49:38 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-31180-1</guid>
+        <source url="https://0x00sec.org/t/a-graphql-tale-what-else-is-in-there-besides-introspection/31180.rss">A GraphQL tale: What else is in there besides introspection?</source>
+      </item>
+  </channel>
+</rss>

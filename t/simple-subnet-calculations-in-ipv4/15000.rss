@@ -1,0 +1,416 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Simple Subnet Calculations in IPv4</title>
+    <link>https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000</link>
+    <description>Hey All,
+
+I recently wrote up some information on subnetting, and figured I would share it. For a more in depth overview I would highly recommend reading [A Dive Into Subnetting](https://0x00sec.org/t/a-dive-into-subnetting/468), which @_py wrote. Hopefully this quick and dirty reference helps in it&#39;s own way!
+
+Subnetting is the product of logically dividing up a network up into smaller, modular networks. This has many benefits, such as speed increases, easier administration, and increased options for maintaining security. While this post will not go into detail on the benefits or implementation of subnetworks, it is important to be able to calculate subnetwork ranges, network addresses, and broadcast addresses. In other words, &quot;What is the network for for IP XXX.XXX.XXX.XXX/XX? What is the IP range of this network?&quot;, and so on.
+&lt;hr&gt; 
+&lt;h2&gt;Finding the Subnet Mask&lt;/h2&gt;  
+When running commands such as ipconfig or ifconfig you may be given your IP and subnet mask; but let&#39;s assume that we are working with a classless IP displayed as 192.168.0.23/21 and that you have to calculate the subnet mask yourself. The portion preceding the &quot;/&quot; would be the IP, and the portion afterwards indicates the amount of subnet mask bits. Like IPs, subnet masks are comprised of four binary octets. The bits are typically assigned left to right, so we would have a subnet mask of 11111111.11111111.11111000.00000000,  or 255.255.248.000 in decimal format. 
+&lt;hr&gt;  
+&lt;h2&gt;Simple Calculations with the Binary Method&lt;/h2&gt;  
+Now that we have our subnet mask, lets calculate the network address, which is the very first IP in a subnet range. This is done with a bitwise AND operation, so the IP needs to be represented as binary as well, 11000000.10101000.00000000.00010111.  
+Here we perform the AND operation and find our network address:  
+
+```  
+11000000.10101000.00000000.00010111 = 192.168.000.023 (Address)  
+11111111.11111111.11111000.00000000 = 255.255.248.000 (Mask)  
+-----------------------------------AND---------------  
+11000000.10101000.00000000.00000000 = 192.168.000.000 (Network Address)
+```  
+This means that, for IP 192.168.0.23/21, our host 0.23 belongs to network 192.168.0.0. Now, lets look at the range of this network. We calculate this by once again looking at the bits assigned in our network mask octets, and keeping in mind the binary values of each. More specifically, we look at whichever our rightmost octet is which contains 1 values, and then the value of our rightmost bit.  
+
+&lt;table&gt;
+  &lt;tr&gt;
+    &lt;th&gt;Value:&lt;/th&gt;
+    &lt;td&gt;128&lt;/td&gt;
+    &lt;td&gt;64&lt;/td&gt;
+    &lt;td&gt;32&lt;/td&gt;
+    &lt;td&gt;16&lt;/td&gt;
+    &lt;td&gt;8&lt;/td&gt;
+    &lt;td&gt;4&lt;/td&gt;
+    &lt;td&gt;2&lt;/td&gt;
+    &lt;td&gt;1&lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+    &lt;th&gt;Bits:&lt;/th&gt;
+    &lt;td&gt;1&lt;/td&gt;
+    &lt;td&gt;1&lt;/td&gt;
+    &lt;td&gt;1&lt;/td&gt;
+    &lt;td&gt;1&lt;/td&gt;
+    &lt;td&gt;1&lt;/td&gt;
+    &lt;td&gt;0&lt;/td&gt;
+    &lt;td&gt;0&lt;/td&gt;
+    &lt;td&gt;0&lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;  
+
+The rightmost bit corresponds to 8, which indicates our range. In other words, the subnet range that 192.168.0.23/21 belongs to is 192.168.0.0 through 192.168.7.255, and 192.168.8.0 is the adjacent subnet. Now we also know our broadcast address, which is always the last IP address in the range (192.168.7.255). Since the first and last IP addresses are reserved for the network and broadcast addresses, the host address range (all valid addressable IPs) would be 192.168.0.1 through 192.168.7.254, giving a total of 2,046 valid host addresses (calculated as (8 x 256) - 2). We can calculate the amount of valid host addresses as rightmost bit value, 8, multiplied by 256 per octet to the right, subtracting 2 lastly.  
+&lt;hr&gt;  
+&lt;h2&gt;Even Simpler Calculations with the Magic Number Method&lt;/h2&gt;  
+Now that we have examined the binary method, let&#39;s take a look at a simpler way of calculating the same subnet properties. Assuming we have our subnet mask, perhaps using a lookup chart such as the cheatsheet at the bottom, we instead want to find our leftmost number that isn&#39;t 255. Let&#39;s assume we are working with an IP of 66.52.3.30 and a subnet mask of 255.255.255.240. So, for 255.255.255.240, we have the number 240. To get our &quot;magic number&quot;, we subtract 240 from 256, resulting in 16. Our magic number is calculated from the 4th binary octet, so we know our subnets calculate in intervals of 16 from the 4th octet. In other words, we know we would have network addresses of 66.52.3.0, followed by 66.52.3.16, followed by 66.52.3.32, and so on. Using this logic, we know that address 66.52.3.30 is within the network of 66.52.3.16, because the host range of the subnet extends from 66.52.3.17 through 66.52.3.30. We now also know that our broadcast address is 66.52.3.31, and that the next subnet range will begin at 66.52.3.32, giving a valid host range of 14. We can calculate the amount of valid host addresses as our magic number, 16, multiplied by 256 per octet to the right, subtracting 2 lastly.  
+&lt;hr&gt;  
+&lt;h2&gt;Cheatsheet Chart&lt;/h2&gt;  
+
+| Mask Bit Suffix | Subnet Mask | Host Addresses per Subnet |  
+|-----------------|-----------------|---------------:|  
+| /1 | 128.0.0.0 | 2,147,483,646 |  
+| /2 | 192.0.0.0 | 1,073,741,822 |  
+| /3 | 224.0.0.0 | 536,870,910 |  
+| /4 | 240.0.0.0 | 268,435,454 |  
+| /5 | 248.0.0.0 | 134,217,726 |  
+| /6 | 252.0.0.0 | 67,108,862 |  
+| /7 | 254.0.0.0 | 33,554,430 |  
+| /8 | 255.0.0.0 | 16,777,214 |  
+| /9 | 255.128.0.0 | 8,388,606 |  
+| /10 | 255.192.0.0 | 4,194,302 |  
+| /11 | 255.224.0.0 | 2,097,150 |  
+| /12 | 255.240.0.0 | 1,048,574 |  
+| /13 | 255.248.0.0 | 524,286 |  
+| /14 | 255.252.0.0 | 262,142 |  
+| /15 | 255.254.0.0 | 131,070 |  
+| /16 | 255.255.0.0 | 65,534 |  
+| /17 | 255.255.128.0 | 32,766 |  
+| /18 | 255.255.192.0 | 16,382 |  
+| /19 | 255.255.224.0 | 8,190 |  
+| /20 | 255.255.240.0 | 4,094 |  
+| /21 | 255.255.248.0 | 2,046 |  
+| /22 | 255.255.252.0 | 1,022 |  
+| /23 | 255.255.254.0 | 510 |  
+| /24 | 255.255.255.0 | 254 |  
+| /25 | 255.255.255.128 | 126 |  
+| /26 | 255.255.255.192 | 62 |  
+| /27 | 255.255.255.224 | 30 |  
+| /28 | 255.255.255.240 | 14 |  
+| /29 | 255.255.255.248 | 6 |  
+| /30 | 255.255.255.252 | 2 |  
+| /31 | 255.255.255.254 | x |  
+| /32 | 255.255.255.255 | x |
+
+Note that /31 and /32 are not frequently used, and would only be considered &quot;valid&quot; in hyper-specific circumstances which fall outside the scope of this post.</description>
+    
+    <lastBuildDate>Sat, 27 Jul 2019 04:08:43 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Simple Subnet Calculations in IPv4</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/6</link>
+        <pubDate>Thu, 15 Aug 2019 02:40:02 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15000-6</guid>
+        <source url="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000.rss">Simple Subnet Calculations in IPv4</source>
+      </item>
+      <item>
+        <title>Simple Subnet Calculations in IPv4</title>
+        <dc:creator><![CDATA[Archangel9]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/onom4stic0n">@onom4stic0n</a> Like the subnet has been tampered with for malicious purposes. I am going to test it out either way, just want to know if there was a way of picking it up/tracing it.<br>
+-Archangel</p>
+          <p><a href="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/5</link>
+        <pubDate>Sat, 27 Jul 2019 04:08:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15000-5</guid>
+        <source url="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000.rss">Simple Subnet Calculations in IPv4</source>
+      </item>
+      <item>
+        <title>Simple Subnet Calculations in IPv4</title>
+        <dc:creator><![CDATA[onom4stic0n]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group">
+<blockquote>
+<p>1. What happens if the subnet does not match the associated router IP address?</p>
+</blockquote>
+</aside>
+<p>If a computer and router have a subnet mismatch a lot of weird stuff can happen. Communication between two comptuers on the same network can stop completely depending on their individual IP addresses. Say computer A has the correct settings of 192.168.1.161/24, and computer B has the incorrect 192.168.1.13/2<strong>5</strong>, A will be able to send information to B but B won’t be able to send anything back, because B is going to (incorrectly) send those packets to the router instead of directly to the computer. The router is going to see that the source and destination are in the same subnet and not do any forwarding on them.</p>
+<aside class="quote no-group">
+<blockquote>
+<p>2. Which calculation method do you think works better and why?</p>
+</blockquote>
+</aside>
+<p>I, and most people I know, use the “magic number” method. It’s much easier, and working in powers of 2 becomes second nature after a bit.</p>
+<aside class="quote no-group">
+<blockquote>
+<p>3. How do you know if the subnet has been spoofed?</p>
+</blockquote>
+</aside>
+<p>I’m not sure what you mean by this. Can you give an example?</p>
+          <p><a href="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/4</link>
+        <pubDate>Fri, 26 Jul 2019 14:51:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15000-4</guid>
+        <source url="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000.rss">Simple Subnet Calculations in IPv4</source>
+      </item>
+      <item>
+        <title>Simple Subnet Calculations in IPv4</title>
+        <dc:creator><![CDATA[Archangel9]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the dive. Exactly the type of information I was looking for. Couple of questions because I am new to this topic (these may go a bit deeper):  <img src="https://0x00sec.org/images/emoji/twitter/slightly_smiling_face.png?v=9" title=":slightly_smiling_face:" class="emoji" alt=":slightly_smiling_face:"></p>
+<ol>
+<li>What happens if the subnet does not match the associated router IP address?</li>
+<li>Which calculation method do you think works better and why?</li>
+<li>How do you know if the subnet has been spoofed?</li>
+</ol>
+<p>-Archangel</p>
+          <p><a href="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/3</link>
+        <pubDate>Mon, 22 Jul 2019 23:55:40 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15000-3</guid>
+        <source url="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000.rss">Simple Subnet Calculations in IPv4</source>
+      </item>
+      <item>
+        <title>Simple Subnet Calculations in IPv4</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Ah yes, the good ol days when <a class="mention" href="https://0x00sec.org/u/_py">@_py</a> did networking and used Python.</p>
+          <p><a href="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/2</link>
+        <pubDate>Tue, 16 Jul 2019 06:02:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15000-2</guid>
+        <source url="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000.rss">Simple Subnet Calculations in IPv4</source>
+      </item>
+      <item>
+        <title>Simple Subnet Calculations in IPv4</title>
+        <dc:creator><![CDATA[0xf00f77]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey All,</p>
+<p>I recently wrote up some information on subnetting, and figured I would share it. For a more in depth overview I would highly recommend reading <a href="https://0x00sec.org/t/a-dive-into-subnetting/468">A Dive Into Subnetting</a>, which <a class="mention" href="https://0x00sec.org/u/_py">@_py</a> wrote. Hopefully this quick and dirty reference helps in it’s own way!</p>
+<p>Subnetting is the product of logically dividing up a network up into smaller, modular networks. This has many benefits, such as speed increases, easier administration, and increased options for maintaining security. While this post will not go into detail on the benefits or implementation of subnetworks, it is important to be able to calculate subnetwork ranges, network addresses, and broadcast addresses. In other words, “What is the network for for IP XXX.XXX.XXX.XXX/XX? What is the IP range of this network?”, and so on.</p>
+<hr> 
+<h2>Finding the Subnet Mask</h2>  
+When running commands such as ipconfig or ifconfig you may be given your IP and subnet mask; but let's assume that we are working with a classless IP displayed as 192.168.0.23/21 and that you have to calculate the subnet mask yourself. The portion preceding the "/" would be the IP, and the portion afterwards indicates the amount of subnet mask bits. Like IPs, subnet masks are comprised of four binary octets. The bits are typically assigned left to right, so we would have a subnet mask of 11111111.11111111.11111000.00000000,  or 255.255.248.000 in decimal format. 
+<hr>  
+<h2>Simple Calculations with the Binary Method</h2>  
+Now that we have our subnet mask, lets calculate the network address, which is the very first IP in a subnet range. This is done with a bitwise AND operation, so the IP needs to be represented as binary as well, 11000000.10101000.00000000.00010111.  
+Here we perform the AND operation and find our network address:  
+<pre><code class="lang-auto">11000000.10101000.00000000.00010111 = 192.168.000.023 (Address)  
+11111111.11111111.11111000.00000000 = 255.255.248.000 (Mask)  
+-----------------------------------AND---------------  
+11000000.10101000.00000000.00000000 = 192.168.000.000 (Network Address)
+</code></pre>
+<p>This means that, for IP 192.168.0.23/21, our host 0.23 belongs to network 192.168.0.0. Now, lets look at the range of this network. We calculate this by once again looking at the bits assigned in our network mask octets, and keeping in mind the binary values of each. More specifically, we look at whichever our rightmost octet is which contains 1 values, and then the value of our rightmost bit.</p>
+<table>
+  <tbody>
+<tr>
+    <th>Value:</th>
+    <td>128</td>
+    <td>64</td>
+    <td>32</td>
+    <td>16</td>
+    <td>8</td>
+    <td>4</td>
+    <td>2</td>
+    <td>1</td>
+  </tr>
+  <tr>
+    <th>Bits:</th>
+    <td>1</td>
+    <td>1</td>
+    <td>1</td>
+    <td>1</td>
+    <td>1</td>
+    <td>0</td>
+    <td>0</td>
+    <td>0</td>
+  </tr>
+</tbody>
+</table>  
+<p>The rightmost bit corresponds to 8, which indicates our range. In other words, the subnet range that 192.168.0.23/21 belongs to is 192.168.0.0 through 192.168.7.255, and 192.168.8.0 is the adjacent subnet. Now we also know our broadcast address, which is always the last IP address in the range (192.168.7.255). Since the first and last IP addresses are reserved for the network and broadcast addresses, the host address range (all valid addressable IPs) would be 192.168.0.1 through 192.168.7.254, giving a total of 2,046 valid host addresses (calculated as (8 x 256) - 2). We can calculate the amount of valid host addresses as rightmost bit value, 8, multiplied by 256 per octet to the right, subtracting 2 lastly.</p>
+<hr>  
+<h2>Even Simpler Calculations with the Magic Number Method</h2>  
+Now that we have examined the binary method, let's take a look at a simpler way of calculating the same subnet properties. Assuming we have our subnet mask, perhaps using a lookup chart such as the cheatsheet at the bottom, we instead want to find our leftmost number that isn't 255. Let's assume we are working with an IP of 66.52.3.30 and a subnet mask of 255.255.255.240. So, for 255.255.255.240, we have the number 240. To get our "magic number", we subtract 240 from 256, resulting in 16. Our magic number is calculated from the 4th binary octet, so we know our subnets calculate in intervals of 16 from the 4th octet. In other words, we know we would have network addresses of 66.52.3.0, followed by 66.52.3.16, followed by 66.52.3.32, and so on. Using this logic, we know that address 66.52.3.30 is within the network of 66.52.3.16, because the host range of the subnet extends from 66.52.3.17 through 66.52.3.30. We now also know that our broadcast address is 66.52.3.31, and that the next subnet range will begin at 66.52.3.32, giving a valid host range of 14. We can calculate the amount of valid host addresses as our magic number, 16, multiplied by 256 per octet to the right, subtracting 2 lastly.  
+<hr>  
+<h2>Cheatsheet Chart</h2>  
+<div class="md-table">
+<table>
+<thead>
+<tr>
+<th>Mask Bit Suffix</th>
+<th>Subnet Mask</th>
+<th style="text-align:right">Host Addresses per Subnet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>/1</td>
+<td>128.0.0.0</td>
+<td style="text-align:right">2,147,483,646</td>
+</tr>
+<tr>
+<td>/2</td>
+<td>192.0.0.0</td>
+<td style="text-align:right">1,073,741,822</td>
+</tr>
+<tr>
+<td>/3</td>
+<td>224.0.0.0</td>
+<td style="text-align:right">536,870,910</td>
+</tr>
+<tr>
+<td>/4</td>
+<td>240.0.0.0</td>
+<td style="text-align:right">268,435,454</td>
+</tr>
+<tr>
+<td>/5</td>
+<td>248.0.0.0</td>
+<td style="text-align:right">134,217,726</td>
+</tr>
+<tr>
+<td>/6</td>
+<td>252.0.0.0</td>
+<td style="text-align:right">67,108,862</td>
+</tr>
+<tr>
+<td>/7</td>
+<td>254.0.0.0</td>
+<td style="text-align:right">33,554,430</td>
+</tr>
+<tr>
+<td>/8</td>
+<td>255.0.0.0</td>
+<td style="text-align:right">16,777,214</td>
+</tr>
+<tr>
+<td>/9</td>
+<td>255.128.0.0</td>
+<td style="text-align:right">8,388,606</td>
+</tr>
+<tr>
+<td>/10</td>
+<td>255.192.0.0</td>
+<td style="text-align:right">4,194,302</td>
+</tr>
+<tr>
+<td>/11</td>
+<td>255.224.0.0</td>
+<td style="text-align:right">2,097,150</td>
+</tr>
+<tr>
+<td>/12</td>
+<td>255.240.0.0</td>
+<td style="text-align:right">1,048,574</td>
+</tr>
+<tr>
+<td>/13</td>
+<td>255.248.0.0</td>
+<td style="text-align:right">524,286</td>
+</tr>
+<tr>
+<td>/14</td>
+<td>255.252.0.0</td>
+<td style="text-align:right">262,142</td>
+</tr>
+<tr>
+<td>/15</td>
+<td>255.254.0.0</td>
+<td style="text-align:right">131,070</td>
+</tr>
+<tr>
+<td>/16</td>
+<td>255.255.0.0</td>
+<td style="text-align:right">65,534</td>
+</tr>
+<tr>
+<td>/17</td>
+<td>255.255.128.0</td>
+<td style="text-align:right">32,766</td>
+</tr>
+<tr>
+<td>/18</td>
+<td>255.255.192.0</td>
+<td style="text-align:right">16,382</td>
+</tr>
+<tr>
+<td>/19</td>
+<td>255.255.224.0</td>
+<td style="text-align:right">8,190</td>
+</tr>
+<tr>
+<td>/20</td>
+<td>255.255.240.0</td>
+<td style="text-align:right">4,094</td>
+</tr>
+<tr>
+<td>/21</td>
+<td>255.255.248.0</td>
+<td style="text-align:right">2,046</td>
+</tr>
+<tr>
+<td>/22</td>
+<td>255.255.252.0</td>
+<td style="text-align:right">1,022</td>
+</tr>
+<tr>
+<td>/23</td>
+<td>255.255.254.0</td>
+<td style="text-align:right">510</td>
+</tr>
+<tr>
+<td>/24</td>
+<td>255.255.255.0</td>
+<td style="text-align:right">254</td>
+</tr>
+<tr>
+<td>/25</td>
+<td>255.255.255.128</td>
+<td style="text-align:right">126</td>
+</tr>
+<tr>
+<td>/26</td>
+<td>255.255.255.192</td>
+<td style="text-align:right">62</td>
+</tr>
+<tr>
+<td>/27</td>
+<td>255.255.255.224</td>
+<td style="text-align:right">30</td>
+</tr>
+<tr>
+<td>/28</td>
+<td>255.255.255.240</td>
+<td style="text-align:right">14</td>
+</tr>
+<tr>
+<td>/29</td>
+<td>255.255.255.248</td>
+<td style="text-align:right">6</td>
+</tr>
+<tr>
+<td>/30</td>
+<td>255.255.255.252</td>
+<td style="text-align:right">2</td>
+</tr>
+<tr>
+<td>/31</td>
+<td>255.255.255.254</td>
+<td style="text-align:right">x</td>
+</tr>
+<tr>
+<td>/32</td>
+<td>255.255.255.255</td>
+<td style="text-align:right">x</td>
+</tr>
+</tbody>
+</table>
+</div><p>Note that /31 and /32 are not frequently used, and would only be considered “valid” in hyper-specific circumstances which fall outside the scope of this post.</p>
+          <p><a href="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000/1</link>
+        <pubDate>Tue, 16 Jul 2019 02:28:40 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15000-1</guid>
+        <source url="https://0x00sec.org/t/simple-subnet-calculations-in-ipv4/15000.rss">Simple Subnet Calculations in IPv4</source>
+      </item>
+  </channel>
+</rss>

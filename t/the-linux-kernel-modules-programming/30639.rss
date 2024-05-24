@@ -1,0 +1,926 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>The linux kernel modules programming</title>
+    <link>https://0x00sec.org/t/the-linux-kernel-modules-programming/30639</link>
+    <description>In this tutorial, I&#39;m going to teach you how to write linux kernel modules, it is necessary to know C programming language.
+
+You will probably ask  &amp;quot;So, what the hell is that linux kernel module?&amp;quot;
+* it is a piece of code that can be dynamically loaded and unloaded from the kernel, &amp;quot;maybe you don&#39;t know what kernel is&amp;quot;
+***It is the main part of each operating system. It is &amp;quot;program&amp;quot; that is loaded
+and executed by bootloader at the boot time**  The kernel manages all system resources. It&#39;s responsible for communication between software and hardware, manages all user&#39;s processes and many, many more.
+
+- Kernel and user mode processes run in different privilege level. New processors support it i.e. Intel processors have the following privilege
+```
+levels:
+ring0(the most powerful privilege level)
+ring1
+ring2
+ring3(the least powerful privilege level)
+```
+Linux uses only two of them  &lt;code&gt;ring0&lt;/code&gt; for kernel and &lt;code&gt;ring3&lt;/code&gt; for user mode proceses. You can ask - &amp;quot;What are these privilege levels useful for?&amp;quot;.
+If user mode processes run in &lt;code&gt;ring0&lt;/code&gt;, they would be able to execute some &amp;quot;destructive&amp;quot; code, For example they could execute &amp;quot;cli&amp;quot; processor command, It would stop all interrupts and as a result stop whole kernel! It would be very bad for safety of the system, That&#39;s why only kernel runs in &lt;code&gt;ring0&lt;/code&gt; and
+user mode processes in &lt;code&gt;ring3&lt;/code&gt; when they run in &lt;code&gt;ring3&lt;/code&gt; they can&#39;t do anything bad to the kernel.
+
+The main power of linux kernel modules is that they run in &lt;code&gt;ring0&lt;/code&gt; (kernel mode), not as normal processes in &lt;code&gt;ring3&lt;/code&gt;(user mode). Of course only root can load
+them :) Why are they useful? For example, there can be a sitation when we have some hardware and unfortunately we haven&#39;t drivers for it compiled into the kernel. Then, kernel modules can help us.
+Kernel module can be driver for that hardware, We can load such a kernel module and then we can normally use our hardware without kernel module, it would be necessary to recompile the kernel with support for this hardware and it takes really long time...
+
+How to load modules? Modules are usually files with &amp;quot;.ko&amp;quot; extension. All we need to do is to execute command as &lt;code style=&quot;color:red&quot;&gt;root&lt;/code&gt;
+insmod module.ko
+The module was loaded. But after some time we will want to unload the module, How to do this? We execute again as &lt;code style=&quot;color:red&quot;&gt;root&lt;/code&gt;
+```
+rmmod module
+or
+rmmod module.ko
+# Never mind :)
+```
+OK. Now we know what are linux kernel modules, why they are useful and how to load them, We can write a simple module then
+it will be standard ***Hello world!*** module.
+
+* Read the comments in code the explain many things.
+
+``` 
+/* These are standard module include files */
+#include &lt;linux/kernel.h&gt;
+#include &lt;linux/module.h&gt;
+#include &lt;linux/init.h&gt;
+
+/* This is function that will be executed when we load the module */
+int __init mod_init(void)
+{
+	/* Now we see printk function. This is something like
+	standard printf in C. But we are working in kernel mode
+	so we can&#39;t use functions used by user mode programs.
+	I will give more information about this function right
+	after the code of this module */
+	printk(KERN_ALERT &quot;Hello world!\n&quot;);
+
+	return 0;
+}
+
+/* This function will be executed when we unload the module */
+void __exit mod_exit(void)
+{
+	printk(KERN_ALERT &quot;Bye world\n&quot;);
+}
+
+
+/* Here we register mod_init and mod_exit */
+
+/* mod_init and mod_exit functions can have different names they only have to be registered by module_init and module_exit macros */
+
+/* As a parameter of module_init we give function that has to be executed during loading of the module */
+module_init(mod_init);
+
+/* As a parameter of module_exit we give function that has to be executed during unloading of the module */
+module_exit(mod_exit);
+
+```
+As promised, I will explain printk function, First thing if you want to &amp;quot;normally&amp;quot; see what printk writes you must load and unload module not in &quot;X&quot; but from standard tty console, So  &lt;code&gt;printk&lt;/code&gt; just writes given text to the screen if you load module in &quot;X&quot; mode you won&#39;t see what printk wrote. However you can still see it
+by executing command ```dmesg``` However, &lt;code&gt;printk&lt;/code&gt; was not meant to communicate with user it is rather used as a logging mechanism.  ```KERN_ALERT``` is a priority of message to be logged, There are 8 priorities levels each level has its own macro if value of used priority is lower(the lower value it has, the more important is the message)
+than console_loglevel the message is written to the screen you can see all macros in ```linux/kernel.h``` file(this is relative path from root kernel&#39;s source code directory).
+
+How to compile such a module? We use a special Makefile:
+
+```
+obj-m += hello.o
+all:
+	make -C /lib/modules/$(shell uname -r)/build M=${PWD} modules
+clean:
+	make -C /lib/modules/$(shell uname -r)/build M=${PWD} clean
+
+
+```
+I assume that your file with source code of our module is &quot;hello.c&quot; Now we execute &lt;code&gt;make&lt;/code&gt; ok we have &quot;hello.ko&quot; file, Load it as &lt;code style=&quot;color:red&quot;&gt;root&lt;/code&gt; from tty console &lt;code&gt;insmod hello.ko&lt;/code&gt; 
+You should see &quot;Hello world!&quot; Now you can unload this module &lt;code&gt;rmmod hello&lt;/code&gt; You should see &quot;Bye world!&quot; 
+You should also include 
+```
+```MODULE_LICENSE``` specifies what license is used for this module.
+```MODULE_AUTHOR```  specifies who is he author of this module.
+```MODULE_DESCRIPTION``` is a short description what the module does.
+```
+Let&#39;s see modified module:
+```
+/* These are standard module include files */
+#include &lt;linux/kernel.h&gt;
+#include &lt;linux/module.h&gt;
+#include &lt;linux/init.h&gt;
+
+MODULE_LICENSE(&quot;GPL&quot;);
+MODULE_AUTHOR(&quot;Ormi &gt; ormi.ormi@gmail.com&quot;);
+MODULE_DESCRIPTION(&quot;Hello World&quot;);
+
+/* This is function that will be executed when we load the module */
+int __init mod_init(void)
+{
+	/* Now we see printk function. This is something like
+	standard printf in C. But we are working in kernel mode
+	so we can&#39;t use functions used by user mode programs.
+	I will give more information about this function right
+	after the code of this module */
+	printk(KERN_ALERT &quot;Hello world!\n&quot;);
+
+	return 0;
+}
+
+/* This function will be executed when we unload the module */
+void __exit mod_exit(void)
+{
+	printk(KERN_ALERT &quot;Bye world\n&quot;);
+}
+
+
+/* Here we register mod_init and mod_exit */
+
+/* As a parameter of module_init we give function that has to be executed during loading of the module */
+module_init(mod_init);
+
+/* As a parameter of module_exit we give function that has to be executed during unloading of the module */
+module_exit(mod_exit);
+
+```
+Let&#39;s compile it again &lt;code&gt;make&lt;/code&gt; Now we can see some information about module, Execute the command &lt;code&gt;modinfo hello.ko&lt;/code&gt; We can see something like this:
+```
+filename:       hello.ko
+description:    Hello World
+author:         Ormi &gt; ormi.ormi@gmail.com
+license:        GPL
+srcversion:     0B4C5D175084D60DBC22242
+depends:        
+vermagic:       2.6.28-11-generic SMP mod_unload modversions 586 
+```
+One day we will write a module, which source code will be too big to fit in one file. For example it can fit in two files: one.c - two.c, How to compile it into one module? We can use such a Makefile:
+```
+obj-m += big.o
+big-objs += one.o two.o
+
+all:
+	make -C /lib/modules/$(shell uname -r)/build M=${PWD} modules
+clean:
+	make -C /lib/modules/$(shell uname -r)/build M=${PWD} clean
+
+```
+
+When we compile it with &lt;code&gt;make&lt;/code&gt; command, we will get &quot;big.ko&quot; file which is our module :) Now you can do some experiments with our modules, try creating something bigger you should be familiar with this because now we are moving
+to something more complicated. If you didn&#39;t understand what I wrote you can have problems with next things.
+
+## PROCFS
+
+Linux has a nice feature that helps kernel and modules to communicate with processes **procfs** In most of ditributions you can find it in
+/proc directory, There are sub-directories for all processes and some other &amp;quot;files&amp;quot;(for example /proc/version which gives us information about kernel&#39;s version) In this section I will show how to create &amp;quot;files&amp;quot; or &amp;quot;entries&amp;quot; in **procfs**, I will explain what functions and structures we need for our module.
+
+* ```struct proc_dir_entry``` Each entry in **procfs** is represented by its own ```proc_dir_entry structure``` Let&#39;s look at definition of this structure:
+```
+struct proc_dir_entry {
+        unsigned int low_ino;
+        unsigned short namelen;
+        const char *name;
+        mode_t mode;
+        nlink_t nlink;
+        uid_t uid;
+        gid_t gid;
+        loff_t size;
+        const struct inode_operations *proc_iops;
+        /*
+         * NULL proc_fops means PDE is going away RSN or
+         * PDE is just created. In either case, e.g. read_proc won&#39;t be
+         * called because it&#39;s too late or too early, respectively.
+         *
+         * If you&#39;re allocating proc_fops dynamically, save a pointer
+         * somewhere.
+         */
+        const struct file_operations *proc_fops;
+        struct proc_dir_entry *next, *parent, *subdir;
+        void *data;
+        read_proc_t *read_proc;
+        write_proc_t *write_proc;
+        atomic_t count;         /* use count */
+        int pde_users;  /* number of callers into module in progress */
+        spinlock_t pde_unload_lock; /* proc_fops checks and pde_users bumps */
+        struct completion *pde_unload_completion;
+        struct list_head pde_openers;   /* who did open, but not release */
+};
+
+```
+We are interested only in following fields:
+1. name - name of the entry in profs
+2. mode - who can access the entry(for example 777)
+3. read_proc - pointer to function that manages reading from this file. 
+4. count - how many bytes can we write there.
+* Let&#39;s look at prototype:
+```
+typedef int (read_proc_t)(char *page, char **start, off_t off,
+                          int count, int *eof, void *data);
+```
+Here we are interested only in page and count arguments page is pointer to user mode buffer where we have to write data
+```
+write_proc - pointer to function that manages writing to this file. Prototype:
+typedef int (write_proc_t)(struct file *file, const char __user *buffer,
+                           unsigned long count, void *data);
+```
+We are interested only in buffer and count buffer is pointer to user mode buffer in which there is stored data which has to be written to our entry &lt;code&gt;count&lt;/code&gt; - size of this buffer
+OK. that&#39;s all I wanted to say about &lt;code&gt;proc_dir_entry&lt;/code&gt;
+
+2. &lt;code&gt;create_proc_entry&lt;/code&gt; function
+
+Let&#39;s look at prototype:
+```
+extern struct proc_dir_entry *create_proc_entry(const char *name, mode_t mode, struct proc_dir_entry *parent);
+```
+* name - name of entry to be created
+* mode - this value will be written to mode field of proc_dir_entry structure of create entry
+* parent - in which sub-directory of /proc we want to create our entry. We give 0 here, because we want to create our entry right in /proc.
+
+This function return pointer to &lt;code&gt;proc_dir_entry&lt;/code&gt; representing out entry in procfs.
+
+What will our module do?
+1. It will create entry named &amp;quot;test_proc&amp;quot;.
+2. It will have special buffer our_buf where it will store some data.
+3. When user writes to our entry(for example by command &lt;code&gt;echo hello &amp;gt; /proc/test_proc&lt;/code&gt; data written to this file will be stored in our_buf.
+4. When user reads from our entry(for example by command &lt;code&gt;cat /proc/test_proc&lt;/code&gt;, module &amp;quot;shows&amp;quot; him the content of our_buf.
+
+Next functions we need:
+1. &lt;code&gt;sprintf and snprintf&lt;/code&gt;(they are used as standard sprintf and snprintf for user mode programs)
+2. &lt;code&gt;copy_from_user(void *dst, void *src, int count)&lt;/code&gt;
+This function is used to copy data from user mode buffer(src) to our kernel mode buffer(dst). count bytes are copied.
+3. &lt;code&gt;remove_proc_entry(char *name, struct proc_dir_entry *parent)&lt;/code&gt;
+name - name of entry we want to delete
+parent - in which sub-directory of /proc is entry we want to delete. We give 0 here, because we want to delete entry in /proc.
+
+Now let&#39;s take a look at code of our module:
+```
+/* Standard includes for modules */
+#include &lt;linux/kernel.h&gt;
+#include &lt;linux/module.h&gt;
+#include &lt;linux/init.h&gt;
+
+/* for proc_dir_entry and create_proc_entry */
+#include &lt;linux/proc_fs.h&gt;
+
+/* For sprintf and snprintf */
+#include &lt;linux/string.h&gt;
+
+/* For copy_from_user */
+#include &lt;linux/uaccess.h&gt;
+
+MODULE_LICENSE(&quot;GPL&quot;);
+MODULE_AUTHOR(&quot;Ormi &gt; ormi.ormi@gmail.com&quot;);
+MODULE_DESCRIPTION(&quot;Simple module using procfs&quot;);
+
+static char our_buf[256];
+
+int buf_read(char *buf, char **start, off_t offset, int count, int *eof, void *data)
+{
+	int len;
+	/* For example - when content of our_buf is hello when user executes command cat /proc/test_proc;
+	he will see content of our_buf(in our example hello */
+	len = snprintf(buf, count, &quot;%s&quot;, our_buf);
+	return len;
+}
+
+/* When user writes to our entry. For example echo aa &gt; /proc/test_ptoc. aa will be stored in our_buf.
+Then, when user reads from our entry(cat /proc/test_proc) he will see aa */
+static int buf_write(struct file *file, const char *buf, unsigned long count, void *data)
+{
+	/* If count is bigger than 255, data which user wants to write is too big to fit in our_buf. We don&#39;t want
+	any buffer overflows, so we read only 255 bytes */	
+	if(count &gt; 255)
+		count = 255;
+	/* Here we read from buf to our_buf */
+	copy_from_user(our_buf, buf, count);
+	/* we write NULL to end the string */
+	our_buf[count] = &#39;\0&#39;;
+	return count;
+}
+
+int __init start_module(void)
+{
+
+	/* We create our entry */	
+	struct proc_dir_entry *de = create_proc_entry(&quot;test_proc&quot;, 0666, 0);
+
+	/* Set pointers to our functions reading and writing */
+	de-&gt;read_proc = buf_read;
+	de-&gt;write_proc = buf_write;
+
+	/* We initialize our_buf with some text. */
+	sprintf(our_buf, &quot;hello&quot;);
+
+	return 0 ;
+}
+
+void __exit exit_module(void)
+{
+	/* We delete our entry */
+	remove_proc_entry(&quot;test_proc&quot;, NULL);
+}
+
+module_init(start_module);
+module_exit(exit_module);
+
+```
+Now, edit Makefile and change hello.o to proc.o (if file with source code of this module is written as proc.c) and compile.
+&lt;code&gt;make&lt;/code&gt; Then load module &lt;code&gt;insmod proc.ko&lt;/code&gt; and test our module ;)
+
+## NOTIFIERS
+
+Next thing I want to write about is something called &amp;quot;notify chain&amp;quot;. There are some events, which are quite important, and when they occur some kernel sub-systems want to be informed about this. Here notify chains come to help us.
+We will use some keyboard events as an example and then we will write our first, doing-something module :) So:
+when user presses a key, kernel &amp;quot;reads&amp;quot; it and then, using notify chain informs all subsystems which want to be informed about pressed key, One of the structures used by notifiers is &amp;quot;notifier_block&amp;quot;
+Let&#39;s look at the definition:
+
+```
+struct notifier_block {
+        int (*notifier_call)(struct notifier_block *self, unsigned long x, void *data);
+        struct notifier_block *next;
+        int priority;
+};
+```
+This structure is used to register in notify chains. ```notifier_call``` is pointer to function which is called when an event occurs. Priority informs about
+priority of that function. Functions with higher priorities are called earlier. However, this field is usually set to 0. 
+next is pointer to next registered notifier_block, So:
+* An event occurs, Kernel &amp;quot;looks&amp;quot; at head of list of notifier_blocks and executes first registered function. Then it goes where pointer next points and executes function, Then it goes again to next and again executes function. &quot;So how can a module register in keyboard notify chain?&quot;
+* It creates a notifier_block structure and initializes it. For example:
+```
+struct notifier_block nb;
+nb.notifier_call = function
+```
+Where function is function which has to be executed when an event occurs(in our example - when a key is pressed).
+Registers by register_keyboard_notifer```(struct notifier_block *nb)``` . In our example:
+```register_keyboard_notifier(&amp;amp;nb);```
+
+We have to write function which will handle situation when a key is pressed. What are the parameters? As in the prototype:
+(struct notifier_block *self, unsigned long stage, void *data);
+self - pointer to our notifier_block - we don&#39;t use it
+stage - stage of &amp;quot;handling&amp;quot; the pressed key. We do something only when stage is KBD_KEYSYM.
+data - pointer to keyboard_notifier_param structure.
+In this structure we are interested only in value field. It stores the value of pressed key. 
+
+Our module will be very simple random numbers generator. It&#39;s only a toy and can&#39;t be treated seriously :)
+
+```
+/* Standard includes for modules */
+#include &lt;linux/module.h&gt;
+#include &lt;linux/kernel.h&gt;
+#include &lt;linux/init.h&gt;
+/* For keyboard_notifier param etc. */
+#include &lt;linux/keyboard.h&gt;
+/* notifier_block etc. */
+#include &lt;linux/notifier.h&gt;
+/* create_proc_entry etc. */
+#include &lt;linux/proc_fs.h&gt;
+/* sprintf */
+#include &lt;linux/string.h&gt;
+
+MODULE_LICENSE(&quot;GPL&quot;) ;
+
+static unsigned long long random_num ;
+
+/* Our function that will be executed when a key is pressed */
+static int kbd_notify(struct notifier_block *self, unsigned long stage, void *data)
+{
+	struct keyboard_notifier_param *param = data; /* Pointer to keyboard_notifier_param */
+	int value = param-&gt;value - 0xf000; /* Value can&#39;t be to big */
+	/* We calculate our random number by random_num*key_value
+	This is really dummy and improfessional, but this module
+	only has to show how to use notifiers */	
+	/* Value must fit in long long :) */
+	if(random_num &gt; 1000000000)
+		random_num -= 10*value;	
+	else	
+		random_num  *= value;
+	return NOTIFY_DONE ;
+}
+
+/* We prepare our notifier_block structure. kbd_notify is function handling events */
+static struct notifier_block kbd_nb = { .notifier_call = kbd_notify, } ;
+
+/* We register in notify chain */
+static void handler_init(void)
+{
+	register_keyboard_notifier(&amp;kbd_nb) ;
+}
+
+/* We write this random number to user mode buffer */
+static int random_read(char *buf, char **start, off_t off, int count, int *peof, void *data)
+{
+	int len = sprintf(buf, &quot;%llu&quot;, random_num);
+
+	return len ;
+}
+
+/* We create entry in procfs */
+static void proc_init(void)
+{
+	struct proc_dir_entry *de = create_proc_entry(&quot;random_simple&quot;, 0444, 0);
+	de-&gt;read_proc = random_read;
+}
+
+static int __init random_init(void) 
+{
+	handler_init();
+	proc_init();
+	random_num = 1;
+	
+
+	return 0 ;
+}
+
+static void __exit random_exit(void)
+{
+	remove_proc_entry(&quot;random_simple&quot;, 0);
+	unregister_keyboard_notifier(&amp;kbd_nb);
+}
+
+
+module_init(random_init) ;
+module_exit(random_exit) ;
+/*  Now you can compile it and test. */
+```
+
+## END
+That&#39;s all for now. I hope you learned something from this tutorial and became interested in linux kernel. If you want to start browsing kernel&#39;s code,
+I can give an advise. I began my adventure with linux kernel by writing linux kernel modules one day I got an idea to write a [simple rootkit](https://0x00sec.org/t/writing-a-simple-rootkit-for-linux/29034), I wanted my rootkit to be difficult to detect to achieve this i had to know more organisation of kernel&#39;s structures, Firstly, I analysed how &lt;code&gt;procfs&lt;/code&gt; works and how new entries are created etc.</description>
+    
+    <lastBuildDate>Tue, 16 Aug 2022 18:11:24 +0000</lastBuildDate>
+    <category>Linux</category>
+    <atom:link href="https://0x00sec.org/t/the-linux-kernel-modules-programming/30639.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>The linux kernel modules programming</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/the-linux-kernel-modules-programming/30639/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-linux-kernel-modules-programming/30639/4</link>
+        <pubDate>Sat, 10 Dec 2022 16:02:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-30639-4</guid>
+        <source url="https://0x00sec.org/t/the-linux-kernel-modules-programming/30639.rss">The linux kernel modules programming</source>
+      </item>
+      <item>
+        <title>The linux kernel modules programming</title>
+        <dc:creator><![CDATA[winterr_dog]]></dc:creator>
+        <description><![CDATA[
+            <p>Excellent work here <a class="mention" href="https://0x00sec.org/u/0xf00">@0xf00</a> , I’m always up for such kind of articles. Great research!!</p>
+<p>Only the best! <img src="https://0x00sec.org/images/emoji/twitter/handshake.png?v=12" title=":handshake:" class="emoji" alt=":handshake:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/the-linux-kernel-modules-programming/30639/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-linux-kernel-modules-programming/30639/3</link>
+        <pubDate>Tue, 16 Aug 2022 18:11:24 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-30639-3</guid>
+        <source url="https://0x00sec.org/t/the-linux-kernel-modules-programming/30639.rss">The linux kernel modules programming</source>
+      </item>
+      <item>
+        <title>The linux kernel modules programming</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice Post!, especially the notifier part, learnt something new.</p>
+          <p><a href="https://0x00sec.org/t/the-linux-kernel-modules-programming/30639/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-linux-kernel-modules-programming/30639/2</link>
+        <pubDate>Thu, 11 Aug 2022 14:14:33 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-30639-2</guid>
+        <source url="https://0x00sec.org/t/the-linux-kernel-modules-programming/30639.rss">The linux kernel modules programming</source>
+      </item>
+      <item>
+        <title>The linux kernel modules programming</title>
+        <dc:creator><![CDATA[0xf00]]></dc:creator>
+        <description><![CDATA[
+            <p>In this tutorial, I’m going to teach you how to write linux kernel modules, it is necessary to know C programming language.</p>
+<p>You will probably ask  "So, what the hell is that linux kernel module?"</p>
+<ul>
+<li>it is a piece of code that can be dynamically loaded and unloaded from the kernel, "maybe you don’t know what kernel is"<br>
+*<strong>It is the main part of each operating system. It is "program" that is loaded<br>
+and executed by bootloader at the boot time</strong>  The kernel manages all system resources. It’s responsible for communication between software and hardware, manages all user’s processes and many, many more.</li>
+</ul>
+<ul>
+<li>Kernel and user mode processes run in different privilege level. New processors support it i.e. Intel processors have the following privilege</li>
+</ul>
+<pre><code class="lang-auto">levels:
+ring0(the most powerful privilege level)
+ring1
+ring2
+ring3(the least powerful privilege level)
+</code></pre>
+<p>Linux uses only two of them  <code>ring0</code> for kernel and <code>ring3</code> for user mode proceses. You can ask - "What are these privilege levels useful for?".<br>
+If user mode processes run in <code>ring0</code>, they would be able to execute some "destructive" code, For example they could execute "cli" processor command, It would stop all interrupts and as a result stop whole kernel! It would be very bad for safety of the system, That’s why only kernel runs in <code>ring0</code> and<br>
+user mode processes in <code>ring3</code> when they run in <code>ring3</code> they can’t do anything bad to the kernel.</p>
+<p>The main power of linux kernel modules is that they run in <code>ring0</code> (kernel mode), not as normal processes in <code>ring3</code>(user mode). Of course only root can load<br>
+them <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> Why are they useful? For example, there can be a sitation when we have some hardware and unfortunately we haven’t drivers for it compiled into the kernel. Then, kernel modules can help us.<br>
+Kernel module can be driver for that hardware, We can load such a kernel module and then we can normally use our hardware without kernel module, it would be necessary to recompile the kernel with support for this hardware and it takes really long time…</p>
+<p>How to load modules? Modules are usually files with ".ko" extension. All we need to do is to execute command as <code>root</code><br>
+insmod module.ko<br>
+The module was loaded. But after some time we will want to unload the module, How to do this? We execute again as <code>root</code></p>
+<pre><code class="lang-auto">rmmod module
+or
+rmmod module.ko
+# Never mind :)
+</code></pre>
+<p>OK. Now we know what are linux kernel modules, why they are useful and how to load them, We can write a simple module then<br>
+it will be standard <em><strong>Hello world!</strong></em> module.</p>
+<ul>
+<li>Read the comments in code the explain many things.</li>
+</ul>
+<pre><code class="lang-auto">/* These are standard module include files */
+#include &lt;linux/kernel.h&gt;
+#include &lt;linux/module.h&gt;
+#include &lt;linux/init.h&gt;
+
+/* This is function that will be executed when we load the module */
+int __init mod_init(void)
+{
+	/* Now we see printk function. This is something like
+	standard printf in C. But we are working in kernel mode
+	so we can't use functions used by user mode programs.
+	I will give more information about this function right
+	after the code of this module */
+	printk(KERN_ALERT "Hello world!\n");
+
+	return 0;
+}
+
+/* This function will be executed when we unload the module */
+void __exit mod_exit(void)
+{
+	printk(KERN_ALERT "Bye world\n");
+}
+
+
+/* Here we register mod_init and mod_exit */
+
+/* mod_init and mod_exit functions can have different names they only have to be registered by module_init and module_exit macros */
+
+/* As a parameter of module_init we give function that has to be executed during loading of the module */
+module_init(mod_init);
+
+/* As a parameter of module_exit we give function that has to be executed during unloading of the module */
+module_exit(mod_exit);
+
+</code></pre>
+<p>As promised, I will explain printk function, First thing if you want to "normally" see what printk writes you must load and unload module not in “X” but from standard tty console, So  <code>printk</code> just writes given text to the screen if you load module in “X” mode you won’t see what printk wrote. However you can still see it<br>
+by executing command <code>dmesg</code> However, <code>printk</code> was not meant to communicate with user it is rather used as a logging mechanism.  <code>KERN_ALERT</code> is a priority of message to be logged, There are 8 priorities levels each level has its own macro if value of used priority is lower(the lower value it has, the more important is the message)<br>
+than console_loglevel the message is written to the screen you can see all macros in <code>linux/kernel.h</code> file(this is relative path from root kernel’s source code directory).</p>
+<p>How to compile such a module? We use a special Makefile:</p>
+<pre><code class="lang-auto">obj-m += hello.o
+all:
+	make -C /lib/modules/$(shell uname -r)/build M=${PWD} modules
+clean:
+	make -C /lib/modules/$(shell uname -r)/build M=${PWD} clean
+
+
+</code></pre>
+<p>I assume that your file with source code of our module is “hello.c” Now we execute <code>make</code> ok we have “hello.ko” file, Load it as <code>root</code> from tty console <code>insmod hello.ko</code><br>
+You should see “Hello world!” Now you can unload this module <code>rmmod hello</code> You should see “Bye world!”<br>
+You should also include</p>
+<pre><code class="lang-auto">```MODULE_LICENSE``` specifies what license is used for this module.
+```MODULE_AUTHOR```  specifies who is he author of this module.
+```MODULE_DESCRIPTION``` is a short description what the module does.
+</code></pre>
+<p>Let’s see modified module:</p>
+<pre><code class="lang-auto">/* These are standard module include files */
+#include &lt;linux/kernel.h&gt;
+#include &lt;linux/module.h&gt;
+#include &lt;linux/init.h&gt;
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Ormi &gt; ormi.ormi@gmail.com");
+MODULE_DESCRIPTION("Hello World");
+
+/* This is function that will be executed when we load the module */
+int __init mod_init(void)
+{
+	/* Now we see printk function. This is something like
+	standard printf in C. But we are working in kernel mode
+	so we can't use functions used by user mode programs.
+	I will give more information about this function right
+	after the code of this module */
+	printk(KERN_ALERT "Hello world!\n");
+
+	return 0;
+}
+
+/* This function will be executed when we unload the module */
+void __exit mod_exit(void)
+{
+	printk(KERN_ALERT "Bye world\n");
+}
+
+
+/* Here we register mod_init and mod_exit */
+
+/* As a parameter of module_init we give function that has to be executed during loading of the module */
+module_init(mod_init);
+
+/* As a parameter of module_exit we give function that has to be executed during unloading of the module */
+module_exit(mod_exit);
+
+</code></pre>
+<p>Let’s compile it again <code>make</code> Now we can see some information about module, Execute the command <code>modinfo hello.ko</code> We can see something like this:</p>
+<pre><code class="lang-auto">filename:       hello.ko
+description:    Hello World
+author:         Ormi &gt; ormi.ormi@gmail.com
+license:        GPL
+srcversion:     0B4C5D175084D60DBC22242
+depends:        
+vermagic:       2.6.28-11-generic SMP mod_unload modversions 586 
+</code></pre>
+<p>One day we will write a module, which source code will be too big to fit in one file. For example it can fit in two files: one.c - two.c, How to compile it into one module? We can use such a Makefile:</p>
+<pre><code class="lang-auto">obj-m += big.o
+big-objs += one.o two.o
+
+all:
+	make -C /lib/modules/$(shell uname -r)/build M=${PWD} modules
+clean:
+	make -C /lib/modules/$(shell uname -r)/build M=${PWD} clean
+
+</code></pre>
+<p>When we compile it with <code>make</code> command, we will get “big.ko” file which is our module <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> Now you can do some experiments with our modules, try creating something bigger you should be familiar with this because now we are moving<br>
+to something more complicated. If you didn’t understand what I wrote you can have problems with next things.</p>
+<h2>
+<a name="procfs-1" class="anchor" href="https://0x00sec.org#procfs-1"></a>PROCFS</h2>
+<p>Linux has a nice feature that helps kernel and modules to communicate with processes <strong>procfs</strong> In most of ditributions you can find it in<br>
+/proc directory, There are sub-directories for all processes and some other "files"(for example /proc/version which gives us information about kernel’s version) In this section I will show how to create "files" or "entries" in <strong>procfs</strong>, I will explain what functions and structures we need for our module.</p>
+<ul>
+<li>
+<code>struct proc_dir_entry</code> Each entry in <strong>procfs</strong> is represented by its own <code>proc_dir_entry structure</code> Let’s look at definition of this structure:</li>
+</ul>
+<pre><code class="lang-auto">struct proc_dir_entry {
+        unsigned int low_ino;
+        unsigned short namelen;
+        const char *name;
+        mode_t mode;
+        nlink_t nlink;
+        uid_t uid;
+        gid_t gid;
+        loff_t size;
+        const struct inode_operations *proc_iops;
+        /*
+         * NULL proc_fops means PDE is going away RSN or
+         * PDE is just created. In either case, e.g. read_proc won't be
+         * called because it's too late or too early, respectively.
+         *
+         * If you're allocating proc_fops dynamically, save a pointer
+         * somewhere.
+         */
+        const struct file_operations *proc_fops;
+        struct proc_dir_entry *next, *parent, *subdir;
+        void *data;
+        read_proc_t *read_proc;
+        write_proc_t *write_proc;
+        atomic_t count;         /* use count */
+        int pde_users;  /* number of callers into module in progress */
+        spinlock_t pde_unload_lock; /* proc_fops checks and pde_users bumps */
+        struct completion *pde_unload_completion;
+        struct list_head pde_openers;   /* who did open, but not release */
+};
+
+</code></pre>
+<p>We are interested only in following fields:</p>
+<ol>
+<li>name - name of the entry in profs</li>
+<li>mode - who can access the entry(for example 777)</li>
+<li>read_proc - pointer to function that manages reading from this file.</li>
+<li>count - how many bytes can we write there.</li>
+</ol>
+<ul>
+<li>Let’s look at prototype:</li>
+</ul>
+<pre><code class="lang-auto">typedef int (read_proc_t)(char *page, char **start, off_t off,
+                          int count, int *eof, void *data);
+</code></pre>
+<p>Here we are interested only in page and count arguments page is pointer to user mode buffer where we have to write data</p>
+<pre><code class="lang-auto">write_proc - pointer to function that manages writing to this file. Prototype:
+typedef int (write_proc_t)(struct file *file, const char __user *buffer,
+                           unsigned long count, void *data);
+</code></pre>
+<p>We are interested only in buffer and count buffer is pointer to user mode buffer in which there is stored data which has to be written to our entry <code>count</code> - size of this buffer<br>
+OK. that’s all I wanted to say about <code>proc_dir_entry</code></p>
+<ol start="2">
+<li>
+<code>create_proc_entry</code> function</li>
+</ol>
+<p>Let’s look at prototype:</p>
+<pre><code class="lang-auto">extern struct proc_dir_entry *create_proc_entry(const char *name, mode_t mode, struct proc_dir_entry *parent);
+</code></pre>
+<ul>
+<li>name - name of entry to be created</li>
+<li>mode - this value will be written to mode field of proc_dir_entry structure of create entry</li>
+<li>parent - in which sub-directory of /proc we want to create our entry. We give 0 here, because we want to create our entry right in /proc.</li>
+</ul>
+<p>This function return pointer to <code>proc_dir_entry</code> representing out entry in procfs.</p>
+<p>What will our module do?</p>
+<ol>
+<li>It will create entry named "test_proc".</li>
+<li>It will have special buffer our_buf where it will store some data.</li>
+<li>When user writes to our entry(for example by command <code>echo hello &gt; /proc/test_proc</code> data written to this file will be stored in our_buf.</li>
+<li>When user reads from our entry(for example by command <code>cat /proc/test_proc</code>, module "shows" him the content of our_buf.</li>
+</ol>
+<p>Next functions we need:</p>
+<ol>
+<li>
+<code>sprintf and snprintf</code>(they are used as standard sprintf and snprintf for user mode programs)</li>
+<li>
+<code>copy_from_user(void *dst, void *src, int count)</code><br>
+This function is used to copy data from user mode buffer(src) to our kernel mode buffer(dst). count bytes are copied.</li>
+<li>
+<code>remove_proc_entry(char *name, struct proc_dir_entry *parent)</code><br>
+name - name of entry we want to delete<br>
+parent - in which sub-directory of /proc is entry we want to delete. We give 0 here, because we want to delete entry in /proc.</li>
+</ol>
+<p>Now let’s take a look at code of our module:</p>
+<pre><code class="lang-auto">/* Standard includes for modules */
+#include &lt;linux/kernel.h&gt;
+#include &lt;linux/module.h&gt;
+#include &lt;linux/init.h&gt;
+
+/* for proc_dir_entry and create_proc_entry */
+#include &lt;linux/proc_fs.h&gt;
+
+/* For sprintf and snprintf */
+#include &lt;linux/string.h&gt;
+
+/* For copy_from_user */
+#include &lt;linux/uaccess.h&gt;
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Ormi &gt; ormi.ormi@gmail.com");
+MODULE_DESCRIPTION("Simple module using procfs");
+
+static char our_buf[256];
+
+int buf_read(char *buf, char **start, off_t offset, int count, int *eof, void *data)
+{
+	int len;
+	/* For example - when content of our_buf is hello when user executes command cat /proc/test_proc;
+	he will see content of our_buf(in our example hello */
+	len = snprintf(buf, count, "%s", our_buf);
+	return len;
+}
+
+/* When user writes to our entry. For example echo aa &gt; /proc/test_ptoc. aa will be stored in our_buf.
+Then, when user reads from our entry(cat /proc/test_proc) he will see aa */
+static int buf_write(struct file *file, const char *buf, unsigned long count, void *data)
+{
+	/* If count is bigger than 255, data which user wants to write is too big to fit in our_buf. We don't want
+	any buffer overflows, so we read only 255 bytes */	
+	if(count &gt; 255)
+		count = 255;
+	/* Here we read from buf to our_buf */
+	copy_from_user(our_buf, buf, count);
+	/* we write NULL to end the string */
+	our_buf[count] = '\0';
+	return count;
+}
+
+int __init start_module(void)
+{
+
+	/* We create our entry */	
+	struct proc_dir_entry *de = create_proc_entry("test_proc", 0666, 0);
+
+	/* Set pointers to our functions reading and writing */
+	de-&gt;read_proc = buf_read;
+	de-&gt;write_proc = buf_write;
+
+	/* We initialize our_buf with some text. */
+	sprintf(our_buf, "hello");
+
+	return 0 ;
+}
+
+void __exit exit_module(void)
+{
+	/* We delete our entry */
+	remove_proc_entry("test_proc", NULL);
+}
+
+module_init(start_module);
+module_exit(exit_module);
+
+</code></pre>
+<p>Now, edit Makefile and change hello.o to proc.o (if file with source code of this module is written as proc.c) and compile.<br>
+<code>make</code> Then load module <code>insmod proc.ko</code> and test our module <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=12" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+<h2>
+<a name="notifiers-2" class="anchor" href="https://0x00sec.org#notifiers-2"></a>NOTIFIERS</h2>
+<p>Next thing I want to write about is something called "notify chain". There are some events, which are quite important, and when they occur some kernel sub-systems want to be informed about this. Here notify chains come to help us.<br>
+We will use some keyboard events as an example and then we will write our first, doing-something module <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> So:<br>
+when user presses a key, kernel "reads" it and then, using notify chain informs all subsystems which want to be informed about pressed key, One of the structures used by notifiers is "notifier_block"<br>
+Let’s look at the definition:</p>
+<pre><code class="lang-auto">struct notifier_block {
+        int (*notifier_call)(struct notifier_block *self, unsigned long x, void *data);
+        struct notifier_block *next;
+        int priority;
+};
+</code></pre>
+<p>This structure is used to register in notify chains. <code>notifier_call</code> is pointer to function which is called when an event occurs. Priority informs about<br>
+priority of that function. Functions with higher priorities are called earlier. However, this field is usually set to 0.<br>
+next is pointer to next registered notifier_block, So:</p>
+<ul>
+<li>An event occurs, Kernel "looks" at head of list of notifier_blocks and executes first registered function. Then it goes where pointer next points and executes function, Then it goes again to next and again executes function. “So how can a module register in keyboard notify chain?”</li>
+<li>It creates a notifier_block structure and initializes it. For example:</li>
+</ul>
+<pre><code class="lang-auto">struct notifier_block nb;
+nb.notifier_call = function
+</code></pre>
+<p>Where function is function which has to be executed when an event occurs(in our example - when a key is pressed).<br>
+Registers by register_keyboard_notifer<code>(struct notifier_block *nb)</code> . In our example:<br>
+<code>register_keyboard_notifier(&amp;amp;nb);</code></p>
+<p>We have to write function which will handle situation when a key is pressed. What are the parameters? As in the prototype:<br>
+(struct notifier_block *self, unsigned long stage, void *data);<br>
+self - pointer to our notifier_block - we don’t use it<br>
+stage - stage of "handling" the pressed key. We do something only when stage is KBD_KEYSYM.<br>
+data - pointer to keyboard_notifier_param structure.<br>
+In this structure we are interested only in value field. It stores the value of pressed key.</p>
+<p>Our module will be very simple random numbers generator. It’s only a toy and can’t be treated seriously <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
+<pre><code class="lang-auto">/* Standard includes for modules */
+#include &lt;linux/module.h&gt;
+#include &lt;linux/kernel.h&gt;
+#include &lt;linux/init.h&gt;
+/* For keyboard_notifier param etc. */
+#include &lt;linux/keyboard.h&gt;
+/* notifier_block etc. */
+#include &lt;linux/notifier.h&gt;
+/* create_proc_entry etc. */
+#include &lt;linux/proc_fs.h&gt;
+/* sprintf */
+#include &lt;linux/string.h&gt;
+
+MODULE_LICENSE("GPL") ;
+
+static unsigned long long random_num ;
+
+/* Our function that will be executed when a key is pressed */
+static int kbd_notify(struct notifier_block *self, unsigned long stage, void *data)
+{
+	struct keyboard_notifier_param *param = data; /* Pointer to keyboard_notifier_param */
+	int value = param-&gt;value - 0xf000; /* Value can't be to big */
+	/* We calculate our random number by random_num*key_value
+	This is really dummy and improfessional, but this module
+	only has to show how to use notifiers */	
+	/* Value must fit in long long :) */
+	if(random_num &gt; 1000000000)
+		random_num -= 10*value;	
+	else	
+		random_num  *= value;
+	return NOTIFY_DONE ;
+}
+
+/* We prepare our notifier_block structure. kbd_notify is function handling events */
+static struct notifier_block kbd_nb = { .notifier_call = kbd_notify, } ;
+
+/* We register in notify chain */
+static void handler_init(void)
+{
+	register_keyboard_notifier(&amp;kbd_nb) ;
+}
+
+/* We write this random number to user mode buffer */
+static int random_read(char *buf, char **start, off_t off, int count, int *peof, void *data)
+{
+	int len = sprintf(buf, "%llu", random_num);
+
+	return len ;
+}
+
+/* We create entry in procfs */
+static void proc_init(void)
+{
+	struct proc_dir_entry *de = create_proc_entry("random_simple", 0444, 0);
+	de-&gt;read_proc = random_read;
+}
+
+static int __init random_init(void) 
+{
+	handler_init();
+	proc_init();
+	random_num = 1;
+	
+
+	return 0 ;
+}
+
+static void __exit random_exit(void)
+{
+	remove_proc_entry("random_simple", 0);
+	unregister_keyboard_notifier(&amp;kbd_nb);
+}
+
+
+module_init(random_init) ;
+module_exit(random_exit) ;
+/*  Now you can compile it and test. */
+</code></pre>
+<h2>
+<a name="end-3" class="anchor" href="https://0x00sec.org#end-3"></a>END</h2>
+<p>That’s all for now. I hope you learned something from this tutorial and became interested in linux kernel. If you want to start browsing kernel’s code,<br>
+I can give an advise. I began my adventure with linux kernel by writing linux kernel modules one day I got an idea to write a <a href="https://0x00sec.org/t/writing-a-simple-rootkit-for-linux/29034">simple rootkit</a>, I wanted my rootkit to be difficult to detect to achieve this i had to know more organisation of kernel’s structures, Firstly, I analysed how <code>procfs</code> works and how new entries are created etc.</p>
+          <p><a href="https://0x00sec.org/t/the-linux-kernel-modules-programming/30639/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-linux-kernel-modules-programming/30639/1</link>
+        <pubDate>Thu, 11 Aug 2022 00:02:10 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-30639-1</guid>
+        <source url="https://0x00sec.org/t/the-linux-kernel-modules-programming/30639.rss">The linux kernel modules programming</source>
+      </item>
+  </channel>
+</rss>

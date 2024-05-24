@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Setting up Quassel Core on Amazon EC2 server</title>
+    <link>https://0x00sec.org/t/setting-up-quassel-core-on-amazon-ec2-server/1047</link>
+    <description>Quassel is an IRC client which can be setup to have a core server, and a client, where the core is always up and running so that you are always available in IRC and also, ideally, have less connection issues etc, etc.. Let&#39;s just get right to it.
+Note: There won&#39;t be a whole lot of explanation here, as the pictures are pretty straight forward.
+
+## Sign up for Amazon Web Services and Create EC2 AMI
+Create an account for AWS at http://aws.amazon.com and then login to your AWS console. You are presented the following screen. There are lots of options, but for now, all we want is a simple EC2 server on their cloud.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/6/67baf8accd9f2ceee58b0ca407a47c3100b23634.PNG&quot; width=&quot;642&quot; height=&quot;398&quot;&gt;
+
+Click &quot;Amazon EC2&quot; and then &quot;Create Instance&quot;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/8/8ff5f13b238b5bc3e86ad090209b3daf100f69c5.PNG&quot; width=&quot;606&quot; height=&quot;176&quot;&gt;
+
+There are sever AMI&#39;s (Amazon Machine Instances) available to choose from. I am going to fire up an Ubuntu 14.04 Server, but you can choose which ever you&#39;re comfortable/most familiar with. 
+Note: &quot;Free Tier Eligible means just that, it is free to use. However, this is only for 12 months and then they&#39;ll begin to bill you. Also, this is only for *new* Amazon Web Services customers. I didn&#39;t know this and I&#39;ve been getting billed... it&#39;s not too expensive.. but still... not very hard to just create a new account (not very hard to just create a new account every 12 months either hehe).
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/0d48024f2da8a76ddc48fab8fbf2d1ba278e263a.PNG&quot; width=&quot;689&quot; height=&quot;255&quot;&gt;
+
+##Choose amount of virtual processors and RAM for the machine
+Unless you plan to do something beyond the scope of this tutorial, the minimum specs are fine... resist your inner nerd urge to have more than 1GB of RAM... I know... it&#39;s hard, but it&#39;s plenty, trust me, I&#39;m some guy on the internet, I&#39;d never lie.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/334407237649db5f91b18135e9c24aef8d2302bc.PNG&quot; width=&quot;690&quot; height=&quot;341&quot;&gt;
+
+##Choose your subnet info 
+Again, do nothing here.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/4ee09c4d9a69b54af51da30a7b06f26c90783ded.PNG&quot; width=&quot;690&quot; height=&quot;301&quot;&gt;
+
+##Choose storage space 
+I&#39;d just leave it at 15GB... you could even go less, unless you plan to use this AMI to store anything in the future.
+Note: You get 30GB of free storage across any/all AMI&#39;s you are running (though I think 2 is the limit for free).
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/f238b195f5a8188ad7a1de05aa2147308beca153.PNG&quot; width=&quot;690&quot; height=&quot;258&quot;&gt;
+
+##Create a Tag for your AMI
+As far as I know, this is just used within the AWS console to refer to this specific AMI at times.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/7397a0a358a7dbd5a0b15072892ceaf8c8667093.PNG&quot; width=&quot;690&quot; height=&quot;122&quot;&gt;
+
+##Create a security Group
+A security group in AWS is just a name given to a particular set of firewall rules that you can apply to groups of machines or a single machine as you see fit. This consists primarily of which ports it&#39;s allowed to recieve ingress (inbound) traffic on, and what IP addresses or address range it will accept connections from. 
+
+If you *know* that your IP is static and won&#39;t change, and you only connect from a couple places, you can go ahead and add your home IP address and connect from anywhere you want. If you&#39;re using this AMI as a staging server for some attack vector and connecting to it through a VPN, you&#39;d definitely want to leave this open/set to 0.0.0.0 so any IP can connect.
+
+Go ahead and open up port 22 so you can SSH into your machine as need be. And then open up whatever port you want Quassel to run on. I was going to have that as 31337 for this demo, but didn&#39;t record the process of changing it so you&#39;ll have to figure that out on your own.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/70b29a97cac0f0b6d56d31431e594d276479731c.PNG&quot; width=&quot;690&quot; height=&quot;229&quot;&gt;
+**Note: You actually have to open 4242 as well for the initial Quassel Core connection, so your inbound open ports should look like this instead**
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/f494718f8bdb6ba2635fa0477c791ec9fc8a86bb.PNG&quot; width=&quot;690&quot; height=&quot;152&quot;&gt;
+
+##Review EC2 AMI settings and click launch
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/5/5e797fd1a12b9bc694357ef9733f78d6267f9c29.PNG&quot; width=&quot;689&quot; height=&quot;259&quot;&gt;
+
+##Create SSH Key Pair for secure SSH connections.
+Amazon does not give their instances default passwords, as they feel that would be too insecure (rightfully so), so instead, they have you create an SSH Key Pair and they drop the public key into your AMI&#39;s /etc/hosts/ directory for you and give you the matching private key. Type in a name for your private key and click &quot;download&quot;. Save this as `&lt;`MyPrivateKey`&gt;`.pem somewhere safe/secure where you will not lose it, as you **cannot download this private key again**.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/0eb8e8d6386aa1e9a44ca0488675092f3b251030.PNG&quot; width=&quot;678&quot; height=&quot;500&quot;&gt;
+
+##Actually launch AMI
+Click &quot;Launch Instances&quot; and your AMI will actually be up and running.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/e/e21e07b5cf3c6eff5c4c08c93a77dd47785166ac.PNG&quot; width=&quot;690&quot; height=&quot;240&quot;&gt;
+
+##View launch log
+You can click &quot;View launch log&quot; to see the state your AMI is in as it&#39;s booting up.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/e/eb46a7a50079921d254ed9eb36d9063aaa2edc31.PNG&quot; width=&quot;601&quot; height=&quot;285&quot;&gt;
+
+##Connect to EC2 AMI over SSH with Putty (or just ssh on linux =p)
+Windows has no SSH client by default, so you need to acquire one. Sadly, there are only really 2 options that work reliably as far as I know... using cygwin to emulate a linux terminal on your windows machine, and installing ssh via cygwin, or using PuTTY. The later is way easier, and Putty is actually pretty powerful and awesome in its own right. Go ahead and [download and install PuTTY](http://www.putty.org/). I don&#39;t have pictures for this... I have faith in your ability to run *.exe&#39;s from unknown sources ;p.
+
+##Import private key into PuTTY
+Putty actually has a seperate program entirely for handling import/export/generation of public/private keys (probably due to the large codebase involved with all the different algorithms different keys cant support). So in Windows, find and run Putty-Gen, and then click the&quot;Load&quot; button where it says &quot;Load existing Private Key&quot;. It will pop up and tell you that the key was loaded successfully.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/40c45b4afab8e6ca8f8cbc6bfe04f34ea712be2f.PNG&quot; width=&quot;484&quot; height=&quot;470&quot;&gt;
+
+#Save private key as PuTTY compatible key
+Putty has some sort of different format for the file types for its keys... loading the key simple extracted the raw data of they key into the resulting window for viewing, now you must choose &quot;Save Private Key&quot; to save it as a Putty Key Type. Feel free to give it a passsphrase though it is not required.
+Note: Have fun with half of my private key... if anyone can come up with some decent hashing/collision programs, my free-tier AMI is all yours ;p.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/2/22e2a734d228e023872613426b1bbb1f566ab453.png&quot; width=&quot;483&quot; height=&quot;466&quot;&gt;
+
+##Grab the IP address or hostname of your AMI from AWS Console
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/d42f98459ce4ddfa4c48175947cb10c76ecacefe.PNG&quot; width=&quot;689&quot; height=&quot;250&quot;&gt;
+
+
+##Run Putty
+Run PuTTY, input the IP/hostname of your AMI, and then go ahead and give this SSH session a name for good measure (saves all the data attributed with this SSH connection for later use) and click &quot;Save&quot;.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/5/59e85dde6a3d29eca822220080826374d2648bbf.PNG&quot; width=&quot;460&quot; height=&quot;442&quot;&gt;
+
+##Configure Putty session with Private Key and username
+Go to Connection-&gt;Data and enter the default username in the &quot;Auto-Login username&quot; field. For most AWS EC2 AMI&#39;s, this username is ec2-user, however you should read the documentation for the AMI you choose, as the default username for the Ubuntu AMI is **ubuntu**.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/730e7bf671c43c740e63e51a9cf394c7f2169f32.PNG&quot; width=&quot;459&quot; height=&quot;439&quot;&gt;
+
+Go to Connections-&gt;SSH-&gt;Auth, click the Browse button next to &quot;Private key file for authorization&quot;, and choose the putty compatible private key that you created with PuTTY Gen.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/1271f2ccaae108e349e9d420742ff55159b6d52a.png&quot; width=&quot;456&quot; height=&quot;437&quot;&gt;
+
+**Note: At this point you should choose &quot;Save Session&quot; again back under the Session tab at the very top of the left hand tree. Otherwise, you&#39;ll have to load the key again each time and username, as we so far only chose &quot;save&quot; after entering the IP/host information.**
+
+##Connect to your AMI
+The first time connecting to a new host over SSH with PuTTY you should get a prompt telling you the fingerprint is unknown and asking if you want to trust it before. This is a MITM mitigation by PuTTY... if one day your fingerprint is just suddenly different for no reason, you should Not connect, and figure out why (if it&#39;s not an attack, it&#39;s likely because the IP address changed, while the public DNS record remained the same, or something of the sorts... buuuuut also prob just means something fishy is happening). Go ahead anc click &quot;Yes&quot; to accept the fingerprint as known.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/cc5cb61329e6744c5a8938b70f6cf1e52fb79a81.PNG&quot; width=&quot;679&quot; height=&quot;425&quot;&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/2/249ed12c09e7b84d5c2fdfe569c65d296266e024.PNG&quot; width=&quot;690&quot; height=&quot;496&quot;&gt;
+
+##Update, Upgrade, and Install Quassel-Core with the following commands
+    sudo apt-get update
+    sudo apt-get install upgrade
+    sudo apt-get install quassel-core
+**Note: I forgot to take pictures of the update/upgrade, but there&#39;s nothing more to it.**
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/e/e33bdc361a5432e30f6fa274cffb1d3b6f1c7942.PNG&quot; width=&quot;673&quot; height=&quot;424&quot;&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/fba996db12ff0ddda978f57ff5ee2b54a18a27d8.PNG&quot; width=&quot;673&quot; height=&quot;424&quot;&gt;
+
+##Run Quassel Client and connect to AMI&#39;s IP/hostname on port 4242
+**Note: At this point, if you&#39;re on linux, you&#39;ll need to sudo apt-get quassel-client**
+
+##Add Core to Quassel Client
+Run Quasel Client. Choose &quot;Add Core&quot;.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/7a1550a7b108611a9859daa85f124266532118f1.PNG&quot; width=&quot;690&quot; height=&quot;424&quot;&gt;
+
+##Fill in details for Core server
+Give the core an &quot;Account Name&quot; which is just seen from the client when choosing a core. 
+Enter the IP/hostname of the core, which can be the IP or the public DNS provided by amazon.
+Enter &quot;4242&quot; as the port to connect to.
+Enter whatever username and password you want. It creates this account as the super user account for the quassel core.
+Enter any proxy information you may have for whatever reason. 
+Click Ok and connect to Quassel Core.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/e/e3038288557ccaf2d0256f854f455933696ff6e3.PNG&quot; width=&quot;394&quot; height=&quot;493&quot;&gt;
+
+##Follow the Quassel-Core setup Wizard
+Click Next.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/14c7e4f17ae201a84122e71d78875ca1b34fcfb8.PNG&quot; width=&quot;690&quot; height=&quot;423&quot;&gt;
+
+Choose SQLiteDB as database type, unless you&#39;re configuring a core to have many, many users (which some people do), in which case you&#39;d want a postgres DB.
+**Note: if you choose postgres you&#39;ll have to apt-get install that onto the ubuntu server and/or configure it if it&#39;s already installed.**
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/ddac4dbb8dc77f635e0ec30ecba16b7ad39165b8.PNG&quot; width=&quot;516&quot; height=&quot;398&quot;&gt;
+
+At this point, you choose &quot;Connect to Core&quot;, and your Quassel Client connects to your Quassel Core. From here you need to add your Quassel Identity containing your IRC nickname(s) and IRC server info of whatever server(s) you connect to with those nicknames. 
+
+I wrote a [tutorial a few days ago on how to connect to the 0x00sec IRC with Quassel](https://0x00sec.org/t/join-0x00sec-on-irc-how-to-irc-with-quassel/997) just using the quassel stand-alone program, not the client... however once you connect to the core with the client, the process is identical, so for the rest of this tutorial, jump on over there and do that. See you on the other side!</description>
+    
+    <lastBuildDate>Sun, 04 Sep 2016 02:36:04 +0000</lastBuildDate>
+    <category>Anonymity</category>
+    <atom:link href="https://0x00sec.org/t/setting-up-quassel-core-on-amazon-ec2-server/1047.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Setting up Quassel Core on Amazon EC2 server</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/setting-up-quassel-core-on-amazon-ec2-server/1047/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/setting-up-quassel-core-on-amazon-ec2-server/1047/2</link>
+        <pubDate>Sun, 21 Jan 2018 00:35:26 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1047-2</guid>
+        <source url="https://0x00sec.org/t/setting-up-quassel-core-on-amazon-ec2-server/1047.rss">Setting up Quassel Core on Amazon EC2 server</source>
+      </item>
+      <item>
+        <title>Setting up Quassel Core on Amazon EC2 server</title>
+        <dc:creator><![CDATA[123loaded]]></dc:creator>
+        <description><![CDATA[
+            <p>Quassel is an IRC client which can be setup to have a core server, and a client, where the core is always up and running so that you are always available in IRC and also, ideally, have less connection issues etc, etc… Let’s just get right to it.<br>
+Note: There won’t be a whole lot of explanation here, as the pictures are pretty straight forward.</p>
+<h2>Sign up for Amazon Web Services and Create EC2 AMI</h2>
+<p>Create an account for AWS at <a href="http://aws.amazon.com" rel="noopener nofollow ugc">http://aws.amazon.com</a> and then login to your AWS console. You are presented the following screen. There are lots of options, but for now, all we want is a simple EC2 server on their cloud.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/6/67baf8accd9f2ceee58b0ca407a47c3100b23634.PNG" width="642" height="398"></p>
+<p>Click “Amazon EC2” and then “Create Instance”<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/8/8ff5f13b238b5bc3e86ad090209b3daf100f69c5.PNG" width="606" height="176"></p>
+<p>There are sever AMI’s (Amazon Machine Instances) available to choose from. I am going to fire up an Ubuntu 14.04 Server, but you can choose which ever you’re comfortable/most familiar with.<br>
+Note: "Free Tier Eligible means just that, it is free to use. However, this is only for 12 months and then they’ll begin to bill you. Also, this is only for <em>new</em> Amazon Web Services customers. I didn’t know this and I’ve been getting billed… it’s not too expensive… but still… not very hard to just create a new account (not very hard to just create a new account every 12 months either hehe).<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/0/0d48024f2da8a76ddc48fab8fbf2d1ba278e263a.PNG" width="689" height="255"></p>
+<p>#<span class="hashtag">#Choose</span> amount of virtual processors and RAM for the machine<br>
+Unless you plan to do something beyond the scope of this tutorial, the minimum specs are fine… resist your inner nerd urge to have more than 1GB of RAM… I know… it’s hard, but it’s plenty, trust me, I’m some guy on the internet, I’d never lie.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/3/334407237649db5f91b18135e9c24aef8d2302bc.PNG" width="690" height="341"></p>
+<p>#<span class="hashtag">#Choose</span> your subnet info<br>
+Again, do nothing here.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/4/4ee09c4d9a69b54af51da30a7b06f26c90783ded.PNG" width="690" height="301"></p>
+<p>#<span class="hashtag">#Choose</span> storage space<br>
+I’d just leave it at 15GB… you could even go less, unless you plan to use this AMI to store anything in the future.<br>
+Note: You get 30GB of free storage across any/all AMI’s you are running (though I think 2 is the limit for free).<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/f/f238b195f5a8188ad7a1de05aa2147308beca153.PNG" width="690" height="258"></p>
+<p>#<span class="hashtag">#Create</span> a Tag for your AMI<br>
+As far as I know, this is just used within the AWS console to refer to this specific AMI at times.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/7/7397a0a358a7dbd5a0b15072892ceaf8c8667093.PNG" width="690" height="122"></p>
+<p>#<span class="hashtag">#Create</span> a security Group<br>
+A security group in AWS is just a name given to a particular set of firewall rules that you can apply to groups of machines or a single machine as you see fit. This consists primarily of which ports it’s allowed to recieve ingress (inbound) traffic on, and what IP addresses or address range it will accept connections from.</p>
+<p>If you <em>know</em> that your IP is static and won’t change, and you only connect from a couple places, you can go ahead and add your home IP address and connect from anywhere you want. If you’re using this AMI as a staging server for some attack vector and connecting to it through a VPN, you’d definitely want to leave this open/set to 0.0.0.0 so any IP can connect.</p>
+<p>Go ahead and open up port 22 so you can SSH into your machine as need be. And then open up whatever port you want Quassel to run on. I was going to have that as 31337 for this demo, but didn’t record the process of changing it so you’ll have to figure that out on your own.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/7/70b29a97cac0f0b6d56d31431e594d276479731c.PNG" width="690" height="229"><br>
+<strong>Note: You actually have to open 4242 as well for the initial Quassel Core connection, so your inbound open ports should look like this instead</strong><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/f/f494718f8bdb6ba2635fa0477c791ec9fc8a86bb.PNG" width="690" height="152"></p>
+<p>#<span class="hashtag">#Review</span> EC2 AMI settings and click launch<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/5/5e797fd1a12b9bc694357ef9733f78d6267f9c29.PNG" width="689" height="259"></p>
+<p>#<span class="hashtag">#Create</span> SSH Key Pair for secure SSH connections.<br>
+Amazon does not give their instances default passwords, as they feel that would be too insecure (rightfully so), so instead, they have you create an SSH Key Pair and they drop the public key into your AMI’s /etc/hosts/ directory for you and give you the matching private key. Type in a name for your private key and click “download”. Save this as <code>&lt;</code>MyPrivateKey<code>&gt;</code>.pem somewhere safe/secure where you will not lose it, as you <strong>cannot download this private key again</strong>.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/0/0eb8e8d6386aa1e9a44ca0488675092f3b251030.PNG" width="678" height="500"></p>
+<p>#<span class="hashtag">#Actually</span> launch AMI<br>
+Click “Launch Instances” and your AMI will actually be up and running.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/e/e21e07b5cf3c6eff5c4c08c93a77dd47785166ac.PNG" width="690" height="240"></p>
+<p>#<span class="hashtag">#View</span> launch log<br>
+You can click “View launch log” to see the state your AMI is in as it’s booting up.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/e/eb46a7a50079921d254ed9eb36d9063aaa2edc31.PNG" width="601" height="285"></p>
+<p>#<span class="hashtag">#Connect</span> to EC2 AMI over SSH with Putty (or just ssh on linux =p)<br>
+Windows has no SSH client by default, so you need to acquire one. Sadly, there are only really 2 options that work reliably as far as I know… using cygwin to emulate a linux terminal on your windows machine, and installing ssh via cygwin, or using PuTTY. The later is way easier, and Putty is actually pretty powerful and awesome in its own right. Go ahead and <a href="http://www.putty.org/" rel="noopener nofollow ugc">download and install PuTTY</a>. I don’t have pictures for this… I have faith in your ability to run *.exe’s from unknown sources ;p.</p>
+<p>#<span class="hashtag">#Import</span> private key into PuTTY<br>
+Putty actually has a seperate program entirely for handling import/export/generation of public/private keys (probably due to the large codebase involved with all the different algorithms different keys cant support). So in Windows, find and run Putty-Gen, and then click the"Load" button where it says “Load existing Private Key”. It will pop up and tell you that the key was loaded successfully.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/4/40c45b4afab8e6ca8f8cbc6bfe04f34ea712be2f.PNG" width="484" height="470"></p>
+<p><span class="hashtag">#Save</span> private key as PuTTY compatible key<br>
+Putty has some sort of different format for the file types for its keys… loading the key simple extracted the raw data of they key into the resulting window for viewing, now you must choose “Save Private Key” to save it as a Putty Key Type. Feel free to give it a passsphrase though it is not required.<br>
+Note: Have fun with half of my private key… if anyone can come up with some decent hashing/collision programs, my free-tier AMI is all yours ;p.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/2/22e2a734d228e023872613426b1bbb1f566ab453.png" width="483" height="466"></p>
+<p>#<span class="hashtag">#Grab</span> the IP address or hostname of your AMI from AWS Console<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/d/d42f98459ce4ddfa4c48175947cb10c76ecacefe.PNG" width="689" height="250"></p>
+<p>#<span class="hashtag">#Run</span> Putty<br>
+Run PuTTY, input the IP/hostname of your AMI, and then go ahead and give this SSH session a name for good measure (saves all the data attributed with this SSH connection for later use) and click “Save”.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/5/59e85dde6a3d29eca822220080826374d2648bbf.PNG" width="460" height="442"></p>
+<p>#<span class="hashtag">#Configure</span> Putty session with Private Key and username<br>
+Go to Connection-&gt;Data and enter the default username in the “Auto-Login username” field. For most AWS EC2 AMI’s, this username is ec2-user, however you should read the documentation for the AMI you choose, as the default username for the Ubuntu AMI is <strong>ubuntu</strong>.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/7/730e7bf671c43c740e63e51a9cf394c7f2169f32.PNG" width="459" height="439"></p>
+<p>Go to Connections-&gt;SSH-&gt;Auth, click the Browse button next to “Private key file for authorization”, and choose the putty compatible private key that you created with PuTTY Gen.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/1/1271f2ccaae108e349e9d420742ff55159b6d52a.png" width="456" height="437"></p>
+<p><strong>Note: At this point you should choose “Save Session” again back under the Session tab at the very top of the left hand tree. Otherwise, you’ll have to load the key again each time and username, as we so far only chose “save” after entering the IP/host information.</strong></p>
+<p>#<span class="hashtag">#Connect</span> to your AMI<br>
+The first time connecting to a new host over SSH with PuTTY you should get a prompt telling you the fingerprint is unknown and asking if you want to trust it before. This is a MITM mitigation by PuTTY… if one day your fingerprint is just suddenly different for no reason, you should Not connect, and figure out why (if it’s not an attack, it’s likely because the IP address changed, while the public DNS record remained the same, or something of the sorts… buuuuut also prob just means something fishy is happening). Go ahead anc click “Yes” to accept the fingerprint as known.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/c/cc5cb61329e6744c5a8938b70f6cf1e52fb79a81.PNG" width="679" height="425"><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/2/249ed12c09e7b84d5c2fdfe569c65d296266e024.PNG" width="690" height="496"></p>
+<p>#<span class="hashtag">#Update</span>, Upgrade, and Install Quassel-Core with the following commands<br>
+sudo apt-get update<br>
+sudo apt-get install upgrade<br>
+sudo apt-get install quassel-core<br>
+<strong>Note: I forgot to take pictures of the update/upgrade, but there’s nothing more to it.</strong><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/e/e33bdc361a5432e30f6fa274cffb1d3b6f1c7942.PNG" width="673" height="424"><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/f/fba996db12ff0ddda978f57ff5ee2b54a18a27d8.PNG" width="673" height="424"></p>
+<p>#<span class="hashtag">#Run</span> Quassel Client and connect to AMI’s IP/hostname on port 4242<br>
+<strong>Note: At this point, if you’re on linux, you’ll need to sudo apt-get quassel-client</strong></p>
+<p>#<span class="hashtag">#Add</span> Core to Quassel Client<br>
+Run Quasel Client. Choose “Add Core”.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/7/7a1550a7b108611a9859daa85f124266532118f1.PNG" width="690" height="424"></p>
+<p>#<span class="hashtag">#Fill</span> in details for Core server<br>
+Give the core an “Account Name” which is just seen from the client when choosing a core.<br>
+Enter the IP/hostname of the core, which can be the IP or the public DNS provided by amazon.<br>
+Enter “4242” as the port to connect to.<br>
+Enter whatever username and password you want. It creates this account as the super user account for the quassel core.<br>
+Enter any proxy information you may have for whatever reason.<br>
+Click Ok and connect to Quassel Core.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/e/e3038288557ccaf2d0256f854f455933696ff6e3.PNG" width="394" height="493"></p>
+<p>#<span class="hashtag">#Follow</span> the Quassel-Core setup Wizard<br>
+Click Next.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/1/14c7e4f17ae201a84122e71d78875ca1b34fcfb8.PNG" width="690" height="423"></p>
+<p>Choose SQLiteDB as database type, unless you’re configuring a core to have many, many users (which some people do), in which case you’d want a postgres DB.<br>
+<strong>Note: if you choose postgres you’ll have to apt-get install that onto the ubuntu server and/or configure it if it’s already installed.</strong><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/d/ddac4dbb8dc77f635e0ec30ecba16b7ad39165b8.PNG" width="516" height="398"></p>
+<p>At this point, you choose “Connect to Core”, and your Quassel Client connects to your Quassel Core. From here you need to add your Quassel Identity containing your IRC nickname(s) and IRC server info of whatever server(s) you connect to with those nicknames.</p>
+<p>I wrote a <a href="https://0x00sec.org/t/join-0x00sec-on-irc-how-to-irc-with-quassel/997">tutorial a few days ago on how to connect to the 0x00sec IRC with Quassel</a> just using the quassel stand-alone program, not the client… however once you connect to the core with the client, the process is identical, so for the rest of this tutorial, jump on over there and do that. See you on the other side!</p>
+          <p><a href="https://0x00sec.org/t/setting-up-quassel-core-on-amazon-ec2-server/1047/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/setting-up-quassel-core-on-amazon-ec2-server/1047/1</link>
+        <pubDate>Sun, 04 Sep 2016 02:36:04 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1047-1</guid>
+        <source url="https://0x00sec.org/t/setting-up-quassel-core-on-amazon-ec2-server/1047.rss">Setting up Quassel Core on Amazon EC2 server</source>
+      </item>
+  </channel>
+</rss>

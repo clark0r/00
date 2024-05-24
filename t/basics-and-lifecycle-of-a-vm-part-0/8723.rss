@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Basics and lifecycle of a VM - Part #0</title>
+    <link>https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723</link>
+    <description>&lt;h2&gt;Basics and lifecycle of a VM - Part #0&lt;/h2&gt;
+
+
+[details=&quot;Edit&quot;]
+
+* Added navigation links
+* some restructuring in the link section 
+[/details]
+
+
+&gt; **Disclaimer**
+&gt; 
+&gt; This article is based on extensive research and I am not an expert in this field. The only intention I’ve got was “_to understand how virtualization is working and share it_” (a pretty naive target). Please tell me any mistake you discover. I will correct it as quick as possible.
+
+How does a Virtual Machine works? Well, an OS is running in a separate program (e.g. Virtual-Box, Hyper-V) which makes this OS “think” it runs on a real PC, but in reality it has no power over my PC at all. This all can be done because magicians working at Intel, AMD and this company which develops VirtualBox.
+
+This is the standard explanation which is kinda right, but… nah, how does this stuff works in reality? So, lets get the basic high level view:
+
+When you booting up a guest OS as VM on your machine, a part of your kernel starts executing special virtualization instructions on your CPU. This kernel module is called a Hypervisor or a Virtual Machine Monitor (VMM) which, you guessed it, monitors what your VM does.
+
+There are two ways to design a VMM.
+1. The host virtualization type. Here your install a software on an already existing OS (the host). This software installs it’s hypervisor driver and runs the VMs with it.
+_Software examples:_ [VirtualBox](https://en.wikipedia.org/wiki/VirtualBox), [Vmware](https://en.wikipedia.org/wiki/VMware).
+
+&gt; &lt;pre&gt;
+&gt;  –––––––––––––––––––––––     –––––––––––––––––––––––
+&gt; |                       |   |                       |
+&gt; |       GUEST OS        |   |      GUEST OS         |
+&gt; |                       |   |                       |
+&gt;  –––––––––––––––––––––––     –––––––––––––––––––––––
+&gt; |                       |   |                       |
+&gt; |     KERNEL GUEST OS   |   |   KERNEL GUEST OS     |           ...
+&gt;  –––––––––––––––––––––––     –––––––––––––––––––––––   –––––––––––––––––––––
+&gt;             |___________________________|________________________|
+&gt;                                  |
+&gt;  ––––––––––––––––––––––––––––––––|––––––––––––––––––––––––––  
+&gt; |                                |                          |
+&gt; |         HOST OS                |        HOST OS           |
+&gt;  –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+&gt; |                       |        |         |                |
+&gt; |   KERNEL HOST         |   VMM MODULE     |  KERNEL HOST   |
+&gt; |                       |        |         |                |
+&gt;  –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+&gt; |                                |                          |
+&gt; |                          HARDWARE                         |
+&gt; |                                                           |
+&gt; 
+&gt; &lt;/pre&gt;
+
+2. The bare metal hypervisor. This one is a hypervisor running directly on the hardware (started by the BIOS). On top of this all the guests are running with their own kernels. To manage the guests there is a more privileged VM running with which you can also control the hypervisor.
+_Software examples:_ [Xen](https://en.wikipedia.org/wiki/Xen), [KVM](https://en.wikipedia.org/wiki/Kernel-based_Virtual_Machine).
+
+&gt; &lt;pre&gt;
+&gt; 
+&gt;  –––––––––––––––––––––––     –––––––––––––––––––––––
+&gt; |                       |   |                       |
+&gt; |       GUEST OS        |   |      GUEST OS         |
+&gt; |                       |   |                       |
+&gt;  –––––––––––––––––––––––     –––––––––––––––––––––––
+&gt; |                       |   |                       |
+&gt; |     KERNEL GUEST OS   |   |   KERNEL GUEST OS     |           ...
+&gt;  –––––––––––––––––––––––     –––––––––––––––––––––––   –––––––––––––––––––––
+&gt;             |__________________ ________|________________________|
+&gt;                                |               |
+&gt;                                |               |
+&gt;                                |               | &lt; MANAGES GUESTS
+&gt;                                |  –––––––––––––––––––––––––––
+&gt;                                | |                           |
+&gt;                                | |    MANAGEMENT OS          |
+&gt;                                | |                           |
+&gt;                                |  –––––––––––––––––––––––––––
+&gt;                                |                    |
+&gt;                                |                    |
+&gt;                                |                    |
+&gt;  –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+&gt; |                              |                            |
+&gt; |                         HYPERVISOR (e.g. XEN)             |
+&gt; |                              |                            |
+&gt;  –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+&gt; |                              |                            |
+&gt; |                          HARDWARE                         |
+&gt; |                                                           |
+&gt; 
+&gt; &lt;/pre&gt;
+
+
+This is still a pretty high level view on the whole topic. So let&#39;s go deeper.
+
+Your CPU got a hell lot of instructions which can be used by software like your kernel. Basic ones which read values from a register or more complex ones like AES encryption routines. And beside those, also a set of virtualization instructions (VMX operations).
+
+To start your VM with your guest OS the VMM will set up a rule set, executes a VMXON instruction on the CPU and enters the VM.
+_“Enter the VM”_ basically means that the processor starts executing the code of the guest OS (usually the BIOS). The processor is aware that a VM is executing code and not the actual host kernel (this processor state is called: _VMX non-root operation mode_).
+If the guest tries to run specific CPU instructions which are not allowed, the processor will “_exit_” the VMX non-root mode and give back control to the VMM. The VMM can look at the instruction the guest has tried to execute, executes the instruction on behalf of the guest OS (or doesn’t) and uses a VMRESUME to enter the VM again (a.k.a sets the processor state into VMX non-root mode).
+This game will go on and on until you decide to shut down the VM.
+
+&gt; &lt;pre&gt;
+&gt; set up ––––&gt; VMXON ––––––&gt; VMLAUNCH/–––––––&gt; VM has –––––– ––––––––&gt; VMOFF
+&gt; rule set                   VMRESUME         control       |
+&gt;                           ^                               |
+&gt;                           |                               |
+&gt;                           |                         Tries to exec.
+&gt;                           |                         root operation
+&gt;                           |                               |
+&gt;                       VMM exec.  &lt;–––– VM–exit &lt;––––––––––
+&gt;                      instructions
+&gt; &lt;/pre&gt;
+
+As you see the guest OS is running most the time natively on your CPU. Occasionally interrupted by VM-exits and VM-entries.
+Those transitions between the VM and the VMM are relatively costly in terms of CPU-cycles. When it comes to a VM-exit the processor has to
+
+ **1.** save the CPU state of the guest system (copy registers etc.),
+ **2.** store information about the reason for the VM-Exit,
+ **3.** restore the CPU state of the VMM,
+ **4.** the VMM will handle the instructions the guest OS wasn’t allowed to execute
+ **5.** save the result for the guest,
+ **6.** save its own CPU state and return to the VM (VMRESUME).
+
+At this point we already can see why using a VM is safer than just running a normal OS. In case you’ve got some malware on your guest OS running, it will only be able to execute harmless CPU instructions. All the important ones, which could affect our host systems memory and execution flow, get executed by the VMM.
+
+Because a VMM just have to handle specific instructions of the VM, the code is way less complex than of an OS kernel. Which means:
+_less code_ → _smaller attack surface_ → _harder to find vulnerabilities._
+
+This process is similar to User-Mode &lt;&gt; Kernel-Mode traps on not virtualized operation systems. Although in this case we create another layer under the guest OS kernel and therefore another possibility to control processes on the upper layers.
+
+This was it for now. In the next part we talk about the rule sets of the VM. It should get much clearer than why the VMM has actually that much control.
+
+In case you want to program a basic hypervisor yourself, you can follow the first of those links down there.
+
+&lt;hr&gt;
+&lt;div align=&quot;center&quot;&gt; &lt;a href=&quot;https://0x00sec.org/t/introduction-hardware-virtualization-part-4294967295/8722&quot;&gt;&lt;br&gt; &lt;-- Introduction&lt;/a&gt;&lt;/div&gt;
+
+&lt;div align=&quot;center&quot;&gt; &lt;a href=&quot;https://0x00sec.org/t/the-vmcs-part-1/8739&quot;&gt;The VMCS - Part #1 --&gt;&lt;/a&gt; &lt;/div&gt;
+&lt;hr&gt;
+
+_Do it yourself_
+- https://rayanfam.com/topics/hypervisor-from-scratch-part-1/ (building a kernel module)
+- https://software.intel.com/sites/default/files/managed/7c/f1/326019-sdm-vol-3c.pdf (raw information)
+- https://www.codeproject.com/Articles/215458/Virtualization-for-System-Programmers (same content like this, but different words and with PoC)
+
+_But I want to read about hacky stuff!_
+- https://en.wikipedia.org/wiki/Blue_Pill_(software)
+- https://web.archive.org/web/20110913070538/http://www.invisiblethingslab.com/resources/bh08/
+- https://web.archive.org/web/20080418123748/http://www.bluepillproject.org/</description>
+    
+    <lastBuildDate>Sun, 30 Sep 2018 22:09:33 +0000</lastBuildDate>
+    <category>Hardware</category>
+    <atom:link href="https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Basics and lifecycle of a VM - Part #0</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723/4</link>
+        <pubDate>Fri, 26 Oct 2018 18:20:38 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-8723-4</guid>
+        <source url="https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723.rss">Basics and lifecycle of a VM - Part #0</source>
+      </item>
+      <item>
+        <title>Basics and lifecycle of a VM - Part #0</title>
+        <dc:creator><![CDATA[Rot127]]></dc:creator>
+        <description><![CDATA[
+            <p>Well, obviously, every code has to run at some point on a CPU. But before hardware virtualization was there hypervisors did changed some instructions before executing them on the CPU (which can be seen as “guest code never runs directly on the CPU”).<br>
+This is called Binary Translation and because every instruction needs to be checked by the hypervisor before execution it was pretty ineffective.</p>
+          <p><a href="https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723/3</link>
+        <pubDate>Sun, 30 Sep 2018 22:09:33 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-8723-3</guid>
+        <source url="https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723.rss">Basics and lifecycle of a VM - Part #0</source>
+      </item>
+      <item>
+        <title>Basics and lifecycle of a VM - Part #0</title>
+        <dc:creator><![CDATA[Derfloink]]></dc:creator>
+        <description><![CDATA[
+            <p>Great Article! I never thought that much about VM’s and  how secure they’re. Also I never knew that the code of a VM is directly executed on the CPU (which in my case sounds pretty vurnable despite it’s controlled by the VMM). Looking forward to read more about that <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723/2</link>
+        <pubDate>Sun, 30 Sep 2018 10:50:28 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-8723-2</guid>
+        <source url="https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723.rss">Basics and lifecycle of a VM - Part #0</source>
+      </item>
+      <item>
+        <title>Basics and lifecycle of a VM - Part #0</title>
+        <dc:creator><![CDATA[Rot127]]></dc:creator>
+        <description><![CDATA[
+            <h2>Basics and lifecycle of a VM - Part #0</h2>
+
+Edit <a href="https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723/1">(click for more details)</a>
+<blockquote>
+<p><strong>Disclaimer</strong></p>
+<p>This article is based on extensive research and I am not an expert in this field. The only intention I’ve got was “<em>to understand how virtualization is working and share it</em>” (a pretty naive target). Please tell me any mistake you discover. I will correct it as quick as possible.</p>
+</blockquote>
+<p>How does a Virtual Machine works? Well, an OS is running in a separate program (e.g. Virtual-Box, Hyper-V) which makes this OS “think” it runs on a real PC, but in reality it has no power over my PC at all. This all can be done because magicians working at Intel, AMD and this company which develops VirtualBox.</p>
+<p>This is the standard explanation which is kinda right, but… nah, how does this stuff works in reality? So, lets get the basic high level view:</p>
+<p>When you booting up a guest OS as VM on your machine, a part of your kernel starts executing special virtualization instructions on your CPU. This kernel module is called a Hypervisor or a Virtual Machine Monitor (VMM) which, you guessed it, monitors what your VM does.</p>
+<p>There are two ways to design a VMM.</p>
+<ol>
+<li>The host virtualization type. Here your install a software on an already existing OS (the host). This software installs it’s hypervisor driver and runs the VMs with it.<br>
+<em>Software examples:</em> <a href="https://en.wikipedia.org/wiki/VirtualBox" rel="nofollow noopener">VirtualBox</a>, <a href="https://en.wikipedia.org/wiki/VMware" rel="nofollow noopener">Vmware</a>.</li>
+</ol>
+<blockquote>
+<pre> –––––––––––––––––––––––     –––––––––––––––––––––––
+|                       |   |                       |
+|       GUEST OS        |   |      GUEST OS         |
+|                       |   |                       |
+ –––––––––––––––––––––––     –––––––––––––––––––––––
+|                       |   |                       |
+|     KERNEL GUEST OS   |   |   KERNEL GUEST OS     |           ...
+ –––––––––––––––––––––––     –––––––––––––––––––––––   –––––––––––––––––––––
+            |___________________________|________________________|
+                                 |
+ ––––––––––––––––––––––––––––––––|––––––––––––––––––––––––––  
+|                                |                          |
+|         HOST OS                |        HOST OS           |
+ –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+|                       |        |         |                |
+|   KERNEL HOST         |   VMM MODULE     |  KERNEL HOST   |
+|                       |        |         |                |
+ –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+|                                |                          |
+|                          HARDWARE                         |
+|                                                           |
+
+</pre>
+</blockquote>
+<ol start="2">
+<li>The bare metal hypervisor. This one is a hypervisor running directly on the hardware (started by the BIOS). On top of this all the guests are running with their own kernels. To manage the guests there is a more privileged VM running with which you can also control the hypervisor.<br>
+<em>Software examples:</em> <a href="https://en.wikipedia.org/wiki/Xen" rel="nofollow noopener">Xen</a>, <a href="https://en.wikipedia.org/wiki/Kernel-based_Virtual_Machine" rel="nofollow noopener">KVM</a>.</li>
+</ol>
+<blockquote>
+<pre> –––––––––––––––––––––––     –––––––––––––––––––––––
+|                       |   |                       |
+|       GUEST OS        |   |      GUEST OS         |
+|                       |   |                       |
+ –––––––––––––––––––––––     –––––––––––––––––––––––
+|                       |   |                       |
+|     KERNEL GUEST OS   |   |   KERNEL GUEST OS     |           ...
+ –––––––––––––––––––––––     –––––––––––––––––––––––   –––––––––––––––––––––
+            |__________________ ________|________________________|
+                               |               |
+                               |               |
+                               |               | &lt; MANAGES GUESTS
+                               |  –––––––––––––––––––––––––––
+                               | |                           |
+                               | |    MANAGEMENT OS          |
+                               | |                           |
+                               |  –––––––––––––––––––––––––––
+                               |                    |
+                               |                    |
+                               |                    |
+ –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+|                              |                            |
+|                         HYPERVISOR (e.g. XEN)             |
+|                              |                            |
+ –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+|                              |                            |
+|                          HARDWARE                         |
+|                                                           |
+
+</pre>
+</blockquote>
+<p>This is still a pretty high level view on the whole topic. So let’s go deeper.</p>
+<p>Your CPU got a hell lot of instructions which can be used by software like your kernel. Basic ones which read values from a register or more complex ones like AES encryption routines. And beside those, also a set of virtualization instructions (VMX operations).</p>
+<p>To start your VM with your guest OS the VMM will set up a rule set, executes a VMXON instruction on the CPU and enters the VM.<br>
+<em>“Enter the VM”</em> basically means that the processor starts executing the code of the guest OS (usually the BIOS). The processor is aware that a VM is executing code and not the actual host kernel (this processor state is called: <em>VMX non-root operation mode</em>).<br>
+If the guest tries to run specific CPU instructions which are not allowed, the processor will “<em>exit</em>” the VMX non-root mode and give back control to the VMM. The VMM can look at the instruction the guest has tried to execute, executes the instruction on behalf of the guest OS (or doesn’t) and uses a VMRESUME to enter the VM again (a.k.a sets the processor state into VMX non-root mode).<br>
+This game will go on and on until you decide to shut down the VM.</p>
+<blockquote>
+<pre>set up ––––&gt; VMXON ––––––&gt; VMLAUNCH/–––––––&gt; VM has –––––– ––––––––&gt; VMOFF
+rule set                   VMRESUME         control       |
+                          ^                               |
+                          |                               |
+                          |                         Tries to exec.
+                          |                         root operation
+                          |                               |
+                      VMM exec.  &lt;–––– VM–exit &lt;––––––––––
+                     instructions
+</pre>
+</blockquote>
+<p>As you see the guest OS is running most the time natively on your CPU. Occasionally interrupted by VM-exits and VM-entries.<br>
+Those transitions between the VM and the VMM are relatively costly in terms of CPU-cycles. When it comes to a VM-exit the processor has to</p>
+<p><strong>1.</strong> save the CPU state of the guest system (copy registers etc.),<br>
+<strong>2.</strong> store information about the reason for the VM-Exit,<br>
+<strong>3.</strong> restore the CPU state of the VMM,<br>
+<strong>4.</strong> the VMM will handle the instructions the guest OS wasn’t allowed to execute<br>
+<strong>5.</strong> save the result for the guest,<br>
+<strong>6.</strong> save its own CPU state and return to the VM (VMRESUME).</p>
+<p>At this point we already can see why using a VM is safer than just running a normal OS. In case you’ve got some malware on your guest OS running, it will only be able to execute harmless CPU instructions. All the important ones, which could affect our host systems memory and execution flow, get executed by the VMM.</p>
+<p>Because a VMM just have to handle specific instructions of the VM, the code is way less complex than of an OS kernel. Which means:<br>
+<em>less code</em> → <em>smaller attack surface</em> → <em>harder to find vulnerabilities.</em></p>
+<p>This process is similar to User-Mode &lt;&gt; Kernel-Mode traps on not virtualized operation systems. Although in this case we create another layer under the guest OS kernel and therefore another possibility to control processes on the upper layers.</p>
+<p>This was it for now. In the next part we talk about the rule sets of the VM. It should get much clearer than why the VMM has actually that much control.</p>
+<p>In case you want to program a basic hypervisor yourself, you can follow the first of those links down there.</p>
+<hr>
+<div align="center"> <a href="https://0x00sec.org/t/introduction-hardware-virtualization-part-4294967295/8722"><br> &lt;-- Introduction</a>
+</div>
+<div align="center"> <a href="https://0x00sec.org/t/the-vmcs-part-1/8739">The VMCS - Part #1 --&gt;</a> </div>
+<hr>
+<p><em>Do it yourself</em></p>
+<ul>
+<li>
+<a href="https://rayanfam.com/topics/hypervisor-from-scratch-part-1/" rel="nofollow noopener">https://rayanfam.com/topics/hypervisor-from-scratch-part-1/</a> (building a kernel module)</li>
+<li>
+<a href="https://software.intel.com/sites/default/files/managed/7c/f1/326019-sdm-vol-3c.pdf" rel="nofollow noopener">https://software.intel.com/sites/default/files/managed/7c/f1/326019-sdm-vol-3c.pdf</a> (raw information)</li>
+<li>
+<a href="https://www.codeproject.com/Articles/215458/Virtualization-for-System-Programmers" rel="nofollow noopener">https://www.codeproject.com/Articles/215458/Virtualization-for-System-Programmers</a> (same content like this, but different words and with PoC)</li>
+</ul>
+<p><em>But I want to read about hacky stuff!</em></p>
+<ul>
+<li><a href="https://en.wikipedia.org/wiki/Blue_Pill_(software)" rel="nofollow noopener">https://en.wikipedia.org/wiki/Blue_Pill_(software)</a></li>
+<li><a href="https://web.archive.org/web/20110913070538/http://www.invisiblethingslab.com/resources/bh08/" rel="nofollow noopener">https://web.archive.org/web/20110913070538/http://www.invisiblethingslab.com/resources/bh08/</a></li>
+<li><a href="https://web.archive.org/web/20080418123748/http://www.bluepillproject.org/" rel="nofollow noopener">https://web.archive.org/web/20080418123748/http://www.bluepillproject.org/</a></li>
+</ul>
+          <p><a href="https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723/1</link>
+        <pubDate>Wed, 26 Sep 2018 18:20:33 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-8723-1</guid>
+        <source url="https://0x00sec.org/t/basics-and-lifecycle-of-a-vm-part-0/8723.rss">Basics and lifecycle of a VM - Part #0</source>
+      </item>
+  </channel>
+</rss>

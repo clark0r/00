@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stupid Nix Tricks: SSH Multiplexing - Networking - 0x00sec - The Home of the Hacker</title>
+<meta name="description" content="At this point, it should basically be “Stupid SSH tricks™”, but whatever. 
+Prerequisites:  Basic understanding of *nix and SSH 
+Scenario
+You have a server behind a firewalled network and you need to connect. You could ju&amp;hellip;">
+<meta name="generator" content="Discourse 3.1.0.beta6 - https://github.com/discourse/discourse version 80a1709965fa59da824b2e3392976fc6fc898f80">
+<link rel="icon" type="image/png" href="../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.png">
+<link rel="apple-touch-icon" type="image/png" href="../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.png">
+<meta name="theme-color" media="all" content="#171616">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+<link rel="canonical" href="5583.html" />
+<link rel="search" type="application/opensearchdescription+xml" href="../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+<link href="../../stylesheets/color_definitions_0x00sec-v2_15_57_a5ef387651921c3e4c7aa1108536015ba8299efb.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" class="light-scheme" />
+<link href="../../stylesheets/desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop" />
+<link href="../../stylesheets/chat_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="chat" />
+<link href="../../stylesheets/discourse-details_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-details" />
+<link href="../../stylesheets/discourse-lazy-videos_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-lazy-videos" />
+<link href="../../stylesheets/discourse-local-dates_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-local-dates" />
+<link href="../../stylesheets/discourse-narrative-bot_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-narrative-bot" />
+<link href="../../stylesheets/discourse-presence_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-presence" />
+<link href="../../stylesheets/discourse-spoiler-alert_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-spoiler-alert" />
+<link href="../../stylesheets/docker_manager_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="docker_manager" />
+<link href="../../stylesheets/poll_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="poll" />
+<link href="../../stylesheets/chat_desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="chat_desktop" />
+<link href="../../stylesheets/poll_desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="poll_desktop" />
+<link href="../../stylesheets/desktop_theme_46_f36ade55bf80933494fe3b5fab518f477de3bd4e.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2" />
+<link href="../../stylesheets/desktop_theme_57_8c0e890a61cdb4c5833a9f9c96664ed164e7d645.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop_theme" data-theme-id="57" data-theme-name="0x00sec-v2" />
+<link rel="stylesheet" href="https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="https://s3.amazonaws.com/0x00sec/highlight.pack.js"></script>
+<link rel="preload" href="../../theme-javascripts/440fd21108f5ba9e5dfe06cca9fc842569d5a874.js%3F__ws=0x00sec.org" as="script">
+<script defer src="../../theme-javascripts/440fd21108f5ba9e5dfe06cca9fc842569d5a874.js%3F__ws=0x00sec.org" data-theme-id="40"></script>
+<link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;Stupid Nix Tricks: SSH Multiplexing&#39;" href="5583.rss" />
+<meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://0x00sec.org/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:image" content="https://0x00sec.org/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:url" content="https://0x00sec.org/t/stupid-nix-tricks-ssh-multiplexing/5583" />
+<meta name="twitter:url" content="https://0x00sec.org/t/stupid-nix-tricks-ssh-multiplexing/5583" />
+<meta property="og:title" content="Stupid Nix Tricks: SSH Multiplexing" />
+<meta name="twitter:title" content="Stupid Nix Tricks: SSH Multiplexing" />
+<meta property="og:description" content="At this point, it should basically be “Stupid SSH tricks™”, but whatever.  Prerequisites:  Basic understanding of *nix and SSH  Scenario You have a server behind a firewalled network and you need to connect. You could just do something like ssh first-server and from there ssh internal-server. Not too bad, right?  What if there’s a whole subnet of servers that you might wanna reach? What if you don’t wanna SSH twice? What if you’re using something that wants to execute from your local machine but..." />
+<meta name="twitter:description" content="At this point, it should basically be “Stupid SSH tricks™”, but whatever.  Prerequisites:  Basic understanding of *nix and SSH  Scenario You have a server behind a firewalled network and you need to connect. You could just do something like ssh first-server and from there ssh internal-server. Not too bad, right?  What if there’s a whole subnet of servers that you might wanna reach? What if you don’t wanna SSH twice? What if you’re using something that wants to execute from your local machine but..." />
+<meta property="og:article:section" content="Networking" />
+<meta property="og:article:section:color" content="8C6238" />
+<meta name="twitter:label1" value="Reading time" />
+<meta name="twitter:data1" value="2 mins 🕑" />
+<meta name="twitter:label2" value="Likes" />
+<meta name="twitter:data2" value="35 ❤" />
+<meta property="article:published_time" content="2018-02-22T15:51:42+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+</head>
+<body class="crawler ">
+<div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+
+<a href="https://init.0x00sec.org" class="dow-menu">Init</a>
+<a href="https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+<a href="https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+<header>
+<a href="../../index.html">
+0x00sec - The Home of the Hacker
+</a>
+</header>
+<div id="main-outlet" class="wrap" role="main">
+<div id="topic-title">
+<h1>
+<a href="5583.html">Stupid Nix Tricks: SSH Multiplexing</a>
+</h1>
+<div class="topic-category" itemscope itemtype="http://schema.org/BreadcrumbList">
+<span itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+<a href="../../c/networking/63.html" class="badge-wrapper bullet" itemprop="item">
+<span class="badge-category-bg" style="background-color: #8C6238"></span>
+<span class="badge-category clear-badge">
+<span class="category-name" itemprop="name">Networking</span>
+</span>
+</a>
+<meta itemprop="position" content="1" />
+</span>
+</div>
+</div>
+<div itemscope itemtype="http://schema.org/DiscussionForumPosting">
+<meta itemprop="headline" content="Stupid Nix Tricks: SSH Multiplexing">
+<meta itemprop="articleSection" content="Networking">
+<meta itemprop="keywords" content>
+<div itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+<meta itemprop="name" content="0x00sec - The Home of the Hacker">
+<div itemprop="logo" itemscope itemtype="http://schema.org/ImageObject">
+<meta itemprop="url" content="https://0x00sec.org/uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.png">
+</div>
+</div>
+<div id="post_1" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/fraq"><span itemprop="name">fraq</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-22T15:51:42Z" class="post-time">
+February 22, 2018, 3:51pm
+</time>
+<meta itemprop="dateModified" content="2018-02-22T15:51:42Z">
+<span itemprop="position">1</span>
+</span>
+</div>
+<div class="post" itemprop="articleBody">
+<p>At this point, it should basically be “Stupid SSH tricks™”, but whatever.</p>
+<p>Prerequisites: Basic understanding of *nix and SSH</p>
+<h2>Scenario</h2>
+<p>You have a server behind a firewalled network and you need to connect. You <em>could</em> just do something like <code>ssh first-server</code> and from there <code>ssh internal-server</code>. Not too bad, right?</p>
+<p>What if there’s a whole subnet of servers that you might wanna reach? What if you don’t wanna SSH twice? What if you’re using something that wants to execute from your local machine but can’t really handle the manual two step SSH jump (such as <a href="https://www.ansible.com/" rel="nofollow noopener">Ansible</a>)</p>
+<p>This is where SSH Multiplexing comes in <em>very</em> handy</p>
+<h2>Solution, part 1: Pivot box</h2>
+<p>As you probably expected by now, we’re going to be digging into our ssh config file, so go ahead and pop an editor open to <code>~/.ssh/config</code></p>
+<p>The first thing we want to do is setup our “gateway” or “bastion” or “jump” host. Whatever you want to call it. Doesn’t matter to me. Here’s an excerpt of mine with a breakdown of each line in the config</p>
+<pre><code class="lang-auto">host jump
+  User fraq
+  Hostname foo.bar.baz
+  ControlMaster auto
+  ControlPath ~/.ssh/proxy-%r@%h:%p
+  ControlPersist 5m
+</code></pre>
+<p><code>host jump</code> defines a friendly name in SSH for your machine. Note that this isn’t in <code>/etc/hosts</code>, so you can’t <code>ping jump</code>, but you can <code>ssh jump</code>. When you do use <code>ssh jump</code>, ssh opens up the config file, looks for a host entry that matches, and then uses that config to build the connection. Nothing we haven’t covered already in previous chapters.</p>
+<p><code>User fraq</code> is the username we use to connect to <code>jump</code></p>
+<p><code>Hostname foo.bar.baz</code> means that we connect to a server called <code>foo.bar.baz</code> in DNS. This can also be an IP address.</p>
+<p>These next three are the ones you need for multiplexing:<br>
+<code>ControlMaster auto</code> tells the ssh connection that you want to listen for control connections (used for multiplexing)</p>
+<p><code>ControlPath</code> tells ssh where to put the control socket for the connections and how to format the file names. Per the OpenSSH cookbook:</p>
+<blockquote>
+<p>The combination %r, %h and %p stand for the remote user name, the remote host and the remote host’s port. The control sockets should be given unique names.</p>
+</blockquote>
+<p><code>ControlPersist</code> tells ssh how long to leave the master open.</p>
+<h2>Solution, part 2: Target box</h2>
+<p>Now that your jump host is setup to accept multiplexed SSH connections, it’s time to tell the SSH how to connect to your target box <em>through</em> the jump box.</p>
+<pre><code class="lang-auto">Host target
+    ProxyCommand ssh -W %h:%p jump
+    User fraq
+    Hostname 10.10.10.10
+</code></pre>
+<p>As you can see, it looks very similar to a standard config file, except for the <code>ProxyCommand</code> option. This tells the ssh connection to execute that command <em>first</em> as a prerequisite for connecting to the target machine. In our case, we’re saying that we want to <code>ssh -W</code> through the machine known to ssh as <code>jump</code>.</p>
+<h2>Conclusion</h2>
+<p>With this in place, you can now use <code>jump</code> as a pivot to get into internal networks that it can access but you cannot, all without having to <code>ssh</code> twice manually. This means scripts or tools that invoke <code>ssh</code> can be used locally on your machine as well.</p>
+<p>And yes, this can be chained basically indefinitely, so you can create some pretty long and crazy proxy connections.</p>
+<p>Also, I very intentionally skipped over the in-depth explanation of <code>ssh -W</code> and the older <code>ssh nc</code> implementation. The whole purpose of this post was just to setup ssh multiplexing.</p>
+<h3>References</h3>
+<p><a href="https://en.wikibooks.org/wiki/OpenSSH/Cookbook/Multiplexing" class="onebox" target="_blank" rel="nofollow noopener">https://en.wikibooks.org/wiki/OpenSSH/Cookbook/Multiplexing</a></p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="10" />
+<span class="post-likes">10 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_2" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/pry0cc"><span itemprop="name">pry0cc</span></a>
+(Leader &amp; Offsec Engineer &amp; Forum Daddy)
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-22T15:56:17Z" class="post-time">
+February 22, 2018, 3:56pm
+</time>
+<meta itemprop="dateModified" content="2018-02-22T15:56:17Z">
+<span itemprop="position">2</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>This is cool and all. But I think you’re complicating this massively.</p>
+<p>Here is an example of a jump box I use in my ssh config.</p>
+<pre><code class="lang-auto">Host myhost
+    Hostname 10.10.10.10
+    Port 4040 
+    User pry0cc
+    ProxyJump <a href="../../cdn-cgi/l/email-protection.html" class="__cf_email__" data-cfemail="7a0a08033a100f170a18150254191517">[email&#160;protected]</a>
+</code></pre>
+<p>Simply putting a host inside ProxyJump does the same thing.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="5" />
+<span class="post-likes">5 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_3" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/fraq"><span itemprop="name">fraq</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-22T16:10:25Z" class="post-time">
+February 22, 2018, 4:10pm
+</time>
+<meta itemprop="dateModified" content="2018-02-22T16:10:25Z">
+<span itemprop="position">3</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>“Complicating” all depends on your use case.</p>
+<p>I intentionally omitted the CLI version of this, but as you’re probably aware, anything you do on the CLI can be done in the ssh config and vice versa. For me, I <em>always</em> ssh in certain boxes via jump hosts, so I want to remove the <code>-J whatevermiddlehost</code> from my command and just <code>ssh foo</code>.</p>
+<p>Beyond that, there’s a very good reason to setup and use this via the config file: SSH config files can accept regex! If you want to execute a command against a whole subnet (ie, Ansible plays) then you can setup a host entry like <code>*.mydomain</code> or <code>10.10.*</code>, so in one fell swoop you setup proxycommands for a whole bunch of servers.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="3" />
+<span class="post-likes">3 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_4" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/fraq"><span itemprop="name">fraq</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-22T16:20:06Z" class="post-time">
+February 22, 2018, 4:20pm
+</time>
+<meta itemprop="dateModified" content="2018-02-22T16:20:06Z">
+<span itemprop="position">4</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>so, <code>ssh -J</code> is valid and good and useful if you’re doing a one-off. As you know I always recommend that if you do something twice, script/automate/remove the manual interaction.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_5" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/pry0cc"><span itemprop="name">pry0cc</span></a>
+(Leader &amp; Offsec Engineer &amp; Forum Daddy)
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-22T16:36:55Z" class="post-time">
+February 22, 2018, 4:36pm
+</time>
+<meta itemprop="dateModified" content="2018-02-22T16:36:55Z">
+<span itemprop="position">5</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Well, that code snippet ^ is an ssh config file. Not a command line switch.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="1" />
+<span class="post-likes">1 Like</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_6" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/fraq"><span itemprop="name">fraq</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-22T16:39:20Z" class="post-time">
+February 22, 2018, 4:39pm
+</time>
+<meta itemprop="dateModified" content="2018-02-22T16:39:20Z">
+<span itemprop="position">6</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>It should also be noted that ProxyCommand and ProxyJump are not the same. ProxyCommand is present on most but not all older SSH versions and allows for arbitrary commands attached to SSH (like <code>nc</code>), whereas ProxyJump is shorthand for <code>ssh</code>ing through multiple machines.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="1" />
+<span class="post-likes">1 Like</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_7" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/pry0cc"><span itemprop="name">pry0cc</span></a>
+(Leader &amp; Offsec Engineer &amp; Forum Daddy)
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-22T16:40:31Z" class="post-time">
+February 22, 2018, 4:40pm
+</time>
+<meta itemprop="dateModified" content="2018-02-22T16:40:31Z">
+<span itemprop="position">7</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Isn’t that what you want to achieve? Use a machine to connect through? Or am I mistaken?</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_8" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/fraq"><span itemprop="name">fraq</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-22T16:41:16Z" class="post-time">
+February 22, 2018, 4:41pm
+</time>
+<meta itemprop="dateModified" content="2018-02-22T16:41:16Z">
+<span itemprop="position">8</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>This is a basic example of connecting through machines, yeah. If you wanna use this to do additional fun stuff, that’s up to you.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="1" />
+<span class="post-likes">1 Like</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_9" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/maderas"><span itemprop="name">maderas</span></a>
+(https://twitter.com/hackermaderas)
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-25T05:14:49Z" class="post-time">
+February 25, 2018, 5:14am
+</time>
+<meta itemprop="dateModified" content="2018-02-25T05:14:49Z">
+<span itemprop="position">9</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Your “Stupid Nix Tricks” have become a favorite of mine fraq…thank you.</p>
+<p>Also, I understand and appreciate pry0cc’s contribution to this post.</p>
+<p>It should be noted that where exploitation is concerned, there could be any number of variables that could force improvisation of a concept or skill.</p>
+<p>Stupid snags happen all the time on engagements, and sometimes you don’t have time to fully appreciate the cause of a snag until you are drafting your report (or even later when the client’s IT department let you in on what could have occurred); you just keep shifting the methods by which you’d achieve your next step.</p>
+<p>Thus, I appreciate fraq’s introduction of this concept and both your and pry0cc’s methods of execution.</p>
+<p>I also appreciate the measures by which any work here on the Big0 is open to review and fair, polite criticism and discourse…so thank you both for being an example of this as well.</p>
+<p>There are no sacred cows in this community, only cows and BBQ.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="5" />
+<span class="post-likes">5 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_10" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/fraq"><span itemprop="name">fraq</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-25T20:50:58Z" class="post-time">
+February 25, 2018, 8:50pm
+</time>
+<meta itemprop="dateModified" content="2018-02-25T20:50:58Z">
+<span itemprop="position">10</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<aside class="quote no-group" data-username="maderas" data-post="9" data-topic="5583">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt width="20" height="20" src="../../user_avatar/0x00sec.org/maderas/40/6389_2.png" class="avatar"> maderas:</div>
+<blockquote>
+<p>There are no sacred cows in this community, only cows and BBQ.</p>
+</blockquote>
+</aside>
+<p>I’m gonna have to remember that <img src="../../images/emoji/twitter/wink.png%3Fv=9" title=":wink:" class="emoji" alt=":wink:"></p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="1" />
+<span class="post-likes">1 Like</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_11" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/maderas"><span itemprop="name">maderas</span></a>
+(https://twitter.com/hackermaderas)
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-02-26T19:47:53Z" class="post-time">
+February 26, 2018, 7:47pm
+</time>
+<meta itemprop="dateModified" content="2018-02-26T19:47:53Z">
+<span itemprop="position">11</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>fraq-</p>
+<p>I am glad you enjoyed the quip brother; it was in no way an equivalent exchange for the knowledge you (and pry0cc) shared.</p>
+<p>It was a spontaneous flourish on my part; as well as being an apex skill of my trade, Nix Administration reminds of me of the older generations of Unix Administrators (far too many are retiring or being pushed into retirement ) who projected a tangible aura of arcane, strange power.</p>
+<p>I was managed/mentored by one grey beard who got into Systems Administration of huge industrial/energy sector enterprise environments to “ease into retirement” .</p>
+<p>His career had started as a programmer in the 1960’s: he designed and programmed microprocessors for submarines .</p>
+<p>The company provided no tools or resources other then the microprocessors themselves (back then software bundling as a service was still going strong thanks to companies likeIBM).</p>
+<p>He had to program not just the microprocessors, but also almost all of his tools…mostly in Haskell…</p>
+<p>I think your post and the back and forth with pyr0cc (which those Unix sorcerers were also prone to) reminded me of those times.</p>
+<p>I think my mind got weird with those words as I realized that this community is building the future facsimiles of those mages.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="4" />
+<span class="post-likes">4 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_12" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/fraq"><span itemprop="name">fraq</span></a>
+Closed
+</span>
+<link itemprop="mainEntityOfPage" href="5583.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-03-24T15:51:59Z" class="post-time">
+March 24, 2018, 3:51pm
+</time>
+<meta itemprop="dateModified" content="2018-03-24T15:51:59Z">
+<span itemprop="position">12</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+</div>
+</div>
+<footer class="container wrap">
+<nav class="crawler-nav">
+<ul>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../index.html" itemprop="url">Home </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../categories.html" itemprop="url">Categories </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="https://0x00sec.org/guidelines" itemprop="url">FAQ/Guidelines </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../tos.html" itemprop="url">Terms of Service </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../privacy.html" itemprop="url">Privacy Policy </a>
+</span>
+</li>
+</ul>
+</nav>
+<p class="powered-by-link">Powered by <a href="https://www.discourse.org">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+<script data-cfasync="false" src="../../cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script src="https://instant.page/3.0.0" type="module" defer integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1"></script>
+</body>
+</html>

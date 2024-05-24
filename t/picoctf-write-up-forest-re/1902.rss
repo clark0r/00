@@ -1,0 +1,1038 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>picoCTF Write-up ~ Forest (RE)</title>
+    <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902</link>
+    <description>Hello folks! I hope you&#39;re doing great. This is my first ever CTF write-up yay! 
+
+During the last couple of weeks, @IoTh1nkN0t, @dtm, @kowalski and myself, took part in [picoCTF](https://picoctf.com/). It&#39;s an &quot;entry-level&quot; CTF, which practically means, it&#39;s made for CTF rookies! Well, you needed a little bit of experience in order to tackle some of the more challenging tasks but nonetheless it was hella fun. And the best part? The tasks stay online for a year+ so go pwn &#39;em all now! I&#39;m pretty sure it was our first CTF as a team and as individuals. We ended up placing in the top 120, though at some point we reached top 70 (12k+ teams in total). My teammates will follow up with their own write-ups as well AFAIK.
+
+The main reason I&#39;m writing this post isn&#39;t to show off my solving skills, but to get you interested in CTFs since they are extremely fun and personally I learnt a ton. I won&#39;t be writing about all the tasks I&#39;ve solved. I&#39;ll focus on the ones that were fun and challenging to me. I&#39;ll begin with _forest_ , which was a Reverse Engineering task and in the next days I&#39;m hoping to release my write-up on a Forensics and Exploit Development (bypassing ASLR via format string bug) task.  
+
+Without further ado, let&#39;s get right into it!
+
+---
+
+###Binary Analysis
+
+Let&#39;s begin with the RE starter-pack analysis:
+
+```makefile
+&gt; file forest
+  forest: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux.so.2, for GNU/Linux 2.6.32, BuildID[sha1]=4bc47bea06a7f6c49f552be50a5d028989dd9f50, stripped
+
+```
+Sweet! A 32-bit ELF binary. Oh wait, stripped as well. I haven&#39;t dealt with more than 2 stripped binaries in my life so it took me quite a bit of time to analyse it and understand it in Binary Ninja. I was also given the following text:
+
+```makefile
+DLLDLDLLLLLDLLLLRLDLLDLD
+LLLRRDLLLLRDLLLLLDLLRLRR
+RDLLLDLLLDLLLLLDLLRDLLLR
+RLDLLLDLLLLLDLLLRLDLLDLL
+RLRRDLLLDLLRLRRRDLLRDLLL
+LLDLLLRLDLLDLLRLRRDLLLLL
+DLLRDLLLRRLDLLLDLLLLLDLL
+RDLLRLRRDLLLDLLLDLLRLRRR
+DLLLLLDLLLLRLDLLLRRLRRDD
+LLLRRDLLLRRLRDLLLRLDLRRD
+DLLLRLDLLLRRRDLLRLRRRDLRRLD
+```
+Pretty non-sense, right? Have no fear! We will find out soon!
+
+By the way, some of the RE veterans would probably understand what this binary is about just from its name but I&#39;m a sucker :disappointed_relieved:.
+
+I did not bother running the binary in the beginning so let&#39;s dig deeper with bninja.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/b/b19156dec4b5b9aa799ec1331ad64f9b6fe89740.png&quot; width=&quot;491&quot; height=&quot;383&quot;&gt;
+Here are the important instructions from the snippet:
+
+```asm
+1. lea ecx, [esp + 0x4]          # address of argc
+2. mov eax, dword [data_8049c0c] # stores a string pointer into eax
+3. sub esp, 0xc 
+4. push eax
+5. call sub_80486f0
+```
+The pointer being stored into eax is a string pointer which contains the following string:
+
+```makefile
+yuoteavpxqgrlsdhwfjkzi_cmbn
+```
+We&#39;ll make sure that&#39;s the one once we fire up GDB later on. Let&#39;s move on with our analysis. So it looks like it calls a function at location _0x80486f0_ with the content of eax being its argument. 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/e/e15304901df09784607313f21f164fa47624e273.png&quot; width=&quot;690&quot; height=&quot;460&quot;&gt;
+
+Cute. Let&#39;s see what it does step-by-step.
+
+* Stores the number 0 in 2 local variables. I said local variables because once you enter the function&#39;s body, **_ebp + offset_** refers to arguments and **_ebp - offset_** refers to local variables. That&#39;s how it works in 32-bit ELF binaries.
+
+* Quick little tip for the RE newbies. As I said, 0 is being stored in 2 local vars. Now look at the down-left corner of the above assembly snippet. _**ebp - 0x10**_ is actually a counter variable! In other words, whenever you see an initialization of a variable to 0, look for an addition of that variable with 1. There&#39;s a pretty high chance that it&#39;s a loop counter. 
+
+```asm
+  add dword [ebp-0x10], 0x1 # ya sneaky counter
+```
+* Jump to the next instruction.
+
+
+Let&#39;s enter the loop code...
+
+```asm
+1. mov   edx, dword [ebp + 0x8]
+2. mov   eax, dword [ebp - 0x10]
+3. add   eax, edx 
+4. movzx eax, byte [eax]
+5. test  al, al
+```
+English translation:
+
+* Grab dat string pointer.
+* Add the counter value to it. This is a pretty common way of parsing every byte of a string FYI.
+* Store the byte in eax.
+* Check if it&#39;s null. 
+
+Neat so far. So in each loop iteration it will read one byte from the string and check if it&#39;s a null-byte. Which makes sense right? Once we reach the end of the string, that&#39;s what should be there. 
+
+Moving on to the case where it&#39;s not a null-byte, which is the juice of that function.
+
+```asm
+1. mov edx, dword [ebp + 0x8]  
+2. mov eax, dword [ebp - 0x10]
+3. add eax, edx
+4. movzx eax, byte [eax]
+5. movsx eax, al
+6. sup esp, 0x8
+7. push eax
+8. push dword [ebp - 0xc]
+9. call sub_8048607
+```
+
+English translation:
+
+Not sure if you noticed it, but it does the exact same thing, except this time, it pushes the byte at address _**string pointer + counter**_ and that weird value at **_ebp - 0xc_** as arguments to a function as well.
+
+Let&#39;s recap our intel:
+
+* So far the binary gets a pointer to a string.
+* Function at address 0x80486f0 receives that pointer as an argument.
+* It iterates through each byte and calls for each byte a function at address 0x8048607.
+
+Ok cool, not bad so far. Let&#39;s investigate the function at 0x8048607 and do not panic.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/2/285c20a6a92a91c4cfeb59a1fe58cb07b7ef3a34.png&quot; width=&quot;690&quot; height=&quot;485&quot;&gt;
+
+I kinda got scared once I noticed that this function calls itself. Reversing recursion can get tricky. Nevertheless, let&#39;s tackle this bad boy. As always, I&#39;ll write down the assembly and the english pseudo version of it for the non-assembly readers.
+
+```asm
+1. mov eax, dword [ebp + 0xc]  # string&#39;s byte 
+2. mov byte [ebp - 0x1c], al   # store the byte in ebp - 0x1c 
+3. cmp dword [ebp + 0x8], 0x0  # malloc_ptr 
+4. jne 0x804864b               # check if pointer is null 
+```
+
+The part you should pay attention to is the **_ebp + 0x8_** variable (line 3 in the above code snippet) which was **_ebp - 0xc_** in the previous function we inspected. If you haven&#39;t noticed it already, the current function is calling **_malloc_** in each recursion. And if you didn&#39;t know, the return value of a function is stored in eax. Our function&#39;s disassembly shows us that afterwards, the result (pointer in our case since we are dealing with malloc), will be stored in **_ebp + 0x8_**. Thus, we can safely assume, that _**ebp + 0x8**_ is indeed a malloc&#39;d pointer. 
+
+```asm
+1. call malloc
+2. mov dword [ebp + 0x8], eax
+```
+
+Don&#39;t worry though, we&#39;ll delve deeper into the actual functionality.
+
+Interesting. So this function calls malloc and stores the pointer into _**ebp + 0x8**_. But wait, there is more! Let&#39;s analyze further the branch that is taken if the malloc pointer is null, which is indeed null when the function is called for the first time.
+
+```asm
+1.  sub esp, 0xc
+2.  push 0xc 
+3.  call malloc
+4.  add esp, 0x10
+5.  mov dword [ebp + 0x8], eax
+6.  mov eax, dword [ebp + 0x8]
+7.  mov dword [eax], 0x0
+8.  mov eax, dword [ebp + 0x8]
+9.  mov [eax + 0x4], 0x0
+10. mov eax, dword [ebp + 0x8]
+11. mov edx, byte [ebp - 0x1c]
+12. mov byte [eax + 0x8], dl
+13. mov eax, dword [ebp + 0x8] 
+14. jmp 0x80486a2
+```
+
+This is too much to handle at once so I&#39;ll provide english translation and some dynamic analysis.
+
+English translation:
+
+* Allocate memory of 12 bytes.
+* Store the pointer of the allocated chunk in ebp + 0x8.
+* Fill with 0s the first 4 bytes of that chunk.
+* Fill with 0s the next 4 bytes of that chunk.
+* Fill the next 4 bytes of that chunk with the hex value of the string&#39;s byte.
+
+
+Here&#39;s a snippet from GDB:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/394745c8379896784367f02a7a5353ec1bb829eb.png&quot; width=&quot;690&quot; height=&quot;51&quot;&gt;
+ 
+Looks like I was right! 0x79 is &#39;y&#39; in hex fyi.
+
+I&#39;ve dealt with linked lists in the past and it was clear to me that this binary was no different. Something tells me that those 0s will be soon filled with addresses. Let&#39;s see if I was right ;). 
+
+As you can see from the bninja snippet, once the **_malloc_** branch is taken, the function exits. Sweet, let&#39;s see what&#39;s coming next! Obviously the function will be called again as I&#39;ve said before until a null-byte is read from the string. By the way, since the string is kinda long, I won&#39;t explain every single iteration of the recursion since it&#39;s tedious and to be honest all that matters is to understand the logic of the binary. The rest is history.
+
+Enough of the chatter! Let&#39;s get back to the disassembly. We&#39;ll continue with the same function, though this time a different branch will be taken since _**ebp + 0x8**_ will contain the address of the chunk we just malloc&#39;d and not null.
+
+The following snippets are the bread and butter of the entire task. I bet some of you already know where I&#39;m getting at ;). This time I will include some comments for reading convenience.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/e/ed0995b78e58ccb3d25f95e43fefaed5e4b7642b.png&quot; width=&quot;448&quot; height=&quot;130&quot;&gt;
+
+
+Off to the english translation:
+
+* Store a malloc&#39;d pointer in eax.
+* Store the value at offset **_malloc&#39;d + 0x8_** in eax. That is, the hex value of a character of the weird string I showed in the beginning.
+* Compare that value with the **_current_** byte of the string.
+* Branch depending on the result of the comparison.
+
+---
+
+###Forest Full Of Trees
+Let&#39;s see the branches and get our minds blown away:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/c54a1f068083a9b89bd50d8135d94a77c22d5617.png&quot; width=&quot;690&quot; height=&quot;217&quot;&gt;
+
+With a quick look, it seems like both branches do the same thing. BUT, with a more careful look, that&#39;s not the case. The left branch represents the branch to be taken if the comparison is greater or equal, while the right one represents the opposite. Wait a second! That pattern is familiar! Time for the recap.
+
+* We have a string of lower-case letters.
+
+* For each byte of the string, we check if its null. If yes, terminate.
+
+* For each byte of the string, we call malloc.
+
+* With malloc we create a 12-byte chunk. Let&#39;s call it node.
+
+* In each node we store stuff. One of the stuff in them is the hex representation of one of the letters of the string.
+
+* For each newly created node, we check if the current string&#39;s byte is greater or smaller than the current node&#39;s value we&#39;re at.
+
+Do you see it? It should&#39;ve hit you in the face by now! We are dealing with a Binary Search Tree! Remember the name of the task, &quot;forest&quot; ;).
+
+Let&#39;s investigate the disassembly further and see it in action.
+
+```asm
+1. movsx edx, byte [ebp - 0x1c]    
+2. mov eax, dword [ebp + 0x8]      
+3. mov eax, dword [eax || eax + 0x4]               
+4. sub esp, 0x8
+5. push edx
+6. push eax
+7. call alloc
+   [ ... ]
+```
+Couple of things to note. I&#39;ve changed the name of the function to **_alloc_** for ease and second of all have a look at line #3 of the disassembly. The main and only difference between the branches is that exact line. The left branch refers to a value stored at offset **_malloc&#39;d + 0x0_**, while the right branch refers to a value stored at offset **_malloc&#39;d + 0x4_**.
+
+I believe it&#39;s pretty clear what&#39;s going on right now. For clarity&#39;s sake, I&#39;ll include one more GDB snippet to prove to you that we are dealing with a BST.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/76d99352c19a0de8ae15006add8e7c912bfb9058.png&quot; width=&quot;689&quot; height=&quot;101&quot;&gt;
+
+Awesome! The above snippet is taken during the 2nd iteration of the weird string, which in this case is the letter &#39;u&#39;, aka 0x75. Let me translate it a little bit more.
+
+
+```makefile
+                          0x804a008
+                          Root Node
+                      +----------------+
+                      |   left* node   |
+                      |   right* node  |
+                      |      0x79      |
+                      +----------------+
+                   _ /
+                 /
+                /
+            0x804a018
+            Left Node
+       +----------------+
+       |   left* node   |
+       |   right* node  |
+       |      0x75      |
+       +----------------+
+```
+And:
+
+```c
+struct Node {
+    struct Node* left;
+    struct Node* right;
+    int32_t value;
+}
+```
+So this is the current state of the tree and the structure of each node. There is no way in hell I&#39;ll make a whole ascii art for the tree because I&#39;ll die till then. I&#39;m pretty sure you get the idea. Feel free to draw out the whole tree on a paper. It shouldn&#39;t take more than 10 mins. That way you can follow along even easier. 
+
+Simple stuff. The binary creates a binary search tree depending on the hex values of the incoming characters. Root node being 0x79, on the right of it the values greater than 0x79 and on the left values less than 0x79 (0x75 in our case and so on).
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/f8ae8ded4970da238d012ac9f0b3cd792eeaa1cb.png&quot; width=&quot;690&quot; height=&quot;253&quot;&gt;
+
+Look at that! Our tree is growing!
+
+Anyway, now that our tree is slowly made, let&#39;s go back to main and move on with the disassembly. 
+
+---
+
+###Flag Checking Algorithm
+
+Running the binary without arguments gives the following message:
+
+```makefile
+&gt; ./forest
+You have the wrong number of arguments for this forest.
+./forest [password] [string]
+```
+
+Hmm, there is a [string] reference. What could that be? Remember that strange text that was given for the task?
+
+```makefile
+DLLDLDLLLLLDLLLLRLDLLDLD
+LLLRRDLLLLRDLLLLLDLLRLRR
+RDLLLDLLLDLLLLLDLLRDLLLR
+RLDLLLDLLLLLDLLLRLDLLDLL
+RLRRDLLLDLLRLRRRDLLRDLLL
+LLDLLLRLDLLDLLRLRRDLLLLL
+DLLRDLLLRRLDLLLDLLLLLDLL
+RDLLRLRRDLLLDLLLDLLRLRRR
+DLLLLLDLLLLRLDLLLRRLRRDD
+LLLRRDLLLRRLRDLLLRLDLRRD
+DLLLRLDLLLRRRDLLRLRRRDLRRLD
+```
+
+Yep, that non sense is about to be useful to us. Assembly, assembly where you at?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/4d54d79a34a8cb5e0b69afa31ec2537cb1453786.png&quot; width=&quot;383&quot; height=&quot;239&quot;&gt;
+
+Once again, I renamed some parts in order to make sense out of it easier. So our tree is made and looking cool. Now it&#39;s time to have our password checked. The arguments being passed to the function are:
+
+* Password
+* Strange text
+* Tree pointer
+
+Obviously the function will process the provided password against the tree but where does the strange text fit in? I will not include all the parts of the function because they are not needed for the reader&#39;s comprehension.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/5/51bdd57d1242a9bb5388b3d83399e97f97b9f11e.png&quot; width=&quot;498&quot; height=&quot;260&quot;&gt;
+
+Inside **_check_** there is a call to a different function (I know, my creativity is crap but I had no idea what else to name it because it also does checking!) called **actual_check**. This function receives as arguments the tree pointer, our password and the strange text as shown in the disassembly.
+
+The magic in that snippet is at this line:
+```asm
+and dword [ebp - 0xc], eax
+```
+We&#39;ll come back to it shortly. As always, another recap to stay updated! 
+
+* We are about to investigate if our password is correct. Let&#39;s pretend that we enter &quot;megustapy&quot;.
+* The **check** function will simply iterate over each byte of the strange text and our password. 
+* For each byte it will call **actual_check**.
+
+
+Off to **actual_check**!
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/8/806af9c17d14e498f2d7ebcad8a7898aa0f15fc9.png&quot; width=&quot;388&quot; height=&quot;93&quot;&gt;
+
+Our password&#39;s byte is being compared with the value of the current tree node (by the way, if you are not familiar with how BST traversing works, I suggest you looking it up because you won&#39;t understand a single word). Now it&#39;s time for the interesting part.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/7a472d7ec271efa604e042412e2c4c63819cae75.png&quot; width=&quot;620&quot; height=&quot;393&quot;&gt;
+
+
+The above branch is taken if the password&#39;s byte is equal to the node&#39;s hex value. Since &#39;y&#39; is the root node, that would mean that if the first character of our password was &#39;y&#39;, it would jump to that branch. 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/2/2f6ee191cf04af1dc352807f8be9ed9e14164d4f.png&quot; width=&quot;690&quot; height=&quot;161&quot;&gt;
+
+The above branch is taken if the password&#39;s byte is **NOT** equal to the node&#39;s value. So what does this code do you ask? It checks if the password&#39;s byte value is greater/equal or less than the node&#39;s value. Depending on the comparison, it will jump again to a certain branch. I think you get a feeling of where this is going. Let me summarize it.
+
+* Each byte of our password will get compared against the node&#39;s value we are currently at.
+* Depending on if it&#39;s equal/greater/less than the node&#39;s value, we will jump to a certain branch.
+* There is another comparison though, which I&#39;m about to explain.
+
+As you can hopefully see, after we jump to a branch there is a &quot;sub&quot;-comparison. What this does is check the strange text&#39;s current byte value. Here is a [link](https://0x0.st/xp5.txt) to the text as well. It contains only 3 letters, &#39;L&#39;, &#39;R&#39;, &#39;D&#39;. If you are familiar with binary trees, you could easily guess that &#39;L&#39; and &#39;R&#39; are referring to the **_left_** and **_right_** nodes respectively. But what the hell is &#39;D&#39;?
+
+I have to admit that this part drove me nuts, but after some googling and brain-storming it hit me. &#39;D&#39; actually refers to the **_data_** of the **_current_** node. Cool, so now we know how the text is actually interpreted. But how is it connected to the password checking algorithm? In order to understand the whys and hows, let&#39;s take a step back and analyse **_check_** a little more carefully this time.
+
+Well, remember a &quot;magic&quot; line I mentioned before in the **_check&#39;s_** body? Let me refresh your mind:
+
+```asm
+and dword [ebp - 0xc], eax
+```
+What&#39;s going on there? Looks like **actual_check**&#39;s return value is getting AND&#39;d with the value at **_ebp - 0xc_**. But what&#39;s the &quot;magic&quot; value at ebp - 0xc? I hid that part on purpose but it&#39;s time reveal it ;).
+
+```asm
+mov dword [ebp-0xc], 0x1
+```
+So why am I showing you this and why is this important?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/f6d02af4509f528503982520a7187b2067f3b0ce.png&quot; width=&quot;449&quot; height=&quot;262&quot;&gt;
+
+We enter that part of the function once we stumble upon a null-byte in our password and the weird text. Let&#39;s look at the disassembly closer:
+
+```asm
+1.  mov eax, dword [ebp - 0x10] 
+2.  mov eax, byte [eax]
+3.  test al, al
+4.  sete dl
+5.  mov eax, dword [ebp - 0x14]
+6.  movzx eax, byte [eax]
+7.  test al, al
+8.  sete al
+9.  and eax, edx
+10. movzx eal, al
+11. and dword [ebp - 0xc], eax
+12. mov eax, dword [ebp - 0xc]
+```
+
+* 1-4: Set dl to 1 if eax is 0, which indeed is 0 since we can&#39;t enter that code unless we reached the null-byte.
+* 5 - 8: Set al to 1 if eax is 0.
+* 9 - 11: AND al with dl and the result AND it with that &quot;magic&quot; value.
+
+Afterwards, **_check_** returns back to _**main**_ with the &quot;magic&quot; value being its return value. Then, the value is compared with 0, if it is, then we screwed up. Otherwise, big win!
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/d8c2b8f09687901bef78427b5b23ddb14ea632b0.png&quot; width=&quot;690&quot; height=&quot;217&quot;&gt;
+
+We get a massive hint out of the above snippet. The return value should be 1! Which means the AND result should be 1! So how can we make the &quot;magic&quot; value be 1?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/7a472d7ec271efa604e042412e2c4c63819cae75.png&quot; width=&quot;620&quot; height=&quot;393&quot;&gt;
+
+It looks like the only way to get 1 is by meeting 2 conditions at the same time. In particular, the current strange_text&#39;s byte should be &#39;D&#39; **and** our password&#39;s byte should be **equal** to the node&#39;s value. If we are at &#39;D&#39; and the bytes are not equal, the return value which is stored in the magic value will be 0. Resulting to the final AND operation being 0. And as I mentioned earlier, 0 will output &quot;Nope&quot; on the screen. With that assumption, the rest is easy. Fire up a tab with the strange_text, you&#39;ll need it.
+
+Here&#39;s the plan:
+
+* We figured out that strange_text is basically a traversing path.
+
+* We also found out that in order for our password to be accepted, each of its bytes should be equal to the current node&#39;s value **IF AND ONLY IF** we are at an offset of strange_text that contains the byte &#39;D&#39; as well.
+
+* In other words, each time we meet a &#39;D&#39;, we need to make sure that the password&#39;s byte is equal to the value of the node. We don&#39;t care about &#39;L&#39;, &#39;R&#39;, the binary will &quot;skip&quot; those either way.
+
+This might not make sense at the moment but once I make my beautiful tree drawing, you&#39;ll see what I&#39;m talking about. [This](https://0x0.st/xfD.txt) is how I edited strange_text. I highly recommend having it opened. 
+
+Before we begin traversing the tree, let&#39;s establish a pseudo-lang:
+
+* L - Left node/child
+* R - Right node/child
+* D - Read the value at the current node
+
+---
+
+###A Picasso Was Born
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/5/5a77b603c7e491eb2b06f18b4821db7c06a8d49f.png&quot; width=&quot;690&quot; height=&quot;458&quot;&gt;
+
+There it is, our beloved tree. The hex values represent the actual characters. I thought of doing it by hand but sometimes online tools can be helpful. Let&#39;s move on with our solution. Let me remind you that once &#39;D&#39; is met, **actual_check** exits and it&#39;s called again for the next LDR etc sequence. **_For every new sequence, the tree is traversed from the start_**. Let&#39;s walk through one example and the rest should make sense. If we follow the algorithm carefully, it will hint us the password by itself.
+
+---
+###The Finale 
+####1st letter
+* First letter of the sequence is &#39;D&#39;. 
+
+* What does that mean? Well, according to our assumption, we are currently at the root node, meaning, 0x79. Since there is &#39;D&#39; in our sequence, our password&#39;s first byte should be equal to the node we are currently at. Meaning, &#39;y&#39;. So the first letter should be &#39;y&#39;.
+
+* Then, actual_check exits with magic value still being 1 and comes back again with a new sequence. 
+
+####2nd letter
+* This time, with _LLD_. What does this mean for our password? 
+
+* The tree will be traversed from its root node as always. 
+
+* This time though it will be searched as Left-Left-Data. Which means, 0x79 --&gt; 0x75 --&gt; 0x6f --&gt; Stop and check.
+
+* &#39;o&#39;, which is 0x6f in hex, will be compared against our 2nd password&#39;s byte. If they are equal, actual_check exits again and the magic value remains 1. 
+
+* So far so good. We&#39;ve got &quot;yo&quot; so far. Something tells me the next character will be &#39;u&#39;. Let&#39;s test it.
+
+####3rd letter
+
+* We&#39;ve got _LD_ now.
+
+* Our tree will be traversed in the following manner; 0x79 --&gt; 0x75 --&gt; Stop and check.
+
+* &#39;u&#39;, which is 0x75 in hex, will be compared against our 3rd password&#39;s byte. If it is indeed &#39;u&#39;, magic value stays 1 and we are set.
+
+
+As you see it&#39;s like a game now. We&#39;ve understood the meat of the task so traversing the tree should be a piece of cake. Following the same thought process we end up with the following password:
+
+```makefile
+you_could_see_the_forest_for_the_trees_ckyljfxyfmsw
+```
+Ayy! Let&#39;s check if it&#39;s correct, shall we?
+
+```makefile
+&gt; ./forest you_could_see_the_forest_for_the_trees_ckyljfxyfmsw DLLDLDLLLLLDLLLLRLDLLDLDLLLRRDLLLLRDLLLLLDLLRLRRRDLLLDLLLDLLLLLDLLRDLLLRRLDLLLDLLLLLDLLLRLDLLDLLRLRRDLLLDLLRLRRRDLLRDLLLLLDLLLRLDLLDLLRLRRDLLLLLDLLRDLLLRRLDLLLDLLLLLDLLRDLLRLRRDLLLDLLLDLLRLRRRDLLLLLDLLLLRLDLLLRRLRRDDLLLRRDLLLRRLRDLLLRLDLRRDDLLLRLDLLLRRRDLLRLRRRDLRRLD
+You did it! Submit the input as the flag
+```
+Voila!
+
+----
+
+###Conclusion
+
+That was it folks. I hope it wasn&#39;t too much to handle. It&#39;s my first ever CTF write-up and I wasn&#39;t sure about how analytical I should be. I tried my best to explain it from my point of view like when I was trying to figure out what the binary does. 
+
+Thank you for taking the time to read my write-up and I hope you learnt something new out of it. Feedback is always welcome and much appreciated.
+
+Peace out,
+@_py</description>
+    
+    <lastBuildDate>Fri, 21 Apr 2017 20:53:35 +0000</lastBuildDate>
+    <category>Reverse Engineering</category>
+    <atom:link href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[VVid0w]]></dc:creator>
+        <description><![CDATA[
+            <p>Ayy, I’ve actually had this book for awhile now in pdf form. Perhaps it’s time I got around to actually reading it.</p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/13</link>
+        <pubDate>Fri, 21 Apr 2017 20:53:35 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-13</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote group-VIP" data-username="dtm" data-post="10" data-topic="1902">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/dtm/40/6409_2.png" class="avatar"> dtm:</div>
+<blockquote>
+<p>Hacking: The Art of Exploitation</p>
+</blockquote>
+</aside>
+<p>Tip for everyone in general here: READ THIS BOOK.  It’s worth the money. It explains basics as well as advanced techniques and tricks to create chaos within a program, exploit it, change its behavior and more…<br>
+Also it’s delivered with a VM where you can try everything your own so it’s not just pure theory.</p>
+<p>~cheers</p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/12</link>
+        <pubDate>Fri, 21 Apr 2017 09:09:12 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-12</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/pry0cc">@pry0cc</a> I’m not hating. I’m peaceful and loving mayn.</p>
+<p>Btw, you <strong>learn</strong> by reading. You <strong>master</strong> by doing. You can’t just stick your head in the sand.  Once you know enough theory, you’ll have the resources to google for the right keywords/solutions and find your way through tasks.</p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/11</link>
+        <pubDate>Fri, 21 Apr 2017 07:30:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-11</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>But how much of <em>Hacking: The Art of Exploitation</em> have you read?</p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/10</link>
+        <pubDate>Fri, 21 Apr 2017 05:15:37 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-10</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Woah, no hate <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<p>You may be right, I need to push past that first hurdle. I can sit here and make excuses all day or I can just get on with it.</p>
+<p>In my whole past of learning anything, infosec, programming and what not, I’ve been able to push past that first hurdle. Reverse Engineering + CTF’s seem to be the biggest initial hurdle I’ve ever come across.</p>
+<p>I learn by doing, the problem with these is that you sort of have to know how, to do, but you can’t learn by doing if you can’t do it <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"></p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/9</link>
+        <pubDate>Thu, 20 Apr 2017 20:10:36 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-9</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m new to CTFs as well and I’m no “pro” in all means, but just trying to figure out the solution and playing around with various approaches is fun. Sure it can be tiring and frustrating if it ain’t working but that’s where the fun lies.<br>
+With every solved question/CTF the next one will be easier ( or not <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"> ).</p>
+<p>For myself I can say that I’ll try to start and actually finish more CTFs in the near future whenever I have the time because the small tricks and working steps you can take in order to solve something are worth learning for everybody.</p>
+<p>I didnt start the current picoCTF but I will do so soon :). so I skipped the write up for now Sorry <a class="mention" href="https://0x00sec.org/u/_py">@_py</a> <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"> .  I’ll come back to it once I’m 110% frustrated or am done with the CTF <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/8</link>
+        <pubDate>Thu, 20 Apr 2017 17:09:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-8</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Bruh, I didn’t say Reverse Engineering is beginner-friendly.</p>
+<p>If you and <a class="mention" href="https://0x00sec.org/u/anon79434934">@anon79434934</a> actually bothered to sign up you would see what I’m talking about. No need to have a passive attitude towards CTFs. They are meant to make you feel dumb in order to improve. Embrace it.</p>
+<p>There was a task where you had to sign up on the CTF’s forum and you got the flag. There was another one where you had to set up SSH keys in order to connect to a shell. There was a task that was dealing with bash loops and much much more of the same style. There were tasks that literally took 1 minute to solve if you googled for the right online tool.</p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/7</link>
+        <pubDate>Thu, 20 Apr 2017 17:02:33 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-7</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Ha “beginner friendly tasks”</p>
+<p>Reverse Engineering is hard. That’s definitely true when you’re just starting out.</p>
+<p><a class="mention" href="https://0x00sec.org/u/anon79434934">@anon79434934</a>, we need to figure out a way to bridge the gap between complete beginner and intermediate. I am struggling with this myself. When we break it we should share our findings.</p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/6</link>
+        <pubDate>Thu, 20 Apr 2017 16:56:12 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-6</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[exploit]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice writeup °_° keep up <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/5</link>
+        <pubDate>Wed, 19 Apr 2017 12:01:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-5</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Actually the CTF had a fair amount of beginner-friendly tasks as well.</p>
+<p>It’s not possible to know every task’s solution just by reading it. We solved plenty of tasks as a team and at least 85% of them required us to google/research quite a lot. Especially crypto. Personally, the pwning one that I’ll be writing about took me 5 days of straight research and asking questions.</p>
+<p>Don’t wait to feel ready! As <a class="mention" href="https://0x00sec.org/u/dtm">@dtm</a> says, “DON’T LET YOUR DREAMS BE MEMES!”</p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/4</link>
+        <pubDate>Wed, 19 Apr 2017 11:57:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-4</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[anon79434934]]></dc:creator>
+        <description><![CDATA[
+            <p>Unfortunately there are no CTF’s without hard stuff because otherwise I would’ve participated.</p>
+<p>Good write up. +1</p>
+<p>-Phoenix750</p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/3</link>
+        <pubDate>Wed, 19 Apr 2017 11:51:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-3</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Pretty cool write up!.. Looking forward to more!!!</p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/2</link>
+        <pubDate>Wed, 19 Apr 2017 09:24:20 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-2</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Forest (RE)</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello folks! I hope you’re doing great. This is my first ever CTF write-up yay!</p>
+<p>During the last couple of weeks, <a class="mention" href="https://0x00sec.org/u/ioth1nkn0t">@IoTh1nkN0t</a>, <a class="mention" href="https://0x00sec.org/u/dtm">@dtm</a>, <a class="mention" href="https://0x00sec.org/u/kowalski">@kowalski</a> and myself, took part in <a href="https://picoctf.com/" rel="noopener nofollow ugc">picoCTF</a>. It’s an “entry-level” CTF, which practically means, it’s made for CTF rookies! Well, you needed a little bit of experience in order to tackle some of the more challenging tasks but nonetheless it was hella fun. And the best part? The tasks stay online for a year+ so go pwn 'em all now! I’m pretty sure it was our first CTF as a team and as individuals. We ended up placing in the top 120, though at some point we reached top 70 (12k+ teams in total). My teammates will follow up with their own write-ups as well AFAIK.</p>
+<p>The main reason I’m writing this post isn’t to show off my solving skills, but to get you interested in CTFs since they are extremely fun and personally I learnt a ton. I won’t be writing about all the tasks I’ve solved. I’ll focus on the ones that were fun and challenging to me. I’ll begin with <em>forest</em> , which was a Reverse Engineering task and in the next days I’m hoping to release my write-up on a Forensics and Exploit Development (bypassing ASLR via format string bug) task.</p>
+<p>Without further ado, let’s get right into it!</p>
+<hr>
+<p>##<span class="hashtag">#Binary</span> Analysis</p>
+<p>Let’s begin with the RE starter-pack analysis:</p>
+<pre><code class="lang-makefile">&gt; file forest
+  forest: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux.so.2, for GNU/Linux 2.6.32, BuildID[sha1]=4bc47bea06a7f6c49f552be50a5d028989dd9f50, stripped
+
+</code></pre>
+<p>Sweet! A 32-bit ELF binary. Oh wait, stripped as well. I haven’t dealt with more than 2 stripped binaries in my life so it took me quite a bit of time to analyse it and understand it in Binary Ninja. I was also given the following text:</p>
+<pre><code class="lang-makefile">DLLDLDLLLLLDLLLLRLDLLDLD
+LLLRRDLLLLRDLLLLLDLLRLRR
+RDLLLDLLLDLLLLLDLLRDLLLR
+RLDLLLDLLLLLDLLLRLDLLDLL
+RLRRDLLLDLLRLRRRDLLRDLLL
+LLDLLLRLDLLDLLRLRRDLLLLL
+DLLRDLLLRRLDLLLDLLLLLDLL
+RDLLRLRRDLLLDLLLDLLRLRRR
+DLLLLLDLLLLRLDLLLRRLRRDD
+LLLRRDLLLRRLRDLLLRLDLRRD
+DLLLRLDLLLRRRDLLRLRRRDLRRLD
+</code></pre>
+<p>Pretty non-sense, right? Have no fear! We will find out soon!</p>
+<p>By the way, some of the RE veterans would probably understand what this binary is about just from its name but I’m a sucker <img src="/images/emoji/twitter/disappointed_relieved.png?v=9" title=":disappointed_relieved:" class="emoji" alt=":disappointed_relieved:">.</p>
+<p>I did not bother running the binary in the beginning so let’s dig deeper with bninja.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/b/b19156dec4b5b9aa799ec1331ad64f9b6fe89740.png" width="491" height="383"></p>
+<p>Here are the important instructions from the snippet:</p>
+<pre><code class="lang-auto">1. lea ecx, [esp + 0x4]          # address of argc
+2. mov eax, dword [data_8049c0c] # stores a string pointer into eax
+3. sub esp, 0xc 
+4. push eax
+5. call sub_80486f0
+</code></pre>
+<p>The pointer being stored into eax is a string pointer which contains the following string:</p>
+<pre><code class="lang-makefile">yuoteavpxqgrlsdhwfjkzi_cmbn
+</code></pre>
+<p>We’ll make sure that’s the one once we fire up GDB later on. Let’s move on with our analysis. So it looks like it calls a function at location <em>0x80486f0</em> with the content of eax being its argument.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/e15304901df09784607313f21f164fa47624e273.png" width="690" height="460"></p>
+<p>Cute. Let’s see what it does step-by-step.</p>
+<ul>
+<li>
+<p>Stores the number 0 in 2 local variables. I said local variables because once you enter the function’s body, <strong><em>ebp + offset</em></strong> refers to arguments and <strong><em>ebp - offset</em></strong> refers to local variables. That’s how it works in 32-bit ELF binaries.</p>
+</li>
+<li>
+<p>Quick little tip for the RE newbies. As I said, 0 is being stored in 2 local vars. Now look at the down-left corner of the above assembly snippet. <em><strong>ebp - 0x10</strong></em> is actually a counter variable! In other words, whenever you see an initialization of a variable to 0, look for an addition of that variable with 1. There’s a pretty high chance that it’s a loop counter.</p>
+</li>
+</ul>
+<pre><code class="lang-auto">  add dword [ebp-0x10], 0x1 # ya sneaky counter
+</code></pre>
+<ul>
+<li>Jump to the next instruction.</li>
+</ul>
+<p>Let’s enter the loop code…</p>
+<pre><code class="lang-auto">1. mov   edx, dword [ebp + 0x8]
+2. mov   eax, dword [ebp - 0x10]
+3. add   eax, edx 
+4. movzx eax, byte [eax]
+5. test  al, al
+</code></pre>
+<p>English translation:</p>
+<ul>
+<li>Grab dat string pointer.</li>
+<li>Add the counter value to it. This is a pretty common way of parsing every byte of a string FYI.</li>
+<li>Store the byte in eax.</li>
+<li>Check if it’s null.</li>
+</ul>
+<p>Neat so far. So in each loop iteration it will read one byte from the string and check if it’s a null-byte. Which makes sense right? Once we reach the end of the string, that’s what should be there.</p>
+<p>Moving on to the case where it’s not a null-byte, which is the juice of that function.</p>
+<pre><code class="lang-auto">1. mov edx, dword [ebp + 0x8]  
+2. mov eax, dword [ebp - 0x10]
+3. add eax, edx
+4. movzx eax, byte [eax]
+5. movsx eax, al
+6. sup esp, 0x8
+7. push eax
+8. push dword [ebp - 0xc]
+9. call sub_8048607
+</code></pre>
+<p>English translation:</p>
+<p>Not sure if you noticed it, but it does the exact same thing, except this time, it pushes the byte at address <em><strong>string pointer + counter</strong></em> and that weird value at <strong><em>ebp - 0xc</em></strong> as arguments to a function as well.</p>
+<p>Let’s recap our intel:</p>
+<ul>
+<li>So far the binary gets a pointer to a string.</li>
+<li>Function at address 0x80486f0 receives that pointer as an argument.</li>
+<li>It iterates through each byte and calls for each byte a function at address 0x8048607.</li>
+</ul>
+<p>Ok cool, not bad so far. Let’s investigate the function at 0x8048607 and do not panic.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/285c20a6a92a91c4cfeb59a1fe58cb07b7ef3a34.png" width="690" height="485"></p>
+<p>I kinda got scared once I noticed that this function calls itself. Reversing recursion can get tricky. Nevertheless, let’s tackle this bad boy. As always, I’ll write down the assembly and the english pseudo version of it for the non-assembly readers.</p>
+<pre><code class="lang-auto">1. mov eax, dword [ebp + 0xc]  # string's byte 
+2. mov byte [ebp - 0x1c], al   # store the byte in ebp - 0x1c 
+3. cmp dword [ebp + 0x8], 0x0  # malloc_ptr 
+4. jne 0x804864b               # check if pointer is null 
+</code></pre>
+<p>The part you should pay attention to is the <strong><em>ebp + 0x8</em></strong> variable (line 3 in the above code snippet) which was <strong><em>ebp - 0xc</em></strong> in the previous function we inspected. If you haven’t noticed it already, the current function is calling <strong><em>malloc</em></strong> in each recursion. And if you didn’t know, the return value of a function is stored in eax. Our function’s disassembly shows us that afterwards, the result (pointer in our case since we are dealing with malloc), will be stored in <strong><em>ebp + 0x8</em></strong>. Thus, we can safely assume, that <em><strong>ebp + 0x8</strong></em> is indeed a malloc’d pointer.</p>
+<pre><code class="lang-auto">1. call malloc
+2. mov dword [ebp + 0x8], eax
+</code></pre>
+<p>Don’t worry though, we’ll delve deeper into the actual functionality.</p>
+<p>Interesting. So this function calls malloc and stores the pointer into <em><strong>ebp + 0x8</strong></em>. But wait, there is more! Let’s analyze further the branch that is taken if the malloc pointer is null, which is indeed null when the function is called for the first time.</p>
+<pre><code class="lang-auto">1.  sub esp, 0xc
+2.  push 0xc 
+3.  call malloc
+4.  add esp, 0x10
+5.  mov dword [ebp + 0x8], eax
+6.  mov eax, dword [ebp + 0x8]
+7.  mov dword [eax], 0x0
+8.  mov eax, dword [ebp + 0x8]
+9.  mov [eax + 0x4], 0x0
+10. mov eax, dword [ebp + 0x8]
+11. mov edx, byte [ebp - 0x1c]
+12. mov byte [eax + 0x8], dl
+13. mov eax, dword [ebp + 0x8] 
+14. jmp 0x80486a2
+</code></pre>
+<p>This is too much to handle at once so I’ll provide english translation and some dynamic analysis.</p>
+<p>English translation:</p>
+<ul>
+<li>Allocate memory of 12 bytes.</li>
+<li>Store the pointer of the allocated chunk in ebp + 0x8.</li>
+<li>Fill with 0s the first 4 bytes of that chunk.</li>
+<li>Fill with 0s the next 4 bytes of that chunk.</li>
+<li>Fill the next 4 bytes of that chunk with the hex value of the string’s byte.</li>
+</ul>
+<p>Here’s a snippet from GDB:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/3/394745c8379896784367f02a7a5353ec1bb829eb.png" width="690" height="51"></p>
+<p>Looks like I was right! 0x79 is ‘y’ in hex fyi.</p>
+<p>I’ve dealt with linked lists in the past and it was clear to me that this binary was no different. Something tells me that those 0s will be soon filled with addresses. Let’s see if I was right ;).</p>
+<p>As you can see from the bninja snippet, once the <strong><em>malloc</em></strong> branch is taken, the function exits. Sweet, let’s see what’s coming next! Obviously the function will be called again as I’ve said before until a null-byte is read from the string. By the way, since the string is kinda long, I won’t explain every single iteration of the recursion since it’s tedious and to be honest all that matters is to understand the logic of the binary. The rest is history.</p>
+<p>Enough of the chatter! Let’s get back to the disassembly. We’ll continue with the same function, though this time a different branch will be taken since <em><strong>ebp + 0x8</strong></em> will contain the address of the chunk we just malloc’d and not null.</p>
+<p>The following snippets are the bread and butter of the entire task. I bet some of you already know where I’m getting at ;). This time I will include some comments for reading convenience.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/ed0995b78e58ccb3d25f95e43fefaed5e4b7642b.png" width="448" height="130"></p>
+<p>Off to the english translation:</p>
+<ul>
+<li>Store a malloc’d pointer in eax.</li>
+<li>Store the value at offset <strong><em>malloc’d + 0x8</em></strong> in eax. That is, the hex value of a character of the weird string I showed in the beginning.</li>
+<li>Compare that value with the <strong><em>current</em></strong> byte of the string.</li>
+<li>Branch depending on the result of the comparison.</li>
+</ul>
+<hr>
+<p>##<span class="hashtag">#Forest</span> Full Of Trees<br>
+Let’s see the branches and get our minds blown away:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/c/c54a1f068083a9b89bd50d8135d94a77c22d5617.png" width="690" height="217"></p>
+<p>With a quick look, it seems like both branches do the same thing. BUT, with a more careful look, that’s not the case. The left branch represents the branch to be taken if the comparison is greater or equal, while the right one represents the opposite. Wait a second! That pattern is familiar! Time for the recap.</p>
+<ul>
+<li>
+<p>We have a string of lower-case letters.</p>
+</li>
+<li>
+<p>For each byte of the string, we check if its null. If yes, terminate.</p>
+</li>
+<li>
+<p>For each byte of the string, we call malloc.</p>
+</li>
+<li>
+<p>With malloc we create a 12-byte chunk. Let’s call it node.</p>
+</li>
+<li>
+<p>In each node we store stuff. One of the stuff in them is the hex representation of one of the letters of the string.</p>
+</li>
+<li>
+<p>For each newly created node, we check if the current string’s byte is greater or smaller than the current node’s value we’re at.</p>
+</li>
+</ul>
+<p>Do you see it? It should’ve hit you in the face by now! We are dealing with a Binary Search Tree! Remember the name of the task, “forest” ;).</p>
+<p>Let’s investigate the disassembly further and see it in action.</p>
+<pre><code class="lang-auto">1. movsx edx, byte [ebp - 0x1c]    
+2. mov eax, dword [ebp + 0x8]      
+3. mov eax, dword [eax || eax + 0x4]               
+4. sub esp, 0x8
+5. push edx
+6. push eax
+7. call alloc
+   [ ... ]
+</code></pre>
+<p>Couple of things to note. I’ve changed the name of the function to <strong><em>alloc</em></strong> for ease and second of all have a look at line <span class="hashtag">#3</span> of the disassembly. The main and only difference between the branches is that exact line. The left branch refers to a value stored at offset <strong><em>malloc’d + 0x0</em></strong>, while the right branch refers to a value stored at offset <strong><em>malloc’d + 0x4</em></strong>.</p>
+<p>I believe it’s pretty clear what’s going on right now. For clarity’s sake, I’ll include one more GDB snippet to prove to you that we are dealing with a BST.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/76d99352c19a0de8ae15006add8e7c912bfb9058.png" width="689" height="101"></p>
+<p>Awesome! The above snippet is taken during the 2nd iteration of the weird string, which in this case is the letter ‘u’, aka 0x75. Let me translate it a little bit more.</p>
+<pre><code class="lang-makefile">                          0x804a008
+                          Root Node
+                      +----------------+
+                      |   left* node   |
+                      |   right* node  |
+                      |      0x79      |
+                      +----------------+
+                   _ /
+                 /
+                /
+            0x804a018
+            Left Node
+       +----------------+
+       |   left* node   |
+       |   right* node  |
+       |      0x75      |
+       +----------------+
+</code></pre>
+<p>And:</p>
+<pre><code class="lang-auto">struct Node {
+    struct Node* left;
+    struct Node* right;
+    int32_t value;
+}
+</code></pre>
+<p>So this is the current state of the tree and the structure of each node. There is no way in hell I’ll make a whole ascii art for the tree because I’ll die till then. I’m pretty sure you get the idea. Feel free to draw out the whole tree on a paper. It shouldn’t take more than 10 mins. That way you can follow along even easier.</p>
+<p>Simple stuff. The binary creates a binary search tree depending on the hex values of the incoming characters. Root node being 0x79, on the right of it the values greater than 0x79 and on the left values less than 0x79 (0x75 in our case and so on).</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/f/f8ae8ded4970da238d012ac9f0b3cd792eeaa1cb.png" width="690" height="253"></p>
+<p>Look at that! Our tree is growing!</p>
+<p>Anyway, now that our tree is slowly made, let’s go back to main and move on with the disassembly.</p>
+<hr>
+<p>##<span class="hashtag">#Flag</span> Checking Algorithm</p>
+<p>Running the binary without arguments gives the following message:</p>
+<pre><code class="lang-makefile">&gt; ./forest
+You have the wrong number of arguments for this forest.
+./forest [password] [string]
+</code></pre>
+<p>Hmm, there is a [string] reference. What could that be? Remember that strange text that was given for the task?</p>
+<pre><code class="lang-makefile">DLLDLDLLLLLDLLLLRLDLLDLD
+LLLRRDLLLLRDLLLLLDLLRLRR
+RDLLLDLLLDLLLLLDLLRDLLLR
+RLDLLLDLLLLLDLLLRLDLLDLL
+RLRRDLLLDLLRLRRRDLLRDLLL
+LLDLLLRLDLLDLLRLRRDLLLLL
+DLLRDLLLRRLDLLLDLLLLLDLL
+RDLLRLRRDLLLDLLLDLLRLRRR
+DLLLLLDLLLLRLDLLLRRLRRDD
+LLLRRDLLLRRLRDLLLRLDLRRD
+DLLLRLDLLLRRRDLLRLRRRDLRRLD
+</code></pre>
+<p>Yep, that non sense is about to be useful to us. Assembly, assembly where you at?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/4/4d54d79a34a8cb5e0b69afa31ec2537cb1453786.png" width="383" height="239"></p>
+<p>Once again, I renamed some parts in order to make sense out of it easier. So our tree is made and looking cool. Now it’s time to have our password checked. The arguments being passed to the function are:</p>
+<ul>
+<li>Password</li>
+<li>Strange text</li>
+<li>Tree pointer</li>
+</ul>
+<p>Obviously the function will process the provided password against the tree but where does the strange text fit in? I will not include all the parts of the function because they are not needed for the reader’s comprehension.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/5/51bdd57d1242a9bb5388b3d83399e97f97b9f11e.png" width="498" height="260"></p>
+<p>Inside <strong><em>check</em></strong> there is a call to a different function (I know, my creativity is crap but I had no idea what else to name it because it also does checking!) called <strong>actual_check</strong>. This function receives as arguments the tree pointer, our password and the strange text as shown in the disassembly.</p>
+<p>The magic in that snippet is at this line:</p>
+<pre><code class="lang-auto">and dword [ebp - 0xc], eax
+</code></pre>
+<p>We’ll come back to it shortly. As always, another recap to stay updated!</p>
+<ul>
+<li>We are about to investigate if our password is correct. Let’s pretend that we enter “megustapy”.</li>
+<li>The <strong>check</strong> function will simply iterate over each byte of the strange text and our password.</li>
+<li>For each byte it will call <strong>actual_check</strong>.</li>
+</ul>
+<p>Off to <strong>actual_check</strong>!</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/8/806af9c17d14e498f2d7ebcad8a7898aa0f15fc9.png" width="388" height="93"></p>
+<p>Our password’s byte is being compared with the value of the current tree node (by the way, if you are not familiar with how BST traversing works, I suggest you looking it up because you won’t understand a single word). Now it’s time for the interesting part.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/7a472d7ec271efa604e042412e2c4c63819cae75.png" width="620" height="393"></p>
+<p>The above branch is taken if the password’s byte is equal to the node’s hex value. Since ‘y’ is the root node, that would mean that if the first character of our password was ‘y’, it would jump to that branch.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/2f6ee191cf04af1dc352807f8be9ed9e14164d4f.png" width="690" height="161"></p>
+<p>The above branch is taken if the password’s byte is <strong>NOT</strong> equal to the node’s value. So what does this code do you ask? It checks if the password’s byte value is greater/equal or less than the node’s value. Depending on the comparison, it will jump again to a certain branch. I think you get a feeling of where this is going. Let me summarize it.</p>
+<ul>
+<li>Each byte of our password will get compared against the node’s value we are currently at.</li>
+<li>Depending on if it’s equal/greater/less than the node’s value, we will jump to a certain branch.</li>
+<li>There is another comparison though, which I’m about to explain.</li>
+</ul>
+<p>As you can hopefully see, after we jump to a branch there is a “sub”-comparison. What this does is check the strange text’s current byte value. Here is a <a href="https://0x0.st/xp5.txt" rel="noopener nofollow ugc">link</a> to the text as well. It contains only 3 letters, ‘L’, ‘R’, ‘D’. If you are familiar with binary trees, you could easily guess that ‘L’ and ‘R’ are referring to the <strong><em>left</em></strong> and <strong><em>right</em></strong> nodes respectively. But what the hell is ‘D’?</p>
+<p>I have to admit that this part drove me nuts, but after some googling and brain-storming it hit me. ‘D’ actually refers to the <strong><em>data</em></strong> of the <strong><em>current</em></strong> node. Cool, so now we know how the text is actually interpreted. But how is it connected to the password checking algorithm? In order to understand the whys and hows, let’s take a step back and analyse <strong><em>check</em></strong> a little more carefully this time.</p>
+<p>Well, remember a “magic” line I mentioned before in the <strong><em>check’s</em></strong> body? Let me refresh your mind:</p>
+<pre><code class="lang-auto">and dword [ebp - 0xc], eax
+</code></pre>
+<p>What’s going on there? Looks like <strong>actual_check</strong>’s return value is getting AND’d with the value at <strong><em>ebp - 0xc</em></strong>. But what’s the “magic” value at ebp - 0xc? I hid that part on purpose but it’s time reveal it ;).</p>
+<pre><code class="lang-auto">mov dword [ebp-0xc], 0x1
+</code></pre>
+<p>So why am I showing you this and why is this important?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/f/f6d02af4509f528503982520a7187b2067f3b0ce.png" width="449" height="262"></p>
+<p>We enter that part of the function once we stumble upon a null-byte in our password and the weird text. Let’s look at the disassembly closer:</p>
+<pre><code class="lang-auto">1.  mov eax, dword [ebp - 0x10] 
+2.  mov eax, byte [eax]
+3.  test al, al
+4.  sete dl
+5.  mov eax, dword [ebp - 0x14]
+6.  movzx eax, byte [eax]
+7.  test al, al
+8.  sete al
+9.  and eax, edx
+10. movzx eal, al
+11. and dword [ebp - 0xc], eax
+12. mov eax, dword [ebp - 0xc]
+</code></pre>
+<ul>
+<li>1-4: Set dl to 1 if eax is 0, which indeed is 0 since we can’t enter that code unless we reached the null-byte.</li>
+<li>5 - 8: Set al to 1 if eax is 0.</li>
+<li>9 - 11: AND al with dl and the result AND it with that “magic” value.</li>
+</ul>
+<p>Afterwards, <strong><em>check</em></strong> returns back to <em><strong>main</strong></em> with the “magic” value being its return value. Then, the value is compared with 0, if it is, then we screwed up. Otherwise, big win!</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/d/d8c2b8f09687901bef78427b5b23ddb14ea632b0.png" width="690" height="217"></p>
+<p>We get a massive hint out of the above snippet. The return value should be 1! Which means the AND result should be 1! So how can we make the “magic” value be 1?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/7a472d7ec271efa604e042412e2c4c63819cae75.png" width="620" height="393"></p>
+<p>It looks like the only way to get 1 is by meeting 2 conditions at the same time. In particular, the current strange_text’s byte should be ‘D’ <strong>and</strong> our password’s byte should be <strong>equal</strong> to the node’s value. If we are at ‘D’ and the bytes are not equal, the return value which is stored in the magic value will be 0. Resulting to the final AND operation being 0. And as I mentioned earlier, 0 will output “Nope” on the screen. With that assumption, the rest is easy. Fire up a tab with the strange_text, you’ll need it.</p>
+<p>Here’s the plan:</p>
+<ul>
+<li>
+<p>We figured out that strange_text is basically a traversing path.</p>
+</li>
+<li>
+<p>We also found out that in order for our password to be accepted, each of its bytes should be equal to the current node’s value <strong>IF AND ONLY IF</strong> we are at an offset of strange_text that contains the byte ‘D’ as well.</p>
+</li>
+<li>
+<p>In other words, each time we meet a ‘D’, we need to make sure that the password’s byte is equal to the value of the node. We don’t care about ‘L’, ‘R’, the binary will “skip” those either way.</p>
+</li>
+</ul>
+<p>This might not make sense at the moment but once I make my beautiful tree drawing, you’ll see what I’m talking about. <a href="https://0x0.st/xfD.txt" rel="noopener nofollow ugc">This</a> is how I edited strange_text. I highly recommend having it opened.</p>
+<p>Before we begin traversing the tree, let’s establish a pseudo-lang:</p>
+<ul>
+<li>L - Left node/child</li>
+<li>R - Right node/child</li>
+<li>D - Read the value at the current node</li>
+</ul>
+<hr>
+<p>##<span class="hashtag">#A</span> Picasso Was Born<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/5/5a77b603c7e491eb2b06f18b4821db7c06a8d49f.png" width="690" height="458"></p>
+<p>There it is, our beloved tree. The hex values represent the actual characters. I thought of doing it by hand but sometimes online tools can be helpful. Let’s move on with our solution. Let me remind you that once ‘D’ is met, <strong>actual_check</strong> exits and it’s called again for the next LDR etc sequence. <strong><em>For every new sequence, the tree is traversed from the start</em></strong>. Let’s walk through one example and the rest should make sense. If we follow the algorithm carefully, it will hint us the password by itself.</p>
+<hr>
+<p>##<span class="hashtag">#The</span> Finale<br>
+###<span class="hashtag">#1st</span> letter</p>
+<ul>
+<li>
+<p>First letter of the sequence is ‘D’.</p>
+</li>
+<li>
+<p>What does that mean? Well, according to our assumption, we are currently at the root node, meaning, 0x79. Since there is ‘D’ in our sequence, our password’s first byte should be equal to the node we are currently at. Meaning, ‘y’. So the first letter should be ‘y’.</p>
+</li>
+<li>
+<p>Then, actual_check exits with magic value still being 1 and comes back again with a new sequence.</p>
+</li>
+</ul>
+<p>###<span class="hashtag">#2nd</span> letter</p>
+<ul>
+<li>
+<p>This time, with <em>LLD</em>. What does this mean for our password?</p>
+</li>
+<li>
+<p>The tree will be traversed from its root node as always.</p>
+</li>
+<li>
+<p>This time though it will be searched as Left-Left-Data. Which means, 0x79 --&gt; 0x75 --&gt; 0x6f --&gt; Stop and check.</p>
+</li>
+<li>
+<p>‘o’, which is 0x6f in hex, will be compared against our 2nd password’s byte. If they are equal, actual_check exits again and the magic value remains 1.</p>
+</li>
+<li>
+<p>So far so good. We’ve got “yo” so far. Something tells me the next character will be ‘u’. Let’s test it.</p>
+</li>
+</ul>
+<p>###<span class="hashtag">#3rd</span> letter</p>
+<ul>
+<li>
+<p>We’ve got <em>LD</em> now.</p>
+</li>
+<li>
+<p>Our tree will be traversed in the following manner; 0x79 --&gt; 0x75 --&gt; Stop and check.</p>
+</li>
+<li>
+<p>‘u’, which is 0x75 in hex, will be compared against our 3rd password’s byte. If it is indeed ‘u’, magic value stays 1 and we are set.</p>
+</li>
+</ul>
+<p>As you see it’s like a game now. We’ve understood the meat of the task so traversing the tree should be a piece of cake. Following the same thought process we end up with the following password:</p>
+<pre><code class="lang-makefile">you_could_see_the_forest_for_the_trees_ckyljfxyfmsw
+</code></pre>
+<p>Ayy! Let’s check if it’s correct, shall we?</p>
+<pre><code class="lang-makefile">&gt; ./forest you_could_see_the_forest_for_the_trees_ckyljfxyfmsw DLLDLDLLLLLDLLLLRLDLLDLDLLLRRDLLLLRDLLLLLDLLRLRRRDLLLDLLLDLLLLLDLLRDLLLRRLDLLLDLLLLLDLLLRLDLLDLLRLRRDLLLDLLRLRRRDLLRDLLLLLDLLLRLDLLDLLRLRRDLLLLLDLLRDLLLRRLDLLLDLLLLLDLLRDLLRLRRDLLLDLLLDLLRLRRRDLLLLLDLLLLRLDLLLRRLRRDDLLLRRDLLLRRLRDLLLRLDLRRDDLLLRLDLLLRRRDLLRLRRRDLRRLD
+You did it! Submit the input as the flag
+</code></pre>
+<p>Voila!</p>
+<hr>
+<p>##<span class="hashtag">#Conclusion</span></p>
+<p>That was it folks. I hope it wasn’t too much to handle. It’s my first ever CTF write-up and I wasn’t sure about how analytical I should be. I tried my best to explain it from my point of view like when I was trying to figure out what the binary does.</p>
+<p>Thank you for taking the time to read my write-up and I hope you learnt something new out of it. Feedback is always welcome and much appreciated.</p>
+<p>Peace out,<br>
+<a class="mention" href="https://0x00sec.org/u/_py">@_py</a></p>
+          <p><a href="https://0x00sec.org/t/picoctf-write-up-forest-re/1902/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/picoctf-write-up-forest-re/1902/1</link>
+        <pubDate>Wed, 19 Apr 2017 09:03:35 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1902-1</guid>
+        <source url="https://0x00sec.org/t/picoctf-write-up-forest-re/1902.rss">picoCTF Write-up ~ Forest (RE)</source>
+      </item>
+  </channel>
+</rss>

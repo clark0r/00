@@ -1,0 +1,598 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Encrypted Chat: Part III</title>
+    <link>https://0x00sec.org/t/encrypted-chat-part-iii/7639</link>
+    <description>_This post is part three of a multi-part series. If you haven&#39;t already, please read parts [one](https://0x00sec.org/t/encrypted-chat-part-i/5839) and [two](https://0x00sec.org/t/encrypted-chat-part-ii/5958)._
+
+# It&#39;s been a while...
+Sorry for the extreme (four month!) delay on this series. I got busy with other things and it became hard to return to it, being unsure if anyone would still be interested. Anyways, I felt it should be completed so here we go!
+
+## The Code [Cont.]
+Unless you have super-human memory, here&#39;s a brief refresher of what I covered in Part II:
+
+1. **Initializing the Server**
+a. Creating the socket
+b. Generating _p_ and _g_ for the DHKE
+c. Listening for incoming clients
+2. **Initializing a client (as the server)**
+a. Creating a private/public key pair
+b. Sending _p_, _g_, and the public key in a standardized format
+c. Receiving the client&#39;s public key
+d. Calculating the shared key from _p_, the private key, and the client&#39;s public key
+
+The last line of code shown started a new thread to listen for incoming messages from the newly initialized client:
+
+```py
+# Listen for incoming messages from client
+threading.Thread(target=self.listen, args=(client, )).start()
+```
+
+This allows the server to initialize new clients while still listening to this one. The server&#39;s `listen` method does the following:
+
+1. Receive 1024 bytes of data from the client
+2. Decrypt the data with the client&#39;s shared key
+3. Broadcast the decrypted message to the rest of the clients on the server
+4. Repeat!
+
+```py
+def listen(self, client):
+    &quot;&quot;&quot;
+    Receive and handle data from a client.
+    :param client: client to receive data from
+    &quot;&quot;&quot;
+    while True:
+        try:
+            # Wait for data from client
+            data = client.connection.recv(1024)
+            # Disconnect client if no data received
+            if not data:
+                self.disconnect(client)
+                break
+            print(&quot;{} [Raw]: {}&quot;.format(client.address[0], data))
+            # Parse data as cipher-text message
+            msg = Message(key=client.key, ciphertext=data)
+            print(&quot;{} [Decrypted]: {}&quot;.format(client.address[0], msg.plaintext))
+            if msg.plaintext == &quot;!exit&quot;:
+                client.send(&quot;Acknowledged&quot;)
+                self.disconnect(client)
+                continue
+            self.broadcast(msg.plaintext, client)
+        # Disconnect client if unable to read from connection
+        except OSError:
+            self.disconnect(client)
+            break
+```
+
+The `Message` class takes care of the encryption and decryption of messages using the shared AES key we generated with the client. You can find it in [cipher.py](https://github.com/spec-sec/SecureChat/blob/master/cipher.py). 
+
+When the server broadcasts the message, it has to re-encrypt the plaintext with each recipient&#39;s respective key. Here is the server&#39;s method for doing so:
+
+```py
+def broadcast(self, content, from_client, show_address=True):
+    if show_address:
+        msg = from_client.address[0] + &quot;: &quot; + content
+    else:
+        msg = content
+    [client.send(msg) for client in self.clients if client is not from_client]
+```
+It looks through its list of clients and sends the message to everyone who is not the sender.
+And here is the `send` method inside of the client:
+```py
+def send(self, content):
+    &quot;&quot;&quot;
+    Encrypt and send a message to the client
+    :param content: plaintext content to be encrypted
+    &quot;&quot;&quot;
+    msg = Message(key=self.key, plaintext=content)
+    self.connection.sendall(msg.pack())
+```
+It encrypts the message with the client&#39;s key and packages it (by concatenating the initialization vector and the ciphertext) to be sent over the socket.
+
+And that&#39;s it for the server!
+## 3. The Client and the Command-Line Interface
+I&#39;m going to skip most of the interface-related code since it doesn&#39;t relate to computer security and it isn&#39;t very interesting anyways. I&#39;ll go over its initialization though, since it may be a useful technique in other projects.
+
+Here&#39;s what happens when you run `client.py`:
+
+1. A new `CLI` object is created
+a. The screen/chat window is initialized (I&#39;m using [curses](https://docs.python.org/3/howto/curses.html))
+2. A new `Client` object is created (which connects to the chat server) and the `CLI` object is passed in so the client can write to the screen.
+3. The `CLI` object is given the `Client` so that it can send the input it collects from the user.
+4. The client listener (awaiting messages from the server) is started on a separate thread.
+5. The command-line interface (awaiting message input from the user) is started on the main thread.
+
+```py
+. . .
+interface = CLI()
+try:
+    c = Client(interface, args.host, port=args.port)
+except ConnectionRefusedError:
+    interface.clean_exit()
+    print(&quot;Connection Refused&quot;)
+    sys.exit()
+except OSError:
+    interface.clean_exit()
+    print(&quot;Connection Failed&quot;)
+    sys.exit()
+# Add the client object to the interface
+interface.init_client(c)
+# Start the client
+client_thread = threading.Thread(target=c.start)
+client_thread.start()
+# Start the main input loop
+try:
+    interface.main()
+except KeyboardInterrupt:
+    interface.clean_exit()
+```
+Giving the client and the interface references to each-other allows them to communicate across separate threads—a useful approach that can be applied in various projects.
+
+Let&#39;s see what happens when we initialize the `Client`:
+
+```py
+def __init__(self, interface, server_address, port=DEFAULT_PORT):
+    &quot;&quot;&quot;
+    Initialize a new client.
+    :param server_address: IP address of the server
+    :param port: Server port to connect to
+    &quot;&quot;&quot;
+    self.cli = interface
+    self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    self.cli.add_msg(&quot;Connecting to {}...&quot;.format(server_address))
+    try:
+        self.connection.connect((server_address, port))
+    except KeyboardInterrupt:
+        self.cli.clean_exit()
+        sys.exit()
+    self.cli.add_msg(&quot;Connected!&quot;)
+    self.key = None
+```
+You&#39;ll see that a new socket is created and used to connect to the provided server, again using IPv4 and TCP. The client also has the ability to call `add_msg` on the interface to print to the screen, as previously mentioned.
+
+When the client is started, via these two lines from earlier:
+```py
+client_thread = threading.Thread(target=c.start)
+client_thread.start()
+```
+the client&#39;s `start` method is called on another thread. It does the following:
+
+1. Perform a DHKE with the server to generate a shared key.
+2. Listen for incoming messages
+3. Decrypt incoming messages and display them on the screen.
+
+Let&#39;s see how it accomplishes part `1`:
+
+```py
+def start(self):
+    &quot;&quot;&quot;
+    Start the client: perform key exchange and start listening
+    for incoming messages.
+    &quot;&quot;&quot;
+    try:
+        self.key = self.dh()
+    except ConnectionError:
+        self.cli.add_msg(&quot;Unable to Connect&quot;)
+        return
+. . .
+```
+```py
+def dh(self):
+    &quot;&quot;&quot;
+    Perform Diffie-Hellman Key Exchange with the server.
+
+    p: prime modulus declared by the server
+    g: generator declared by the server
+    server_key: the server&#39;s public key
+
+    private_key: the client&#39;s private key
+    public_key: the client&#39;s public key
+
+    :return shared_key: the 256-bit key both the client and
+    server now share
+    &quot;&quot;&quot;
+    self.cli.add_msg(&quot;Establishing Encryption Key...&quot;)
+    dh_message = self.connection.recv(DH_MSG_SIZE)
+    # Unpack p, g, and server_key from the server&#39;s dh message
+    p, g, server_key = DH.unpack(dh_message)
+    # Generate a randomized private key
+    private_key = DH.gen_private_key()
+    # Send the server a public key which used the previously
+    # Generated private key and both g and p
+    public_key = DH.gen_public_key(g, private_key, p)
+    self.connection.sendall(DH.package(public_key, LEN_PK))
+    # Calculate shared key
+    shared_key = DH.get_shared_key(server_key, private_key, p)
+    # print(&quot;Shared Key: {}&quot;.format(shared_key))
+    self.cli.add_msg(&quot;Encryption Key: {}&quot;.format(binascii.hexlify(shared_key).decode(&quot;utf-8&quot;)))
+    return shared_key
+```
+As you&#39;ll notice, the client&#39;s `dh` method is quite similar to that of the server—the only difference being it _receives_ `p` and `g` instead of generating them, and is the first to get the other&#39;s public key. It then creates a private/public key pair sends the public key. Finally, it calculates the shared key with the server&#39;s public key, its own private key, and `p`.
+
+To wrap things up, let&#39;s view the rest of the `start` method, which covers `2` and `3`.
+
+```py
+. . .
+while True:
+    try:
+        # Wait for data from server
+        data = self.connection.recv(1024)
+        # Disconnect from server if no data received
+        if not data:
+            self.connection.close()
+            self.cli.uninit_client()
+            break
+        # Parse data as cipher-text message
+        msg = Message(key=self.key, ciphertext=data)
+        if not self.cli:
+            break
+        # Add message to the command-line interface
+        self.cli.add_msg(msg.plaintext)
+    # Disconnect client if unable to read from connection
+    except OSError:
+        self.connection.close()
+        self.cli.uninit_client()
+        break
+```
+Again, this looks very similar to the server code. It attempts to receive 1024 bytes from the server, and once it does, it decrypts the data using the shared key. Lastly, it displays the plaintext message to the screen through the command-line interface.
+
+When the user submits a message, `client.send()` is called by the interface, which encrypts it and sends it to the server:
+```py
+def send(self, content):
+    &quot;&quot;&quot;
+    Send a message to the server.
+    :param content: string to encrypt and send
+    &quot;&quot;&quot;
+    if not self.key:
+        self.cli.add_msg(&quot;Error: Key Not Established&quot;)
+        return
+    msg = Message(key=self.key, plaintext=content)
+    self.connection.sendall(msg.pack())
+```
+
+# The End.
+![securechat_screenshot|690x454](upload://t3YmRair4C0nEEAwg0dloTDdUow.png)
+
+That completes the encrypted chat series, props to those who stuck around for this long! If you have any questions, I&#39;d be happy to answer them. Just leave a comment or send me a direct message.
+
+## P.S.
+I&#39;ve also been working on a version 2 of this program that works more like a modern chat program, with user accounts, message storage, chat groups, and cool security features (that were recommended by users of 0x00sec!). It&#39;s still in its early stages, but I&#39;ve already put the code on GitHub if anyone is interested: [https://github.com/spec-sec/SecureChat2](https://github.com/spec-sec/SecureChat2).</description>
+    
+    <lastBuildDate>Wed, 18 Jul 2018 15:49:05 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/encrypted-chat-part-iii/7639.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Encrypted Chat: Part III</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/encrypted-chat-part-iii/7639/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/encrypted-chat-part-iii/7639/8</link>
+        <pubDate>Thu, 16 Aug 2018 23:01:35 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-7639-8</guid>
+        <source url="https://0x00sec.org/t/encrypted-chat-part-iii/7639.rss">Encrypted Chat: Part III</source>
+      </item>
+      <item>
+        <title>Encrypted Chat: Part III</title>
+        <dc:creator><![CDATA[spec]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks!<br>
+I actually used m2crypto to generate the <em>p</em> and <em>g</em> parameters for diffie-hellman, since that was something I didn’t want to implement myself. I know m2crypto can do the whole process, but what <a class="mention" href="https://0x00sec.org/u/lkw">@lkw</a> said is correct, I wanted to try doing it myself so I could learn. It’s a great library though, definitely something I will use more of in the future.</p>
+          <p><a href="https://0x00sec.org/t/encrypted-chat-part-iii/7639/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/encrypted-chat-part-iii/7639/7</link>
+        <pubDate>Wed, 18 Jul 2018 15:49:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-7639-7</guid>
+        <source url="https://0x00sec.org/t/encrypted-chat-part-iii/7639.rss">Encrypted Chat: Part III</source>
+      </item>
+      <item>
+        <title>Encrypted Chat: Part III</title>
+        <dc:creator><![CDATA[lkw]]></dc:creator>
+        <description><![CDATA[
+            <p>I think part of the point of the post was to implement the crypto to see how it could work instead of using an openssl wrapper.</p>
+          <p><a href="https://0x00sec.org/t/encrypted-chat-part-iii/7639/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/encrypted-chat-part-iii/7639/6</link>
+        <pubDate>Wed, 18 Jul 2018 14:15:20 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-7639-6</guid>
+        <source url="https://0x00sec.org/t/encrypted-chat-part-iii/7639.rss">Encrypted Chat: Part III</source>
+      </item>
+      <item>
+        <title>Encrypted Chat: Part III</title>
+        <dc:creator><![CDATA[Techno_Forg]]></dc:creator>
+        <description><![CDATA[
+            <p>This probably could sound retarded, but, I was curious if you could use something like m2crypto? I saw the implementation briefly with another program in Python, but that’s a long story. Maybe something worth looking into?</p>
+<p>Btw, nice post man… thank you for finishing it up and welcome back. With that being said… ~Cheers!</p>
+<p>–Techno Forg–</p>
+          <p><a href="https://0x00sec.org/t/encrypted-chat-part-iii/7639/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/encrypted-chat-part-iii/7639/5</link>
+        <pubDate>Wed, 18 Jul 2018 14:11:28 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-7639-5</guid>
+        <source url="https://0x00sec.org/t/encrypted-chat-part-iii/7639.rss">Encrypted Chat: Part III</source>
+      </item>
+      <item>
+        <title>Encrypted Chat: Part III</title>
+        <dc:creator><![CDATA[lkw]]></dc:creator>
+        <description><![CDATA[
+            <p>You probably know this, but to add to <a class="mention" href="https://0x00sec.org/u/spec">@spec</a>’s answer, the ways I am aware of for host verification (there may be others) are</p>
+<ol>
+<li>Manually adding trusted keys/certificates</li>
+<li>Key pinning - kind of like 1 but adding the hash of the key instead and check that the has of the received key matches</li>
+<li>Certificate authorities</li>
+<li>Web of trust</li>
+<li>Blockchain with proof of work or other</li>
+</ol>
+<p>Of course each has it’s own issues: obviously the centralised ones can be compromised or turn malicious, and the distributed ones (afaik) rely on some heuristic, like participants nodes or a majority of participants being non malicious.</p>
+          <p><a href="https://0x00sec.org/t/encrypted-chat-part-iii/7639/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/encrypted-chat-part-iii/7639/4</link>
+        <pubDate>Wed, 18 Jul 2018 13:20:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-7639-4</guid>
+        <source url="https://0x00sec.org/t/encrypted-chat-part-iii/7639.rss">Encrypted Chat: Part III</source>
+      </item>
+      <item>
+        <title>Encrypted Chat: Part III</title>
+        <dc:creator><![CDATA[spec]]></dc:creator>
+        <description><![CDATA[
+            <p>Although the message contents are encrypted when sent over the network and can’t be read without the key, there’s no way for the client to verify the validity of the host they’re connecting to. Therefore, if an attacker pretends to be the server, they could intercept the components of the shared key while forwarding everything to the real server and have a copy of the shared key for themselves. If they did it this way, they would be able to read all of the messages.<br>
+I guess this program is kind of like having the encryption part of https, and not the host verification part. Without that, any networking-based program is susceptible to MitM.</p>
+          <p><a href="https://0x00sec.org/t/encrypted-chat-part-iii/7639/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/encrypted-chat-part-iii/7639/3</link>
+        <pubDate>Wed, 18 Jul 2018 03:05:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-7639-3</guid>
+        <source url="https://0x00sec.org/t/encrypted-chat-part-iii/7639.rss">Encrypted Chat: Part III</source>
+      </item>
+      <item>
+        <title>Encrypted Chat: Part III</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Just curious, is this secure against MitM? AFAIK, DH alone isn’t enough for that.</p>
+          <p><a href="https://0x00sec.org/t/encrypted-chat-part-iii/7639/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/encrypted-chat-part-iii/7639/2</link>
+        <pubDate>Wed, 18 Jul 2018 02:00:53 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-7639-2</guid>
+        <source url="https://0x00sec.org/t/encrypted-chat-part-iii/7639.rss">Encrypted Chat: Part III</source>
+      </item>
+      <item>
+        <title>Encrypted Chat: Part III</title>
+        <dc:creator><![CDATA[spec]]></dc:creator>
+        <description><![CDATA[
+            <p><em>This post is part three of a multi-part series. If you haven’t already, please read parts <a href="https://0x00sec.org/t/encrypted-chat-part-i/5839">one</a> and <a href="https://0x00sec.org/t/encrypted-chat-part-ii/5958">two</a>.</em></p>
+<h1>It’s been a while…</h1>
+<p>Sorry for the extreme (four month!) delay on this series. I got busy with other things and it became hard to return to it, being unsure if anyone would still be interested. Anyways, I felt it should be completed so here we go!</p>
+<h2>The Code [Cont.]</h2>
+<p>Unless you have super-human memory, here’s a brief refresher of what I covered in Part II:</p>
+<ol>
+<li>
+<strong>Initializing the Server</strong><br>
+a. Creating the socket<br>
+b. Generating <em>p</em> and <em>g</em> for the DHKE<br>
+c. Listening for incoming clients</li>
+<li>
+<strong>Initializing a client (as the server)</strong><br>
+a. Creating a private/public key pair<br>
+b. Sending <em>p</em>, <em>g</em>, and the public key in a standardized format<br>
+c. Receiving the client’s public key<br>
+d. Calculating the shared key from <em>p</em>, the private key, and the client’s public key</li>
+</ol>
+<p>The last line of code shown started a new thread to listen for incoming messages from the newly initialized client:</p>
+<pre><code class="lang-auto"># Listen for incoming messages from client
+threading.Thread(target=self.listen, args=(client, )).start()
+</code></pre>
+<p>This allows the server to initialize new clients while still listening to this one. The server’s <code>listen</code> method does the following:</p>
+<ol>
+<li>Receive 1024 bytes of data from the client</li>
+<li>Decrypt the data with the client’s shared key</li>
+<li>Broadcast the decrypted message to the rest of the clients on the server</li>
+<li>Repeat!</li>
+</ol>
+<pre><code class="lang-auto">def listen(self, client):
+    """
+    Receive and handle data from a client.
+    :param client: client to receive data from
+    """
+    while True:
+        try:
+            # Wait for data from client
+            data = client.connection.recv(1024)
+            # Disconnect client if no data received
+            if not data:
+                self.disconnect(client)
+                break
+            print("{} [Raw]: {}".format(client.address[0], data))
+            # Parse data as cipher-text message
+            msg = Message(key=client.key, ciphertext=data)
+            print("{} [Decrypted]: {}".format(client.address[0], msg.plaintext))
+            if msg.plaintext == "!exit":
+                client.send("Acknowledged")
+                self.disconnect(client)
+                continue
+            self.broadcast(msg.plaintext, client)
+        # Disconnect client if unable to read from connection
+        except OSError:
+            self.disconnect(client)
+            break
+</code></pre>
+<p>The <code>Message</code> class takes care of the encryption and decryption of messages using the shared AES key we generated with the client. You can find it in <a href="https://github.com/spec-sec/SecureChat/blob/master/cipher.py" rel="noopener nofollow ugc">cipher.py</a>.</p>
+<p>When the server broadcasts the message, it has to re-encrypt the plaintext with each recipient’s respective key. Here is the server’s method for doing so:</p>
+<pre><code class="lang-auto">def broadcast(self, content, from_client, show_address=True):
+    if show_address:
+        msg = from_client.address[0] + ": " + content
+    else:
+        msg = content
+    [client.send(msg) for client in self.clients if client is not from_client]
+</code></pre>
+<p>It looks through its list of clients and sends the message to everyone who is not the sender.<br>
+And here is the <code>send</code> method inside of the client:</p>
+<pre><code class="lang-auto">def send(self, content):
+    """
+    Encrypt and send a message to the client
+    :param content: plaintext content to be encrypted
+    """
+    msg = Message(key=self.key, plaintext=content)
+    self.connection.sendall(msg.pack())
+</code></pre>
+<p>It encrypts the message with the client’s key and packages it (by concatenating the initialization vector and the ciphertext) to be sent over the socket.</p>
+<p>And that’s it for the server!</p>
+<h2>3. The Client and the Command-Line Interface</h2>
+<p>I’m going to skip most of the interface-related code since it doesn’t relate to computer security and it isn’t very interesting anyways. I’ll go over its initialization though, since it may be a useful technique in other projects.</p>
+<p>Here’s what happens when you run <code>client.py</code>:</p>
+<ol>
+<li>A new <code>CLI</code> object is created<br>
+a. The screen/chat window is initialized (I’m using <a href="https://docs.python.org/3/howto/curses.html" rel="noopener nofollow ugc">curses</a>)</li>
+<li>A new <code>Client</code> object is created (which connects to the chat server) and the <code>CLI</code> object is passed in so the client can write to the screen.</li>
+<li>The <code>CLI</code> object is given the <code>Client</code> so that it can send the input it collects from the user.</li>
+<li>The client listener (awaiting messages from the server) is started on a separate thread.</li>
+<li>The command-line interface (awaiting message input from the user) is started on the main thread.</li>
+</ol>
+<pre><code class="lang-auto">. . .
+interface = CLI()
+try:
+    c = Client(interface, args.host, port=args.port)
+except ConnectionRefusedError:
+    interface.clean_exit()
+    print("Connection Refused")
+    sys.exit()
+except OSError:
+    interface.clean_exit()
+    print("Connection Failed")
+    sys.exit()
+# Add the client object to the interface
+interface.init_client(c)
+# Start the client
+client_thread = threading.Thread(target=c.start)
+client_thread.start()
+# Start the main input loop
+try:
+    interface.main()
+except KeyboardInterrupt:
+    interface.clean_exit()
+</code></pre>
+<p>Giving the client and the interface references to each-other allows them to communicate across separate threads—a useful approach that can be applied in various projects.</p>
+<p>Let’s see what happens when we initialize the <code>Client</code>:</p>
+<pre><code class="lang-auto">def __init__(self, interface, server_address, port=DEFAULT_PORT):
+    """
+    Initialize a new client.
+    :param server_address: IP address of the server
+    :param port: Server port to connect to
+    """
+    self.cli = interface
+    self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    self.cli.add_msg("Connecting to {}...".format(server_address))
+    try:
+        self.connection.connect((server_address, port))
+    except KeyboardInterrupt:
+        self.cli.clean_exit()
+        sys.exit()
+    self.cli.add_msg("Connected!")
+    self.key = None
+</code></pre>
+<p>You’ll see that a new socket is created and used to connect to the provided server, again using IPv4 and TCP. The client also has the ability to call <code>add_msg</code> on the interface to print to the screen, as previously mentioned.</p>
+<p>When the client is started, via these two lines from earlier:</p>
+<pre><code class="lang-auto">client_thread = threading.Thread(target=c.start)
+client_thread.start()
+</code></pre>
+<p>the client’s <code>start</code> method is called on another thread. It does the following:</p>
+<ol>
+<li>Perform a DHKE with the server to generate a shared key.</li>
+<li>Listen for incoming messages</li>
+<li>Decrypt incoming messages and display them on the screen.</li>
+</ol>
+<p>Let’s see how it accomplishes part <code>1</code>:</p>
+<pre><code class="lang-auto">def start(self):
+    """
+    Start the client: perform key exchange and start listening
+    for incoming messages.
+    """
+    try:
+        self.key = self.dh()
+    except ConnectionError:
+        self.cli.add_msg("Unable to Connect")
+        return
+. . .
+</code></pre>
+<pre><code class="lang-auto">def dh(self):
+    """
+    Perform Diffie-Hellman Key Exchange with the server.
+
+    p: prime modulus declared by the server
+    g: generator declared by the server
+    server_key: the server's public key
+
+    private_key: the client's private key
+    public_key: the client's public key
+
+    :return shared_key: the 256-bit key both the client and
+    server now share
+    """
+    self.cli.add_msg("Establishing Encryption Key...")
+    dh_message = self.connection.recv(DH_MSG_SIZE)
+    # Unpack p, g, and server_key from the server's dh message
+    p, g, server_key = DH.unpack(dh_message)
+    # Generate a randomized private key
+    private_key = DH.gen_private_key()
+    # Send the server a public key which used the previously
+    # Generated private key and both g and p
+    public_key = DH.gen_public_key(g, private_key, p)
+    self.connection.sendall(DH.package(public_key, LEN_PK))
+    # Calculate shared key
+    shared_key = DH.get_shared_key(server_key, private_key, p)
+    # print("Shared Key: {}".format(shared_key))
+    self.cli.add_msg("Encryption Key: {}".format(binascii.hexlify(shared_key).decode("utf-8")))
+    return shared_key
+</code></pre>
+<p>As you’ll notice, the client’s <code>dh</code> method is quite similar to that of the server—the only difference being it <em>receives</em> <code>p</code> and <code>g</code> instead of generating them, and is the first to get the other’s public key. It then creates a private/public key pair sends the public key. Finally, it calculates the shared key with the server’s public key, its own private key, and <code>p</code>.</p>
+<p>To wrap things up, let’s view the rest of the <code>start</code> method, which covers <code>2</code> and <code>3</code>.</p>
+<pre><code class="lang-auto">. . .
+while True:
+    try:
+        # Wait for data from server
+        data = self.connection.recv(1024)
+        # Disconnect from server if no data received
+        if not data:
+            self.connection.close()
+            self.cli.uninit_client()
+            break
+        # Parse data as cipher-text message
+        msg = Message(key=self.key, ciphertext=data)
+        if not self.cli:
+            break
+        # Add message to the command-line interface
+        self.cli.add_msg(msg.plaintext)
+    # Disconnect client if unable to read from connection
+    except OSError:
+        self.connection.close()
+        self.cli.uninit_client()
+        break
+</code></pre>
+<p>Again, this looks very similar to the server code. It attempts to receive 1024 bytes from the server, and once it does, it decrypts the data using the shared key. Lastly, it displays the plaintext message to the screen through the command-line interface.</p>
+<p>When the user submits a message, <code>client.send()</code> is called by the interface, which encrypts it and sends it to the server:</p>
+<pre><code class="lang-auto">def send(self, content):
+    """
+    Send a message to the server.
+    :param content: string to encrypt and send
+    """
+    if not self.key:
+        self.cli.add_msg("Error: Key Not Established")
+        return
+    msg = Message(key=self.key, plaintext=content)
+    self.connection.sendall(msg.pack())
+</code></pre>
+<h1>The End.</h1>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/c/cbb2096e48c2175b10cf908e594aef41d9a1dd78.png" alt="securechat_screenshot" data-base62-sha1="t3YmRair4C0nEEAwg0dloTDdUow" width="690" height="454"></p>
+<p>That completes the encrypted chat series, props to those who stuck around for this long! If you have any questions, I’d be happy to answer them. Just leave a comment or send me a direct message.</p>
+<h2>P.S.</h2>
+<p>I’ve also been working on a version 2 of this program that works more like a modern chat program, with user accounts, message storage, chat groups, and cool security features (that were recommended by users of 0x00sec!). It’s still in its early stages, but I’ve already put the code on GitHub if anyone is interested: <a href="https://github.com/spec-sec/SecureChat2" rel="noopener nofollow ugc">https://github.com/spec-sec/SecureChat2</a>.</p>
+          <p><a href="https://0x00sec.org/t/encrypted-chat-part-iii/7639/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/encrypted-chat-part-iii/7639/1</link>
+        <pubDate>Tue, 17 Jul 2018 23:01:35 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-7639-1</guid>
+        <source url="https://0x00sec.org/t/encrypted-chat-part-iii/7639.rss">Encrypted Chat: Part III</source>
+      </item>
+  </channel>
+</rss>
