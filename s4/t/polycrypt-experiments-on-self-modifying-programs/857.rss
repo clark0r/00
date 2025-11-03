@@ -1,0 +1,610 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>PolyCrypt. Experiments on Self-Modifying Programs</title>
+    <link>https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857</link>
+    <description>Some time ago, we explored the idea of a simple crypter for ELF files ( https://0x00sec.org/t/a-simple-linux-crypter/537). In that post, we explored a simple technique to modify the code of a program at run-time. In that specific case to decrypt parts of the code that were crypted beforehand by an off-line tool.
+
+In this article, I will present you an experiment to actually changing the binaries after each execution. It was conceived as a crackme but, in the end, I thought it would be too much so I make it into this article.
+
+# Why?
+Well, I have always found self-modifying programs fascinating. It is a topic that I like. But I guess the answer you are looking for is something less personal.
+
+As you can imagine, a changing program is interesting form a malware point of view. Actually, for me, the whole malware thingy is exactly the same that the whole anti-copy/anti-debug world... they both goes side by side, and you actually need the same skills to write malware and to write software protection systems. 
+
+At end, it is up to you want you want to use the knowledge for :). Anyway, this is a very first experiment and it is intended for educational purposes. To let us better understand how this work.
+
+Enough introduction. Let&#39;s get to the real stuff.
+
+# The Technique
+You will see, immediately, that the code shares a lot of functions from the Linux Crypter, therefore I recommend you take a look to that other article before diving into this one. It is not necessary but it will help if you are not familiar with the ELF format.
+
+In the same way that the Linux Crypter, this program will decrypt some specially marked section in the program that is intended to be secure at run-time but, after that, it will generate a new random key, re-encrypt the secured section and modify the binary in the disk effectively changing the binary file.
+
+In other words, every time you run the program, the binary in the disk changes.
+
+# The `main` Function
+Let&#39;s start taking a look at the `main` function. We will work out the code backwards from there. Here it is:
+
+```
+int
+main (int argc, char *argv[])
+{
+  CRYPTER *crypter;
+
+  srand (time (NULL));
+
+  crypter = load (argv[0]);
+  change (crypter);
+
+  check ();
+
+  return 0;
+}
+```
+
+In this case, as you can see, we are going to use a data structure to keep all our crypter data in one place and avoid using static variables as we did with the Linux Crypter. This time, as you will see soon, we have to keep track of more data, and this is just a more convenient way to have it all together.
+
+Then, we create the `crypter` object calling the `load` function and passing as first parameter the name of the program being executed (`argv[0]`). After that, we run the `change` function, the one that actually changes the memory and the disk images of the program and effectively decrypts the secured section in the program.
+
+After doing all this, we are good to run our secured function `check`. Let&#39;s continue taking a look to the first function `load`.
+
+# The `load` Function
+The `load` function is very simple. It allocates memory for our `crypter` object and then loads the whole file we pass as parameter into memory, storing that information in the just created `crypter` object.
+
+```
+CRYPTER*
+load (char *f)
+{
+  int     fd;
+  CRYPTER *c;
+
+  if ((c = malloc (sizeof(CRYPTER))) == NULL) DIE1 (&quot;malloc:&quot;);
+
+  c-&gt;fname = strdup (f);
+
+  /* Read the code in memory */
+  if ((fd = open (f, O_RDONLY, 0)) &lt; 0) DIE (&quot;open&quot;);
+  c-&gt;code_len = (get_file_size (fd));
+  c-&gt;code = malloc (c-&gt;code_len);
+  read (fd, c-&gt;code, c-&gt;code_len); 
+
+  close (fd);
+
+  return c;
+}
+```
+
+The `get_file_size` function should look familiar to you (and also self-explanatory) and the rest of the function just reads the file `f` in memory as we said.
+
+# The  `change` Function
+This function is the biggest and it is the one that does all the work. It is a variation of the section decoding function used by the Linux Crypter, so it should also look pretty familiar to you.
+
+```
+int
+change (CRYPTER *c)
+{
+  Elf64_Shdr *s;
+  int        key_off;
+
+  /* Find data section to get the current key */
+  /* Actually we need this to modifiy the image file */
+  if ((s = elfi_find_section (c-&gt;code, &quot;.data&quot;)) == NULL) 
+    DIE1 (&quot;.data not found\n&quot;);
+  
+  key_off = s-&gt;sh_offset + 0x10; /* XXX: Figure out where the 0x10 comes from */
+
+  /* Find the crypted code */
+  if ((s = elfi_find_section (c-&gt;code, SECTION)) == NULL) 
+    DIE1 (&quot;secured section not found&quot;);
+
+  c-&gt;p   = s-&gt;sh_offset; 
+  c-&gt;len = s-&gt;sh_size;
+
+  /* Change Permissions of section  SECTION to decrypt code */
+  unsigned char *ptr       = DEFAULT_EP + c-&gt;p;
+  unsigned char *ptr1      = DEFAULT_EP + c-&gt;p + c-&gt;len;
+  size_t         pagesize  = sysconf(_SC_PAGESIZE);
+  uintptr_t      pagestart = (uintptr_t)ptr &amp; -pagesize;
+  int            psize     = (ptr1 - (unsigned char*)pagestart);
+
+  /* Make the pages writable...*/
+  if (mprotect ((void*)pagestart, psize, PROT_READ | PROT_WRITE | PROT_EXEC) &lt; 0)
+    perror (&quot;mprotect:&quot;);
+
+  /* Decode memory and file */
+  xor_block (DEFAULT_EP + c-&gt;p, c-&gt;len);
+  xor_block (c-&gt;code + c-&gt;p, c-&gt;len);
+
+  /* Reset permissions */
+  if (mprotect ((void*)pagestart, psize, PROT_READ | PROT_EXEC) &lt; 0)
+    perror (&quot;mprotect:&quot;);
+
+  /* Update key and reencode file */
+  gen_key ((u_char*)c-&gt;code + key_off, KEY_SIZE + 1);
+  xor_block (c-&gt;code + c-&gt;p, c-&gt;len);
+
+  /* Dump the new file to disk. We are ready for next execution */
+  save (c);
+
+  return 0;
+}
+
+```
+
+The first thing the function does is to find the `.data` segment and the `.txet` segment (this is our secured segment defined as a constant at the beginning of the program). This is one of the reasons why we need to load the binary file from disk. The section information is lost on the memory image of the process. It is used at load time, but then, it is not kept, so we need to retrieve it from the file.
+
+Indeed, we could use alternative ways to figure out the memory location of encryption key and the crypted code, but in this case I decided to use the section info in the file. Once your program is finished (your `check` function is complete), everything should be at fixed positions and all this code will can be heavily simplified.
+
+So, using the section headers from the ELF file, we can calculate the offsets to the crypted code (`p`), its length (`len`) and also the offset within the disk file to the current key needed to decrypt the code. Yes. We store the key in the file and we change it in every execution.
+
+The key is a static global variable in the file and it goes directly into the `.data` segment. The `0x10` extra offset you may have noticed in the code, was determined empirically and I have not yet investigated why it is needed. Check your binary once you have compiled and check if you need some special fix for your system.
+
+Once we have all this information, we just proceed as we did with the Linux Crypter. Calculate the memory pages where the code is, change permissions, modify and restore permissions. 
+
+The only difference with the crypter is that we also need to decode the disk image (not only the memory image) to be able to re-encrypt it properly for the next execution... It maybe some smart way of avoid this decryption here, but for the time being, I went for the obvious steps.
+
+# Dumping the Modified Binary
+After decrypting the code we can execute it. The Linux Crypter finished at this point, now, we also want to change the file in the disk so it looks different on each execution. This is done with the last lines in the `change` function.
+
+```
+  /* Update key and reencode file */
+  gen_key ((u_char*)c-&gt;code + key_off, KEY_SIZE + 1);
+  xor_block (c-&gt;code + c-&gt;p, c-&gt;len);
+
+  /* Dump the new file to disk. We are ready for next execution */
+  save (c);
+```
+
+The `gen_key` function creates a new random key modifying the `key` in memory as well as the bytes in the binary file. Then, a new call to `xor_block` will crypt the disk image with the new generated password.
+
+At this point our disk image is completely patched and we can save it to the disk. This is done by the `save` function:
+
+```
+void
+save (CRYPTER *c)
+{
+  int fd;
+
+  /* Delete the file so we can write a modified image */
+  if ((unlink (c-&gt;fname)) &lt; 0) DIE (&quot;unlink:&quot;);
+
+  if ((write ((fd = open (c-&gt;fname, O_CREAT | O_TRUNC | O_RDWR,S_IRWXU)),
+	      c-&gt;code, c-&gt;code_len)) &lt; 0) DIE (&quot;write:&quot;);
+
+  close (fd);
+
+  return;
+}
+```
+
+The function just deletes the old file from disk (otherwise we get a `Text busy` error when we try to write into it) and creates a new one dumping the patched image we have just created. This patched image has our special code section crypted with a new random password, and this new random password has also been stored in the file. We have put the password in the file in a way that it will be mapped to the right variable in the program when loaded next time.
+
+# Testing
+It is time to test. First we compile the program and do some checks
+
+    $ make polycrypt
+    cc     polycrypt.c   -o polycrypt
+    $ md5sum polycrypt
+    278af06b4e01f1d0e81d6ccf0f27e482  polycrypt
+    $ objdump -d polycrypt | grep -A15 .txet
+    Disassembly of section .txet:
+
+    00000000004012ef &lt;check&gt;:
+      4012ef:	55                   	push   %rbp
+      4012f0:	48 89 e5             	mov    %rsp,%rbp
+      4012f3:	53                   	push   %rbx
+      4012f4:	48 81 ec 28 04 00 00 	sub    $0x428,%rsp
+      4012fb:	64 48 8b 04 25 28 00 	mov    %fs:0x28,%rax
+      401302:	00 00
+      401304:	48 89 45 e8          	mov    %rax,-0x18(%rbp)
+      401308:	31 c0                	xor    %eax,%eax
+      40130a:	48 8b 05 ff 0d 20 00 	mov    0x200dff(%rip),%rax        # 602110 &lt;stdout@@GLIBC_2.2.5&gt;
+      401311:	b9 00 00 00 00       	mov    $0x0,%ecx
+      401316:	ba 02 00 00 00       	mov    $0x2,%edx
+      40131b:	be 00 00 00 00       	mov    $0x0,%esi
+      401320:	48 89 c7             	mov    %rax,%rdi
+
+
+
+The `check` function showing those checking password message is just an example. It actually does nothing. We just needed some code in there to test the program.
+
+
+So far so good. The `.txet` is not encrypted yet... or if you prefer, it is encrypted with the null password. Let&#39;s run the program, and repeat the process:
+
+
+    $ ./polycrypt
+    PolyCrypt password checker v 0.1
+    $ Hello
+    Checking Password Hello
+     Please wait ....................
+    Communications Error. Please try again later :P
+    $ md5sum polycrypt
+    9c988a839156f7ec62e98fc621d35b4f  polycrypt
+    $ objdump -d polycrypt | grep -A15 .txet
+    Disassembly of section .txet:
+
+    00000000004012ef &lt;check&gt;:
+      4012ef:	15 c6 42 94 55       	adc    $0x559442c6,%eax
+      4012f4:	56                   	push   %rsi
+      4012f5:	78 dd                	js     4012d4 &lt;__libc_csu_fini+0x4&gt;
+      4012f7:	68 8a cb 71 62       	pushq  $0x6271cb8a
+      4012fc:	56                   	push   %rsi
+      4012fd:	72 35                	jb     401334 &lt;check+0x45&gt;
+      4012ff:	65 a6                	cmpsb  %es:(%rdi),%gs:(%rsi)
+      401301:	cb                   	lret
+      401302:	71 06                	jno    40130a &lt;check+0x1b&gt;
+      401304:	56                   	push   %rsi
+      401305:	70 74                	jo     40137b &lt;check+0x8c&gt;
+      401307:	a8 bf                	test   $0xbf,%al
+      401309:	0b 39                	or     (%rcx),%edi
+
+
+
+The new random key has crypted the `check` function and therefore changed the MD5 hash for the file... Let&#39;s run it one more time.
+
+
+    $ ./polycrypt
+    PolyCrypt password checker v 0.1
+    $ Bye Bye
+    Checking Password Bye Bye
+     Please wait ....................
+    Communications Error. Please try again later :P
+    $ md5sum polycrypt
+    e332338ef80ce5d1bdcdc11f5e98b255  polycrypt
+    $ objdump -d polycrypt | grep -A15 .txet
+    Disassembly of section .txet:
+
+    00000000004012ef &lt;check&gt;:
+      4012ef:	b4 e0                	mov    $0xe0,%ah
+      4012f1:	c6                   	(bad)
+      4012f2:	3c d1                	cmp    $0xd1,%al
+      4012f4:	1b 80 c7 c9 ac 4f    	sbb    0x4facc9c7(%rax),%eax
+      4012fa:	d9 e6                	(bad)
+      4012fc:	1b 8a 2f c4 80 4f    	sbb    0x4f80c42f(%rdx),%ecx
+      401302:	d9 82 1b 88 6e 09    	flds   0x96e881b(%rdx)
+      401308:	99                   	cltd
+      401309:	8f                   	(bad)
+      40130a:	91                   	xchg   %eax,%ecx
+      40130b:	09 56 fe             	or     %edx,-0x2(%rsi)
+      40130e:	26 c1 a8 f6 d9 82 53 	shrl   $0x1,%es:0x5382d9f6(%rax)
+      401315:	01
+
+
+
+# Conclusions
+As the title says, this is an experiment. I haven&#39;t extensively tested and the only objective was to explore what is possible in order to mutate a program. In case you get in troubles making it work in your system, there is a `dump_mem` function in the code intended for debugging.
+
+The most likely cause for the program not to work, is that your `data` segment has a different layout, and you are nor properly updating the new key in memory and in the disk... A couple of traces in the code and `xxd` should let you fix that quickly. If in the process you find a better way to deal with this data segment issue, please share
+
+The code as usual at github
+
+https://github.com/0x00pf/0x00sec_code/tree/master/crypter
+
+
+Hack Fun!</description>
+    
+    <lastBuildDate>Sun, 31 Jul 2016 17:48:07 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>PolyCrypt. Experiments on Self-Modifying Programs</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/6</link>
+        <pubDate>Sun, 21 Jan 2018 00:42:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-857-6</guid>
+        <source url="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857.rss">PolyCrypt. Experiments on Self-Modifying Programs</source>
+      </item>
+      <item>
+        <title>PolyCrypt. Experiments on Self-Modifying Programs</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Ah I meant polymorphic code in malware. A bit off topic, but I bet you’ll find it very interesting. I think I have some books and what not about somewhere, so I’ll take a look.</p>
+          <p><a href="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/5</link>
+        <pubDate>Sun, 31 Jul 2016 17:48:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-857-5</guid>
+        <source url="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857.rss">PolyCrypt. Experiments on Self-Modifying Programs</source>
+      </item>
+      <item>
+        <title>PolyCrypt. Experiments on Self-Modifying Programs</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/oaktree">@oaktree</a> no, I was not doing that. I will try. Thanks!</p>
+<p><a class="mention" href="https://d.clarkee.co.uk/u/cromical">@Cromical</a> you mean <em>polymorphic code</em> as in malware or as in standard boring OOP stuff <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:">  . I’m actually trying (not security related) so if you have references to share, that will be appreciated</p>
+          <p><a href="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/4</link>
+        <pubDate>Sun, 31 Jul 2016 08:26:30 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-857-4</guid>
+        <source url="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857.rss">PolyCrypt. Experiments on Self-Modifying Programs</source>
+      </item>
+      <item>
+        <title>PolyCrypt. Experiments on Self-Modifying Programs</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice, and thanks mate! Oh wait- have you tried polymorphic code yet?  It’s very interesting!</p>
+          <p><a href="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/3</link>
+        <pubDate>Sun, 31 Jul 2016 04:44:05 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-857-3</guid>
+        <source url="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857.rss">PolyCrypt. Experiments on Self-Modifying Programs</source>
+      </item>
+      <item>
+        <title>PolyCrypt. Experiments on Self-Modifying Programs</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>I think you are doing this, but I wanted to point it out clearly.</p>
+<p>Rather than decrypting the relevant code segments on the disk file (first, before re-crypting it), you simply XOR it with the new key and then XOR the old key with the new key accordingly. This is due to the properties of xor!</p>
+          <p><a href="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/2</link>
+        <pubDate>Sun, 31 Jul 2016 01:24:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-857-2</guid>
+        <source url="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857.rss">PolyCrypt. Experiments on Self-Modifying Programs</source>
+      </item>
+      <item>
+        <title>PolyCrypt. Experiments on Self-Modifying Programs</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Some time ago, we explored the idea of a simple crypter for ELF files ( <a href="https://0x00sec.org/t/a-simple-linux-crypter/537" class="inline-onebox">A simple Linux Crypter</a>). In that post, we explored a simple technique to modify the code of a program at run-time. In that specific case to decrypt parts of the code that were crypted beforehand by an off-line tool.</p>
+<p>In this article, I will present you an experiment to actually changing the binaries after each execution. It was conceived as a crackme but, in the end, I thought it would be too much so I make it into this article.</p>
+<h1>Why?</h1>
+<p>Well, I have always found self-modifying programs fascinating. It is a topic that I like. But I guess the answer you are looking for is something less personal.</p>
+<p>As you can imagine, a changing program is interesting form a malware point of view. Actually, for me, the whole malware thingy is exactly the same that the whole anti-copy/anti-debug world… they both goes side by side, and you actually need the same skills to write malware and to write software protection systems.</p>
+<p>At end, it is up to you want you want to use the knowledge for :). Anyway, this is a very first experiment and it is intended for educational purposes. To let us better understand how this work.</p>
+<p>Enough introduction. Let’s get to the real stuff.</p>
+<h1>The Technique</h1>
+<p>You will see, immediately, that the code shares a lot of functions from the Linux Crypter, therefore I recommend you take a look to that other article before diving into this one. It is not necessary but it will help if you are not familiar with the ELF format.</p>
+<p>In the same way that the Linux Crypter, this program will decrypt some specially marked section in the program that is intended to be secure at run-time but, after that, it will generate a new random key, re-encrypt the secured section and modify the binary in the disk effectively changing the binary file.</p>
+<p>In other words, every time you run the program, the binary in the disk changes.</p>
+<h1>The <code>main</code> Function</h1>
+<p>Let’s start taking a look at the <code>main</code> function. We will work out the code backwards from there. Here it is:</p>
+<pre><code class="lang-auto">int
+main (int argc, char *argv[])
+{
+  CRYPTER *crypter;
+
+  srand (time (NULL));
+
+  crypter = load (argv[0]);
+  change (crypter);
+
+  check ();
+
+  return 0;
+}
+</code></pre>
+<p>In this case, as you can see, we are going to use a data structure to keep all our crypter data in one place and avoid using static variables as we did with the Linux Crypter. This time, as you will see soon, we have to keep track of more data, and this is just a more convenient way to have it all together.</p>
+<p>Then, we create the <code>crypter</code> object calling the <code>load</code> function and passing as first parameter the name of the program being executed (<code>argv[0]</code>). After that, we run the <code>change</code> function, the one that actually changes the memory and the disk images of the program and effectively decrypts the secured section in the program.</p>
+<p>After doing all this, we are good to run our secured function <code>check</code>. Let’s continue taking a look to the first function <code>load</code>.</p>
+<h1>The <code>load</code> Function</h1>
+<p>The <code>load</code> function is very simple. It allocates memory for our <code>crypter</code> object and then loads the whole file we pass as parameter into memory, storing that information in the just created <code>crypter</code> object.</p>
+<pre><code class="lang-auto">CRYPTER*
+load (char *f)
+{
+  int     fd;
+  CRYPTER *c;
+
+  if ((c = malloc (sizeof(CRYPTER))) == NULL) DIE1 ("malloc:");
+
+  c-&gt;fname = strdup (f);
+
+  /* Read the code in memory */
+  if ((fd = open (f, O_RDONLY, 0)) &lt; 0) DIE ("open");
+  c-&gt;code_len = (get_file_size (fd));
+  c-&gt;code = malloc (c-&gt;code_len);
+  read (fd, c-&gt;code, c-&gt;code_len); 
+
+  close (fd);
+
+  return c;
+}
+</code></pre>
+<p>The <code>get_file_size</code> function should look familiar to you (and also self-explanatory) and the rest of the function just reads the file <code>f</code> in memory as we said.</p>
+<h1>The  <code>change</code> Function</h1>
+<p>This function is the biggest and it is the one that does all the work. It is a variation of the section decoding function used by the Linux Crypter, so it should also look pretty familiar to you.</p>
+<pre><code class="lang-auto">int
+change (CRYPTER *c)
+{
+  Elf64_Shdr *s;
+  int        key_off;
+
+  /* Find data section to get the current key */
+  /* Actually we need this to modifiy the image file */
+  if ((s = elfi_find_section (c-&gt;code, ".data")) == NULL) 
+    DIE1 (".data not found\n");
+  
+  key_off = s-&gt;sh_offset + 0x10; /* XXX: Figure out where the 0x10 comes from */
+
+  /* Find the crypted code */
+  if ((s = elfi_find_section (c-&gt;code, SECTION)) == NULL) 
+    DIE1 ("secured section not found");
+
+  c-&gt;p   = s-&gt;sh_offset; 
+  c-&gt;len = s-&gt;sh_size;
+
+  /* Change Permissions of section  SECTION to decrypt code */
+  unsigned char *ptr       = DEFAULT_EP + c-&gt;p;
+  unsigned char *ptr1      = DEFAULT_EP + c-&gt;p + c-&gt;len;
+  size_t         pagesize  = sysconf(_SC_PAGESIZE);
+  uintptr_t      pagestart = (uintptr_t)ptr &amp; -pagesize;
+  int            psize     = (ptr1 - (unsigned char*)pagestart);
+
+  /* Make the pages writable...*/
+  if (mprotect ((void*)pagestart, psize, PROT_READ | PROT_WRITE | PROT_EXEC) &lt; 0)
+    perror ("mprotect:");
+
+  /* Decode memory and file */
+  xor_block (DEFAULT_EP + c-&gt;p, c-&gt;len);
+  xor_block (c-&gt;code + c-&gt;p, c-&gt;len);
+
+  /* Reset permissions */
+  if (mprotect ((void*)pagestart, psize, PROT_READ | PROT_EXEC) &lt; 0)
+    perror ("mprotect:");
+
+  /* Update key and reencode file */
+  gen_key ((u_char*)c-&gt;code + key_off, KEY_SIZE + 1);
+  xor_block (c-&gt;code + c-&gt;p, c-&gt;len);
+
+  /* Dump the new file to disk. We are ready for next execution */
+  save (c);
+
+  return 0;
+}
+
+</code></pre>
+<p>The first thing the function does is to find the <code>.data</code> segment and the <code>.txet</code> segment (this is our secured segment defined as a constant at the beginning of the program). This is one of the reasons why we need to load the binary file from disk. The section information is lost on the memory image of the process. It is used at load time, but then, it is not kept, so we need to retrieve it from the file.</p>
+<p>Indeed, we could use alternative ways to figure out the memory location of encryption key and the crypted code, but in this case I decided to use the section info in the file. Once your program is finished (your <code>check</code> function is complete), everything should be at fixed positions and all this code will can be heavily simplified.</p>
+<p>So, using the section headers from the ELF file, we can calculate the offsets to the crypted code (<code>p</code>), its length (<code>len</code>) and also the offset within the disk file to the current key needed to decrypt the code. Yes. We store the key in the file and we change it in every execution.</p>
+<p>The key is a static global variable in the file and it goes directly into the <code>.data</code> segment. The <code>0x10</code> extra offset you may have noticed in the code, was determined empirically and I have not yet investigated why it is needed. Check your binary once you have compiled and check if you need some special fix for your system.</p>
+<p>Once we have all this information, we just proceed as we did with the Linux Crypter. Calculate the memory pages where the code is, change permissions, modify and restore permissions.</p>
+<p>The only difference with the crypter is that we also need to decode the disk image (not only the memory image) to be able to re-encrypt it properly for the next execution… It maybe some smart way of avoid this decryption here, but for the time being, I went for the obvious steps.</p>
+<h1>Dumping the Modified Binary</h1>
+<p>After decrypting the code we can execute it. The Linux Crypter finished at this point, now, we also want to change the file in the disk so it looks different on each execution. This is done with the last lines in the <code>change</code> function.</p>
+<pre><code class="lang-auto">  /* Update key and reencode file */
+  gen_key ((u_char*)c-&gt;code + key_off, KEY_SIZE + 1);
+  xor_block (c-&gt;code + c-&gt;p, c-&gt;len);
+
+  /* Dump the new file to disk. We are ready for next execution */
+  save (c);
+</code></pre>
+<p>The <code>gen_key</code> function creates a new random key modifying the <code>key</code> in memory as well as the bytes in the binary file. Then, a new call to <code>xor_block</code> will crypt the disk image with the new generated password.</p>
+<p>At this point our disk image is completely patched and we can save it to the disk. This is done by the <code>save</code> function:</p>
+<pre><code class="lang-auto">void
+save (CRYPTER *c)
+{
+  int fd;
+
+  /* Delete the file so we can write a modified image */
+  if ((unlink (c-&gt;fname)) &lt; 0) DIE ("unlink:");
+
+  if ((write ((fd = open (c-&gt;fname, O_CREAT | O_TRUNC | O_RDWR,S_IRWXU)),
+	      c-&gt;code, c-&gt;code_len)) &lt; 0) DIE ("write:");
+
+  close (fd);
+
+  return;
+}
+</code></pre>
+<p>The function just deletes the old file from disk (otherwise we get a <code>Text busy</code> error when we try to write into it) and creates a new one dumping the patched image we have just created. This patched image has our special code section crypted with a new random password, and this new random password has also been stored in the file. We have put the password in the file in a way that it will be mapped to the right variable in the program when loaded next time.</p>
+<h1>Testing</h1>
+<p>It is time to test. First we compile the program and do some checks</p>
+<pre><code>$ make polycrypt
+cc     polycrypt.c   -o polycrypt
+$ md5sum polycrypt
+278af06b4e01f1d0e81d6ccf0f27e482  polycrypt
+$ objdump -d polycrypt | grep -A15 .txet
+Disassembly of section .txet:
+
+00000000004012ef &lt;check&gt;:
+  4012ef:	55                   	push   %rbp
+  4012f0:	48 89 e5             	mov    %rsp,%rbp
+  4012f3:	53                   	push   %rbx
+  4012f4:	48 81 ec 28 04 00 00 	sub    $0x428,%rsp
+  4012fb:	64 48 8b 04 25 28 00 	mov    %fs:0x28,%rax
+  401302:	00 00
+  401304:	48 89 45 e8          	mov    %rax,-0x18(%rbp)
+  401308:	31 c0                	xor    %eax,%eax
+  40130a:	48 8b 05 ff 0d 20 00 	mov    0x200dff(%rip),%rax        # 602110 &lt;stdout@@GLIBC_2.2.5&gt;
+  401311:	b9 00 00 00 00       	mov    $0x0,%ecx
+  401316:	ba 02 00 00 00       	mov    $0x2,%edx
+  40131b:	be 00 00 00 00       	mov    $0x0,%esi
+  401320:	48 89 c7             	mov    %rax,%rdi
+</code></pre>
+<p>The <code>check</code> function showing those checking password message is just an example. It actually does nothing. We just needed some code in there to test the program.</p>
+<p>So far so good. The <code>.txet</code> is not encrypted yet… or if you prefer, it is encrypted with the null password. Let’s run the program, and repeat the process:</p>
+<pre><code>$ ./polycrypt
+PolyCrypt password checker v 0.1
+$ Hello
+Checking Password Hello
+ Please wait ....................
+Communications Error. Please try again later :P
+$ md5sum polycrypt
+9c988a839156f7ec62e98fc621d35b4f  polycrypt
+$ objdump -d polycrypt | grep -A15 .txet
+Disassembly of section .txet:
+
+00000000004012ef &lt;check&gt;:
+  4012ef:	15 c6 42 94 55       	adc    $0x559442c6,%eax
+  4012f4:	56                   	push   %rsi
+  4012f5:	78 dd                	js     4012d4 &lt;__libc_csu_fini+0x4&gt;
+  4012f7:	68 8a cb 71 62       	pushq  $0x6271cb8a
+  4012fc:	56                   	push   %rsi
+  4012fd:	72 35                	jb     401334 &lt;check+0x45&gt;
+  4012ff:	65 a6                	cmpsb  %es:(%rdi),%gs:(%rsi)
+  401301:	cb                   	lret
+  401302:	71 06                	jno    40130a &lt;check+0x1b&gt;
+  401304:	56                   	push   %rsi
+  401305:	70 74                	jo     40137b &lt;check+0x8c&gt;
+  401307:	a8 bf                	test   $0xbf,%al
+  401309:	0b 39                	or     (%rcx),%edi
+</code></pre>
+<p>The new random key has crypted the <code>check</code> function and therefore changed the MD5 hash for the file… Let’s run it one more time.</p>
+<pre><code>$ ./polycrypt
+PolyCrypt password checker v 0.1
+$ Bye Bye
+Checking Password Bye Bye
+ Please wait ....................
+Communications Error. Please try again later :P
+$ md5sum polycrypt
+e332338ef80ce5d1bdcdc11f5e98b255  polycrypt
+$ objdump -d polycrypt | grep -A15 .txet
+Disassembly of section .txet:
+
+00000000004012ef &lt;check&gt;:
+  4012ef:	b4 e0                	mov    $0xe0,%ah
+  4012f1:	c6                   	(bad)
+  4012f2:	3c d1                	cmp    $0xd1,%al
+  4012f4:	1b 80 c7 c9 ac 4f    	sbb    0x4facc9c7(%rax),%eax
+  4012fa:	d9 e6                	(bad)
+  4012fc:	1b 8a 2f c4 80 4f    	sbb    0x4f80c42f(%rdx),%ecx
+  401302:	d9 82 1b 88 6e 09    	flds   0x96e881b(%rdx)
+  401308:	99                   	cltd
+  401309:	8f                   	(bad)
+  40130a:	91                   	xchg   %eax,%ecx
+  40130b:	09 56 fe             	or     %edx,-0x2(%rsi)
+  40130e:	26 c1 a8 f6 d9 82 53 	shrl   $0x1,%es:0x5382d9f6(%rax)
+  401315:	01
+</code></pre>
+<h1>Conclusions</h1>
+<p>As the title says, this is an experiment. I haven’t extensively tested and the only objective was to explore what is possible in order to mutate a program. In case you get in troubles making it work in your system, there is a <code>dump_mem</code> function in the code intended for debugging.</p>
+<p>The most likely cause for the program not to work, is that your <code>data</code> segment has a different layout, and you are nor properly updating the new key in memory and in the disk… A couple of traces in the code and <code>xxd</code> should let you fix that quickly. If in the process you find a better way to deal with this data segment issue, please share</p>
+<p>The code as usual at github</p>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" width="32" height="32">
+      <a href="https://github.com/0x00pf/0x00sec_code/tree/master/crypter" target="_blank" rel="noopener nofollow ugc">GitHub</a>
+  </header>
+  <article class="onebox-body">
+    <img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a35c2bf9477f702a5322cfd1c8f54353d79c1d16.png" class="thumbnail" width="" height="">
+
+<h3><a href="https://github.com/0x00pf/0x00sec_code/tree/master/crypter" target="_blank" rel="noopener nofollow ugc">0x00pf/0x00sec_code</a></h3>
+
+<p>Code for my 0x00sec.org posts. Contribute to 0x00pf/0x00sec_code development by creating an account on GitHub.</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p>Hack Fun!</p>
+          <p><a href="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857/1</link>
+        <pubDate>Sat, 30 Jul 2016 10:40:25 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-857-1</guid>
+        <source url="https://d.clarkee.co.uk/t/polycrypt-experiments-on-self-modifying-programs/857.rss">PolyCrypt. Experiments on Self-Modifying Programs</source>
+      </item>
+  </channel>
+</rss>

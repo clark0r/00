@@ -1,0 +1,423 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Use the Past to Conquer the Future - A How-To on BASH History Substitution</title>
+    <link>https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977</link>
+    <description># Use The Past To Conquer The Future - History Substitution
+
+Since I had to get **_really_** close with bash recently and found myself typing the same things over and over again, I decided to open the amazing toolbox called _&quot;History Substitution&quot;_ and was amazed by how much you can do with it. It&#39;s a feature built into bash that allows you to get commands and arguments from your history.
+In this How-To I hope to be able to share this amazement with you! So let&#39;s go!
+***
+## 1. Introduction
+A long time ago, the Grandmaster who taught me Linux brought a small detail to my attention. 
+It went a little something like this:
+&gt; Me: apt update
+$ apt update: permission denied
+Me: sudo apt upda ...
+Him: wait! I shall teach you ...
+$ sudo !!
+sudo apt update
+
+Suffice to say, my mind was blown!
+
+After learning this, I used it as often as I could, not realizing that this rabbit hole went even deeper than I imagined.
+***
+## 2. Down the hole we go
+In our daily life with bash we often come across situations like this:
+&gt; less /this/path/is/really/long/and/annoying/randomfile
+
+Now if we&#39;re done looking at the file and want to open it in vi we have to: 
+
+press the up arrow -&gt; pos1 -&gt; del/del/del/del -&gt; vi
+
+which is ok but still a pain in the butt if we have to do it more than once in our entire lifetime.
+Instead with history subsitution we can just do:
+&gt; vi !!$
+
+So how does this work?
+As you may have noticed by now, to start a history substitution command you begin with two exclamation points. 
+Given only two consecutive exclamation points returns the whole last command. 
+If we use history substitution with other options we can always omit the second exclamation point.
+
+When used with a dollar sign it returns only the last argument.
+The other way around, an exclamation point followed by a circumflex (this thing -&gt; ^ ) takes only the first argument. 
+Let&#39;s look at some examples with **_&quot;echo a b c&quot;_** as the last command used:
+&gt;!! -&gt; echo a b c
+echo !! -&gt; echo echo a b c
+echo !$ -&gt; echo c
+echo !^ -&gt; echo a
+echo !* -&gt; echo  a b c
+
+The first command above would also execute it immediately.
+Notice that the two exclamations points also get the command and the one with ^ ignores it.
+To get all arguments but not the command, the asterisk is used.
+Additionally you can get specific arguments using a colon, in this context it&#39;s called the word designator:
+&gt; echo !:0 -&gt; echo echo
+echo !:2 -&gt; echo b
+echo !:2-3 -&gt; echo b c
+echo !:2* -&gt; echo b c
+echo !:1 !:3 -&gt; echo a c
+
+But let&#39;s say that you had to run a different command in the meantime and the things you need are not in the last command anymore. This is also easily done by telling it &quot;how long ago&quot; the command was used.
+&gt; $ echo a b c
+$ echo d e f
+!-1 -&gt; echo d e f
+!-2 -&gt; echo a b c
+
+This is very helpful when using them in quick succession but nigh impossible to keep track of over longer sessions. In those cases it&#39;s a lot easier to use the built-in string function.
+&gt;$ uname -r
+$ uname -a
+$ echo a b c
+echo !un -&gt; echo uname -a
+echo !un:* -&gt; echo -a
+echo !?nam -&gt; echo uname -a
+echo !?me -r? -&gt; echo uname -r
+
+As we can see, only giving it the beginning of the command it automatically looks for the first occurence (going upwards) in the history and returns it. Using the question marks we can look for parts inside the command to further narrow it down and filter alike commands.
+
+### Now onto paths!
+
+Another great feature built into this, is the path handling. 
+It requires some getting used to but is also very straightforward.
+let&#39;s assume we have this path:
+&gt; /home/user/folder/file.txt
+
+This is what we can do:
+&gt; Get the path up to file:
+echo !:h -&gt; /home/user/folder
+
+&gt;Get the filename plus extension:
+echo !:t -&gt; file.txt
+
+&gt;Get the path up to file extension:
+echo !:r -&gt; /home/user/folder/file
+
+&gt;Get only file extension:
+echo !:e -&gt; .txt
+
+&gt;Get only filename:
+echo !:t:r -&gt; file
+
+### Substitution!
+
+We can also substitute certain strings with other strings.
+For example if we have **_/path/file1_** and we want to change **file1** to **file2** we do:
+&gt;!:s/file1/file2
+
+But this only works on the first occurence found!
+If we want to do this globally, so for every occurence of **file1**, we use:
+&gt;!:gs/file1/file2
+
+Example:
+&gt;$ cp /path/file1 /path/folder/file1
+!:gs/file1/file2 -&gt; cp /path/file2 /path/folder/file2
+
+If you want to repeat a successful substitution in a different context then you don&#39;t need to write it again.
+You can just use:
+&gt;!:&amp; -&gt; for single occurence substitution
+!:g&amp; -&gt; for global substitution
+***
+## 3. Summary
+
+[details=&quot;Summary/Cheat-Sheet&quot;]
+&gt;!! -&gt; execute last command
+!$ -&gt; return last argument
+!^ -&gt; return first argument
+!* -&gt; return all arguments
+!:n -&gt; return the string on nth position
+!:n-x -&gt; return position n to x
+!:n* -&gt; return all arguments starting with n
+!n -&gt; execute command with history number n
+!-n -&gt; exectue command that was run n commands back
+!?str -&gt; execute first command (going up) that matches _str_
+!?str? -&gt; execute first command (going up) that contains _str_
+!:h -&gt; return path up to bas filename
+!:t -&gt; return only base filename
+!:r -&gt; return path up to extension
+!:e -&gt; return only extension
+!:s/str1/str2 -&gt; substitute first occurence of _str1_ with _str2_
+!:gs/str1/str2 -&gt; substitute all occurences of _str1_ with _str2_
+!:&amp; -&gt; repeat last successful substitution
+!:g&amp; -&gt; repeat last successful substitution and make it global
+`!:p` -&gt; don&#39;t execute, print only
+[/details]
+***
+## 4. Extras
+
+* If you missed it in the summary, you can only print the return value of the history substitution without executing it by using `!:p`
+* Of course you can connect all of these to do some crazy things!
+* To use this feature in bash scripts, supply it with `set -H`
+* To run a command and not have it in the history, just type a space in front of it! This works for any command, not just history substitution.
+***
+And that&#39;s all! If you have any questions or found a mistake just leave a comment below.
+
+I sincerely hope you were able to learn something new today and if you already knew about it then I hope I was able to refresh your memory! :smiley: 
+### Happy Hacking!</description>
+    
+    <lastBuildDate>Fri, 03 May 2019 10:13:16 +0000</lastBuildDate>
+    <category>Linux</category>
+    <atom:link href="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Use the Past to Conquer the Future - A How-To on BASH History Substitution</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/9</link>
+        <pubDate>Mon, 13 May 2019 11:45:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12977-9</guid>
+        <source url="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977.rss">Use the Past to Conquer the Future - A How-To on BASH History Substitution</source>
+      </item>
+      <item>
+        <title>Use the Past to Conquer the Future - A How-To on BASH History Substitution</title>
+        <dc:creator><![CDATA[m242]]></dc:creator>
+        <description><![CDATA[
+            <p>Interestingly, zsh does the same thing, but replaces expressions not when enter is hit, but when the expression is done, wich means for zsh that there is a space after it.<br>
+For this reason, this example doesn’t work :</p>
+<aside class="quote no-group" data-username="Tac0caT" data-post="1" data-topic="12977">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/t/439d5e/48.png" class="avatar"> Tac0caT:</div>
+<blockquote>
+<p>$ uname -r<br>
+$ uname -a<br>
+$ echo a b c<br>
+echo !un -&gt; echo uname -a<br>
+echo !un:* -&gt; echo -a<br>
+echo !?nam -&gt; echo uname -a<br>
+echo !?me -r? -&gt; echo uname -r</p>
+</blockquote>
+</aside>
+<p>As  <code>echo !?me -r?</code> is replaced by <code>echo uname -a </code>before we can type <code>-r</code>.<br>
+A simple fix is to use <code>echo !?-r?</code> instead.</p>
+          <p><a href="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/8</link>
+        <pubDate>Fri, 03 May 2019 10:13:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12977-8</guid>
+        <source url="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977.rss">Use the Past to Conquer the Future - A How-To on BASH History Substitution</source>
+      </item>
+      <item>
+        <title>Use the Past to Conquer the Future - A How-To on BASH History Substitution</title>
+        <dc:creator><![CDATA[BL4CKH47H4CK3R]]></dc:creator>
+        <description><![CDATA[
+            <p>Oh man very nice post with nice explanation<br>
+Carry on man !!!<br>
+Happy Hacking <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/7</link>
+        <pubDate>Fri, 03 May 2019 07:04:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12977-7</guid>
+        <source url="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977.rss">Use the Past to Conquer the Future - A How-To on BASH History Substitution</source>
+      </item>
+      <item>
+        <title>Use the Past to Conquer the Future - A How-To on BASH History Substitution</title>
+        <dc:creator><![CDATA[Tac0caT]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m glad to hear you enjoyed it!<br>
+Your malicious use idea intrigued me <a class="mention" href="https://d.clarkee.co.uk/u/hunter">@hunter</a> so I tried to strace the history substitution, as a starting point, and to my surprise it didn’t work!<br>
+Maybe it’s also something to do with how I traced it!?<br>
+I used:<br>
+<code>stty; cat | strace bash &gt; /dev/null</code><br>
+But I always get <code>"!!" - command not found</code><br>
+Anyone know why this could be? It doesn’t really make sense to me since it’s a shell keyword and built into bash…</p>
+<p>EDIT: it works when attaching to an already active bash process… Not quite sure why though, maybe I’ll make a follow up post exploring this in more detail</p>
+          <p><a href="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/5</link>
+        <pubDate>Tue, 16 Apr 2019 15:58:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12977-5</guid>
+        <source url="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977.rss">Use the Past to Conquer the Future - A How-To on BASH History Substitution</source>
+      </item>
+      <item>
+        <title>Use the Past to Conquer the Future - A How-To on BASH History Substitution</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Oh man, I’ve been using the linux command line for like 10 years and I never knew about these shortcuts.</p>
+<p>Thank you so much!</p>
+          <p><a href="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/4</link>
+        <pubDate>Mon, 15 Apr 2019 11:27:31 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12977-4</guid>
+        <source url="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977.rss">Use the Past to Conquer the Future - A How-To on BASH History Substitution</source>
+      </item>
+      <item>
+        <title>Use the Past to Conquer the Future - A How-To on BASH History Substitution</title>
+        <dc:creator><![CDATA[lkw]]></dc:creator>
+        <description><![CDATA[
+            <p>Another feature it could be good to point out is that you can use ctrl-r to search the command history.<br>
+<a href="https://www.gnu.org/software/bash/manual/html_node/Searching.html" class="onebox" target="_blank">https://www.gnu.org/software/bash/manual/html_node/Searching.html</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/3</link>
+        <pubDate>Mon, 15 Apr 2019 07:58:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12977-3</guid>
+        <source url="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977.rss">Use the Past to Conquer the Future - A How-To on BASH History Substitution</source>
+      </item>
+      <item>
+        <title>Use the Past to Conquer the Future - A How-To on BASH History Substitution</title>
+        <dc:creator><![CDATA[hunter]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s a very useful feature that i’ve not heard about. Thank you! I’m now wondering if it could be used maliciously though <img src="https://0x00sec.org/images/emoji/twitter/thinking.png?v=9" title=":thinking:" class="emoji" alt=":thinking:"> Maybe poisoning the bash_history with evil commands? idk</p>
+          <p><a href="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/2</link>
+        <pubDate>Sat, 13 Apr 2019 23:39:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12977-2</guid>
+        <source url="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977.rss">Use the Past to Conquer the Future - A How-To on BASH History Substitution</source>
+      </item>
+      <item>
+        <title>Use the Past to Conquer the Future - A How-To on BASH History Substitution</title>
+        <dc:creator><![CDATA[Tac0caT]]></dc:creator>
+        <description><![CDATA[
+            <h1><a name="p-39608-use-the-past-to-conquer-the-future-history-substitution-1" class="anchor" href="https://d.clarkee.co.uk#p-39608-use-the-past-to-conquer-the-future-history-substitution-1"></a>Use The Past To Conquer The Future - History Substitution</h1>
+<p>Since I had to get <strong><em>really</em></strong> close with bash recently and found myself typing the same things over and over again, I decided to open the amazing toolbox called <em>“History Substitution”</em> and was amazed by how much you can do with it. It’s a feature built into bash that allows you to get commands and arguments from your history.<br>
+In this How-To I hope to be able to share this amazement with you! So let’s go!</p>
+<hr>
+<h2><a name="p-39608-h-1-introduction-2" class="anchor" href="https://d.clarkee.co.uk#p-39608-h-1-introduction-2"></a>1. Introduction</h2>
+<p>A long time ago, the Grandmaster who taught me Linux brought a small detail to my attention.<br>
+It went a little something like this:</p>
+<blockquote>
+<p>Me: apt update<br>
+$ apt update: permission denied<br>
+Me: sudo apt upda …<br>
+Him: wait! I shall teach you …<br>
+$ sudo !!<br>
+sudo apt update</p>
+</blockquote>
+<p>Suffice to say, my mind was blown!</p>
+<p>After learning this, I used it as often as I could, not realizing that this rabbit hole went even deeper than I imagined.</p>
+<hr>
+<h2><a name="p-39608-h-2-down-the-hole-we-go-3" class="anchor" href="https://d.clarkee.co.uk#p-39608-h-2-down-the-hole-we-go-3"></a>2. Down the hole we go</h2>
+<p>In our daily life with bash we often come across situations like this:</p>
+<blockquote>
+<p>less /this/path/is/really/long/and/annoying/randomfile</p>
+</blockquote>
+<p>Now if we’re done looking at the file and want to open it in vi we have to:</p>
+<p>press the up arrow → pos1 → del/del/del/del → vi</p>
+<p>which is ok but still a pain in the butt if we have to do it more than once in our entire lifetime.<br>
+Instead with history subsitution we can just do:</p>
+<blockquote>
+<p>vi !!$</p>
+</blockquote>
+<p>So how does this work?<br>
+As you may have noticed by now, to start a history substitution command you begin with two exclamation points.<br>
+Given only two consecutive exclamation points returns the whole last command.<br>
+If we use history substitution with other options we can always omit the second exclamation point.</p>
+<p>When used with a dollar sign it returns only the last argument.<br>
+The other way around, an exclamation point followed by a circumflex (this thing → ^ ) takes only the first argument.<br>
+Let’s look at some examples with <strong><em>“echo a b c”</em></strong> as the last command used:</p>
+<blockquote>
+<p>!! → echo a b c<br>
+echo !! → echo echo a b c<br>
+echo !$ → echo c<br>
+echo !^ → echo a<br>
+echo !* → echo  a b c</p>
+</blockquote>
+<p>The first command above would also execute it immediately.<br>
+Notice that the two exclamations points also get the command and the one with ^ ignores it.<br>
+To get all arguments but not the command, the asterisk is used.<br>
+Additionally you can get specific arguments using a colon, in this context it’s called the word designator:</p>
+<blockquote>
+<p>echo !:0 → echo echo<br>
+echo !:2 → echo b<br>
+echo !:2-3 → echo b c<br>
+echo !:2* → echo b c<br>
+echo !:1 !:3 → echo a c</p>
+</blockquote>
+<p>But let’s say that you had to run a different command in the meantime and the things you need are not in the last command anymore. This is also easily done by telling it “how long ago” the command was used.</p>
+<blockquote>
+<p>$ echo a b c<br>
+$ echo d e f<br>
+!-1 → echo d e f<br>
+!-2 → echo a b c</p>
+</blockquote>
+<p>This is very helpful when using them in quick succession but nigh impossible to keep track of over longer sessions. In those cases it’s a lot easier to use the built-in string function.</p>
+<blockquote>
+<p>$ uname -r<br>
+$ uname -a<br>
+$ echo a b c<br>
+echo !un → echo uname -a<br>
+echo !un:* → echo -a<br>
+echo !?nam → echo uname -a<br>
+echo !?me -r? → echo uname -r</p>
+</blockquote>
+<p>As we can see, only giving it the beginning of the command it automatically looks for the first occurence (going upwards) in the history and returns it. Using the question marks we can look for parts inside the command to further narrow it down and filter alike commands.</p>
+<h3><a name="p-39608-now-onto-paths-4" class="anchor" href="https://d.clarkee.co.uk#p-39608-now-onto-paths-4"></a>Now onto paths!</h3>
+<p>Another great feature built into this, is the path handling.<br>
+It requires some getting used to but is also very straightforward.<br>
+let’s assume we have this path:</p>
+<blockquote>
+<p>/home/user/folder/file.txt</p>
+</blockquote>
+<p>This is what we can do:</p>
+<blockquote>
+<p>Get the path up to file:<br>
+echo !:h → /home/user/folder</p>
+</blockquote>
+<blockquote>
+<p>Get the filename plus extension:<br>
+echo !:t → file.txt</p>
+</blockquote>
+<blockquote>
+<p>Get the path up to file extension:<br>
+echo !:r → /home/user/folder/file</p>
+</blockquote>
+<blockquote>
+<p>Get only file extension:<br>
+echo !:e → .txt</p>
+</blockquote>
+<blockquote>
+<p>Get only filename:<br>
+echo !:t:r → file</p>
+</blockquote>
+<h3><a name="p-39608-substitution-5" class="anchor" href="https://d.clarkee.co.uk#p-39608-substitution-5"></a>Substitution!</h3>
+<p>We can also substitute certain strings with other strings.<br>
+For example if we have <strong><em>/path/file1</em></strong> and we want to change <strong>file1</strong> to <strong>file2</strong> we do:</p>
+<blockquote>
+<p>!:s/file1/file2</p>
+</blockquote>
+<p>But this only works on the first occurence found!<br>
+If we want to do this globally, so for every occurence of <strong>file1</strong>, we use:</p>
+<blockquote>
+<p>!:gs/file1/file2</p>
+</blockquote>
+<p>Example:</p>
+<blockquote>
+<p>$ cp /path/file1 /path/folder/file1<br>
+!:gs/file1/file2 → cp /path/file2 /path/folder/file2</p>
+</blockquote>
+<p>If you want to repeat a successful substitution in a different context then you don’t need to write it again.<br>
+You can just use:</p>
+<blockquote>
+<p>!:&amp; → for single occurence substitution<br>
+!:g&amp; → for global substitution</p>
+</blockquote>
+<hr>
+<h2><a name="p-39608-h-3-summary-6" class="anchor" href="https://d.clarkee.co.uk#p-39608-h-3-summary-6"></a>3. Summary</h2>
+
+Summary/Cheat-Sheet <a href="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/1">(click for more details)</a>
+<hr>
+<h2><a name="p-39608-h-4-extras-7" class="anchor" href="https://d.clarkee.co.uk#p-39608-h-4-extras-7"></a>4. Extras</h2>
+<ul>
+<li>If you missed it in the summary, you can only print the return value of the history substitution without executing it by using <code>!:p</code></li>
+<li>Of course you can connect all of these to do some crazy things!</li>
+<li>To use this feature in bash scripts, supply it with <code>set -H</code></li>
+<li>To run a command and not have it in the history, just type a space in front of it! This works for any command, not just history substitution.</li>
+</ul>
+<hr>
+<p>And that’s all! If you have any questions or found a mistake just leave a comment below.</p>
+<p>I sincerely hope you were able to learn something new today and if you already knew about it then I hope I was able to refresh your memory! <img src="https://d.clarkee.co.uk/images/emoji/twitter/smiley.png?v=15" title=":smiley:" class="emoji" alt=":smiley:" loading="lazy" width="20" height="20"></p>
+<h3><a name="p-39608-happy-hacking-8" class="anchor" href="https://d.clarkee.co.uk#p-39608-happy-hacking-8"></a>Happy Hacking!</h3>
+          <p><a href="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977/1</link>
+        <pubDate>Sat, 13 Apr 2019 11:45:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12977-1</guid>
+        <source url="https://d.clarkee.co.uk/t/use-the-past-to-conquer-the-future-a-how-to-on-bash-history-substitution/12977.rss">Use the Past to Conquer the Future - A How-To on BASH History Substitution</source>
+      </item>
+  </channel>
+</rss>

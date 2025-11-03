@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>A Dive Into Subnetting</title>
+    <link>https://d.clarkee.co.uk/t/a-dive-into-subnetting/468</link>
+    <description>Hello homies and homets! PySec/Airth here coming at you with some 1337 subnetting. This article was originally posted on Null Byte but since I joined the 0x00sec team and there are a ton of new comers, I decided to re-upload some of them so people won&#39;t get confused with the rest of the posts I will upload in the future.Today&#39;s topic is subnetting as you have probably guessed by the title. So, **`192.168.1.0/24`**. Ever wondered what that `&quot;/24&quot;` or the `&quot;/27`&quot; etc mean? Well, I&#39;m about to teach you how and why we use it. Many people know what a subnet mask is but not that many know how to create and read one. There are two types of subnet creation:
+
+* Based on Network Requirements
+
+* Based on Host Requirements
+
+In this article we will focus on Network Requirements. Let&#39;s get right into it!
+
+_**DISCLAIMER**_: Binary knowledge is mandatory in order to comprehend the concepts that will be shown below.
+
+Let&#39;s look at a situation that would require custon subnetting, shall we?
+
+Let&#39;s assume that our company has purchased the IP address `185.20.5.0` with the default subnet mask ` 255.255.255.0` and want to use it to address our network. Wait a second, &quot;purchased&quot;? Why did the company need to buy the IP address? Well, keep in mind that when we are working with IP addresses, there are the private ones and the public ones. You don&#39;t have to pay for the private ones, you can create them, make them up and design your own internal network but those IP addresses don&#39;t work on the Internet, they are blocked by every Internet Service Provider. Which IP addresses are public or private isn&#39;t today&#39;s discussion. So if you are not familiar with those terms I would advice you to google yourself around.
+
+Let&#39;s go back to our example. So our company has purchased the address `180.20.5.0` with a subnet mask `255.255.255.0`, which means we can&#39;t go outside of the `180.20.5` block. Why? If you have read Part 1 of my IP addressing series you would hopefully know by now that if you line up the first 3 octets of your IP address with the first 3 octets of your subnet mask, you get the network that you belong to. In our case we belong to the `180.20.5` network. So we get 1 network with that subnet mask and the 4th octet of the subnet mask represents the hosts. In our case, 256(counting from 0 to 255) but in reality the `180.20.5.0` address represents the network and the `180.20.5.255` is the broadcast address so 254 are the actual usable hosts.
+
+There&#39;s a problem to that though. Let&#39;s have a look at our company&#39;s topology:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/8d260403bb3ad64a51c57f252dbb0b4e07b462ed.jpg&quot; width=&quot;654&quot; height=&quot;385&quot;&gt;
+
+Let me ask you this question. How many network do you see in this picture? Think, think, think. Don&#39;t look below because you will see the answer!
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/8917dfd586f6c09273b20a505450d8f0b258b8cf.jpg&quot; width=&quot;504&quot; height=&quot;500&quot;&gt;
+
+Gotcha! Don&#39;t be sneaky!
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/1a102118bf41ebaf3c631b462adb96ddab6d8ef6.jpg&quot; width=&quot;654&quot; height=&quot;350&quot;&gt;
+
+Hopefully you didn&#39;t cheat! The answer is 5. Did you get it right? If you did, post it below in the comment section. If you didn&#39;t get it right, no worries, neither did I when I was new to networking.
+
+**Every interface of a router represents the end of a network and the beginning of a new one**. That&#39;s really handy for them and for us because if one of those computers send a broadacst on their network, it will stay in their network thanks to our router. But hey! Those 5 networks are an issue for our company. Our company has 5 networks, but we purchased an address that gives us 1 network.
+
+**_Welcome to Subnetting_**
+
+Subnetting is a way of partitioning a single physical network into more than one smaller logical sub-networks (subnets). In other words, it sacrifices how many hosts you can have per network in order to get more networks. So essentially, we &quot;play around&quot; with the host bits. Now you may be asking &quot;Bits? I only see decimal, in that case 0, representing the hosts. I don&#39;t see any bit.&quot; Remember that warning in the beginning of the article? Binary is coming at you shortly.
+
+Firstly, let&#39;s discuss about the process of &quot;playing around&quot;:
+
+_* Convert the number of networks to binary_
+
+_* Reserve bits in subnet mask and find the increment_
+
+_* Use the increment in order to find the network ranges_
+
+As the first step says, I converted the 5 networks of our company to binary. 5 equals to _0000 0101_ in binary or 101 because 0s don&#39;t affect the number&#39;s value. So 5 takes **3 bits** in reality, right? We can&#39;t get the number 5 with any less than 3 bits.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/5412f2bd7c78f385f96b71c540e8e006f66e7d88.jpg&quot; width=&quot;654&quot; height=&quot;221&quot;&gt;
+
+Now what does the 2nd step mean? Well, the way we do this is by taking the subnet mask and look at it the way our devices look at it, in binary.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/e31ea2b7179e40b630429c3a02739b98768b270c.jpg&quot; width=&quot;578&quot; height=&quot;100&quot;&gt;
+
+What does it mean to reserve bits in the subnet mask though? Well, we have to look at step 1, specifically, at 5&#39;s binary representation. 5 takes 3 bits in binary as we agreed above. Now I want you to take a mental leap with me. 255 in the subnet mask represents the network, 0 represents the hosts, right? Is it ok to make the statement:
+
+**_`-1s represent the network and 0s represent the hosts.`_**
+
+Hm? All good with that statement? Makes sense, right? Ok good. So let&#39;s start putting some of the pieces together. I can&#39;t get the number 5 with any less than 3 bits and we&#39;ve just agreed on the statement &quot;1s represent the network and 0s represent the hosts&quot;. So what does it mean to reserve bits in the subnet mask?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/cebd5659d94b982e632f7a1fb025af4b10786dfc.jpg&quot; width=&quot;600&quot; height=&quot;151&quot;&gt;
+
+It means I pick up right where the 1s leave off and I say &quot;I need 3 network bits and the rest can stay hosts.&quot; Alright alright, wait a second. Isn&#39;t 5 _101_ in binary? Why did I put _111_ in the last octet and not _101_? Well, it doesn&#39;t really matter at all what the binary number is. All it matters is how many bits does it take to get the number 5. If we had the number 20 for example, then its binary representation would be 10100. All I&#39;m after is how many bits it takes in order to be represented in binary, which is 5.
+
+Believe it or not, at this point we already know what our subnet is going to be for this entire network. How? We can take the new binary version of the subnet mask and convert it back to decimal.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/0b0431593e3095db0c9d4a872fd8492f5803905d.jpg&quot; width=&quot;654&quot; height=&quot;138&quot;&gt;
+
+The first 3 octets haven&#39;t changed and frankly they can&#39;t change because that&#39;s what we were given. We can only subnet the host bits because that&#39;s our playground. The 0s are the ones we can modify while the first 3 octets of the 255.255.255.0 subnet mask help us identify the network. So we will convert the last octet back to decimal and voila! Our new subnet mask is 255.255.255.224. The way most people write that is 180.20.5.0/27. Why &quot;/27&quot;? Because 27 are the network bits! Count them! See, doesn&#39;t it make sense now? Alright, we have our subnet mask but doesn&#39;t really mean anything. We still have to find our network ranges. So we did the reservation. Now it&#39;s time for the increment. What&#39;s that increment though?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/003dfead64af01b43068f0c6eb1cdf03458d8e17.jpg&quot; width=&quot;654&quot; height=&quot;75&quot;&gt;
+
+The increment is the lowest network bit converted back to a decimal number. In our case, 32.
+
+Off to the last step. Now we have to use that increment. This is where all gets put together. 32 is our increment and the IP that were given is 180.20.5.0 and we can find out how many IP addresses we can get per network. How we do that?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/809cb171b033147851fb94bf5b37e65bf7799659.jpg&quot; width=&quot;367&quot; height=&quot;500&quot;&gt;
+
+Bam! Here are our 5 networks. In reality there are more than 5 as you can see from the picture but we care about the 5 first ones since 5 is our network requirement. So we could assign the first range for the router link, the second one for the network between one of the computers and its router and so on. **Be careful! The first and last address of each range aren&#39;t usable**. Why? The first one represents the network and the last one is the Broadcast address.
+
+Time to answer some questions. Some of you may be curious and may be thinking &quot;Wait a second, this is giving me more than 5 networks.&quot; That&#39;s obvious from the picture as well. Yes, it does give you more than 5 because of how binary works. So you can think of it as that this process will give you **at least** 5 networks. But hey, I&#39;m not writing this article just to write it. I will prove it to you. How do we know it&#39;s going to give us more than 5 networks or how do we know how many hosts we will have per network?
+
+There&#39;s a really simple formula for that. All you have to do in order to find the amount of networks you are going to get is to calculate 2^number of subnet bits you ended up adding. In our example, 2^3, which equals to 8. So we will get 8 networks. You don&#39;t believe me? Enough of me proving it to you, time for you to see it by yourselves. I will just give you a small hint; .255 is the last possible value of an octet and our network is 180.20.5.0.
+
+Do you want to know how to find the number of hosts per network? I bet with a tiny bit of thought you can  guess that pretty easily. The formula is _2^number of 0s_, so 2^5 = 32. But remember, whenever you find the number of hosts, **always** substract 2. Which makes sense because if you look back at the picture above, the first range is 180.20.5.0-.180.20.5.31. Counting from 0 to 31 gives us 32 and so do the other ranges as well.
+
+You just completed an extremely essential part of your learning career. I know I know, too much to grasp, but trust me, more to come soon, this is just the beginning but if you understood the method and the image behind it, you have nothing to be scared of. You are well on your way to become a subnetting wizard. Here&#39;s an exercise for you:
+
+&gt; In this scenario you&#39;ve got to deal with a class C network once again with the IP 210.20.5.0 and the subnet mask 255.255.255.0. Your objective is to break that network into 50 networks.
+
+Remember, this is just the beginning. Next article we will discuss about subnetting other classes of addresses. I hope this article has been informative for you and I would like to thank you for taking the time to read it. Feel free to post your answer of the assignment in the comment section and in case you didn&#39;t understand something fully, make sure you research it a little bit before you ask. Have an amazing day and stay awesome.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/4589db2115d548bc152558b62f9b9325b7c900d6.jpg&quot; width=&quot;500&quot; height=&quot;500&quot;&gt;
+
+P.S **_`-1s represent the network and 0s represent the hosts.`_**
+
+Later...</description>
+    
+    <lastBuildDate>Fri, 22 Dec 2017 00:37:50 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>A Dive Into Subnetting</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/9</link>
+        <pubDate>Fri, 22 Dec 2017 00:57:29 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-468-9</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468.rss">A Dive Into Subnetting</source>
+      </item>
+      <item>
+        <title>A Dive Into Subnetting</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/8</link>
+        <pubDate>Fri, 22 Dec 2017 00:37:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-468-8</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468.rss">A Dive Into Subnetting</source>
+      </item>
+      <item>
+        <title>A Dive Into Subnetting</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/7</link>
+        <pubDate>Sat, 28 Oct 2017 13:48:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-468-7</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468.rss">A Dive Into Subnetting</source>
+      </item>
+      <item>
+        <title>A Dive Into Subnetting</title>
+        <dc:creator><![CDATA[subnetninja]]></dc:creator>
+        <description><![CDATA[
+            <p>You can check your subnetting practice with a <a href="https://subnet.ninja" rel="nofollow noopener">Subnet Calculator</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/6</link>
+        <pubDate>Sat, 28 Oct 2017 12:55:17 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-468-6</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468.rss">A Dive Into Subnetting</source>
+      </item>
+      <item>
+        <title>A Dive Into Subnetting</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome guide man! I always sort of got sub-netting, but never properly. This has definitely helped me to understand it! Thanks! I look forward to your next one!</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/5</link>
+        <pubDate>Tue, 24 May 2016 07:34:30 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-468-5</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468.rss">A Dive Into Subnetting</source>
+      </item>
+      <item>
+        <title>A Dive Into Subnetting</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Or the left bit, because, you know…</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/4</link>
+        <pubDate>Tue, 24 May 2016 01:34:32 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-468-4</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468.rss">A Dive Into Subnetting</source>
+      </item>
+      <item>
+        <title>A Dive Into Subnetting</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Yep, you always gotta start from the ground up. Ain’t that right mate?</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/3</link>
+        <pubDate>Mon, 23 May 2016 21:28:09 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-468-3</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468.rss">A Dive Into Subnetting</source>
+      </item>
+      <item>
+        <title>A Dive Into Subnetting</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p><img src="https://0x00sec.org/images/emoji/twitter/clap.png?v=9" title=":clap:" class="emoji" alt=":clap:"> Well written, giving a foundation to the fresh meat of our world!</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/2</link>
+        <pubDate>Mon, 23 May 2016 21:27:05 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-468-2</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468.rss">A Dive Into Subnetting</source>
+      </item>
+      <item>
+        <title>A Dive Into Subnetting</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello homies and homets! PySec/Airth here coming at you with some 1337 subnetting. This article was originally posted on Null Byte but since I joined the 0x00sec team and there are a ton of new comers, I decided to re-upload some of them so people won’t get confused with the rest of the posts I will upload in the future.Today’s topic is subnetting as you have probably guessed by the title. So, <strong><code>192.168.1.0/24</code></strong>. Ever wondered what that <code>"/24"</code> or the <code>"/27</code>" etc mean? Well, I’m about to teach you how and why we use it. Many people know what a subnet mask is but not that many know how to create and read one. There are two types of subnet creation:</p>
+<ul>
+<li>
+<p>Based on Network Requirements</p>
+</li>
+<li>
+<p>Based on Host Requirements</p>
+</li>
+</ul>
+<p>In this article we will focus on Network Requirements. Let’s get right into it!</p>
+<p><em><strong>DISCLAIMER</strong></em>: Binary knowledge is mandatory in order to comprehend the concepts that will be shown below.</p>
+<p>Let’s look at a situation that would require custon subnetting, shall we?</p>
+<p>Let’s assume that our company has purchased the IP address <code>185.20.5.0</code> with the default subnet mask <code> 255.255.255.0</code> and want to use it to address our network. Wait a second, “purchased”? Why did the company need to buy the IP address? Well, keep in mind that when we are working with IP addresses, there are the private ones and the public ones. You don’t have to pay for the private ones, you can create them, make them up and design your own internal network but those IP addresses don’t work on the Internet, they are blocked by every Internet Service Provider. Which IP addresses are public or private isn’t today’s discussion. So if you are not familiar with those terms I would advice you to google yourself around.</p>
+<p>Let’s go back to our example. So our company has purchased the address <code>180.20.5.0</code> with a subnet mask <code>255.255.255.0</code>, which means we can’t go outside of the <code>180.20.5</code> block. Why? If you have read Part 1 of my IP addressing series you would hopefully know by now that if you line up the first 3 octets of your IP address with the first 3 octets of your subnet mask, you get the network that you belong to. In our case we belong to the <code>180.20.5</code> network. So we get 1 network with that subnet mask and the 4th octet of the subnet mask represents the hosts. In our case, 256(counting from 0 to 255) but in reality the <code>180.20.5.0</code> address represents the network and the <code>180.20.5.255</code> is the broadcast address so 254 are the actual usable hosts.</p>
+<p>There’s a problem to that though. Let’s have a look at our company’s topology:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/8d260403bb3ad64a51c57f252dbb0b4e07b462ed.jpg" width="654" height="385"></p>
+<p>Let me ask you this question. How many network do you see in this picture? Think, think, think. Don’t look below because you will see the answer!</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/1X/8917dfd586f6c09273b20a505450d8f0b258b8cf.jpg" data-download-href="/uploads/short-url/jyMyY4tcyVUDfXigOuuSFgrNQDB.jpg?dl=1" title="networking-foundations-subnetting.w654 (1).jpg" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/1X/8917dfd586f6c09273b20a505450d8f0b258b8cf.jpg" width="504" height="500"></a></div><p></p>
+<p>Gotcha! Don’t be sneaky!</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/1a102118bf41ebaf3c631b462adb96ddab6d8ef6.jpg" width="654" height="350"></p>
+<p>Hopefully you didn’t cheat! The answer is 5. Did you get it right? If you did, post it below in the comment section. If you didn’t get it right, no worries, neither did I when I was new to networking.</p>
+<p><strong>Every interface of a router represents the end of a network and the beginning of a new one</strong>. That’s really handy for them and for us because if one of those computers send a broadacst on their network, it will stay in their network thanks to our router. But hey! Those 5 networks are an issue for our company. Our company has 5 networks, but we purchased an address that gives us 1 network.</p>
+<p><strong><em>Welcome to Subnetting</em></strong></p>
+<p>Subnetting is a way of partitioning a single physical network into more than one smaller logical sub-networks (subnets). In other words, it sacrifices how many hosts you can have per network in order to get more networks. So essentially, we “play around” with the host bits. Now you may be asking “Bits? I only see decimal, in that case 0, representing the hosts. I don’t see any bit.” Remember that warning in the beginning of the article? Binary is coming at you shortly.</p>
+<p>Firstly, let’s discuss about the process of “playing around”:</p>
+<p><em>* Convert the number of networks to binary</em></p>
+<p><em>* Reserve bits in subnet mask and find the increment</em></p>
+<p><em>* Use the increment in order to find the network ranges</em></p>
+<p>As the first step says, I converted the 5 networks of our company to binary. 5 equals to <em>0000 0101</em> in binary or 101 because 0s don’t affect the number’s value. So 5 takes <strong>3 bits</strong> in reality, right? We can’t get the number 5 with any less than 3 bits.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/5412f2bd7c78f385f96b71c540e8e006f66e7d88.jpg" width="654" height="221"></p>
+<p>Now what does the 2nd step mean? Well, the way we do this is by taking the subnet mask and look at it the way our devices look at it, in binary.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/e31ea2b7179e40b630429c3a02739b98768b270c.jpg" width="578" height="100"></p>
+<p>What does it mean to reserve bits in the subnet mask though? Well, we have to look at step 1, specifically, at 5’s binary representation. 5 takes 3 bits in binary as we agreed above. Now I want you to take a mental leap with me. 255 in the subnet mask represents the network, 0 represents the hosts, right? Is it ok to make the statement:</p>
+<p><strong><em><code>-1s represent the network and 0s represent the hosts.</code></em></strong></p>
+<p>Hm? All good with that statement? Makes sense, right? Ok good. So let’s start putting some of the pieces together. I can’t get the number 5 with any less than 3 bits and we’ve just agreed on the statement “1s represent the network and 0s represent the hosts”. So what does it mean to reserve bits in the subnet mask?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/cebd5659d94b982e632f7a1fb025af4b10786dfc.jpg" width="600" height="151"></p>
+<p>It means I pick up right where the 1s leave off and I say “I need 3 network bits and the rest can stay hosts.” Alright alright, wait a second. Isn’t 5 <em>101</em> in binary? Why did I put <em>111</em> in the last octet and not <em>101</em>? Well, it doesn’t really matter at all what the binary number is. All it matters is how many bits does it take to get the number 5. If we had the number 20 for example, then its binary representation would be 10100. All I’m after is how many bits it takes in order to be represented in binary, which is 5.</p>
+<p>Believe it or not, at this point we already know what our subnet is going to be for this entire network. How? We can take the new binary version of the subnet mask and convert it back to decimal.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/0b0431593e3095db0c9d4a872fd8492f5803905d.jpg" width="654" height="138"></p>
+<p>The first 3 octets haven’t changed and frankly they can’t change because that’s what we were given. We can only subnet the host bits because that’s our playground. The 0s are the ones we can modify while the first 3 octets of the 255.255.255.0 subnet mask help us identify the network. So we will convert the last octet back to decimal and voila! Our new subnet mask is 255.255.255.224. The way most people write that is 180.20.5.0/27. Why “/27”? Because 27 are the network bits! Count them! See, doesn’t it make sense now? Alright, we have our subnet mask but doesn’t really mean anything. We still have to find our network ranges. So we did the reservation. Now it’s time for the increment. What’s that increment though?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/003dfead64af01b43068f0c6eb1cdf03458d8e17.jpg" width="654" height="75"></p>
+<p>The increment is the lowest network bit converted back to a decimal number. In our case, 32.</p>
+<p>Off to the last step. Now we have to use that increment. This is where all gets put together. 32 is our increment and the IP that were given is 180.20.5.0 and we can find out how many IP addresses we can get per network. How we do that?</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/1X/809cb171b033147851fb94bf5b37e65bf7799659.jpg" data-download-href="/uploads/short-url/ilKPrspaTn0vhGXFxpPsIqq4jQR.jpg?dl=1" title="networking-foundations-subnetting.w654 (8).jpg" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/1X/809cb171b033147851fb94bf5b37e65bf7799659.jpg" width="367" height="500"></a></div><p></p>
+<p>Bam! Here are our 5 networks. In reality there are more than 5 as you can see from the picture but we care about the 5 first ones since 5 is our network requirement. So we could assign the first range for the router link, the second one for the network between one of the computers and its router and so on. <strong>Be careful! The first and last address of each range aren’t usable</strong>. Why? The first one represents the network and the last one is the Broadcast address.</p>
+<p>Time to answer some questions. Some of you may be curious and may be thinking “Wait a second, this is giving me more than 5 networks.” That’s obvious from the picture as well. Yes, it does give you more than 5 because of how binary works. So you can think of it as that this process will give you <strong>at least</strong> 5 networks. But hey, I’m not writing this article just to write it. I will prove it to you. How do we know it’s going to give us more than 5 networks or how do we know how many hosts we will have per network?</p>
+<p>There’s a really simple formula for that. All you have to do in order to find the amount of networks you are going to get is to calculate 2^number of subnet bits you ended up adding. In our example, 2^3, which equals to 8. So we will get 8 networks. You don’t believe me? Enough of me proving it to you, time for you to see it by yourselves. I will just give you a small hint; .255 is the last possible value of an octet and our network is 180.20.5.0.</p>
+<p>Do you want to know how to find the number of hosts per network? I bet with a tiny bit of thought you can  guess that pretty easily. The formula is <em>2^number of 0s</em>, so 2^5 = 32. But remember, whenever you find the number of hosts, <strong>always</strong> substract 2. Which makes sense because if you look back at the picture above, the first range is 180.20.5.0-.180.20.5.31. Counting from 0 to 31 gives us 32 and so do the other ranges as well.</p>
+<p>You just completed an extremely essential part of your learning career. I know I know, too much to grasp, but trust me, more to come soon, this is just the beginning but if you understood the method and the image behind it, you have nothing to be scared of. You are well on your way to become a subnetting wizard. Here’s an exercise for you:</p>
+<blockquote>
+<p>In this scenario you’ve got to deal with a class C network once again with the IP 210.20.5.0 and the subnet mask 255.255.255.0. Your objective is to break that network into 50 networks.</p>
+</blockquote>
+<p>Remember, this is just the beginning. Next article we will discuss about subnetting other classes of addresses. I hope this article has been informative for you and I would like to thank you for taking the time to read it. Feel free to post your answer of the assignment in the comment section and in case you didn’t understand something fully, make sure you research it a little bit before you ask. Have an amazing day and stay awesome.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/1X/4589db2115d548bc152558b62f9b9325b7c900d6.jpg" data-download-href="/uploads/short-url/9VaiDcRBZpXlOjzcOLdzIPqyXWK.jpg?dl=1" title="networking-foundations-subnetting.w654 (9).jpg" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/1X/4589db2115d548bc152558b62f9b9325b7c900d6.jpg" width="500" height="500"></a></div><p></p>
+<p>P.S <strong><em><code>-1s represent the network and 0s represent the hosts.</code></em></strong></p>
+<p>Later…</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-into-subnetting/468/1</link>
+        <pubDate>Mon, 23 May 2016 18:47:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-468-1</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-into-subnetting/468.rss">A Dive Into Subnetting</source>
+      </item>
+  </channel>
+</rss>

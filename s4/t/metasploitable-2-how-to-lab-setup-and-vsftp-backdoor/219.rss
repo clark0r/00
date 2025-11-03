@@ -1,0 +1,329 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Metasploitable 2 How-to - Lab Setup and vsftp backdoor</title>
+    <link>https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219</link>
+    <description># Capture The Flag  Vulnerable Machine Part I - Metasploitable 2
+
+Hello Hackers and welcome to this post , in this post I will show you how you can take control of the VM **Metasploitable 2**. I will show you differents ways of taking control of this Vulnerable VM. In this first part I will cover the vsftpd Backdoored service . You can find a great tutorial on how to exploit vsftpd with python here [vsftpd exploit](https://0x00sec.org/t/re-building-a-vsftpd-backdoor-exploit-in-python/159)  by @Defalt 
+
+In this Tutorial, we will use the Metasploit Framework to pwned the box
+
+## Setup the Lab 
+
+First we need to download the Virtual Machine [Metasploitable 2](https://sourceforge.net/projects/metasploitable/files/Metasploitable2/) , we will need a Virtual machine who will be the attacker you can use [Kali Linux](https://www.kali.org/downloads/) , [Backbox](https://backbox.org/download) or another Hacking box :smile:
+
+If you already have  **Metasploitable 2** and your Hacking Box, let&#39;s start by  setting up the Lab.
+
+I will use VirtualBox in this lab ( If you want a tutorial on how to setup a Virtual Lab with VmWare player message me and I&#39;ll do one)
+
+The .zip you have downloaded will contains these files, the Metasploitable.vmdk is the file we need to make the Virtual Machine 
+
+![Metasploit file](upload://935ISdk6qDPjdQVYQbeWYIPriYd.png) 
+
+### VirtualBox Setup
+Let&#39;s get started ! 
+Create a new virtual Machine 
+**Machine &gt; New** 
+Name your Virtual Machine *Metasploitable 2*
+![Metasploitable creation](http://i.imgur.com/7iF7dKT.png)
+
+Click Next and adjust the RAM as you needed, you can let the default option and click next
+
+![RAM Metasploitable](http://i.imgur.com/01dDfT7.png)
+
+Here choose virtual Disk of Metasploitable 2 that you downloaded
+
+![Metasploitale vdmk ](http://i.imgur.com/AdTU2y1.png)
+
+Click Next, you&#39;re almost done ! Now that the Virtual Machine is created, we need to configure the Network settings
+**Right Click on the virtual machine &gt; Configuration &gt; Network** 
+
+![Networking settings](http://i.imgur.com/iHXEvVk.png)
+
+I set the virtual Machine to *private network* and do the same for my Hacking box !
+
+You&#39;re Now Ready to pwned Metasploitable 2
+
+## Pwned that Box 
+
+### Recon
+
+First we need to find the ip of the box we can use 
+
+* nmap
+* netdiscover 
+* arpscan 
+* or something else..
+
+Let&#39;s try netdiscover to find the ip of the box , in Kali Linux type 
+```linux
+netdiscover -r ip_range
+```
+
+![Netdiscover output](http://i.imgur.com/z4DgDU1.png)
+
+So let&#39;s try a nmap scan on the *192.168.56.101*
+
+![Nmap scan](http://i.imgur.com/afR03BR.jpg)
+
+Wow , a lot of open port it&#39;s our target ! Now it&#39;s time to hack it !
+
+## The ftp Service
+
+The ftp port is open let&#39;s check which version of software the VM runs
+
+![vsftpd](http://i.imgur.com/NfaO8du.png)
+
+We see vsftpd 2.3.4, is this service vulnerable ? 
+Let&#39;s run metasploit
+
+first you need to run postgresql and msfdb init :
+```linux
+service postgresql start
+msfdb init
+```
+and then run metasploit 
+```linux
+msfconsole
+```
+ We search if a vsftpd exploit is available 
+```metasploit
+search vsftpd
+```
+
+![msfconsole](http://i.imgur.com/JNYtVgW.png)
+
+
+We found an exploit ! let&#39;s use this exploit 
+```metasploit
+use exploit/unix/ftp/vsftpd_234_backdoor
+```
+The show options will show you what variable should be set for the exploit to work 
+
+We set the remote host **RHOST** and type exploit
+
+
+&lt;img src=&quot;/uploads/default/original/1X/4c1cb80307ff8815a1f367faa164f0a460ff9abf.png&quot; width=&quot;510&quot; height=&quot;296&quot;&gt;
+
+Now we have a root shell !
+&lt;img src=&quot;/uploads/default/original/1X/99c650e6b237d1602d77b4fcd56273db07ca4f00.png&quot; width=&quot;690&quot; height=&quot;155&quot;&gt;
+
+Okay, now that we exploit the box with this vsftpd backdoor let&#39;s figured out how it works 
+
+First open the source code of the exploit with your favorite editor
+&lt;img src=&quot;/uploads/default/original/1X/412034be77eff6054b022171b2b3501002ee221f.png&quot; width=&quot;690&quot; height=&quot;420&quot;&gt;
+If we look at the source code we see that the exploit will open **the port 6200** when we use a random string terminated by a :) as a username and a random string for password
+
+Now let&#39;s open wireshark to see what&#39;s happen on the network
+let&#39;s filter **ftp** and port **6200** and retry the exploit 
+
+&lt;img src=&quot;/uploads/default/original/1X/a5b71c9fb58b91582dd2aa2594bca8fa885c0cdd.png&quot; width=&quot;690&quot; height=&quot;299&quot;&gt;
+
+So when we lauched the exploit the first thing you could notice is that it tries to connect to port 6200
+If the port is not open we send the random string terminated with a  smiley for the **USER** and a random string to  **PASS** that will open the port **6200** 
+
+As you can see on the screenshot above when the user 
+LC:) , And nPSc are sent 
+
+The next frame our machine will retry to connect to port 6200 and it works ! 
+
+We can type 
+```linux
+netstat -tnp
+```
+on Metasploitable 2  we will see that our Kali linux machine is connected to the port 6200
+
+&lt;img src=&quot;/uploads/default/original/1X/30f7c98ce984ace4f5c1cfe9eab641a22bcecef7.png&quot; width=&quot;690&quot; height=&quot;73&quot;&gt;
+
+Here is the end of **Metasploitable 2 part I**
+
+Hope you enjoy reading ! Stay tuned for the next part **Metasploitable 2 - IRC **
+
+@L3akM3-0day</description>
+    
+    <lastBuildDate>Sat, 07 May 2016 08:43:23 +0000</lastBuildDate>
+    <category>CTF</category>
+    <atom:link href="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Metasploitable 2 How-to - Lab Setup and vsftp backdoor</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/8</link>
+        <pubDate>Sun, 21 Jan 2018 00:42:54 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-219-8</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219.rss">Metasploitable 2 How-to - Lab Setup and vsftp backdoor</source>
+      </item>
+      <item>
+        <title>Metasploitable 2 How-to - Lab Setup and vsftp backdoor</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> it helps keep everything more tidy. Your English is very good if it is not your main language! I can barely speak more than English <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/7</link>
+        <pubDate>Sat, 07 May 2016 08:43:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-219-7</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219.rss">Metasploitable 2 How-to - Lab Setup and vsftp backdoor</source>
+      </item>
+      <item>
+        <title>Metasploitable 2 How-to - Lab Setup and vsftp backdoor</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>I’ve been waiting for this!!! <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"> Thanks for posting it!!!</p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/6</link>
+        <pubDate>Fri, 06 May 2016 23:40:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-219-6</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219.rss">Metasploitable 2 How-to - Lab Setup and vsftp backdoor</source>
+      </item>
+      <item>
+        <title>Metasploitable 2 How-to - Lab Setup and vsftp backdoor</title>
+        <dc:creator><![CDATA[L3akM3-0day]]></dc:creator>
+        <description><![CDATA[
+            <p>Okay ! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> Next tutorial will be without the [ Learn Hacking ] , thank for your feedback <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/5</link>
+        <pubDate>Fri, 06 May 2016 20:58:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-219-5</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219.rss">Metasploitable 2 How-to - Lab Setup and vsftp backdoor</source>
+      </item>
+      <item>
+        <title>Metasploitable 2 How-to - Lab Setup and vsftp backdoor</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks! If we put things in the right place it helps users find the articles they’re looking for further down the road. Also the  [ Learn Hacking ] isn’t required <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"> This is a hacking forum!</p>
+<p>This tutorial is really good <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"> I’m hooked <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/4</link>
+        <pubDate>Fri, 06 May 2016 20:55:47 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-219-4</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219.rss">Metasploitable 2 How-to - Lab Setup and vsftp backdoor</source>
+      </item>
+      <item>
+        <title>Metasploitable 2 How-to - Lab Setup and vsftp backdoor</title>
+        <dc:creator><![CDATA[L3akM3-0day]]></dc:creator>
+        <description><![CDATA[
+            <p>Haha you right ! Next time I’ll post in the How to section <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> , Maybe I made some mistakes my english is not perfect but I try <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/3</link>
+        <pubDate>Fri, 06 May 2016 20:53:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-219-3</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219.rss">Metasploitable 2 How-to - Lab Setup and vsftp backdoor</source>
+      </item>
+      <item>
+        <title>Metasploitable 2 How-to - Lab Setup and vsftp backdoor</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey! I haven’t read the post yet, but it looks badass! Make sure to post in the how-to section, I will update it for you this time, please read <a href="https://0x00sec.org/t/updates-as-of-may-5th-2016/188">this</a>. The Hacking section is not for tutorials, that’s what the How-to section is for.</p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/2</link>
+        <pubDate>Fri, 06 May 2016 20:48:31 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-219-2</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219.rss">Metasploitable 2 How-to - Lab Setup and vsftp backdoor</source>
+      </item>
+      <item>
+        <title>Metasploitable 2 How-to - Lab Setup and vsftp backdoor</title>
+        <dc:creator><![CDATA[L3akM3-0day]]></dc:creator>
+        <description><![CDATA[
+            <h1>Capture The Flag  Vulnerable Machine Part I - Metasploitable 2</h1>
+<p>Hello Hackers and welcome to this post , in this post I will show you how you can take control of the VM <strong>Metasploitable 2</strong>. I will show you differents ways of taking control of this Vulnerable VM. In this first part I will cover the vsftpd Backdoored service . You can find a great tutorial on how to exploit vsftpd with python here <a href="https://0x00sec.org/t/re-building-a-vsftpd-backdoor-exploit-in-python/159">vsftpd exploit</a>  by <a class="mention" href="https://d.clarkee.co.uk/u/defalt">@Defalt</a></p>
+<p>In this Tutorial, we will use the Metasploit Framework to pwned the box</p>
+<h2>Setup the Lab</h2>
+<p>First we need to download the Virtual Machine <a href="https://sourceforge.net/projects/metasploitable/files/Metasploitable2/" rel="noopener nofollow ugc">Metasploitable 2</a> , we will need a Virtual machine who will be the attacker you can use <a href="https://www.kali.org/downloads/" rel="noopener nofollow ugc">Kali Linux</a> , <a href="https://backbox.org/download" rel="noopener nofollow ugc">Backbox</a> or another Hacking box <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:"></p>
+<p>If you already have  <strong>Metasploitable 2</strong> and your Hacking Box, let’s start by  setting up the Lab.</p>
+<p>I will use VirtualBox in this lab ( If you want a tutorial on how to setup a Virtual Lab with VmWare player message me and I’ll do one)</p>
+<p>The .zip you have downloaded will contains these files, the Metasploitable.vmdk is the file we need to make the Virtual Machine</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/3f6d0d595e4afa810da906aa82aa1236e5692cb5.png" alt="Metasploit file" data-base62-sha1="935ISdk6qDPjdQVYQbeWYIPriYd" width="" height=""></p>
+<h3>VirtualBox Setup</h3>
+<p>Let’s get started !<br>
+Create a new virtual Machine<br>
+<strong>Machine &gt; New</strong><br>
+Name your Virtual Machine <em>Metasploitable 2</em><br>
+<span alt="Metasploitable creation" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Click Next and adjust the RAM as you needed, you can let the default option and click next</p>
+<p><span alt="RAM Metasploitable" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Here choose virtual Disk of Metasploitable 2 that you downloaded</p>
+<p><span alt="Metasploitale vdmk" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Click Next, you’re almost done ! Now that the Virtual Machine is created, we need to configure the Network settings<br>
+<strong>Right Click on the virtual machine &gt; Configuration &gt; Network</strong></p>
+<p><span alt="Networking settings" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>I set the virtual Machine to <em>private network</em> and do the same for my Hacking box !</p>
+<p>You’re Now Ready to pwned Metasploitable 2</p>
+<h2>Pwned that Box</h2>
+<h3>Recon</h3>
+<p>First we need to find the ip of the box we can use</p>
+<ul>
+<li>nmap</li>
+<li>netdiscover</li>
+<li>arpscan</li>
+<li>or something else…</li>
+</ul>
+<p>Let’s try netdiscover to find the ip of the box , in Kali Linux type</p>
+<pre><code class="lang-auto">netdiscover -r ip_range
+</code></pre>
+<p><span alt="Netdiscover output" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>So let’s try a nmap scan on the <em>192.168.56.101</em></p>
+<p><span alt="Nmap scan" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Wow , a lot of open port it’s our target ! Now it’s time to hack it !</p>
+<h2>The ftp Service</h2>
+<p>The ftp port is open let’s check which version of software the VM runs</p>
+<p><span alt="vsftpd" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>We see vsftpd 2.3.4, is this service vulnerable ?<br>
+Let’s run metasploit</p>
+<p>first you need to run postgresql and msfdb init :</p>
+<pre><code class="lang-auto">service postgresql start
+msfdb init
+</code></pre>
+<p>and then run metasploit</p>
+<pre><code class="lang-auto">msfconsole
+</code></pre>
+<p>We search if a vsftpd exploit is available</p>
+<pre><code class="lang-auto">search vsftpd
+</code></pre>
+<p><span alt="msfconsole" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>We found an exploit ! let’s use this exploit</p>
+<pre><code class="lang-auto">use exploit/unix/ftp/vsftpd_234_backdoor
+</code></pre>
+<p>The show options will show you what variable should be set for the exploit to work</p>
+<p>We set the remote host <strong>RHOST</strong> and type exploit</p>
+<p><img src="/uploads/default/original/1X/4c1cb80307ff8815a1f367faa164f0a460ff9abf.png" width="510" height="296"></p>
+<p>Now we have a root shell !<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/1X/99c650e6b237d1602d77b4fcd56273db07ca4f00.png" data-download-href="/uploads/short-url/lWlWtfizZVlF5XULv5u8sfM4Iq4.png?dl=1" title="Pasted image"><img src="https://0x00sec.s3.amazonaws.com/optimized/1X/99c650e6b237d1602d77b4fcd56273db07ca4f00_2_690x155.png" width="690" height="155" srcset="https://0x00sec.s3.amazonaws.com/optimized/1X/99c650e6b237d1602d77b4fcd56273db07ca4f00_2_690x155.png, /uploads/default/original/1X/99c650e6b237d1602d77b4fcd56273db07ca4f00.png 1.5x, /uploads/default/original/1X/99c650e6b237d1602d77b4fcd56273db07ca4f00.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/1X/99c650e6b237d1602d77b4fcd56273db07ca4f00_2_10x10.png"></a></div><p></p>
+<p>Okay, now that we exploit the box with this vsftpd backdoor let’s figured out how it works</p>
+<p>First open the source code of the exploit with your favorite editor<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/1X/412034be77eff6054b022171b2b3501002ee221f.png" data-download-href="/uploads/short-url/9i82h0BcSQK1NYki4TiL1nouUAn.png?dl=1" title="Pasted image"><img src="https://0x00sec.s3.amazonaws.com/optimized/1X/412034be77eff6054b022171b2b3501002ee221f_2_690x420.png" width="690" height="420" srcset="https://0x00sec.s3.amazonaws.com/optimized/1X/412034be77eff6054b022171b2b3501002ee221f_2_690x420.png, /uploads/default/original/1X/412034be77eff6054b022171b2b3501002ee221f.png 1.5x, /uploads/default/original/1X/412034be77eff6054b022171b2b3501002ee221f.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/1X/412034be77eff6054b022171b2b3501002ee221f_2_10x10.png"></a></div><br>
+If we look at the source code we see that the exploit will open <strong>the port 6200</strong> when we use a random string terminated by a <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> as a username and a random string for password<p></p>
+<p>Now let’s open wireshark to see what’s happen on the network<br>
+let’s filter <strong>ftp</strong> and port <strong>6200</strong> and retry the exploit</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/1X/a5b71c9fb58b91582dd2aa2594bca8fa885c0cdd.png" data-download-href="/uploads/short-url/nDZ64dC2DuezzM0IzKaDuC37ldH.png?dl=1" title="Pasted image"><img src="/uploads/default/original/1X/a5b71c9fb58b91582dd2aa2594bca8fa885c0cdd.png" width="690" height="299" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/1X/a5b71c9fb58b91582dd2aa2594bca8fa885c0cdd_2_10x10.png"></a></div><p></p>
+<p>So when we lauched the exploit the first thing you could notice is that it tries to connect to port 6200<br>
+If the port is not open we send the random string terminated with a  smiley for the <strong>USER</strong> and a random string to  <strong>PASS</strong> that will open the port <strong>6200</strong></p>
+<p>As you can see on the screenshot above when the user<br>
+LC:) , And nPSc are sent</p>
+<p>The next frame our machine will retry to connect to port 6200 and it works !</p>
+<p>We can type</p>
+<pre><code class="lang-auto">netstat -tnp
+</code></pre>
+<p>on Metasploitable 2  we will see that our Kali linux machine is connected to the port 6200</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/1X/30f7c98ce984ace4f5c1cfe9eab641a22bcecef7.png" data-download-href="/uploads/short-url/6ZbNCSzK9oRFgWzIYnr2Kt4pLIX.png?dl=1" title="Pasted image"><img src="https://0x00sec.s3.amazonaws.com/optimized/1X/30f7c98ce984ace4f5c1cfe9eab641a22bcecef7_2_690x73.png" width="690" height="73" srcset="https://0x00sec.s3.amazonaws.com/optimized/1X/30f7c98ce984ace4f5c1cfe9eab641a22bcecef7_2_690x73.png, /uploads/default/original/1X/30f7c98ce984ace4f5c1cfe9eab641a22bcecef7.png 1.5x, /uploads/default/original/1X/30f7c98ce984ace4f5c1cfe9eab641a22bcecef7.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/1X/30f7c98ce984ace4f5c1cfe9eab641a22bcecef7_2_10x10.png"></a></div><p></p>
+<p>Here is the end of <strong>Metasploitable 2 part I</strong></p>
+<p>Hope you enjoy reading ! Stay tuned for the next part **Metasploitable 2 - IRC **</p>
+<p><a class="mention" href="https://d.clarkee.co.uk/u/l3akm3-0day">@L3akM3-0day</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219/1</link>
+        <pubDate>Fri, 06 May 2016 20:44:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-219-1</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-2-how-to-lab-setup-and-vsftp-backdoor/219.rss">Metasploitable 2 How-to - Lab Setup and vsftp backdoor</source>
+      </item>
+  </channel>
+</rss>

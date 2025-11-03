@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!-- Added by HTTrack --><meta http-equiv="content-type" content="text/html;charset=utf-8" /><!-- /Added by HTTrack -->
+<head>
+    <meta charset="utf-8">
+    <title>picoCTF Write-up ~ Pwning RSA (1/2) - Cryptology - 0x00sec - The Home of the Hacker</title>
+    <meta name="description" content="So as you might know, pysec, dtm, kowalski and me did the picoCTF some time back. 
+One of the challenges we did was an RSA one. 
+The challenge was as follows 
+e = 65537
+n = 64231324084806401497504393430865824244731248515&amp;hellip;">
+    <meta name="generator" content="Discourse 3.6.0.beta2-latest - https://github.com/discourse/discourse version 3b1964f3ed8bdc2f181e2abccb1b116e4b814db5">
+<link rel="icon" type="image/png" href="../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.html">
+<link rel="apple-touch-icon" type="image/png" href="../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.html">
+<meta name="theme-color" media="all" content="#171616">
+
+<meta name="color-scheme" content="dark">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, viewport-fit=cover">
+<link rel="canonical" href="1923.html" />
+
+<link rel="search" type="application/opensearchdescription+xml" href="../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+
+    
+    <link href="../../stylesheets/color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4.css_%3b%20filename_%3dUTF-8%27%27color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" class="light-scheme" data-scheme-id="15"/>
+
+<link href="../../stylesheets/common_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27common_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common"  />
+
+  <link href="../../stylesheets/mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile"  />
+  <link href="../../stylesheets/desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop"  />
+
+
+
+    <link href="../../stylesheets/chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="chat"  />
+    <link href="../../stylesheets/checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="checklist"  />
+    <link href="../../stylesheets/discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-cakeday"  />
+    <link href="../../stylesheets/discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-details"  />
+    <link href="../../stylesheets/discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-lazy-videos"  />
+    <link href="../../stylesheets/discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-local-dates"  />
+    <link href="../../stylesheets/discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-narrative-bot"  />
+    <link href="../../stylesheets/discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-presence"  />
+    <link href="../../stylesheets/discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-solved"  />
+    <link href="../../stylesheets/discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-templates"  />
+    <link href="../../stylesheets/discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-topic-voting"  />
+    <link href="../../stylesheets/docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="docker_manager"  />
+    <link href="../../stylesheets/footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="footnote"  />
+    <link href="../../stylesheets/poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="poll"  />
+    <link href="../../stylesheets/spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="spoiler-alert"  />
+    <link href="../../stylesheets/chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="chat_mobile"  />
+    <link href="../../stylesheets/discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-solved_mobile"  />
+    <link href="../../stylesheets/discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-topic-voting_mobile"  />
+    <link href="../../stylesheets/chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="chat_desktop"  />
+    <link href="../../stylesheets/discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="discourse-topic-voting_desktop"  />
+    <link href="../../stylesheets/poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="poll_desktop"  />
+
+  <link href="../../stylesheets/common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960db.css_%3b%20filename_%3dUTF-8%27%27common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960dba97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common_theme" data-theme-id="57" data-theme-name="0x00sec-v2"/>
+    <link href="../../stylesheets/mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38.css_%3b%20filename_%3dUTF-8%27%27mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile_theme" data-theme-id="4" data-theme-name="mobile chrome"/>
+    <link href="../../stylesheets/desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96.css_%3b%20filename_%3dUTF-8%27%27desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2"/>
+
+    <link rel="stylesheet" href="../../../external.html?link=https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="../../../external.html?link=https://s3.amazonaws.com/0x00sec/highlight.pack.js" nonce="mpbKTakVcTfISr8L2Ghrxzo5T"></script>
+<script defer="" src="../../theme-javascripts/05954ff525aceb8daa8b585f92d758d311ae7077.js_%3b%20filename_%3dUTF-8%27%2705954ff525aceb8daa8b585f92d758d311ae7077a97f.js?__ws=d.clarkee.co.uk" data-theme-id="40" nonce="mpbKTakVcTfISr8L2Ghrxzo5T"></script>
+    
+        <link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;picoCTF Write-up ~ Pwning RSA (1/2)&#39;" href="1923.rss" />
+    <meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://d.clarkee.co.uk/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:image" content="https://d.clarkee.co.uk/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:url" content="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923" />
+<meta name="twitter:url" content="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923" />
+<meta property="og:title" content="picoCTF Write-up ~ Pwning RSA (1/2)" />
+<meta name="twitter:title" content="picoCTF Write-up ~ Pwning RSA (1/2)" />
+<meta property="og:description" content="So as you might know, pysec, dtm, kowalski and me did the picoCTF some time back.  One of the challenges we did was an RSA one.  The challenge was as follows  e = 65537 n = 642313240848064014975043934308658242447312485152342673610756859535090103704610472004913349502648157091104463303511131278665176160214474038294042375555935567033107229886104534241324327133387923226576002115108963521725703773387678635509903034467838260875686083768549775481391190161412646384559222421917626615323 dp = 177653780087..." />
+<meta name="twitter:description" content="So as you might know, pysec, dtm, kowalski and me did the picoCTF some time back.  One of the challenges we did was an RSA one.  The challenge was as follows  e = 65537 n = 642313240848064014975043934308658242447312485152342673610756859535090103704610472004913349502648157091104463303511131278665176160214474038294042375555935567033107229886104534241324327133387923226576002115108963521725703773387678635509903034467838260875686083768549775481391190161412646384559222421917626615323 dp = 177653780087..." />
+<meta property="og:article:section" content="Cryptology" />
+<meta property="og:article:section:color" content="9EB83B" />
+<meta property="og:article:tag" content="ctf" />
+<meta property="og:article:tag" content="encryption" />
+<meta property="og:article:tag" content="rsa" />
+<meta name="twitter:label1" value="Reading time" />
+<meta name="twitter:data1" value="1 mins 🕑" />
+<meta name="twitter:label2" value="Likes" />
+<meta name="twitter:data2" value="10 ❤" />
+<meta property="article:published_time" content="2017-04-23T16:14:19+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+
+
+    
+  </head>
+  <body class="crawler ">
+    <div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+  <!--<a href="https://git.0x00sec.org" class="dow-menu">GitLab</a>  
+  <a href="https://blog.0x00sec.org/irc" class="dow-menu">IRC</a>!-->
+  <a href="../../../external.html?link=https://init.0x00sec.org/" class="dow-menu">Init</a>
+  <a href="../../../external.html?link=https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+  <a href="../../../external.html?link=https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+    <header>
+  <a href="../../index.html">0x00sec - The Home of the Hacker</a>
+</header>
+
+    <div id="main-outlet" class="wrap" role="main">
+        <div id="topic-title">
+    <h1>
+      <a href="1923.html">picoCTF Write-up ~ Pwning RSA (1/2)</a>
+    </h1>
+
+      <div class="topic-category" itemscope itemtype="../../../external.html?link=http://schema.org/BreadcrumbList">
+          <span itemprop="itemListElement" itemscope itemtype="../../../external.html?link=http://schema.org/ListItem">
+            <a href="../../c/cryptology/57.html" class="badge-wrapper bullet" itemprop="item">
+              <span class='badge-category-bg' style='background-color: #9EB83B'></span>
+              <span class='badge-category clear-badge'>
+                <span class='category-name' itemprop='name'>Cryptology</span>
+              </span>
+            </a>
+            <meta itemprop="position" content="1" />
+          </span>
+      </div>
+
+      <div class="topic-category">
+        <div class='discourse-tags list-tags'>
+            <a href='../../tag/ctf.html' class='discourse-tag' rel="tag">ctf</a>, 
+            <a href='../../tag/encryption.html' class='discourse-tag' rel="tag">encryption</a>, 
+            <a href='../../tag/rsa.html' class='discourse-tag' rel="tag">rsa</a>
+        </div>
+      </div>
+  </div>
+
+  
+
+    <div itemscope itemtype='../../../external.html?link=http://schema.org/DiscussionForumPosting'>
+      <meta itemprop='headline' content='picoCTF Write-up ~ Pwning RSA (1/2)'>
+      <link itemprop='url' href='1923.html'>
+      <meta itemprop='datePublished' content='2017-04-23T16:14:18Z'>
+        <meta itemprop='articleSection' content='Cryptology'>
+      <meta itemprop='keywords' content='ctf, encryption, rsa'>
+      <div itemprop='publisher' itemscope itemtype="../../../external.html?link=http://schema.org/Organization">
+        <meta itemprop='name' content='0x00sec - The Home of the Hacker'>
+          <div itemprop='logo' itemscope itemtype="../../../external.html?link=http://schema.org/ImageObject">
+            <meta itemprop='url' content='../../uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.html'>
+          </div>
+      </div>
+
+
+          <div id='post_1'  class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/IoTh1nkN0t.html'><span itemprop='name'>IoTh1nkN0t</span></a>
+                
+              </span>
+
+                <link itemprop="mainEntityOfPage" href="1923.html">
+
+
+              <span class="crawler-post-infos">
+                  <time  datetime='2017-04-23T16:14:19Z' class='post-time'>
+                    April 23, 2017,  4:14pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-04-23T16:14:19Z'>
+              <span itemprop='position'>1</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>So as you might know, pysec, dtm, kowalski and me did the picoCTF some time back.<br>
+One of the challenges we did was an RSA one.<br>
+The challenge was as follows</p>
+<pre><code class="lang-auto">e = 65537
+n = 642313240848064014975043934308658242447312485152342673610756859535090103704610472004913349502648157091104463303511131278665176160214474038294042375555935567033107229886104534241324327133387923226576002115108963521725703773387678635509903034467838260875686083768549775481391190161412646384559222421917626615323
+dp = 17765378008759755288183210466105878526943875374957170036175281330288884608317141953683920408636506981101765935449140323585600732241535721917282237462133813
+
+c = 147903288008907053469880199469959588903705520519775597541160700501753344741954421604588338524905987922631822425828587114084662512860181022047137469441292833823381362238861070683420786510831001513730638949486694641768638258876688738949817816449109334961820861920165271653627904957302093274915248851406573361863
+</code></pre>
+<p>So as you might have seen in my previous article <a href="../../../external.html?link=https://0x00sec.org/t/encryption-101-rsa-001-the-maths-behind-it/1921/1">here</a> we already know what e, n and c are.<br>
+e is the public key<br>
+n is the modulus<br>
+and c is the ciphertext.<br>
+But what’s this dp doing there?</p>
+<p>Luckily there is <a href="../../../external.html?link=http://www.di-mgt.com.au/crt_rsa.html" rel="nofollow noopener">this</a> site that has some valuable info.</p>
+<p>It seems that dp is defined as:</p>
+<pre><code class="lang-auto">dP = (1/e) mod (p-1)
+</code></pre>
+<p>but wait.<br>
+Let’s pause here for a minute.<br>
+Notice two things here:<br>
+1/e ( inv(e) ) and (p-1).<br>
+What would happen if we’d multiply this by e?</p>
+<p>You’d get a 1 mod, mod what?</p>
+<p>It’s gotta be a 1 mod a multiple of (p-1).<br>
+So that means if you substract 1 from it, you’d get a multiple of (p-1).</p>
+<p>But how does this help us and why would we even care about p?</p>
+<p>Well from the other article I wrote that we know than n = p*q.<br>
+And that to calculate d we need phi(n).<br>
+If we manage to get p, we get q for free, since n / p = q.<br>
+And with p and q we can calculate phi(n).<br>
+With phi(n) we can calculate e^-1 which is d.<br>
+Then with d we can calculate c^d mod n = m!!!</p>
+<p>So it turns out that finding p is crucial for solving this challenge and having a multiple of (p-1) sounds like a great start!.</p>
+<p>But how would be get p from this multiple of p-1?<br>
+Use the computer!<br>
+There are two ways to solve this.<br>
+The one I used in the challenge was as following.</p>
+<pre><code class="lang-auto">mp = (dp * e) - 1 #mp is multiple of p-1
+for i in range(2,1000000):
+   p = (mp / i) + 1
+   if n % p == 0:
+       break
+print p
+</code></pre>
+<p>Another way would be as following</p>
+<pre><code class="lang-auto">mp = (dp * e) - 1
+#notice that mp is a multiple of p-1
+#mp = k*(p-1) = kp - k
+for i in range (2,1000000):
+    kp = mp+i
+    if gcd(n,kp) &gt; 0:
+        p = gcd(n,kp)
+        break
+print p 
+</code></pre>
+<p>This final solution works, because the gcd of kp and n would p, since p would divide both kp and n.<br>
+Having now found p. we can simple define q as</p>
+<pre><code class="lang-auto">import gmpy2
+q = n / p
+phin = (p-1)*(q-1)
+d = gmpy2.divm(1,e,phin)
+m = gmpy2.powmod(c,d,n)
+print m
+</code></pre>
+<p>Now m would still be very unreadable<br>
+m = 3670434958110785066911905751469631231338751225710158680692616521935747246580687863838005016679513421330301</p>
+<p>So let’s first convert it to hex using this nice site:<br>
+<a href="../../../external.html?link=http://www.mobilefish.com/services/big_number/big_number.php" class="onebox" target="_blank" rel="nofollow noopener">http://www.mobilefish.com/services/big_number/big_number.php</a></p>
+<p>We now have 666C61677B776F775F6C65616B696E675F64705F627265616B735F7273613F5F37373436373139303435377D</p>
+<p>So let’s move to this other cool site<br>
+<a href="../../../external.html?link=http://string-functions.com/hex-string.aspx" class="onebox" target="_blank" rel="nofollow noopener">http://string-functions.com/hex-string.aspx</a><br>
+and so we get our flag:<br>
+flag{wow_leaking_dp_breaks_rsa?_77467190457}</p>
+<p>That’s it!</p>
+<p>Next article we will cover another RSA challenge from the picoCTF</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="7" />
+              <span class='post-likes'>7 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_2' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/exploit.html'><span itemprop='name'>exploit</span></a>
+                (exploit)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-04-23T16:33:01Z' class='post-time'>
+                    April 23, 2017,  4:33pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-04-23T16:33:01Z'>
+              <span itemprop='position'>2</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Awesome, keep it up dude <img src="../../../0x00sec.org/images/emoji/twitter/smileyc164.html?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_3' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/0x00pf.html'><span itemprop='name'>0x00pf</span></a>
+                (pico)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-04-23T16:51:38Z' class='post-time'>
+                    April 23, 2017,  4:51pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-04-23T16:51:38Z'>
+              <span itemprop='position'>3</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Instead of using the on-line services (that are perfectly fine), you can convert those numbers like this:</p>
+<pre><code class="lang-auto">$ echo "obase=16;BIG_DECIMAL_NUMBER" | bc
+$ echo "HEX_SEQUENCE" | xxd -r -p
+</code></pre>
+<p>Or in 1 shot</p>
+<pre><code class="lang-auto">echo "obase=16;BIG_DECIMAL_NUMBER" | bc | xxd -r -p
+</code></pre>
+<p>Great post by the way!</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_4' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/_py.html'><span itemprop='name'>_py</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-04-23T16:52:00Z' class='post-time'>
+                    April 23, 2017,  4:52pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-04-23T16:52:00Z'>
+              <span itemprop='position'>4</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>We might be looking at 0x00sec’s crypto wizard!</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_5' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/IoTh1nkN0t.html'><span itemprop='name'>IoTh1nkN0t</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-04-23T16:58:01Z' class='post-time'>
+                    April 23, 2017,  4:58pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-04-23T16:58:01Z'>
+              <span itemprop='position'>5</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>awesome man!</p>
+<p>so:</p>
+<pre><code class="lang-auto">echo "obase=16;`python solve.py`" | bc | xxd -r -p
+</code></pre>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_6' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/IoTh1nkN0t.html'><span itemprop='name'>IoTh1nkN0t</span></a>
+                
+                  Closed 
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2018-01-21T00:41:40Z' class='post-time'>
+                    January 21, 2018, 12:41am
+                  </time>
+                  <meta itemprop='dateModified' content='2018-01-21T00:41:40Z'>
+              <span itemprop='position'>6</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+    </div>
+
+
+    
+
+
+
+
+    </div>
+    <footer class="container wrap">
+  <nav class='crawler-nav'>
+    <ul>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../index.html' itemprop="url">Home </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../categories.html' itemprop="url">Categories </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../guidelines.html' itemprop="url">Guidelines </a>
+        </span>
+      </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../tos.html' itemprop="url">Terms of Service </a>
+          </span>
+        </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../privacy.html' itemprop="url">Privacy Policy </a>
+          </span>
+        </li>
+    </ul>
+  </nav>
+  <p class='powered-by-link'>Powered by <a href="../../../external.html?link=https://www.discourse.org/">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+
+    
+    <script src="../../../external.html?link=http://instant.page/3.0.0" type="module" defer="" integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1" nonce="mpbKTakVcTfISr8L2Ghrxzo5T"></script>
+  </body>
+  
+</html>

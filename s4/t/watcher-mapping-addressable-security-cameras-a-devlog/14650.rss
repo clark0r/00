@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Watcher - mapping addressable security cameras - a devlog</title>
+    <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650</link>
+    <description>Hello all.
+
+I thought I&#39;d tell you a little about a side-project I&#39;ve been working on, now that it is starting to take shape. It is still far from complete but I thought I&#39;d share its development with 0x00sec.
+
+We all know that the mythical Internet Of Things has been on the rise and that people make all kinds of interesting things publically addressable. Security cameras are one of them and for several years I have been wanting to write something that does the heavy lifting of finding them, places them on a map and if possible, streams them.
+
+![36|690x389](upload://fJBvUrRFPjVPdbrSoGaAlqedYAR.png) 
+
+# The technology stack
+
+There were a couple of things I wanted when I started building this:
+- The program should be able to run locally, rather than as a webservice.
+- It should run on both Windows and Linux.
+- Should be extensible, as we aren&#39;t looking at a static environment.
+
+For portability, Watcher is written in C++11. As there is a limit to how much of the wheel I&#39;m willing to re-invent, [SDL (Simple DirectMedia Layer)](https://www.libsdl.org/) provides cross-platform window creation, OpenGL initialisation, input handling and a few other things. Layering on top of SDL and OpenGL, [ImGui](https://github.com/ocornut/imgui) is used to create the user interface while keeping the bloat low. For data management, [SQLite](https://sqlite.org/index.html) handles storing and retrieving data from a database local to the program, which requires no &quot;real&quot; database service to have to be installed. The much beloved [cURL](https://curl.haxx.se/) is used to interact with HTTP servers and finally, a JSON library serialises configuration files (such as rule sets) and messages between individual plugins.
+
+Further building up on this, the map is built using tiles from a remote server: currently [Stamen](https://stamen.com/), but most [tile servers](https://wiki.openstreetmap.org/wiki/Tile_servers) which used the same specification as [OpenStreetMap](https://wiki.openstreetmap.org) can be used. 
+
+Geolocation is handled by ipinfo.io, using their public API. This is rate limited to 1000 requests a day, but Watcher will just store the addresses which need to be resolved and try again later. 
+
+# The current state
+
+The plugin architecture is now working properly, allowing new components to be added without considerable overhead. The most basic way of finding cameras has been implemented: a simple multi-threaded portscanner scans the internet for webservers on certain ports (80, 81, 8000) and then forwards any results to a plugin which tries to identify if a webpage contains a camera or not, based on a growing ruleset. The vast majority of cameras have specific titles on their pages which makes this less of a faff than it would be otherwise.
+
+Once a camera has been identified, the IP address is sent to the geolocation plugin so it can be represented on our map.
+
+# Increasing coverage
+
+Obviously, scanning the entire internet takes a while. Quite a while, particularly if you&#39;re thinking on being thorough and increasing the number of ports to scan for! Even using something like [masscan](https://github.com/robertdavidgraham/masscan/), you&#39;d need a fairly fat pipe and a serious router. So, there are two additional plugins in the pipeline: one which will leverage Shodan, another which will use Google with specially targetted search terms.
+
+# Next in the pipeline
+
+The map is currently quite basic. The user can scroll around, zoom in/out and see the camera markers, but can&#39;t select them. The tile streaming is also a bit flakey and it&#39;s possible for a tile which is in use to be unloaded, only to get loaded again a few seconds later. It isn&#39;t great work and I could take some shortcuts to get the entire flow running sooner, but since I have no time constraints I can build a solid foundation and get something I&#39;m happy with.
+
+# Source?
+
+Open source, of course. You&#39;ll find the code in the [project&#39;s GitLab](https://gitlab.com/hostile.node/watcher). At the moment it only successfully builds on Windows, I need to spend some time wrangling the makefile :)
+
+# Further posts?
+
+Do you find this kind of development post useful or interesting? Or would you rather just have a post when the tool is ready?</description>
+    
+    <lastBuildDate>Wed, 18 Dec 2019 13:20:49 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[hostile.node]]></dc:creator>
+        <description><![CDATA[
+            <h1>Streaming MJPG cameras</h1>
+<p>Knowing where the cameras are is one thing, but accessing them and streaming their content requires a fair amount of work. In theory, the easiest cameras to stream are the ones which use Motion JPG: these are, for the most part, old cameras which were set up years ago and often with no credentials.</p>
+<p>Motion JPG itself is a naive format: this stream is just a series of base 64 encoded JPGs, separated by a text boundary (traditionally “–myboundary”). From an implementation point of view, writing a codec for this in Watcher isn’t particularly complicated as it already has support for loading JPGs anyway.</p>
+<p>The flow of the program for this is fairly straightforward: the user clicks on a camera and Watcher internally creates a stream request, followed by a broadcast to any codec plugins to see if any of them can interact with that specific camera. In this case, we look for a “video.mjpg” in the URL and optionally do some additional manipulation on the URL to find the streaming endpoint. Once we start receiving data, we buffer all of it until we have a single JPG frame, at which point the JPG gets decoded, copied into a format OpenGL can deal with and uploaded to the GPU to present to the user.</p>
+<p>Overall it is a good step forward as we can now start seeing what’s out there:</p>
+<p><span alt="watcher" data-base62-sha1="14CSCYYkhcWnKf4tcOmeqFzgatz" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>There are some performance issues with this though, as having to decode the JPG like this isn’t a fast operation. This isn’t much of a problem on most streams, but every now and then Watcher trips on a more modern camera which supports MJPG as a legacy format, and will happily stream &gt;1080p as MJPG, causing some considerable stuttering. I’ll be looking into moving this into a separate thread so the interaction with the user interface doesn’t suffer. Additionally, there are other libraries such as libjpg-turbo which could be used further down the line as that could provide a 2x - 6x speedup.</p>
+<h1>Streaming other formats</h1>
+<p>The same pipeline which has been created for streaming MJPG cameras can be used with any other formats. This will likely lead to integrating ffmpeg into Watcher as most cameras these days will be capable of streaming something more reasonable than MJPG, such as H264. This would allow streaming video at a proper frame rate, rather than the 2 frames per second most MJPG cameras stream at.</p>
+<h1>Displaying camera statuses</h1>
+<p>For ease of use, camera pins in the atlas have been colour-coded: they currently start as as grey, but turn green if the user has opened it and successfuly started a stream. This will be further extended to identify cameras which require authentication, or which have had the authentication bypassed.</p>
+<h1>Next: leveraging Shodan</h1>
+<p>Now that the program can stream cameras and is essentially proven as a project, the next step is to feed it more data. The Google search plugin has been useful, but that API will only ever return 100 results per query. And, well, with Google’s history of deprecating things, entirely relying on their API might not be a great idea. So the next step will be to leverage Shodan to perform additional queries and to optionally use an API key.</p>
+<p>The first part of this will be to create a “custom query” and to allow the user to pick and choose which results they want to have added to the database. After that is done, adding an automated mode based on stored queries will be straightforward. The user interface might require some attention afterwards so a high density of pins can be displayed in a way which can be interacted with, rather than just overlapping.</p>
+<h1>Compiling the project</h1>
+<p>Please note that this project remains in flux and has no actual release. If you want to have a play you can <a href="https://gitlab.com/hostile.node/watcher" rel="nofollow noopener">build it from source</a> for Windows (Win64, Debug) using Visual Studio 2017 but be aware that this is a pre-alpha piece of software and your results database will likely get eaten further down the line.</p>
+<p>Thank you for reading. <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/31">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/31</link>
+        <pubDate>Wed, 18 Dec 2019 13:20:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-31</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/hostile.node">@hostile.node</a> if you have any more updates, I have reopened the topic <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/30">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/30</link>
+        <pubDate>Mon, 16 Dec 2019 14:06:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-30</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/29">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/29</link>
+        <pubDate>Mon, 16 Dec 2019 14:05:53 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-29</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/28">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/28</link>
+        <pubDate>Sun, 28 Jul 2019 12:18:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-28</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[hostile.node]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m afraid I’m not sufficiently familiar in Python to provide you a truly educated answer, so take this with a grain of salt. Technically nothing would prevent you from building it in Python: the community has provided Python bindings for imgui and SDL2. Sqlite and JSON have their own Python libraries.</p>
+<p>It might become more complicated once you start processing the camera feeds themselves though, but from a cursory look you can still process e.g. MJPG without it being a hassle.</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/27">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/27</link>
+        <pubDate>Tue, 23 Jul 2019 10:38:13 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-27</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[Archangel9]]></dc:creator>
+        <description><![CDATA[
+            <p>What would be a similar alternative written in Python? <img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"><br>
+Great topic by the way!</p>
+<p>-Archangel</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/26">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/26</link>
+        <pubDate>Tue, 23 Jul 2019 00:04:18 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-26</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>i can text you my api key  any time just let me know</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/25">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/25</link>
+        <pubDate>Fri, 19 Jul 2019 14:54:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-25</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[hostile.node]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks! I’ll let you know once I add the shodan plugin <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/24">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/24</link>
+        <pubDate>Fri, 19 Jul 2019 14:49:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-24</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>i can lend you my shodan member account , if required, has a few scan and export credits…</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/23">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/23</link>
+        <pubDate>Fri, 19 Jul 2019 14:10:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-23</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[hostile.node]]></dc:creator>
+        <description><![CDATA[
+            <h1>Linking Google queries with Watcher</h1>
+<p>In the previous post I’ve covered the initial stages of getting query results from Google and in the last week I’ve been working on the required plumbing to get these results into a format which is usable. This has taken a little longer than expected and more work is still definitely needed before I’m comfortable with people using this tool, but the vertical slice is certainly coming along.</p>
+<p>Here you can see the map being populated as queries are processed and the associated geolocation request completes:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/b/b61fdc5445ef75edc8cd9be9e540e47d4083102b.gif" alt="b75f4ba13347a1a1313b83829cd2773f" data-base62-sha1="pZ99Y0GrcB3gnNqekBm92zt3j2b" width="476" height="398"></p>
+<p>One of the unexpected issues I’ve had is that although in the previous post I have mentioned that Google’s Custom Search Engine allows for 10000 queries a day, this is actually further limited to 100 queries a day if no billing information is linked with the CSE. Now, Google does give ~US$300 worth of query credits and if just having those linked (without requiring an actual card linked) is enough to get the 10000 queries/day limit, then that will save me a great deal of hassle: otherwise I’ll have to keep track of which queries have been performed to allow people to get through the entire ruleset over multiple days, even if they restart the program.</p>
+<p>Once I wrap up the issue above and add support for gracefully handling the “quota reached” error (rather than crashing in a ball of fire) I’ll move on to being able to select the invidual cameras, provide information (such as linked URL, geolocation data, camera type) and the part I have been most looking towards: actually streaming invidual programs from within Watcher.</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/22">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/22</link>
+        <pubDate>Fri, 19 Jul 2019 12:35:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-22</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[Samxel.xo]]></dc:creator>
+        <description><![CDATA[
+            <p>please keep us up to date you are doing great work</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/21">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/21</link>
+        <pubDate>Mon, 15 Jul 2019 14:04:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-21</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[Samxel.xo]]></dc:creator>
+        <description><![CDATA[
+            <p>nicee good luck on programming pls post more updates on this one</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/20">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/20</link>
+        <pubDate>Mon, 15 Jul 2019 13:50:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-20</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>looking forward to it , ill keep bothering you here <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=9" title=":sweat_smile:" class="emoji" alt=":sweat_smile:"><img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=9" title=":sweat_smile:" class="emoji" alt=":sweat_smile:"><img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=9" title=":sweat_smile:" class="emoji" alt=":sweat_smile:">, so that this thread stays alive…<img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"><img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"><img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/19">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/19</link>
+        <pubDate>Sun, 14 Jul 2019 12:44:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-19</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[hostile.node]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey <a class="mention" href="https://d.clarkee.co.uk/u/messede">@messede</a>. I’ve been away for most of the week (business) and haven’t had the chance opportunity to make real progress on this in the last few days. I’m expecting to be able to put up another update post towards the end of the coming week. <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/18</link>
+        <pubDate>Sun, 14 Jul 2019 12:43:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-18</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey <a class="mention" href="https://d.clarkee.co.uk/u/hostile.node">@hostile.node</a> <img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:">,  just wanted to know what’s happening…</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/17</link>
+        <pubDate>Sun, 14 Jul 2019 11:44:00 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-17</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[binarylaw]]></dc:creator>
+        <description><![CDATA[
+            <p>Very smart idea! Thank you for the writeup</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/16</link>
+        <pubDate>Fri, 12 Jul 2019 08:27:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-16</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[carpetman]]></dc:creator>
+        <description><![CDATA[
+            <p>This is amazing! I have so much to learn from this. Thank you for sharing</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/15</link>
+        <pubDate>Mon, 08 Jul 2019 17:58:04 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-15</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="hostile.node" data-post="13" data-topic="14650">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/hostile.node/48/12371_2.png" class="avatar"> hostile.node:</div>
+<blockquote>
+<p>custom query field into the UI</p>
+</blockquote>
+</aside>
+<p>looking forward  to that . <img src="https://d.clarkee.co.uk/images/emoji/twitter/+1.png?v=15" title=":+1:" class="emoji" alt=":+1:" loading="lazy" width="20" height="20"><img src="https://d.clarkee.co.uk/images/emoji/twitter/+1.png?v=15" title=":+1:" class="emoji" alt=":+1:" loading="lazy" width="20" height="20"><img src="https://d.clarkee.co.uk/images/emoji/twitter/+1.png?v=15" title=":+1:" class="emoji" alt=":+1:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/14</link>
+        <pubDate>Sat, 06 Jul 2019 15:06:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-14</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[hostile.node]]></dc:creator>
+        <description><![CDATA[
+            <p>You’ll be able to add any custom queries to the queries file - none of this will be hardcoded, so extending it will be straightforward.</p>
+<p>Once we start using it properly, if we find it is a bit clunky I can add a custom query field into the UI as well.</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/13</link>
+        <pubDate>Sat, 06 Jul 2019 10:11:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-13</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>and a custom google  dork could also be accepted perhaps <img src="https://0x00sec.org/images/emoji/twitter/slightly_smiling_face.png?v=9" title=":slightly_smiling_face:" class="emoji" alt=":slightly_smiling_face:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/12</link>
+        <pubDate>Sat, 06 Jul 2019 01:59:26 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-12</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[hostile.node]]></dc:creator>
+        <description><![CDATA[
+            <h2>Creating a Google Search plugin</h2>
+<p>One of the historic ways of finding security cameras is via search engines: badly configured cameras are both publically addressable and often picked up by a trawling search engine. This has benefits over port-scanning, as we’d be looking into scanning the entire IPv4 address space - doable, but the ability of running e.g. masscan at full speed is beyond most of us.</p>
+<p>Thankfully over the years people have created a substantial corpus of search queries to feed into Google which identify cameras from various manufacturers, mostly due the pages either having URLs which follow certain patterns or static titles.</p>
+<p>Scraping results from Google is not a trivial task as it has various systems in place to prevent automated crawling, but they do provide an API we can make use of. The Custom Search Engine API can be used for free (rate limited to 10000 queries/day) and although intended to provide Google’s search within a certain domain / set of domains, it can be convinced to provide unrestricted searching capabilities.</p>
+<p>In short, the steps are:</p>
+<ul>
+<li>Create a Custom Search Engine (<a href="https://developers.google.com/custom-search/v1/introduction" rel="noopener nofollow ugc">https://developers.google.com/custom-search/v1/introduction</a>).</li>
+<li>When creating the CSE, set it to a non-existing domain and to fallback on “searching the entire web”.</li>
+<li>After the CSE is created, edit it and remove the dummy domain.</li>
+<li>Generate an API key.</li>
+<li>Create queries using the API (you can experiment with <a href="https://developers.google.com/apis-explorer/#p/customsearch/v1/search.cse.list" rel="noopener nofollow ugc">https://developers.google.com/apis-explorer/#p/customsearch/v1/search.cse.list</a> to see how results are formatted).</li>
+</ul>
+<p>It is interesting to note that the API does not let us grab results in bulk: it identifies how many results there are and lets us set a starting point, but it’s limited to a maximum of 10 results at a time. This is not a show-stopper, it just means we need to break down every rule into multiple queries until we have retrieved all the results.</p>
+<p>The basic functionality is now working, with Watcher being able to initiate queries and process the results. This now needs to be expanded to forward the results to the other plugins so the map and database are populated.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f6204efe37074ce81c00cbe8c4e0a4e7cfdb7ad5.png" alt="Annotation%202019-07-05%20131104" data-base62-sha1="z7kG4d7hnqEmDy7HhXq3LfcOzfn" width="690" height="403"></p>
+<p>Here we can see a set of results from the first (currently hardcoded) query. One of the next steps is to make the queries be loaded from a JSON file and start creating the corpus of rules.</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/11</link>
+        <pubDate>Fri, 05 Jul 2019 12:15:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-11</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[hostile.node]]></dc:creator>
+        <description><![CDATA[
+            <p>It is in the project’s scope, and is part of why this program runs locally, as well as being one of the reasons for the plugin architecture it uses. Once I have the core in place, I’m planning on getting my hands on a few vulnerable models, set them up locally and assembling some plugins to target them. This is medium term though, still have a fair bit to do.</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/10</link>
+        <pubDate>Tue, 02 Jul 2019 19:00:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-10</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>i am not asking you to overload the tools capabilities, but i had to ask if you were going to include some known vulnerabilities or IOC’s  , so that your are not just finding the cameras but , you have a view of  vunerable ones , is this in the projects scope</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/9</link>
+        <pubDate>Tue, 02 Jul 2019 14:34:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-9</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[zhihuiyuze]]></dc:creator>
+        <description><![CDATA[
+            <p>Hope to have a tutorial</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/8</link>
+        <pubDate>Sun, 30 Jun 2019 12:34:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-8</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+      <item>
+        <title>Watcher - mapping addressable security cameras - a devlog</title>
+        <dc:creator><![CDATA[cuckkoo]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m excited, Please do tell when you’re done.</p>
+          <p><a href="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650/7</link>
+        <pubDate>Sat, 29 Jun 2019 07:56:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14650-7</guid>
+        <source url="https://d.clarkee.co.uk/t/watcher-mapping-addressable-security-cameras-a-devlog/14650.rss">Watcher - mapping addressable security cameras - a devlog</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,385 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+    <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811</link>
+    <description>Hello 0x00sec! Today in this article we’ll be cracking a device encrypted with LUKS (Linux Unified Key Setup). Breaking LUKS encrypted devices (or any type of encrypted devices) are surprisingly easy if you know what you are doing.
+
+It’s been some time since I joined 0x00sec so I thought it’s about time I contributed something. This is my first article so any valid criticism is welcome.
+
+##The Theory
+
+We could crack LUKS like how these &lt;a href=&quot;http://www.cybercrimetech.com/2014/08/how-to-brute-forcing-password-cracking.html&quot;&gt;guys&lt;/a&gt; did it, but that means authenticating many, many passwords with the luks device the normal way. Which means that that every password would take 1 second just to find whether or not it is correct. If we were using the &lt;a href=&quot;https://crackstation.net/buy-crackstation-wordlist-password-cracking-dictionary.htm&quot;&gt;crackstation wordlist&lt;/a&gt; to find the passwords it would take 1,493,677,782 seconds (or 47 years) to get through the wordlist and the password may not even be found.
+
+A better way exists though.
+
+Basically every program loads itself into memory. This includes encryption programs (surprise!). What this means is that whenever a drive is getting authenticated, the program loads the hashed password into the RAM. If we can grab the memory, all we need to do is find the hash, run it through a password cracker and volia! We’ve got the plain text password.
+
+##Practical
+
+That sounds goods in theory, but how do we implement that in the real world? Well, you’ll need a few tools. I used:
+
+- 1 LUKS encrypted device (preferably USB) – We’ll use this as our test subject
+
+- 1 USB (we need somewhere to store the memory dump)
+
+- 1 Linux OS with cryptsetup on it (I used a Live USB)
+
+- LiME LKM (Using this to dump the RAM)
+
+- AESKeyFind from http://citp.princeton.edu/research/memory
+
+With that out of the way, let’s begin!
+
+##Step 1: Get an encrypted LUKS device
+
+We need a test subject to test our super 1337 H4X03R skill on, so go ahead and encrypt a USB with LUKS. To do this open terminal and type:
+
+    fdisk -l
+    // Find the disk we want to encrypt
+    cryptsetup luksFormat /dev/sdX 
+    // Creates the LUKS container. Make sure to remember password here. We’ll need it for the next steps.
+    cryptsetup luksOpen /dev/sdX crackme 
+    // Opens the LUKS container so we can create a filesystem
+    mkfs.ext4 /dev/mapper/crackme 
+    // Creates the filesystem
+    mount /dev/mapper/crakme /crackme
+    // Mounts freshly made filesystem. We need to check if it’s working.
+    cd /crackme
+    //At this point feel free to create a secret file (proof text) to prove you hacked it :)
+    umount /crackme
+    // Unmounts device, it is ready for hacking.
+    cryptsetup luksClose crackme
+
+With our device ready, let&#39;s move on to the next step:
+
+##Step 2: Install LiME
+
+LiME is an LKM used to dump the memory of a computer running Linux. (If you don’t know what an LKM is, google it.) To get it go to http://github.com504enesicsLAbs/LiME and download the zip file. If you want, you can gitclone it.
+
+Once downloaded, unzip and compile LiME:
+
+    unzip LiME-master.zip
+    cd LiME-master/src
+    make // Compiles the LKM from the makefile provided.
+    modinfo lime.ko // Shows us the details of the newly built LKM.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/4f97fa7896e5cf231638ebd654c592660eeea316.png&quot; width=&quot;450&quot; height=&quot;300&quot;&gt;
+
+There should now be a file called LiME.ko. Don’t close the terminal yet. We’ll need it for later.
+
+##Step 3: Open device and dump the RAM
+
+Next, we want to open the LUKS device for authentication, then dump the RAM. Open a new terminal and type:
+
+    fdisk -l
+
+This lists all the devices connected to the computer. Find your LUKS encrypted device and note down the /dev/sdX of the device. Next, type:
+
+    cryptsetup luksOpen /dev/sdX crackme  
+    // Where /dev/sdX is the letter of your device
+
+Leave the terminal there.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/9fc264e2e01969649ffdcf5fb64e53c8d4d400ca.png&quot; width=&quot;450&quot; height=&quot;300&quot;&gt;
+
+The hashed password has now been loaded into the RAM. Time to dump the RAM! Go over to the over terminal where you compiled LiME. In it type:
+
+    insmod /path/to/lime.ko “path=/path/to/usb/memdump.raw format=raw” // That’s where that second usb comes in.
+
+We want the output to be raw because we don’t want the hash to get mucked up by formating. Also aeskeyfind probably won’t understand other formats.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/9e57028d0f1a5bbd0ad4b047cc19a2593cb011d2.png&quot; width=&quot;450&quot; height=&quot;300&quot;&gt;
+
+This will dump the RAM to a disk on the computer. Any disk can suffice, so long as you can access it and it is not the luks device.
+
+LiME will give no ouput, but when it is done it will return the terminal back to you. It’s best not to do run other apps right now. LiME will take some time to finish (on my computer it took around 5 minutes to dump 4GB) so take a break and do something else while you wait.
+
+##Step 4: Grab the hash from the RAM dump
+
+With the ramdump finished, we now need to find the hash. To do this, download aeskeyfind from http://citp.princeton.edu/research/memory. Unzip it and compile the program. To do this, in a terminal type:
+
+    tar -xvf aeskeyfind-1.0.tar.gz
+    cd aeskeyfind
+
+There should now be a program called aeskeyfind in the folder. To find the hash run:
+
+    ./aeskeyfind -v /path/to/memdump
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/b5af7718c626554688a2d75873357e1f864ca23c.png&quot; width=&quot;450&quot; height=&quot;300&quot;&gt;
+
+This will show you the found hashes in the memory dump. Once that’s done, you can run it through a password cracker. If you need more information for your password cracker, type:
+
+    cryptsetup luksDump /dev/sdX
+
+This will give you the cipher, salt and UUID of the LUKS device among other things.
+
+##Conclusion:
+As always, a long and complex password is the best form of defense against such an attack. There really isn’t much you can do about people grabbing hashes from the memory, apart from said defense or &lt;a href=&quot;https://www.kali.org/tutorials/nuke-kali-linux-luks/&quot;&gt;nuking your keyslots.&lt;/a&gt;
+
+This article has been more centered around grabbing the hashed password of the LUKS device. If you want to learn how to crack hashes, check out this null-byte link: http://null-byte.wonderhowto.com/how-to/password-cracking/
+
+Anyway, that’s enough for today. As always, take your security seriously and hope to see you here or at ##0x00sec on freenode sometime soon.
+
+-- Falcon403</description>
+    
+    <lastBuildDate>Mon, 10 Oct 2016 20:36:20 +0000</lastBuildDate>
+    <category>Cryptology</category>
+    <atom:link href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/12</link>
+        <pubDate>Sun, 21 Jan 2018 00:41:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-12</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[eleanor]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m wondering whether the hashes are salted; on the last screenshot I can see that the easkeyfind displayed a 256-BIT key (probably SHA256). Do you know whether once hashes are in memory, are they salted - probably even if they are on disk, they are not in memory and what we obtain is an actual hash.</p>
+<p>Other than that, it would be great to talk about the possible arguments that one needs to pass to luksFormat when creating an encrypted drive to make this somewhat harder. I realized an attacker can obtain the hash regardless, but a SHA-512 hash should be harder to crack than the SHA-256 hash - it would be great if you can provide the safest luksFormat command currently provided by cryptsetup.</p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/11</link>
+        <pubDate>Mon, 10 Oct 2016 20:36:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-11</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/falcon403">@falcon403</a> thanks for the explanation mate. I overlooked this part of your post</p>
+<aside class="quote no-group" data-username="falcon403" data-post="1" data-topic="811">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/falcon403/48/379_2.png" class="avatar"> falcon403:</div>
+<blockquote>
+<p>This lists all the devices connected to the computer. Find your LUKS encrypted device and note down the /dev/sdX of the device. Next, type:</p>
+<p>cryptsetup luksOpen /dev/sdX crackme<br>
+// Where /dev/sdX is the letter of your device</p>
+<p>Leave the terminal there.</p>
+</blockquote>
+</aside>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/10</link>
+        <pubDate>Tue, 26 Jul 2016 15:58:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-10</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[falcon403]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>: In step one we are creating a LUKS device to test our skills on it. The password was only needed to create a filesystem inside the LUKS container.</p>
+<p>Whenever you start to open a LUKS device the hash gets loaded into the RAM, ready to authenticate passwords. You don’t even have to input a password for this to happen. That is why we could get the hash. Anything in step one is irrelevant to step three. Nobody needs to enter the LUKS password, cryptsetup does that for you (the hashed password anyway.)</p>
+<p>Hope that helps.</p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/9</link>
+        <pubDate>Tue, 26 Jul 2016 03:53:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-9</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[falcon403]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the support, <a class="mention" href="https://d.clarkee.co.uk/u/pry0cc">@pry0cc</a>! I appreciate it <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/8</link>
+        <pubDate>Tue, 26 Jul 2016 03:40:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-8</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>: The <em>password</em> is not what’s in memory. <a class="mention" href="https://d.clarkee.co.uk/u/falcon403">@falcon403</a> is using a memory dump to grab the <strong>hash</strong> of the password.</p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/7</link>
+        <pubDate>Mon, 25 Jul 2016 23:30:31 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-7</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[Merozey]]></dc:creator>
+        <description><![CDATA[
+            <p>GREAT post, and I admire your creativity on achieving the decryption!</p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/6</link>
+        <pubDate>Mon, 25 Jul 2016 23:01:17 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-6</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>I may be too tired today, and certainly I’m missing something… if you boot with a live USB, how does the LUKS password gets into memory?</p>
+<p>In step 1 you enter the password to create the crypted device. If after that you follow all your steps without rebooting, the password is indeed still in memory. But if you reboot the memory is deleted.</p>
+<p>If you boot with a USB live to get root… who enters the password?.</p>
+<p>Surely I’m missing something… any pointers?</p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/5</link>
+        <pubDate>Mon, 25 Jul 2016 21:31:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-5</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[falcon403]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>: I think you might be missing something out. I used a live USB, which is why I had root access. You don’t need to have access to the main OS.</p>
+<p>But yes, you could ‘trojanize’ cryptsetup on the main OS but that would include RE I guess. Not my level of expertise <strong>yet.</strong> Or you could program a false authentication portal and hand the typed password over to the true cryptsetup.</p>
+<p>Anyway, thank for the feedback!</p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/4</link>
+        <pubDate>Mon, 25 Jul 2016 20:32:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-4</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice post.</p>
+<p>Just one question. As you have root access (what you need to load the LKM) and you have to be on-line when the drive is mounted, why not just <em>trojanize</em> <code>cryptsetup</code> and get the password next time somebody mounts the drive?.. I know is not that cool but is there any other reason you can point out?</p>
+<p>Didn’t know about lime. Looks interesting. Thanks for the share</p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/3</link>
+        <pubDate>Mon, 25 Jul 2016 18:36:24 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-3</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome post man. 1337 cred to you <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"> I never considered this approach. I’m guessing this would be a lot more tricky on a main HDD, and on a computer that wasn’t on to when you found it.</p>
+<p>I look forward to seeing your other posts, they’re very easy to read, good job!</p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/2</link>
+        <pubDate>Mon, 25 Jul 2016 12:20:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-2</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+      <item>
+        <title>Breaking Encryption – Hashed Passwords (LUKS Devices)</title>
+        <dc:creator><![CDATA[falcon403]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello 0x00sec! Today in this article we’ll be cracking a device encrypted with LUKS (Linux Unified Key Setup). Breaking LUKS encrypted devices (or any type of encrypted devices) are surprisingly easy if you know what you are doing.</p>
+<p>It’s been some time since I joined 0x00sec so I thought it’s about time I contributed something. This is my first article so any valid criticism is welcome.</p>
+<p>#<span class="hashtag">#The</span> Theory</p>
+<p>We could crack LUKS like how these <a href="http://www.cybercrimetech.com/2014/08/how-to-brute-forcing-password-cracking.html" rel="noopener nofollow ugc">guys</a> did it, but that means authenticating many, many passwords with the luks device the normal way. Which means that that every password would take 1 second just to find whether or not it is correct. If we were using the <a href="https://crackstation.net/buy-crackstation-wordlist-password-cracking-dictionary.htm" rel="noopener nofollow ugc">crackstation wordlist</a> to find the passwords it would take 1,493,677,782 seconds (or 47 years) to get through the wordlist and the password may not even be found.</p>
+<p>A better way exists though.</p>
+<p>Basically every program loads itself into memory. This includes encryption programs (surprise!). What this means is that whenever a drive is getting authenticated, the program loads the hashed password into the RAM. If we can grab the memory, all we need to do is find the hash, run it through a password cracker and volia! We’ve got the plain text password.</p>
+<p>#<span class="hashtag">#Practical</span></p>
+<p>That sounds goods in theory, but how do we implement that in the real world? Well, you’ll need a few tools. I used:</p>
+<ul>
+<li>
+<p>1 LUKS encrypted device (preferably USB) – We’ll use this as our test subject</p>
+</li>
+<li>
+<p>1 USB (we need somewhere to store the memory dump)</p>
+</li>
+<li>
+<p>1 Linux OS with cryptsetup on it (I used a Live USB)</p>
+</li>
+<li>
+<p>LiME LKM (Using this to dump the RAM)</p>
+</li>
+<li>
+<p>AESKeyFind from <a href="http://citp.princeton.edu/research/memory" rel="noopener nofollow ugc">http://citp.princeton.edu/research/memory</a></p>
+</li>
+</ul>
+<p>With that out of the way, let’s begin!</p>
+<p>#<span class="hashtag">#Step</span> 1: Get an encrypted LUKS device</p>
+<p>We need a test subject to test our super 1337 H4X03R skill on, so go ahead and encrypt a USB with LUKS. To do this open terminal and type:</p>
+<pre><code>fdisk -l
+// Find the disk we want to encrypt
+cryptsetup luksFormat /dev/sdX 
+// Creates the LUKS container. Make sure to remember password here. We’ll need it for the next steps.
+cryptsetup luksOpen /dev/sdX crackme 
+// Opens the LUKS container so we can create a filesystem
+mkfs.ext4 /dev/mapper/crackme 
+// Creates the filesystem
+mount /dev/mapper/crakme /crackme
+// Mounts freshly made filesystem. We need to check if it’s working.
+cd /crackme
+//At this point feel free to create a secret file (proof text) to prove you hacked it :)
+umount /crackme
+// Unmounts device, it is ready for hacking.
+cryptsetup luksClose crackme
+</code></pre>
+<p>With our device ready, let’s move on to the next step:</p>
+<p>#<span class="hashtag">#Step</span> 2: Install LiME</p>
+<p>LiME is an LKM used to dump the memory of a computer running Linux. (If you don’t know what an LKM is, google it.) To get it go to <a href="http://github.com504enesicsLAbs/LiME" rel="noopener nofollow ugc">http://github.com504enesicsLAbs/LiME</a> and download the zip file. If you want, you can gitclone it.</p>
+<p>Once downloaded, unzip and compile LiME:</p>
+<pre><code>unzip LiME-master.zip
+cd LiME-master/src
+make // Compiles the LKM from the makefile provided.
+modinfo lime.ko // Shows us the details of the newly built LKM.
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/4f97fa7896e5cf231638ebd654c592660eeea316.png" width="450" height="300"></p>
+<p>There should now be a file called LiME.ko. Don’t close the terminal yet. We’ll need it for later.</p>
+<p>#<span class="hashtag">#Step</span> 3: Open device and dump the RAM</p>
+<p>Next, we want to open the LUKS device for authentication, then dump the RAM. Open a new terminal and type:</p>
+<pre><code>fdisk -l
+</code></pre>
+<p>This lists all the devices connected to the computer. Find your LUKS encrypted device and note down the /dev/sdX of the device. Next, type:</p>
+<pre><code>cryptsetup luksOpen /dev/sdX crackme  
+// Where /dev/sdX is the letter of your device
+</code></pre>
+<p>Leave the terminal there.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/9fc264e2e01969649ffdcf5fb64e53c8d4d400ca.png" width="450" height="300"></p>
+<p>The hashed password has now been loaded into the RAM. Time to dump the RAM! Go over to the over terminal where you compiled LiME. In it type:</p>
+<pre><code>insmod /path/to/lime.ko “path=/path/to/usb/memdump.raw format=raw” // That’s where that second usb comes in.
+</code></pre>
+<p>We want the output to be raw because we don’t want the hash to get mucked up by formating. Also aeskeyfind probably won’t understand other formats.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/9e57028d0f1a5bbd0ad4b047cc19a2593cb011d2.png" width="450" height="300"></p>
+<p>This will dump the RAM to a disk on the computer. Any disk can suffice, so long as you can access it and it is not the luks device.</p>
+<p>LiME will give no ouput, but when it is done it will return the terminal back to you. It’s best not to do run other apps right now. LiME will take some time to finish (on my computer it took around 5 minutes to dump 4GB) so take a break and do something else while you wait.</p>
+<p>#<span class="hashtag">#Step</span> 4: Grab the hash from the RAM dump</p>
+<p>With the ramdump finished, we now need to find the hash. To do this, download aeskeyfind from <a href="http://citp.princeton.edu/research/memory" rel="noopener nofollow ugc">http://citp.princeton.edu/research/memory</a>. Unzip it and compile the program. To do this, in a terminal type:</p>
+<pre><code>tar -xvf aeskeyfind-1.0.tar.gz
+cd aeskeyfind
+</code></pre>
+<p>There should now be a program called aeskeyfind in the folder. To find the hash run:</p>
+<pre><code>./aeskeyfind -v /path/to/memdump
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/b5af7718c626554688a2d75873357e1f864ca23c.png" width="450" height="300"></p>
+<p>This will show you the found hashes in the memory dump. Once that’s done, you can run it through a password cracker. If you need more information for your password cracker, type:</p>
+<pre><code>cryptsetup luksDump /dev/sdX
+</code></pre>
+<p>This will give you the cipher, salt and UUID of the LUKS device among other things.</p>
+<p>#<span class="hashtag">#Conclusion:</span><br>
+As always, a long and complex password is the best form of defense against such an attack. There really isn’t much you can do about people grabbing hashes from the memory, apart from said defense or <a href="https://www.kali.org/tutorials/nuke-kali-linux-luks/" rel="noopener nofollow ugc">nuking your keyslots.</a></p>
+<p>This article has been more centered around grabbing the hashed password of the LUKS device. If you want to learn how to crack hashes, check out this null-byte link: <a href="http://null-byte.wonderhowto.com/how-to/password-cracking/" rel="noopener nofollow ugc">http://null-byte.wonderhowto.com/how-to/password-cracking/</a></p>
+<p>Anyway, that’s enough for today. As always, take your security seriously and hope to see you here or at #<a class="hashtag" href="https://0x00sec.org/tag/0x00sec">#<span>0x00sec</span></a> on freenode sometime soon.</p>
+<p>– Falcon403</p>
+          <p><a href="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811/1</link>
+        <pubDate>Mon, 25 Jul 2016 10:38:00 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-811-1</guid>
+        <source url="https://d.clarkee.co.uk/t/breaking-encryption-hashed-passwords-luks-devices/811.rss">Breaking Encryption – Hashed Passwords (LUKS Devices)</source>
+      </item>
+  </channel>
+</rss>

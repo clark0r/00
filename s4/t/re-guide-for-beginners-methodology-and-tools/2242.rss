@@ -1,0 +1,469 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>RE guide for beginners: Methodology and tools</title>
+    <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242</link>
+    <description>Hi fellas, 
+
+A few days ago, I decided to start my adventure in the reverse engineering domain. I was quickly overwhelmed by a bunch of information and op codes that confused me a lot, even with solid knowledge in assembly and programming.
+
+Reverse engineering can seem complex at the first glance, however, with a good methodology and toolkit, everything becomes more significant.
+
+This article claims to guide you, based on my own experiences, in your first steps in this strange and odd universe.
+
+# Methodology
+
+So, here we are, you downloaded your first binary and now … what to do ? RE requires two types of analysis, static and dynamic. The static analysis will help you to have a better overview and understanding on what going on within the binary, whereas the dynamic analysis will allow you to follow, step by step, the changing that occurs within each register, which system calls are used, etc.
+
+The following methodology is pretty basic. Indeed, we start to perform static analysis to spot odd pieces of code which have to be deeply analysed through dynamic analysis. Pretty simple right ? But which tool can you use ?
+
+## Static analysis
+
+I must admit that I didn’t take the time to assess the different tools available on the internet. Indeed, I instantly jumped on [binary ninja](https://binary.ninja/purchase/)  due to its low cost (99$), compared to the functionalities provided.
+
+Binary ninja is dedicated to static analysis, providing an awesome GUI, which is priceless when you have to deal with such amount of information !
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/c6365815974b6f6f18713e6b4388aa42765d4252.png&quot; width=&quot;690&quot; height=&quot;431&quot;&gt;
+
+As you can see on the image above, binary ninja displays the entire call graph of your executable, simplifying the way to understand how each block interact together. Moreover, you can easily switch of view, via the right bottom select menu. Lastly, the left side enumerates every function called, directly accessible thanks to a simple mouse click.
+
+Upstream, this software allows:
+
+* To place comment within the code
+*  To patch binary through assembly or C code
+* To access an API to develop your own plugin to accelerate the analysis process
+* To access a bunch of plugins available from their [GitHub](https://github.com/Vector35/binaryninja-plugins/tree/master/plugins)
+* Other functions that I didn’t use yet ^^
+
+Note: A [demo version](https://binary.ninja/demo/) is available for free and should be enough for beginners.
+
+## Dynamic analysis
+
+Dynamic analysis can be done through various tools e.g gdb, radare2, etc. From my personal experience, radare2 is far from being user-friendly. Indeed, without the stylesheet, I wasn’t able to remember the shortcuts, which made me waste a lot of time ! However, gdb seems to do the job and pretty well… Moreover, the gdb user experience can be improved by using [peda](https://github.com/longld/peda) (Python Exploit Development Assistance for GDB), enhancing the display of gdb by colourising and displaying disassembly codes, registers, memory information during debugging. 
+
+Here is the enhanced CLI:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/5/5dedbf4374a7dc69ebfe77337487c4116ac0e828.png&quot; width=&quot;511&quot; height=&quot;481&quot;&gt;
+
+# Example
+
+To show you how to apply and use this methodology, I chose to show you how I successfully reverse the third phase of the bomb lab, developed by the Carnegie Mellon University, which @_py makes available on his CTF platform [skidophrenia](https://skidophrenia.ctfd.io).
+
+Here is the phase 3 entry point :
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/42f54512a23d4da073b5f6370e9e100b63d1e24f.png&quot; width=&quot;466&quot; height=&quot;332&quot;&gt;
+
+**Assumption** : The solution seems to have 3 components, two integers and 1 character
+
+Let’s break on the 0x08048bbf address to see the registers state.
+
+**Input tried**: 1 2 3
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/a/afed6dc602a58fe50b399b6a8e213d81210107bf.png&quot; width=&quot;496&quot; height=&quot;156&quot;&gt;
+
+Ok, well, it seems that the register EAX represent the amount of argument passed to **sscanf**. Which confirms our previous assumption. Indeed, at least three values are necessary to pass to the next block.
+
+Here are the next blocks :
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/1b9c15581b1c05fbca0b7616e12e2ffa804df1bf.png&quot; width=&quot;690&quot; height=&quot;443&quot;&gt;
+
+## Explanations
+
+1. Check if the first integer is above **0x7**. If yes, the bomb will explode (block not shown in the picture)
+2. We jump to the case corresponding to our first argument
+3. Set the BL register to **0x6b** and compare the third argument to **0x7b**. If the values are equal, we jump to next block, otherwise the bomb explodes.
+4. Check if the second argument is equal to BL, which has been set previously. If not, the bomb explodes.
+
+Consequently, we can assume that the password should be :
+
+- 3: representing the third case
+- k: corresponding to the ascii value of 0x6b
+- 251: corresponding to the decimal value of 0x7b
+
+Let’s try it !
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/b/b0fa1ac626146cc217f975a7159d04f04fe75ddc.png&quot; width=&quot;362&quot; height=&quot;133&quot;&gt;
+
+Challenge completed ! As you can see, this challenge didn’t need so much dynamic analysis, however, this is quite rare. I chose this exercise to show you the importance to take your times to perform static analysis cause it can easily represent 70% of the work. So, scrupulously analyse each piece of code to reach your goal !
+
+# Conclusion
+
+As it has been demonstrated, reverse engineering is accessible for everyone. However, it is inescapable to have decent knowledge in assembly, memory management as well as in programming. Indeed, it will definitely help you to quickly identify where you have to focus your investigation to patch or bypass the security measure in place. Moreover, patience and dedication are qualities that will help you in your way to develop your RE skills.
+
+Upstream, to help RE Linux binaries in 32 / 64 bits architecture, I created a [git repository](https://github.com/Nitr4x/reverse-me) which contains a docker image, embedding a few tools necessary for such challenge.
+
+I hope that you enjoyed your reading.
+
+Best,
+Nitrax
+
+Note: A particular thanks for @_py, who guided me in this unknown area which is reverse engineering.</description>
+    
+    <lastBuildDate>Mon, 07 Jan 2019 23:20:15 +0000</lastBuildDate>
+    <category>Reverse Engineering</category>
+    <atom:link href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/32">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/32</link>
+        <pubDate>Tue, 08 Jan 2019 06:42:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-32</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[0x_Yuichi]]></dc:creator>
+        <description><![CDATA[
+            <p>I have heard that hopper is a good one too. No doubt gdb rocks :D. cant wait for the exams to finish so that I can roll into action</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/30">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/30</link>
+        <pubDate>Sat, 01 Dec 2018 12:28:15 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-30</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for sharing ! I will give it a try when I would have some spare time <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/29">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/29</link>
+        <pubDate>Mon, 26 Jun 2017 07:18:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-29</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[metr00]]></dc:creator>
+        <description><![CDATA[
+            <p>another great plugin for gdb is <a href="https://github.com/pwndbg/pwndbg" rel="nofollow noopener">pwndbg</a>, it has a better graphics interface than peda and is developed by the same developers for <a href="https://github.com/Gallopsled/pwntools" rel="nofollow noopener">pwntools</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/28">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/28</link>
+        <pubDate>Mon, 26 Jun 2017 06:15:22 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-28</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>I will do my best to post 1 article about RE every 1 or 2 weaks, depending on my spare time <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> stay tuned</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/27">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/27</link>
+        <pubDate>Thu, 15 Jun 2017 07:46:14 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-27</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[psifertex]]></dc:creator>
+        <description><![CDATA[
+            <p>Yup, in terms of file formats and architecture formats radare has a /huge/ number of things supported. It’s weakness is primarily one of usability and documentation. But you can’t beat the price. <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p><a href="https://rada.re/r/cmp.html" class="onebox" target="_blank" rel="nofollow noopener">https://rada.re/r/cmp.html</a></p>
+<p>Take that chart with a few mild grains of salt though. To say that some of those tools “have a decompiler” because they can use retdec for example, is completely not the same thing as saying that IDA Pro has a decompiler. They’re light-years apart.</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/26">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/26</link>
+        <pubDate>Wed, 14 Jun 2017 20:29:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-26</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[twyK]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks, I was searching an alternative to bninja because I can’t afford it right now and I really like to learn some Reverse engineering.</p>
+<p>Question: Radare supports 64bit binary?</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/25">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/25</link>
+        <pubDate>Wed, 14 Jun 2017 15:44:28 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-25</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[Exorust]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank  you, this post was really helpful.If possible can you post more on the same method in subsequent posts??</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/24">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/24</link>
+        <pubDate>Wed, 14 Jun 2017 14:19:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-24</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[XVilka]]></dc:creator>
+        <description><![CDATA[
+            <p>There is a migration guide from IDA, WinDbg or GDB: <a href="https://radare.gitbooks.io/radare2book/content/debugger/migration.html" rel="nofollow noopener">https://radare.gitbooks.io/radare2book/content/debugger/migration.html</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/23">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/23</link>
+        <pubDate>Wed, 14 Jun 2017 03:35:52 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-23</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[leroymckeeubZ]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m not from the radare team but I also want to recommend <a href="https://rada.re/r/" rel="nofollow noopener">radare</a> for both static and dynamic analysis. It has a quite steep learning curve but its also okay especially beginners coming from gdb</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/22">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/22</link>
+        <pubDate>Tue, 13 Jun 2017 19:07:37 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-22</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for your input, I will take it into consideration for my next article! I’m glad to see that this article is vastly appreciate!</p>
+<p>Best,<br>
+Nitrax</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/21">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/21</link>
+        <pubDate>Tue, 13 Jun 2017 07:52:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-21</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/psifertex">@psifertex</a> thank you for taking your time and answering in depth to my questions!<br>
+I guess i missed the pricing section when snooping around on the website.</p>
+<p>Hope to see some awesome ongoing development from you!</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/20">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/20</link>
+        <pubDate>Tue, 13 Jun 2017 05:44:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-20</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[psifertex]]></dc:creator>
+        <description><![CDATA[
+            <p>The plan for pricing is described at the bottom of:</p>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://0x00sec.s3.amazonaws.com/original/2X/8/892512c39676fde0cc68a7007e91e3aee9a88e15.png" class="site-icon" width="" height="">
+      <a href="https://binary.ninja/2017/03/01/welcome-to-the-binary-ninja-blog.html" target="_blank" rel="noopener nofollow ugc">binary.ninja</a>
+  </header>
+  <article class="onebox-body">
+    <img src="https://0x00sec.s3.amazonaws.com/original/2X/0/01ae98d3bad99f87ec181dbae6fa412cf91c794f.png" class="thumbnail" width="" height="">
+
+<h3><a href="https://binary.ninja/2017/03/01/welcome-to-the-binary-ninja-blog.html" target="_blank" rel="noopener nofollow ugc">Binary Ninja &gt; Welcome to the Binary Ninja Blog</a></h3>
+
+<p>Binary Ninja : A Reverse Engineering Platform</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p>TL;DR – personal will be $149 after the introductory period ends, but it will be announced well in advance.</p>
+<p>As for Static versus Dynamic, we’ll get there. As mentioned already, there are plugins that implement it already but it’s not as smooth because it can’t be natively integrated into the UI very well (that will change when the 1.2 release has a better mechanism for arbitrary GUI plugins)</p>
+<p>And development will /always/ be ongoing. There’s tons of research we’re doing to improve things like the current state of the art in linear sweep, function similarity matching, etc. Emulation on the IL, lots of new interesting things underway. Doesn’t mean it’s not usable now, just that we’re dreaming big. <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>Edited to add: For anyone with questions about Binary Ninja, we’ve got a public slack (hit the link above and look for the slack logo at the very bottom) that has a number of channels for different types of questions. Even if you’re brand new to RE, there’s a <span class="hashtag">#ninjas-in-training</span> channel just for folks to ask any question they like about RE.</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/19">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/19</link>
+        <pubDate>Tue, 13 Jun 2017 05:06:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-19</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[Art_Vandelaiy]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey this is a great article. Reverse engineering is very new to me, and this was a great introduction.</p>
+<p>Something off topic (and not in anyway a critique of your expertise), you might want to avoid putting space characters before exclamation marks. “Foo bar !  Foo bar.” should actually look like “Foo bar! Foo bar.” in typed English.</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/18</link>
+        <pubDate>Mon, 12 Jun 2017 21:12:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-18</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[anon10817617]]></dc:creator>
+        <description><![CDATA[
+            <p>You are absolutely right, my mistake for not reading carefully. Was foolish not taking notice that <a class="mention" href="https://d.clarkee.co.uk/u/nitrax">@Nitrax</a> was RE’ing an ELF binary.</p>
+<p><a class="mention" href="https://d.clarkee.co.uk/u/nitrax">@Nitrax</a>, ignore my previous comment.</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/17</link>
+        <pubDate>Mon, 12 Jun 2017 12:17:32 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-17</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>I don’t believe either of them support ELF binaries. If there’s a plugin for that, I’d love to know about it. There is EDB which is the Linux counterpart and it’s not bad.</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/16</link>
+        <pubDate>Mon, 12 Jun 2017 12:11:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-16</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[anon10817617]]></dc:creator>
+        <description><![CDATA[
+            <p>[spoiler]That is a very nice guide, but I was quite surprised with your choosing of tools, I have nothing personal against bninja, but why radare? You have olly and immunity, which are both very powerful tools, the later is open-source and has a ton of friendly plugins too.</p>
+<p>Anyway, thanks for the effort, it was pleasant reading.[/spoiler]</p>
+<p>Nevermind, was stupid not to notice that the author used ELF binary as the subject.</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/15</link>
+        <pubDate>Mon, 12 Jun 2017 11:54:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-15</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>“RE guide for beginners”</p>
+<p>Deobfuscation isn’t beginner friendly, if you know what I mean <img src="https://0x00sec.org/images/emoji/twitter/smirk.png?v=9" title=":smirk:" class="emoji" alt=":smirk:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/14</link>
+        <pubDate>Mon, 12 Jun 2017 06:04:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-14</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[Bowlslaw]]></dc:creator>
+        <description><![CDATA[
+            <p><em>reads</em></p>
+<p><em>doesn’t see perl</em></p>
+<p><img src="https://0x00sec.org/images/emoji/twitter/frowning.png?v=9" title=":frowning:" class="emoji only-emoji" alt=":frowning:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/13</link>
+        <pubDate>Mon, 12 Jun 2017 03:37:29 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-13</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[0w1_k4p0n3]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="_py" data-post="6" data-topic="2242">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/_py/48/4275_2.png" class="avatar"> _py:</div>
+<blockquote>
+<p>(didn’t purchase it ofcourse, if you know what I mean)</p>
+</blockquote>
+</aside>
+<p>hmm sounds like you are referring to a five finger discount <img src="https://d.clarkee.co.uk/images/emoji/twitter/grimacing.png?v=15" title=":grimacing:" class="emoji" alt=":grimacing:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/12</link>
+        <pubDate>Mon, 12 Jun 2017 02:26:09 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-12</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Feel free to do so, I’m planning to make some bninja-related write-ups as well.</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/11</link>
+        <pubDate>Sun, 11 Jun 2017 19:34:22 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-11</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>okay thanks mate. I’ll hit you up once it’s up and running!</p>
+<p><a class="mention" href="https://d.clarkee.co.uk/u/nitrax">@Nitrax</a> after <a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a> gives me the basic rundown I’d post an introductionary post about it, if he’s not posting first <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/10</link>
+        <pubDate>Sun, 11 Jun 2017 19:32:05 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-10</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>It should deserve an entire post <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/9</link>
+        <pubDate>Sun, 11 Jun 2017 19:16:42 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-9</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>The license is cross-platform. I have it installed on both Windows and Linux machines.</p>
+<p>If you have any questions regarding its usage once you purchase it, feel free to hit me up on IRC. I can give you a quick rundown of its internals.</p>
+<p>Another reason as to why bninja is a great starting point is the fact that there is even a book explaining IDA’s features. I think that says a lot about its learning curve.</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/8</link>
+        <pubDate>Sun, 11 Jun 2017 19:15:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-8</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+      <item>
+        <title>RE guide for beginners: Methodology and tools</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>in the current state they may be and that was my question but I’m sure BNinja aims to be an entry level reversing platform for &lt;500$ to be a competitor to IDA, since  named licenses there start at 500€.</p>
+<aside class="quote group-VIP quote-modified" data-username="Nitrax" data-post="5" data-topic="2242">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/nitrax/48/788_2.png" class="avatar"> Nitrax:</div>
+<blockquote>
+<p>bninja will provide such feature when their static engine will be entirely done and…</p>
+</blockquote>
+</aside>
+<p>And that’s the point. When will that be? And what functions will they offer then <img src="https://d.clarkee.co.uk/images/emoji/twitter/stuck_out_tongue.png?v=15" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:" loading="lazy" width="20" height="20"> ?</p>
+<p><a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a> okay you replied one second before me here.<br>
+Seems like a valid explanation. I might grab such a license. Was playing with the thought for a while but was unsure about it because I have noone with hands on experience around me.</p>
+<p>I read about symbolic execution already and it seems massive. It definitely will be helpful and change the game.</p>
+<p>Oh and if I buy a license is it a named one for Linux and Windows or do I need multiple license for different OSs?</p>
+          <p><a href="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242/7</link>
+        <pubDate>Sun, 11 Jun 2017 19:08:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2242-7</guid>
+        <source url="https://d.clarkee.co.uk/t/re-guide-for-beginners-methodology-and-tools/2242.rss">RE guide for beginners: Methodology and tools</source>
+      </item>
+  </channel>
+</rss>

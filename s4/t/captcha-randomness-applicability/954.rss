@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>CAPTCHA - Randomness applicability</title>
+    <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954</link>
+    <description>Hi fellas,
+
+To continue with my CAPTCHA series, I will introduce you the concept of randomness and its applicability to the domain of CAPTCHA breaking with a deeper digression to cryptography, steganography and forensics.
+
+Without further ado, I would like to get to the heart of the matter by explaining you the concept of randomness. In a few words, randomness represents the lack of purpose, logic and objectivity of an event. This theory generated a bunch of debates within the sociological and philosophical community. Indeed, well-known thinkers such as Rob Weatherill stated that “Biologically speaking life is anti-entropic. Life opposes entropy. In the natural course of events in the universe, entropy increase, there is an increase in randomness” (Sovereignty of Death). Consequently, death would increase entropy ? Weird hein ? :) 
+
+Fortunately, this concept is well more practical in computer science. In fact, randomness is one of most important aspect of encryption nowadays. However, succeeding to generate a truly random sequence is currently impractical and the term pseudo-random is preferred. As you probably already guessed, randomness is a big deal and encryption / steganography rely, for most of the current scheme, on the quality of the pseudo random generator used to seed the key generation. In order to assess their quality, each new design has to pass several batteries of tests e.g. DieHarder, NIST, Sexton, etc to reach the minimum required standard to be usable. Regardless, it is almost impossible to verify the degree of randomness produced, making it one of the most challenging area.
+ 
+Well, now that you are aware of the current state of the arts of this odd and curious concept, I will present you ENT, a tool used to assess the randomness properties of a file.
+
+# ENT
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/f64ca8018df223de85735ed45b87e214cafeaf63.png&quot; width=&quot;345&quot; height=&quot;115&quot;&gt;
+
+ENT highlights 6 fundamental parameters:
+
+_The values below represent the typical value obtained over a random and larger file._
+
+**Entropy** : Information density of the content of a file expressed as a number of bits per character (7.999982).
+
+**Compression ratio** : The compression ratio is highly tied with entropy. Higher is the entropy, lower will be the compression ratio (0).
+
+**Chi-Square distribution** : This test is the reference in this domain and extremely sensitive to pseudo random generator errors. This value is calculated for a stream of bytes in the file and expressed as an absolute number and a percentage which indicate how frequently a truly random sequence would exceed this value (253.42 with 50%).
+
+**Arithmetic mean** : This value is calculated by summing all bytes in a file and dividing by its length (127.5).
+
+**Monte Carlo estimation** : Each successive sequence of six bytes is used to generate point coordinates (first three bytes are used for X and the rest for Y). If the distance of the randomly-generated point is less than the radius of a circle inscribed within the square, then it is considered as a hit. For a large file, this estimation tends to the value of PI (3.142422057 with an error of 0.03 %).
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/4b2412adf81a58a7175009d626d56589e759d67e.jpg&quot; width=&quot;272&quot; height=&quot;185&quot;&gt;
+
+**Serial correlation coefficient** : This value shows in which extent a byte depend on of its predecessor (0).
+
+# Steganalysis practical case
+
+Steganalysis is to steganography what cryptanalysis is to cryptography. It consists on the detection of a hidden content inside a carrier. In practice, detecting the use of steganography is quite difficult due to the fact that it is extremely hard to define a norm for each file format. Indeed, several factors e.g. color density, color palette, etc will impact on the file property, increasing the percentage of false positives. However, in the majority of cases, the difference is obvious.
+
+Let’s see a typical jpeg file ! Here is the output of ENT for such format :
+
+_Entropy : 7.963678_
+_Compression ratio : 0_
+_Chi-square distribution : 16545.95 at 0.0.1%_
+_Arithmetic mean : 128.0575_
+_Monte Carlo estimation : 3.174692110 with an error of 1.05%_
+_Serial correlation coefficient: -0.002625_
+
+As you can see, those values are quite close to a random file and people are often mistaken about that.
+
+#### Original image &amp; output
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/6480028fcd475cf1706120661a2ae01f96c5c0ce.jpg&quot; width=&quot;200&quot; height=&quot;200&quot;&gt;
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/6688bd933f0cf3f19ac54de15658d0a51856a4d6.png&quot; width=&quot;345&quot; height=&quot;115&quot;&gt;
+
+#### After steganography processing
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/8d17d9e738a738dae5556d52dc11ba93a31166c1.png&quot; width=&quot;345&quot; height=&quot;115&quot;&gt;
+
+#### Analysis
+
+Current steganography use, mainly, cryptography to hide information within the carrier. Consequently, the entropy will increase, modifying the image properties. As you can see in the images above, the entropy, the arithmetic mean and the Monte Carlo estimation are abnormally close to a random file, showing the usage of encryption ! Awesome right ? Now you are able to determine if yes or not an image carries secret information !
+
+# CAPTCHA breaking
+
+You probably wonder how this assessment could be use to break a CAPTCHA ! Let me introduce you HumanAuth.
+
+HumanAuth is a CAPTCHA based on the differentiation of natural and artificial image. More specifically, detecting what comes from nature (lac, tree, …) and what have been created by humans (belt, car, ..). But how can we break and automatize an attack against such security measure ? Indeed, it is easier than you think !
+
+The big difference between natural and artificial image is the presence of grass, tree, bushes, … which, once the image downloaded, require a highest compression than usual ! As I stated before, the compression ratio is correlated to the entropy. Consequently, a natural image will have a greater entropy that an artificial one !
+
+#### Tree
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/d1804def537d4c25c9223babcc1f29cd5312395b.jpg&quot; width=&quot;194&quot; height=&quot;259&quot;&gt;
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/043afd3dcad84959cc325efd683507ac61a3cec9.png&quot; width=&quot;345&quot; height=&quot;115&quot;&gt;
+
+#### Belt
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/68c459e77fc63798ed70c21ef795ad1f6134996d.jpg&quot; width=&quot;301&quot; height=&quot;167&quot;&gt;&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/9048392f5d40c0c849a94205965da193e3dd42d8.png&quot; width=&quot;345&quot; height=&quot;115&quot;&gt;
+
+# Conclusion
+
+Randomness is an inescapable concept for whom planned to evolve in the hacking area should be aware of. Indeed, it is used in many important areas e.g. Cryptography, Steganography, etc. As you see, randomness and CAPTCHA seem to have no relation at all but, it helped us to bypass the security measure in place. 
+
+**Last words : Think out the box !**</description>
+    
+    <lastBuildDate>Tue, 23 Aug 2016 12:43:04 +0000</lastBuildDate>
+    <category>Cryptology</category>
+    <atom:link href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>CAPTCHA - Randomness applicability</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/10</link>
+        <pubDate>Sun, 21 Jan 2018 00:41:40 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-954-10</guid>
+        <source url="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss">CAPTCHA - Randomness applicability</source>
+      </item>
+      <item>
+        <title>CAPTCHA - Randomness applicability</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Here is an explanation about how entropy is calculated !</p>
+<p><a href="https://asecuritysite.com/encryption/ent" class="onebox" target="_blank" rel="nofollow noopener">https://asecuritysite.com/encryption/ent</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/9</link>
+        <pubDate>Tue, 23 Aug 2016 12:43:04 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-954-9</guid>
+        <source url="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss">CAPTCHA - Randomness applicability</source>
+      </item>
+      <item>
+        <title>CAPTCHA - Randomness applicability</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>That really clears things up. So how is correlation between bits calculated?</p>
+          <p><a href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/8</link>
+        <pubDate>Tue, 23 Aug 2016 12:23:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-954-8</guid>
+        <source url="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss">CAPTCHA - Randomness applicability</source>
+      </item>
+      <item>
+        <title>CAPTCHA - Randomness applicability</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Glad to know it ! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/7</link>
+        <pubDate>Tue, 23 Aug 2016 12:11:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-954-7</guid>
+        <source url="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss">CAPTCHA - Randomness applicability</source>
+      </item>
+      <item>
+        <title>CAPTCHA - Randomness applicability</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/pry0cc">@pry0cc</a>  In the context of randomness, the entropy defines with which extent a bit is tied to another within bytes. Higher is the entropy; lower is the relation between them. That is why it is expressed by a number, within a range from 0 to 8. As <a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a> described in his post above, entropy is affected by compression algorithms. Indeed, such algorithms use bit redundancy to reduce the size of a file without data loss. The consequence of such operation is, of course, a rise of entropy !</p>
+<p>To conclude, entropy is not, as said <a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a> <em>the best possible scenario of data transfer with the least possible loss</em> but it just refers to the degree of randomness within a byte.</p>
+<p>By the way, it exists a bunch of algorithms used to calculate this parameter, but I’m not aware of them.</p>
+<p>Hope it helps to clarify things.</p>
+<p>Best,<br>
+Nitrax</p>
+          <p><a href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/6</link>
+        <pubDate>Tue, 23 Aug 2016 12:09:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-954-6</guid>
+        <source url="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss">CAPTCHA - Randomness applicability</source>
+      </item>
+      <item>
+        <title>CAPTCHA - Randomness applicability</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Correct me if I’m wrong but I believe entropy in this case has to do with the best possible scenario of data transfer with the least possible loss. By “loss” I mean data(bytes) loss. As the legend Shannon said “an absolute limit on the <strong>best possible average length</strong> of lossless encoding or compression of an information source.” Hope that clears things up a little bit more.</p>
+<p>Fyi, you can find more just by googling about information theory. An insane amount of communications, if not all, are based on this field.</p>
+          <p><a href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/5</link>
+        <pubDate>Tue, 23 Aug 2016 11:12:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-954-5</guid>
+        <source url="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss">CAPTCHA - Randomness applicability</source>
+      </item>
+      <item>
+        <title>CAPTCHA - Randomness applicability</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Im sorry if I come across a total noob, but what does entropy of a file mean? I’m completely lost on how this can be calculated and what it means?</p>
+          <p><a href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/4</link>
+        <pubDate>Tue, 23 Aug 2016 10:28:54 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-954-4</guid>
+        <source url="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss">CAPTCHA - Randomness applicability</source>
+      </item>
+      <item>
+        <title>CAPTCHA - Randomness applicability</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>I love it when universal constants like Pi and <code>e</code> just keep coming back.</p>
+<p>I appreciate this article and am happy to finally see that it is easier than expected.</p>
+          <p><a href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/3</link>
+        <pubDate>Mon, 22 Aug 2016 22:54:32 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-954-3</guid>
+        <source url="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss">CAPTCHA - Randomness applicability</source>
+      </item>
+      <item>
+        <title>CAPTCHA - Randomness applicability</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Great article mate! I was looking forward to something like this, and honestly props to you for starting the “CAPTCHA series” so far it’s been nothing but interesting and fun to read. <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/2</link>
+        <pubDate>Mon, 22 Aug 2016 16:55:28 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-954-2</guid>
+        <source url="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss">CAPTCHA - Randomness applicability</source>
+      </item>
+      <item>
+        <title>CAPTCHA - Randomness applicability</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi fellas,</p>
+<p>To continue with my CAPTCHA series, I will introduce you the concept of randomness and its applicability to the domain of CAPTCHA breaking with a deeper digression to cryptography, steganography and forensics.</p>
+<p>Without further ado, I would like to get to the heart of the matter by explaining you the concept of randomness. In a few words, randomness represents the lack of purpose, logic and objectivity of an event. This theory generated a bunch of debates within the sociological and philosophical community. Indeed, well-known thinkers such as Rob Weatherill stated that “Biologically speaking life is anti-entropic. Life opposes entropy. In the natural course of events in the universe, entropy increase, there is an increase in randomness” (Sovereignty of Death). Consequently, death would increase entropy ? Weird hein ? <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>Fortunately, this concept is well more practical in computer science. In fact, randomness is one of most important aspect of encryption nowadays. However, succeeding to generate a truly random sequence is currently impractical and the term pseudo-random is preferred. As you probably already guessed, randomness is a big deal and encryption / steganography rely, for most of the current scheme, on the quality of the pseudo random generator used to seed the key generation. In order to assess their quality, each new design has to pass several batteries of tests e.g. DieHarder, NIST, Sexton, etc to reach the minimum required standard to be usable. Regardless, it is almost impossible to verify the degree of randomness produced, making it one of the most challenging area.</p>
+<p>Well, now that you are aware of the current state of the arts of this odd and curious concept, I will present you ENT, a tool used to assess the randomness properties of a file.</p>
+<h1>ENT</h1>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/f64ca8018df223de85735ed45b87e214cafeaf63.png" width="345" height="115"></p>
+<p>ENT highlights 6 fundamental parameters:</p>
+<p><em>The values below represent the typical value obtained over a random and larger file.</em></p>
+<p><strong>Entropy</strong> : Information density of the content of a file expressed as a number of bits per character (7.999982).</p>
+<p><strong>Compression ratio</strong> : The compression ratio is highly tied with entropy. Higher is the entropy, lower will be the compression ratio (0).</p>
+<p><strong>Chi-Square distribution</strong> : This test is the reference in this domain and extremely sensitive to pseudo random generator errors. This value is calculated for a stream of bytes in the file and expressed as an absolute number and a percentage which indicate how frequently a truly random sequence would exceed this value (253.42 with 50%).</p>
+<p><strong>Arithmetic mean</strong> : This value is calculated by summing all bytes in a file and dividing by its length (127.5).</p>
+<p><strong>Monte Carlo estimation</strong> : Each successive sequence of six bytes is used to generate point coordinates (first three bytes are used for X and the rest for Y). If the distance of the randomly-generated point is less than the radius of a circle inscribed within the square, then it is considered as a hit. For a large file, this estimation tends to the value of PI (3.142422057 with an error of 0.03 %).</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/4b2412adf81a58a7175009d626d56589e759d67e.jpg" width="272" height="185"></p>
+<p><strong>Serial correlation coefficient</strong> : This value shows in which extent a byte depend on of its predecessor (0).</p>
+<h1>Steganalysis practical case</h1>
+<p>Steganalysis is to steganography what cryptanalysis is to cryptography. It consists on the detection of a hidden content inside a carrier. In practice, detecting the use of steganography is quite difficult due to the fact that it is extremely hard to define a norm for each file format. Indeed, several factors e.g. color density, color palette, etc will impact on the file property, increasing the percentage of false positives. However, in the majority of cases, the difference is obvious.</p>
+<p>Let’s see a typical jpeg file ! Here is the output of ENT for such format :</p>
+<p><em>Entropy : 7.963678</em><br>
+<em>Compression ratio : 0</em><br>
+<em>Chi-square distribution : 16545.95 at 0.0.1%</em><br>
+<em>Arithmetic mean : 128.0575</em><br>
+<em>Monte Carlo estimation : 3.174692110 with an error of 1.05%</em><br>
+<em>Serial correlation coefficient: -0.002625</em></p>
+<p>As you can see, those values are quite close to a random file and people are often mistaken about that.</p>
+<h4>Original image &amp; output</h4>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/6480028fcd475cf1706120661a2ae01f96c5c0ce.jpg" width="200" height="200"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/6688bd933f0cf3f19ac54de15658d0a51856a4d6.png" width="345" height="115"></p>
+<h4>After steganography processing</h4>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/8d17d9e738a738dae5556d52dc11ba93a31166c1.png" width="345" height="115"></p>
+<h4>Analysis</h4>
+<p>Current steganography use, mainly, cryptography to hide information within the carrier. Consequently, the entropy will increase, modifying the image properties. As you can see in the images above, the entropy, the arithmetic mean and the Monte Carlo estimation are abnormally close to a random file, showing the usage of encryption ! Awesome right ? Now you are able to determine if yes or not an image carries secret information !</p>
+<h1>CAPTCHA breaking</h1>
+<p>You probably wonder how this assessment could be use to break a CAPTCHA ! Let me introduce you HumanAuth.</p>
+<p>HumanAuth is a CAPTCHA based on the differentiation of natural and artificial image. More specifically, detecting what comes from nature (lac, tree, …) and what have been created by humans (belt, car, …). But how can we break and automatize an attack against such security measure ? Indeed, it is easier than you think !</p>
+<p>The big difference between natural and artificial image is the presence of grass, tree, bushes, … which, once the image downloaded, require a highest compression than usual ! As I stated before, the compression ratio is correlated to the entropy. Consequently, a natural image will have a greater entropy that an artificial one !</p>
+<h4>Tree</h4>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/d1804def537d4c25c9223babcc1f29cd5312395b.jpg" width="194" height="259"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/043afd3dcad84959cc325efd683507ac61a3cec9.png" width="345" height="115"></p>
+<h4>Belt</h4>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/68c459e77fc63798ed70c21ef795ad1f6134996d.jpg" width="301" height="167"><img src="//0x00sec.s3.amazonaws.com/original/1X/9048392f5d40c0c849a94205965da193e3dd42d8.png" width="345" height="115"></p>
+<h1>Conclusion</h1>
+<p>Randomness is an inescapable concept for whom planned to evolve in the hacking area should be aware of. Indeed, it is used in many important areas e.g. Cryptography, Steganography, etc. As you see, randomness and CAPTCHA seem to have no relation at all but, it helped us to bypass the security measure in place.</p>
+<p><strong>Last words : Think out the box !</strong></p>
+          <p><a href="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/captcha-randomness-applicability/954/1</link>
+        <pubDate>Sat, 20 Aug 2016 12:03:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-954-1</guid>
+        <source url="https://d.clarkee.co.uk/t/captcha-randomness-applicability/954.rss">CAPTCHA - Randomness applicability</source>
+      </item>
+  </channel>
+</rss>

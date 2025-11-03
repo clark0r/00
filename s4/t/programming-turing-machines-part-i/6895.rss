@@ -1,0 +1,353 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Programming Turing Machines - Part I</title>
+    <link>https://d.clarkee.co.uk/t/programming-turing-machines-part-i/6895</link>
+    <description># Programming Turing Machines: Introduction
+Back again with another theory-heavy topic!  The project I&#39;ve been working on is quite extensive so it will be split into three parts:
+1. [Introduction](https://0x00sec.org/t/programming-turing-machines-part-i/6895)
+2. [Implementation](https://0x00sec.org/t/programming-turing-machines-part-ii/6908)
+3. [High-level Approach](https://0x00sec.org/t/programming-turing-machines-part-iii/6913)
+
+As these topics are created, they will be linked together for easy navigation, but let&#39;s go ahead and get started.
+
+---
+## Informal definition
+A Turing machine is a relatively simple model for computation, consisting of only three parts: a tape, a head, and a state machine.  For those unfamiliar with finite automata, brush up on DFAs and how they work, as that will help tremendously for understanding the mechanics at play (try [this](https://www.tutorialspoint.com/automata_theory/deterministic_finite_automaton.htm)).
+Think of the tape as an infinite roll of film.  Each cell, however, contains at most 1 symbol or can be blank.  Let&#39;s say for instance our tape looks like this:
+```makefile
+|&gt;|a|a|b|_|_|...
+```
+For this textual representation, cells are denoted by &#39;|&#39; characters and blank cells are represented by &#39;\_&#39; characters.  The reason for this will show up later on, but we will see it is easier to reason about &#39;\_&#39;s being blanks, rather than spaces.
+Another notation you will see me use frequently is using the &#39;&gt;&#39; character as a marker for the beginning of the tape.  The symbols you use on the tape have nothing to do with the Turing machine concept; simply find or make a convention and stick with it (if you want to use Emojis, Turing won&#39;t stop you [probably]).  How the symbols you use on your tape are used with the Turing machine will be discussed in the formal definition.
+The next component of the machine is the head.  It has four operations it can perform: move left, move right, read, and write.  Any time the machine executes an instruction, it will read, write, and move, in that order.  Denoting the position of the head on the tape can be done many different ways, but I found using a &#39;^&#39; character is easiest:
+```makefile
+|&gt;|a|a|b|_|_|...
+ ^
+```
+The last piece of the puzzle is the underlying state machine.  This is what tells the Turing machine what to read and write, as well as which direction to move.  We can represent the different functions of a particular Turing machine configuration by using different states for a particular purpose.  Similar to the head, there are many ways the current state can be represented textually, but I prefer to append it to the end of the tape:
+```makefile
+&gt;aab s1
+^
+```
+The trailing &#39;\_&#39; characters will be ignored unless they are necessary for a particular function; &#39;\_&#39; characters within the middle of the tape will not be ignored, and will still represent blank cells.
+
+---
+## Formal definition
+The following definition is an excerpt from the fantastic book _[Introduction to the Theory of Computation](https://www.amazon.com/Introduction-Theory-Computation-Michael-Sipser/dp/113318779X)_ by Michael Sipser:
+&gt; A Turing machine is a 7-tuple, (_Q_, Σ, Γ, δ, _q&lt;sub&gt;0&lt;/sub&gt;_, _q&lt;sub&gt;A&lt;/sub&gt;_, _q&lt;sub&gt;R&lt;/sub&gt;_), where _Q_, Σ, Γ are all finite sets and:
+&gt; 1. _Q_ is the set of states,
+&gt; 2. Σ is the input alphabet, where &#39;\_&#39; ∉ Σ,
+&gt; 3. Γ is the tape alphabet, where &#39;\_&#39; ∈ Γ and Σ ⊆ Γ,
+&gt; 4. δ: _Q_ x Γ → _Q_ x Γ x {L,R} is the transition function,
+&gt; 5. _q&lt;sub&gt;0&lt;/sub&gt;_ ∈ _Q_ is the start state,
+&gt; 6. _q&lt;sub&gt;A&lt;/sub&gt;_ ∈ _Q_ is the accept state, and
+&gt; 7. _q&lt;sub&gt;R&lt;/sub&gt;_ ∈ _Q_ is the reject state, where _q&lt;sub&gt;R&lt;/sub&gt;_ ≠ _q&lt;sub&gt;A&lt;/sub&gt;_.
+&gt;
+&gt; A Turing machine _M_ = (_Q_, Σ, Γ, δ, _q&lt;sub&gt;0&lt;/sub&gt;_, _q&lt;sub&gt;A&lt;/sub&gt;_, _q&lt;sub&gt;R&lt;/sub&gt;_) computes as follows.  Initially, _M_ receives its input _w_ = _w&lt;sub&gt;1&lt;/sub&gt;w&lt;sub&gt;2&lt;/sub&gt;...w&lt;sub&gt;n&lt;/sub&gt;_ ∈ Σ* on the leftmost _n_ squares of the tape, and the rest is blank (i.e., filled with blank symbols).  The head starts at the leftmost square of the tape.  Note that Σ does not contain the blank symbol, so the first blank appearing on the tape marks the end of the input.  Once _M_ has started, the computation proceeds according to the rules described by the transition function.  If _M_ ever tries to move its head to the left off the left-hand end of the tape, the head stays in the same place for that move, even though the transition function indicates L.  The computation continues until it enters either the accept or reject states, at which point it halts.  If neither occurs, _M_ goes on forever.
+
+&gt; _Note_: There are other definitions of a Turing machine, including a variant of the 7-tuple construction and a &quot;simpler&quot; 6-tuple construction.  Use the definition you understand most, as that will be the most beneficial to you.
+
+So with the above definition in mind, the &quot;meat&quot; of a Turing machine lies within its transition function.  We can rewrite it in a way that is more intuitive to us from an implementation perspective:
+&gt; δ(_q_, _a_) = (_q&#39;_, _b_, _d_), where:
+&gt; 1. _q_, _q&#39;_ ∈ _Q_,
+&gt; 2. _a_, _b_ ∈ Σ, and
+&gt; 3. _d_ ∈ {L,R}.
+
+---
+## Example
+Let&#39;s start with a machine based on our earlier configuration:
+```makefile
+&gt;aab s1
+^
+```
+We can use the above to fill out the construction of a Turing machine that will do nothing (for the time being):
+&gt; + _Q_ = { s1 },
+&gt; + Σ = { a, b }
+&gt; + Γ = { a, b, &gt;, _ }
+
+Since we currently only have one state, s1 is our _q&lt;sub&gt;0&lt;/sub&gt;_, while the other _q_&#39;s are undefined.  We can represent our transition function with a state diagram, but we could also use a list of tuples.  Currently, our machine has no defined behavior; let&#39;s add some stuff to make a machine that accepts only the word &quot;aabb&quot;.  We need to go ahead and add two additional states to our machine so we have a place to go to accept and reject (I use _H_ for &quot;halt&quot;):
+&gt; + _Q_ = { s1, s2, _H_ },
+&gt; + Σ = { a, b }, and
+&gt; + Γ = { a, b, &gt;, _ }.
+
+Let&#39;s go ahead and start writing transition tuples.  The order of the tuples in the list have no meaning, however the elements within each tuple will adhere to the following order:
+&gt; (_q_, _a_, _b_, _d_, _q&#39;_), where _q_, _q&#39;_, _a_, _b_, _d_ maintain the same definitions from above.
+
+We can start by creating a transition to check that our input begins with a &#39;&gt;&#39;:
+&gt; (s1, &gt;, &gt;, R, s2)
+
+This transition states that when in s1, the machine will read a &#39;&gt;&#39; from the tape, write a &#39;&gt;&#39; on the tape, move one cell to the right, then transition to s2.
+With the initial &#39;&gt;&#39; character taken care of, we can check the next cell for an &#39;a&#39;:
+&gt; (s1, &gt;, &gt;, R, s2),
+&gt; (s2, a, a, R, s3)
+
+This performs a similar operation as before, though this time on a different symbol.  We have a problem though: s3 is not a valid state in _Q_.  Let&#39;s rewrite the definition of our Turing machine with additional states that are needed:
+&gt; + _Q_ = { s1, s2, s3, s4, s5, s6, _H_ },
+&gt; + Σ = { a, b },
+&gt; + Γ = { a, b, &gt;, _ },
+&gt; + _q&lt;sub&gt;0&lt;/sub&gt;_ = s1,
+&gt; + _q&lt;sub&gt;A&lt;/sub&gt;_ = s6, and
+&gt; + _q&lt;sub&gt;R&lt;/sub&gt;_ = _H_.
+
+And the necessary transitions:
+&gt; (s1, &gt;, &gt;, R, s2),
+&gt; (s2, a, a, R, s3),
+&gt; (s3, a, a, R, s4),
+&gt; (s4, b, b, R, s5), and
+&gt; (s5, b, b, R, s6).
+
+The halting transition is as follows, and is performed when no valid transition can be found:
+&gt; (_q_, _a_, _a_, R, _H_) where _q_ is the current state and _a_ is a symbol in Σ that has no transition for _q_.
+
+When we &quot;run&quot; the Turing machine, we can see what it does by writing the configuration for every instruction.  As stated, we start with our head at the start of the tape, and or machine in our _q&lt;sub&gt;0&lt;/sub&gt;_ of s1:
+```makefile
+&gt;aab s1
+^
+```
+We look in our transitions and find the path (s1, &gt;, &gt;, R, s2).  The next configuration is written immediately under the previous one:
+```makefile
+&gt;aab s1
+^
+&gt;aab s2
+ ^
+```
+To continue, we again look in our transitions and find (s2, a, a, R, s3):
+```makefile
+&gt;aab s1
+^
+&gt;aab s2
+ ^
+&gt;aab s3
+  ^
+```
+Let&#39;s continue this until our Turing machine halts, then examine what happened:
+```makefile
+&gt;aab s1
+^
+&gt;aab s2
+ ^
+&gt;aab s3
+  ^
+&gt;aab s4
+   ^
+&gt;aab_ s5
+    ^
+&gt;aab__ H
+     ^
+```
+As you can see, our machine carried on just fine until it ran out of letters.  Since our transition function was defined to recognize &quot;aabb&quot;, it had nowhere to go when it got to the first &#39;\_&#39; at the end of our word, &quot;aab&quot;.  Therefore, &quot;aab&quot; was not accepted by the Turing machine.  Let&#39;s run this again, this time using the accepting word &quot;aabb&quot;:
+```makefile
+&gt;aabb s1
+^
+&gt;aabb s2
+ ^
+&gt;aabb s3
+  ^
+&gt;aabb s4
+   ^
+&gt;aabb s5
+    ^
+&gt;aabb_ s6
+     ^
+```
+Since s6 was our _q&lt;sub&gt;A&lt;/sub&gt;_, the Turing machine halted in a valid state, and &quot;aabb&quot; was accepted.
+
+---
+## Parting words
+Using the Turing machine model to solve a particular problem can be extremely useful.  Our example was simple for demonstration purposes, but these models can be used for much more advanced problems.  If at any point the construction and mechanics of a Turing machine was confusing (or incorrect) please let me know so I can clear it up.  Having a solid understanding of these will help tremendously as I describe my implementation of a Turing machine for advanced problem solving.
+For the purposes of demonstration, familiarize yourself with my representation of the transition function as a list of tuples; this will reappear in the implementation later on.
+[Part II](https://0x00sec.org/t/programming-turing-machines-part-ii/6908) is out!</description>
+    
+    <lastBuildDate>Thu, 31 May 2018 00:04:17 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/programming-turing-machines-part-i/6895.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Programming Turing Machines - Part I</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-turing-machines-part-i/6895/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-turing-machines-part-i/6895/2</link>
+        <pubDate>Fri, 29 Jun 2018 02:28:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-6895-2</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-turing-machines-part-i/6895.rss">Programming Turing Machines - Part I</source>
+      </item>
+      <item>
+        <title>Programming Turing Machines - Part I</title>
+        <dc:creator><![CDATA[fi6uh]]></dc:creator>
+        <description><![CDATA[
+            <h1><a name="p-25158-programming-turing-machines-introduction-1" class="anchor" href="https://d.clarkee.co.uk#p-25158-programming-turing-machines-introduction-1"></a>Programming Turing Machines: Introduction</h1>
+<p>Back again with another theory-heavy topic!  The project I’ve been working on is quite extensive so it will be split into three parts:</p>
+<ol>
+<li><a href="https://0x00sec.org/t/programming-turing-machines-part-i/6895" rel="noopener nofollow ugc">Introduction</a></li>
+<li><a href="https://0x00sec.org/t/programming-turing-machines-part-ii/6908" rel="noopener nofollow ugc">Implementation</a></li>
+<li><a href="https://0x00sec.org/t/programming-turing-machines-part-iii/6913" rel="noopener nofollow ugc">High-level Approach</a></li>
+</ol>
+<p>As these topics are created, they will be linked together for easy navigation, but let’s go ahead and get started.</p>
+<hr>
+<h2><a name="p-25158-informal-definition-2" class="anchor" href="https://d.clarkee.co.uk#p-25158-informal-definition-2"></a>Informal definition</h2>
+<p>A Turing machine is a relatively simple model for computation, consisting of only three parts: a tape, a head, and a state machine.  For those unfamiliar with finite automata, brush up on DFAs and how they work, as that will help tremendously for understanding the mechanics at play (try <a href="https://www.tutorialspoint.com/automata_theory/deterministic_finite_automaton.htm" rel="noopener nofollow ugc">this</a>).<br>
+Think of the tape as an infinite roll of film.  Each cell, however, contains at most 1 symbol or can be blank.  Let’s say for instance our tape looks like this:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">|&gt;|a|a|b|_|_|...
+</code></pre>
+<p>For this textual representation, cells are denoted by ‘|’ characters and blank cells are represented by ‘_’ characters.  The reason for this will show up later on, but we will see it is easier to reason about '_'s being blanks, rather than spaces.<br>
+Another notation you will see me use frequently is using the ‘&gt;’ character as a marker for the beginning of the tape.  The symbols you use on the tape have nothing to do with the Turing machine concept; simply find or make a convention and stick with it (if you want to use Emojis, Turing won’t stop you [probably]).  How the symbols you use on your tape are used with the Turing machine will be discussed in the formal definition.<br>
+The next component of the machine is the head.  It has four operations it can perform: move left, move right, read, and write.  Any time the machine executes an instruction, it will read, write, and move, in that order.  Denoting the position of the head on the tape can be done many different ways, but I found using a ‘^’ character is easiest:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">|&gt;|a|a|b|_|_|...
+ ^
+</code></pre>
+<p>The last piece of the puzzle is the underlying state machine.  This is what tells the Turing machine what to read and write, as well as which direction to move.  We can represent the different functions of a particular Turing machine configuration by using different states for a particular purpose.  Similar to the head, there are many ways the current state can be represented textually, but I prefer to append it to the end of the tape:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">&gt;aab s1
+^
+</code></pre>
+<p>The trailing ‘_’ characters will be ignored unless they are necessary for a particular function; ‘_’ characters within the middle of the tape will not be ignored, and will still represent blank cells.</p>
+<hr>
+<h2><a name="p-25158-formal-definition-3" class="anchor" href="https://d.clarkee.co.uk#p-25158-formal-definition-3"></a>Formal definition</h2>
+<p>The following definition is an excerpt from the fantastic book <em><a href="https://www.amazon.com/Introduction-Theory-Computation-Michael-Sipser/dp/113318779X?tag=0x00sec03-20" rel="noopener nofollow ugc">Introduction to the Theory of Computation</a></em> by Michael Sipser:</p>
+<blockquote>
+<p>A Turing machine is a 7-tuple, (<em>Q</em>, Σ, Γ, δ, <em>q<sub>0</sub></em>, <em>q<sub>A</sub></em>, <em>q<sub>R</sub></em>), where <em>Q</em>, Σ, Γ are all finite sets and:</p>
+<ol>
+<li><em>Q</em> is the set of states,</li>
+<li>Σ is the input alphabet, where ‘_’ ∉ Σ,</li>
+<li>Γ is the tape alphabet, where ‘_’ ∈ Γ and Σ ⊆ Γ,</li>
+<li>δ: <em>Q</em> x Γ → <em>Q</em> x Γ x {L,R} is the transition function,</li>
+<li><em>q<sub>0</sub></em> ∈ <em>Q</em> is the start state,</li>
+<li><em>q<sub>A</sub></em> ∈ <em>Q</em> is the accept state, and</li>
+<li><em>q<sub>R</sub></em> ∈ <em>Q</em> is the reject state, where <em>q<sub>R</sub></em> ≠ <em>q<sub>A</sub></em>.</li>
+</ol>
+<p>A Turing machine <em>M</em> = (<em>Q</em>, Σ, Γ, δ, <em>q<sub>0</sub></em>, <em>q<sub>A</sub></em>, <em>q<sub>R</sub></em>) computes as follows.  Initially, <em>M</em> receives its input <em>w</em> = <em>w<sub>1</sub>w<sub>2</sub>…w<sub>n</sub></em> ∈ Σ* on the leftmost <em>n</em> squares of the tape, and the rest is blank (i.e., filled with blank symbols).  The head starts at the leftmost square of the tape.  Note that Σ does not contain the blank symbol, so the first blank appearing on the tape marks the end of the input.  Once <em>M</em> has started, the computation proceeds according to the rules described by the transition function.  If <em>M</em> ever tries to move its head to the left off the left-hand end of the tape, the head stays in the same place for that move, even though the transition function indicates L.  The computation continues until it enters either the accept or reject states, at which point it halts.  If neither occurs, <em>M</em> goes on forever.</p>
+</blockquote>
+<blockquote>
+<p><em>Note</em>: There are other definitions of a Turing machine, including a variant of the 7-tuple construction and a “simpler” 6-tuple construction.  Use the definition you understand most, as that will be the most beneficial to you.</p>
+</blockquote>
+<p>So with the above definition in mind, the “meat” of a Turing machine lies within its transition function.  We can rewrite it in a way that is more intuitive to us from an implementation perspective:</p>
+<blockquote>
+<p>δ(<em>q</em>, <em>a</em>) = (<em>q’</em>, <em>b</em>, <em>d</em>), where:</p>
+<ol>
+<li><em>q</em>, <em>q’</em> ∈ <em>Q</em>,</li>
+<li><em>a</em>, <em>b</em> ∈ Σ, and</li>
+<li><em>d</em> ∈ {L,R}.</li>
+</ol>
+</blockquote>
+<hr>
+<h2><a name="p-25158-example-4" class="anchor" href="https://d.clarkee.co.uk#p-25158-example-4"></a>Example</h2>
+<p>Let’s start with a machine based on our earlier configuration:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">&gt;aab s1
+^
+</code></pre>
+<p>We can use the above to fill out the construction of a Turing machine that will do nothing (for the time being):</p>
+<blockquote>
+<ul>
+<li><em>Q</em> = { s1 },</li>
+<li>Σ = { a, b }</li>
+<li>Γ = { a, b, &gt;, _ }</li>
+</ul>
+</blockquote>
+<p>Since we currently only have one state, s1 is our <em>q<sub>0</sub></em>, while the other <em>q</em>’s are undefined.  We can represent our transition function with a state diagram, but we could also use a list of tuples.  Currently, our machine has no defined behavior; let’s add some stuff to make a machine that accepts only the word “aabb”.  We need to go ahead and add two additional states to our machine so we have a place to go to accept and reject (I use <em>H</em> for “halt”):</p>
+<blockquote>
+<ul>
+<li><em>Q</em> = { s1, s2, <em>H</em> },</li>
+<li>Σ = { a, b }, and</li>
+<li>Γ = { a, b, &gt;, _ }.</li>
+</ul>
+</blockquote>
+<p>Let’s go ahead and start writing transition tuples.  The order of the tuples in the list have no meaning, however the elements within each tuple will adhere to the following order:</p>
+<blockquote>
+<p>(<em>q</em>, <em>a</em>, <em>b</em>, <em>d</em>, <em>q’</em>), where <em>q</em>, <em>q’</em>, <em>a</em>, <em>b</em>, <em>d</em> maintain the same definitions from above.</p>
+</blockquote>
+<p>We can start by creating a transition to check that our input begins with a ‘&gt;’:</p>
+<blockquote>
+<p>(s1, &gt;, &gt;, R, s2)</p>
+</blockquote>
+<p>This transition states that when in s1, the machine will read a ‘&gt;’ from the tape, write a ‘&gt;’ on the tape, move one cell to the right, then transition to s2.<br>
+With the initial ‘&gt;’ character taken care of, we can check the next cell for an ‘a’:</p>
+<blockquote>
+<p>(s1, &gt;, &gt;, R, s2),<br>
+(s2, a, a, R, s3)</p>
+</blockquote>
+<p>This performs a similar operation as before, though this time on a different symbol.  We have a problem though: s3 is not a valid state in <em>Q</em>.  Let’s rewrite the definition of our Turing machine with additional states that are needed:</p>
+<blockquote>
+<ul>
+<li><em>Q</em> = { s1, s2, s3, s4, s5, s6, <em>H</em> },</li>
+<li>Σ = { a, b },</li>
+<li>Γ = { a, b, &gt;, _ },</li>
+<li><em>q<sub>0</sub></em> = s1,</li>
+<li><em>q<sub>A</sub></em> = s6, and</li>
+<li><em>q<sub>R</sub></em> = <em>H</em>.</li>
+</ul>
+</blockquote>
+<p>And the necessary transitions:</p>
+<blockquote>
+<p>(s1, &gt;, &gt;, R, s2),<br>
+(s2, a, a, R, s3),<br>
+(s3, a, a, R, s4),<br>
+(s4, b, b, R, s5), and<br>
+(s5, b, b, R, s6).</p>
+</blockquote>
+<p>The halting transition is as follows, and is performed when no valid transition can be found:</p>
+<blockquote>
+<p>(<em>q</em>, <em>a</em>, <em>a</em>, R, <em>H</em>) where <em>q</em> is the current state and <em>a</em> is a symbol in Σ that has no transition for <em>q</em>.</p>
+</blockquote>
+<p>When we “run” the Turing machine, we can see what it does by writing the configuration for every instruction.  As stated, we start with our head at the start of the tape, and or machine in our <em>q<sub>0</sub></em> of s1:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">&gt;aab s1
+^
+</code></pre>
+<p>We look in our transitions and find the path (s1, &gt;, &gt;, R, s2).  The next configuration is written immediately under the previous one:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">&gt;aab s1
+^
+&gt;aab s2
+ ^
+</code></pre>
+<p>To continue, we again look in our transitions and find (s2, a, a, R, s3):</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">&gt;aab s1
+^
+&gt;aab s2
+ ^
+&gt;aab s3
+  ^
+</code></pre>
+<p>Let’s continue this until our Turing machine halts, then examine what happened:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">&gt;aab s1
+^
+&gt;aab s2
+ ^
+&gt;aab s3
+  ^
+&gt;aab s4
+   ^
+&gt;aab_ s5
+    ^
+&gt;aab__ H
+     ^
+</code></pre>
+<p>As you can see, our machine carried on just fine until it ran out of letters.  Since our transition function was defined to recognize “aabb”, it had nowhere to go when it got to the first ‘_’ at the end of our word, “aab”.  Therefore, “aab” was not accepted by the Turing machine.  Let’s run this again, this time using the accepting word “aabb”:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">&gt;aabb s1
+^
+&gt;aabb s2
+ ^
+&gt;aabb s3
+  ^
+&gt;aabb s4
+   ^
+&gt;aabb s5
+    ^
+&gt;aabb_ s6
+     ^
+</code></pre>
+<p>Since s6 was our <em>q<sub>A</sub></em>, the Turing machine halted in a valid state, and “aabb” was accepted.</p>
+<hr>
+<h2><a name="p-25158-parting-words-5" class="anchor" href="https://d.clarkee.co.uk#p-25158-parting-words-5"></a>Parting words</h2>
+<p>Using the Turing machine model to solve a particular problem can be extremely useful.  Our example was simple for demonstration purposes, but these models can be used for much more advanced problems.  If at any point the construction and mechanics of a Turing machine was confusing (or incorrect) please let me know so I can clear it up.  Having a solid understanding of these will help tremendously as I describe my implementation of a Turing machine for advanced problem solving.<br>
+For the purposes of demonstration, familiarize yourself with my representation of the transition function as a list of tuples; this will reappear in the implementation later on.<br>
+<a href="https://0x00sec.org/t/programming-turing-machines-part-ii/6908" rel="noopener nofollow ugc">Part II</a> is out!</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-turing-machines-part-i/6895/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-turing-machines-part-i/6895/1</link>
+        <pubDate>Wed, 30 May 2018 02:28:53 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-6895-1</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-turing-machines-part-i/6895.rss">Programming Turing Machines - Part I</source>
+      </item>
+  </channel>
+</rss>

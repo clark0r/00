@@ -1,0 +1,291 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Using WASI(Web Assembly System Interface) to call MessageBoxA</title>
+    <link>https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516</link>
+    <description>Hello, this an extremely simple tutorial on how to call the win32api from WASI to peek your curisoty and maybe incite you to do more I promise suuuper simple.
+First what is web assembly? 
+
+Well the official definition is : &quot;WebAssembly (abbreviated  *Wasm* ) is a binary instruction format for a stack-based virtual machine. Wasm is designed as a portable target for compilation of high-level languages like C/C++/Rust&quot;, 
+Or: &quot; WebAssembly is an assembly language for a conceptual machine, not a physical one. This is why it can be run across a variety of different machine architectures.&quot;
+
+Now what about WASI?
+The Official definitions goes as follow : &quot; WASI is a modular system interface for WebAssembly. Focused on stability and portability..&quot; 
+Or:  &quot;Just as WebAssembly is an assembly language for a conceptual machine, WebAssembly needs a system interface for a conceptual operating system, not any single operating system. This way, it can be run across all different OSs.
+This is what WASI is — a system interface for the WebAssembly platform.
+We aim to create a system interface that will be a true companion to WebAssembly and last the test of time. This means upholding the key principles of WebAssembly — portability and security&quot; 
+The key thing in here is that WASI itself is a standard, it has multiple implentations, for now there is two that are of interest. 
+https://github.com/wasmerio/wasmer
+https://github.com/bytecodealliance/wasmtime
+Which both provide a runtime, compilation backends, and an ABI and both support embeding(Note that wasmer has a greater support in general and have more bindings) , that means that you can call the runtime from a multitude of language. The Wasmtime binary is the CLI implementation of that, not the actual runtime itself. 
+Wasmtime uses Just in time compilation and cranelift as a backend.
+https://github.com/bytecodealliance/wasmtime/blob/master/cranelift/README.md
+https://bytecodealliance.github.io/wasmtime/
+A few Disclaimer first: WASI and WASM in general is a really new technology, it is unsatble, and outside of the broswer has very few actual practical cases, it&#39;s support for the WindowsAPi is close to inexistant appart from the ability to read/write to files and to readDaClock, first because the standard wishes to have a POSIX like sycall inteface and also because calling the API isn&#39;t safe by definition, it coudl allow for sandbox evasion, DLL injections and others which I am trying to implement(poorly) and that the people working on the different implentations seems to value SAfEtY above all esle. MoAr abstraction == Moar Safety it is known.
+ I Believe that it will be oneday perfect to run modular malwares that day isn&#39;t here yet, I have made a shellcode Loader which works but that is still a long way from being able to compile Windows.h to WASM and have a full abstracted interface, until then let&#39;s MessageBoxA ourself to paradise. 
+Requirements: a Rust compiler, ability to read and write Rust, Extensive Knowledge of MessageBoxA, WIndows10, a text editor, and that&#39;s about it. 
+
+So first of all let&#39;s install rust if it isn&#39;t already the case  https://static.rust-lang.org/rustup/dist/i686-pc-windows-gnu/rustup-init.exe
+run it and then check everything is alright rustc --version.
+
+then : rustup target add wasm32-unknown-unknown and rustup target add wasm32-wasi to be able to compile to our desired format. 
+then you shall ReCusively clone the wasmtime repo, don&#39;t forget --recursive or after that it won&#39;t build because the .witx file will be missing.
+git clone --recursive https://github.com/bytecodealliance/wasmtime.git
+and then finally cargo build or cargo build --release then go do something else because that may take a while, now if it compiled without any problem you should be set for the next Part if not look at the errors and fix what went wrong.
+
+Now, to add a new sycall to wasmtime you need to do two things -1 : you need to edit the wasi_snapshot_preview1.witx located at wasmtime/crates/wasi-common/WASI/phases/snapshot/witx/wasi_snapshot_preview1.witx in order to declare the new syscall 
+
+![Annotation 2020-05-30 185814|334x235](upload://96zLMdQpjmbPE4TdsspxOk6y4OC.png) 
+
+The function takes two arguments, and retunrs a error erno you will see later that is not true due to my laziness, it will always return Ok(()) no matter what,
+
+then to the second part open crates/wasi-common/src/snapshots/wasi_snapshot_preview1.rs
+
+This is where you will be defining and implementing the actual function, btw I am using the Winapi crate https://docs.rs/winapi/0.3.8/winapi/ so don&#39;t forget to add it to the cargo manifest. 
+
+![Annotation 2020-05-30 185624|690x410](upload://p0eZghx3XshfukNQUrORM2Sh2nf.png) 
+
+Now you will notice a few things first a reference of self(Needed for the trait impl), and the the two Agruments have the types &amp;GuestPtr&lt;&gt; which is from the https://docs.rs/wiggle/0.16.0/wiggle/struct.GuestPtr.html crate, I suggest you read the doumentation, as well as https://github.com/WebAssembly/WASI/blob/2b027d91c29e6141a3768e638076daa23f51621c/phases/snapshot/witx/typenames.witx the types definitions. We are using an unsafe Block and not MessageBoxW(Quicker to implement but you could definitly use a Utf16 vector insted of a str)Now this should compile just fine, now how do you call it you may ask, that&#39;s actually the easier part 
+make a new project cargo new --lib whatever edit the cargo.toml  and add under lib add crate-type = 
+cdylib  
+![Annotation 2020-05-30 185408|591x500](upload://8aa4mM5HDszMJntbXt9NtzHVh7e.png) 
+First define our entry point, this is needed at the moment otherwise this won&#39;t be considered a wasi module by the runtime, next direct the compiler to link with the previously edited snapshot 
+#[link(wasm_import_module = &quot;wasi_snapshot_preview1&quot;)]
+THe next thing to do is to define the function signature, this is important because as mistmatch will prevent you from calling it sucessfully, 
+Next make your call to message Box with proper arguments. 
+cargo build --target wasm32-unknown-unknown 
+
+next where the wasmtime cli has been built give the path of where the library has been built and press enter, you should see the message box poping, if you want to see a trace and possible error message you should set RUST_LOG=wasi_common=trace wasmtime env variable. 
+![Annotation 2020-05-30 185707|690x335](upload://nY0UpNEiadlHhowYxGWza62xGVI.png) 
+
+congrats you have now MessageBoxA from WASI, pretty useless I know, you now have the recipe for GetProcAddress, GetModuleHandle, VirtualAlloc, CreateRemoteThread ect.. 
+If you are interested you should try to add these to the snapshot, make a PEloader or a process hollower, use it with the runtime embeded, maybe try to compile Windows.h to WASI if it&#39;s possible. 
+anyway thanks for your time. 
+Ressource I used to make this where it&#39;s much better explained to be honest I could have both linked these two and been done with it but Idk didn&#39;t feel complete: 
+https://www.jakubkonka.com/2020/04/28/rust-wasi-from-scratch.html
+https://radu-matei.com/blog/adding-wasi-syscall/
+bye?</description>
+    
+    <lastBuildDate>Sat, 30 May 2020 19:54:58 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Using WASI(Web Assembly System Interface) to call MessageBoxA</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516/3</link>
+        <pubDate>Tue, 29 Sep 2020 11:30:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-21516-3</guid>
+        <source url="https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516.rss">Using WASI(Web Assembly System Interface) to call MessageBoxA</source>
+      </item>
+      <item>
+        <title>Using WASI(Web Assembly System Interface) to call MessageBoxA</title>
+        <dc:creator><![CDATA[Danus]]></dc:creator>
+        <description><![CDATA[
+            <p>This is super cool! I was always curious about WASM!</p>
+          <p><a href="https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516/2</link>
+        <pubDate>Sat, 30 May 2020 19:54:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-21516-2</guid>
+        <source url="https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516.rss">Using WASI(Web Assembly System Interface) to call MessageBoxA</source>
+      </item>
+      <item>
+        <title>Using WASI(Web Assembly System Interface) to call MessageBoxA</title>
+        <dc:creator><![CDATA[stringsAreComplex]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello, this an extremely simple tutorial on how to call the win32api from WASI to peek your curisoty and maybe incite you to do more I promise suuuper simple.<br>
+First what is web assembly?</p>
+<p>Well the official definition is : “WebAssembly (abbreviated  <em>Wasm</em> ) is a binary instruction format for a stack-based virtual machine. Wasm is designed as a portable target for compilation of high-level languages like C/C++/Rust”,<br>
+Or: " WebAssembly is an assembly language for a conceptual machine, not a physical one. This is why it can be run across a variety of different machine architectures."</p>
+<p>Now what about WASI?<br>
+The Official definitions goes as follow : " WASI is a modular system interface for WebAssembly. Focused on stability and portability…"<br>
+Or:  “Just as WebAssembly is an assembly language for a conceptual machine, WebAssembly needs a system interface for a conceptual operating system, not any single operating system. This way, it can be run across all different OSs.<br>
+This is what WASI is — a system interface for the WebAssembly platform.<br>
+We aim to create a system interface that will be a true companion to WebAssembly and last the test of time. This means upholding the key principles of WebAssembly — portability and security”<br>
+The key thing in here is that WASI itself is a standard, it has multiple implentations, for now there is two that are of interest.<br>
+</p><aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" width="32" height="32">
+      <a href="https://github.com/wasmerio/wasmer" target="_blank" rel="noopener nofollow ugc">GitHub</a>
+  </header>
+  <article class="onebox-body">
+    <img src="https://0x00sec.s3.amazonaws.com/original/2X/c/cb00b9f04804c98957f1b4748c8491ad0f3a6442.png" class="thumbnail" width="" height="">
+
+<h3><a href="https://github.com/wasmerio/wasmer" target="_blank" rel="noopener nofollow ugc">wasmerio/wasmer</a></h3>
+
+<p>🚀 The leading WebAssembly Runtime supporting WASI and Emscripten - wasmerio/wasmer</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<br>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" width="32" height="32">
+      <a href="https://github.com/bytecodealliance/wasmtime" target="_blank" rel="noopener nofollow ugc">GitHub</a>
+  </header>
+  <article class="onebox-body">
+    <img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f784acd6e46a2e907fb9e51dd7bd59355196fdaa.png" class="thumbnail" width="" height="">
+
+<h3><a href="https://github.com/bytecodealliance/wasmtime" target="_blank" rel="noopener nofollow ugc">bytecodealliance/wasmtime</a></h3>
+
+<p>Standalone JIT-style runtime for WebAssembly, using Cranelift - bytecodealliance/wasmtime</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<br>
+Which both provide a runtime, compilation backends, and an ABI and both support embeding(Note that wasmer has a greater support in general and have more bindings) , that means that you can call the runtime from a multitude of language. The Wasmtime binary is the CLI implementation of that, not the actual runtime itself.<br>
+Wasmtime uses Just in time compilation and cranelift as a backend.<br>
+<aside class="onebox githubblob">
+  <header class="source">
+      <a href="https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/README.md" target="_blank" rel="noopener nofollow ugc">github.com</a>
+  </header>
+  <article class="onebox-body">
+    <h4><a href="https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/README.md" target="_blank" rel="noopener nofollow ugc">bytecodealliance/wasmtime/blob/main/cranelift/README.md</a></h4>
+<pre><code class="lang-md">Cranelift Code Generator
+========================
+
+**A [Bytecode Alliance][BA] project**
+
+Cranelift is a low-level retargetable code generator. It translates a
+[target-independent intermediate representation](docs/ir.md)
+into executable machine code.
+
+[BA]: https://bytecodealliance.org/
+[![Build Status](https://github.com/bytecodealliance/wasmtime/workflows/CI/badge.svg)](https://github.com/bytecodealliance/wasmtime/actions)
+[![Fuzzit Status](https://app.fuzzit.dev/badge?org_id=bytecodealliance)](https://app.fuzzit.dev/orgs/bytecodealliance/dashboard)
+[![Chat](https://img.shields.io/badge/chat-zulip-brightgreen.svg)](https://bytecodealliance.zulipchat.com/#narrow/stream/217117-cranelift/topic/general)
+![Minimum rustc 1.37](https://img.shields.io/badge/rustc-1.37+-green.svg)
+[![Documentation Status](https://docs.rs/cranelift/badge.svg)](https://docs.rs/cranelift)
+
+For more information, see [the documentation](docs/index.md).
+
+For an example of how to use the JIT, see the [SimpleJIT Demo], which
+implements a toy language.
+</code></pre>
+
+  This file has been truncated. <a href="https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/README.md" target="_blank" rel="noopener nofollow ugc">show original</a>
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<br>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://0x00sec.s3.amazonaws.com/original/3X/8/f/8fac6b5dc10c349a61f59faaf5605f105376a2ab.png" class="site-icon" width="196" height="196">
+      <a href="https://bytecodealliance.github.io/wasmtime/" target="_blank" rel="noopener nofollow ugc">bytecodealliance.github.io</a>
+  </header>
+  <article class="onebox-body">
+    <img src="" class="thumbnail" width="" height="">
+
+<h3><a href="https://bytecodealliance.github.io/wasmtime/" target="_blank" rel="noopener nofollow ugc">Introduction - Wasmtime</a></h3>
+
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<br>
+A few Disclaimer first: WASI and WASM in general is a really new technology, it is unsatble, and outside of the broswer has very few actual practical cases, it’s support for the WindowsAPi is close to inexistant appart from the ability to read/write to files and to readDaClock, first because the standard wishes to have a POSIX like sycall inteface and also because calling the API isn’t safe by definition, it coudl allow for sandbox evasion, DLL injections and others which I am trying to implement(poorly) and that the people working on the different implentations seems to value SAfEtY above all esle. MoAr abstraction == Moar Safety it is known.<br>
+I Believe that it will be oneday perfect to run modular malwares that day isn’t here yet, I have made a shellcode Loader which works but that is still a long way from being able to compile Windows.h to WASM and have a full abstracted interface, until then let’s MessageBoxA ourself to paradise.<br>
+Requirements: a Rust compiler, ability to read and write Rust, Extensive Knowledge of MessageBoxA, WIndows10, a text editor, and that’s about it.
+<p>So first of all let’s install rust if it isn’t already the case  <a href="https://static.rust-lang.org/rustup/dist/i686-pc-windows-gnu/rustup-init.exe" rel="noopener nofollow ugc">https://static.rust-lang.org/rustup/dist/i686-pc-windows-gnu/rustup-init.exe</a><br>
+run it and then check everything is alright rustc --version.</p>
+<p>then : rustup target add wasm32-unknown-unknown and rustup target add wasm32-wasi to be able to compile to our desired format.<br>
+then you shall ReCusively clone the wasmtime repo, don’t forget --recursive or after that it won’t build because the .witx file will be missing.<br>
+git clone --recursive <a href="https://github.com/bytecodealliance/wasmtime.git" rel="noopener nofollow ugc">https://github.com/bytecodealliance/wasmtime.git</a><br>
+and then finally cargo build or cargo build --release then go do something else because that may take a while, now if it compiled without any problem you should be set for the next Part if not look at the errors and fix what went wrong.</p>
+<p>Now, to add a new sycall to wasmtime you need to do two things -1 : you need to edit the wasi_snapshot_preview1.witx located at wasmtime/crates/wasi-common/WASI/phases/snapshot/witx/wasi_snapshot_preview1.witx in order to declare the new syscall</p>
+<p><img src="https://0x00sec.org/images/transparent.png" alt="Annotation 2020-05-30 185814" data-orig-src="upload://96zLMdQpjmbPE4TdsspxOk6y4OC.png" width="334" height="235"></p>
+<p>The function takes two arguments, and retunrs a error erno you will see later that is not true due to my laziness, it will always return Ok(()) no matter what,</p>
+<p>then to the second part open crates/wasi-common/src/snapshots/wasi_snapshot_preview1.rs</p>
+<p>This is where you will be defining and implementing the actual function, btw I am using the Winapi crate <a href="https://docs.rs/winapi/0.3.8/winapi/" rel="noopener nofollow ugc">https://docs.rs/winapi/0.3.8/winapi/</a> so don’t forget to add it to the cargo manifest.</p>
+<p><img src="https://0x00sec.org/images/transparent.png" alt="Annotation 2020-05-30 185624" data-orig-src="upload://p0eZghx3XshfukNQUrORM2Sh2nf.png" width="690" height="410"></p>
+<p>Now you will notice a few things first a reference of self(Needed for the trait impl), and the the two Agruments have the types &amp;GuestPtr&lt;&gt; which is from the <a href="https://docs.rs/wiggle/0.16.0/wiggle/struct.GuestPtr.html" rel="noopener nofollow ugc">https://docs.rs/wiggle/0.16.0/wiggle/struct.GuestPtr.html</a> crate, I suggest you read the doumentation, as well as <a href="https://github.com/WebAssembly/WASI/blob/2b027d91c29e6141a3768e638076daa23f51621c/phases/snapshot/witx/typenames.witx" rel="noopener nofollow ugc">https://github.com/WebAssembly/WASI/blob/2b027d91c29e6141a3768e638076daa23f51621c/phases/snapshot/witx/typenames.witx</a> the types definitions. We are using an unsafe Block and not MessageBoxW(Quicker to implement but you could definitly use a Utf16 vector insted of a str)Now this should compile just fine, now how do you call it you may ask, that’s actually the easier part<br>
+make a new project cargo new --lib whatever edit the cargo.toml  and add under lib add crate-type =<br>
+cdylib<br>
+<img src="https://0x00sec.org/images/transparent.png" alt="Annotation 2020-05-30 185408" data-orig-src="upload://8aa4mM5HDszMJntbXt9NtzHVh7e.png" width="591" height="500"><br>
+First define our entry point, this is needed at the moment otherwise this won’t be considered a wasi module by the runtime, next direct the compiler to link with the previously edited snapshot<br>
+#[link(wasm_import_module = “wasi_snapshot_preview1”)]<br>
+THe next thing to do is to define the function signature, this is important because as mistmatch will prevent you from calling it sucessfully,<br>
+Next make your call to message Box with proper arguments.<br>
+cargo build --target wasm32-unknown-unknown</p>
+<p>next where the wasmtime cli has been built give the path of where the library has been built and press enter, you should see the message box poping, if you want to see a trace and possible error message you should set RUST_LOG=wasi_common=trace wasmtime env variable.<br>
+<img src="https://0x00sec.org/images/transparent.png" alt="Annotation 2020-05-30 185707" data-orig-src="upload://nY0UpNEiadlHhowYxGWza62xGVI.png" width="690" height="335"></p>
+<p>congrats you have now MessageBoxA from WASI, pretty useless I know, you now have the recipe for GetProcAddress, GetModuleHandle, VirtualAlloc, CreateRemoteThread ect…<br>
+If you are interested you should try to add these to the snapshot, make a PEloader or a process hollower, use it with the runtime embeded, maybe try to compile Windows.h to WASI if it’s possible.<br>
+anyway thanks for your time.<br>
+Ressource I used to make this where it’s much better explained to be honest I could have both linked these two and been done with it but Idk didn’t feel complete:<br>
+</p><aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <a href="https://www.jakubkonka.com/2020/04/28/rust-wasi-from-scratch.html" target="_blank" rel="noopener nofollow ugc">jakubkonka.com</a>
+  </header>
+  <article class="onebox-body">
+    <img src="" class="thumbnail" width="" height="">
+
+<h3><a href="https://www.jakubkonka.com/2020/04/28/rust-wasi-from-scratch.html" target="_blank" rel="noopener nofollow ugc">Stubbing out WASI manually in Rust</a></h3>
+
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<br>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://0x00sec.s3.amazonaws.com/original/2X/2/28181a6fa77ff5bcb496bd7e2c326aac55333841.png" class="site-icon" width="" height="">
+      <a href="https://radu-matei.com/blog/adding-wasi-syscall/" target="_blank" rel="noopener nofollow ugc" title="12:00AM - 31 March 2020">radu's blog – 31 Mar 20</a>
+  </header>
+  <article class="onebox-body">
+    <img src="https://0x00sec.s3.amazonaws.com/original/2X/d/d03981c3ca81970f319ba264b12d5f6e167b597d.jpeg" class="thumbnail" width="" height="">
+
+<h3><a href="https://radu-matei.com/blog/adding-wasi-syscall/" target="_blank" rel="noopener nofollow ugc">A beginner's guide to adding a new WASI syscall in Wasmtime - radu's blog</a></h3>
+
+<p>In this article, we explore how to add a new system call to WASI, the WebAssembly System Interface, and implement it in Wasmtime</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<br>
+bye?
+          <p><a href="https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516/1</link>
+        <pubDate>Sat, 30 May 2020 19:19:31 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-21516-1</guid>
+        <source url="https://d.clarkee.co.uk/t/using-wasi-web-assembly-system-interface-to-call-messageboxa/21516.rss">Using WASI(Web Assembly System Interface) to call MessageBoxA</source>
+      </item>
+  </channel>
+</rss>

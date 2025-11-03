@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Python Email Automation</title>
+    <link>https://d.clarkee.co.uk/t/python-email-automation/23842</link>
+    <description>Hi everyone, hope you&#39;re all having a good day. :)
+
+You&#39;ve probably created many programs which output interesting files and text. Lets use Python to mass mail these outputs to as many people as we want, as many times as we want, without having to manually fill out 100s of emails.
+
+We can accomplish this using `smtplib` from the standard python library. Which uses [Simple Mail Transfer Protocol](https://en.wikipedia.org/wiki/Simple_Mail_Transfer_Protocol)&lt;/a&gt; aka SMTP.
+
+Code availabe at https://github.com/chr0x6d/python_mail
+
+&lt;h3&gt;What you&#39;ll need&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Python 3.7+&lt;/li&gt;
+&lt;li&gt;An email account which supports SMTP (Gmail and Outlook work fine)&lt;/li&gt;
+&lt;li&gt;List of email recipients&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h3&gt;Notes&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;I am far from an expert programmer, all criticism is welcome!&lt;/li&gt;
+&lt;li&gt;This program is not secure in its current state, passwords are stored in plain-text. This is for simplicity, adapt the program to your own needs.
+&lt;/ul&gt;
+
+&lt;hr&gt;
+&lt;h3&gt;Setup&lt;/h3&gt;
+
+Create a new python file called `client.py` and lets start with adding in all the imports we&#39;ll need. We&#39;ll discuss these later.
+
+```
+import smtplib
+from email.mime.multipart import MIMEMultipart # Creating email messages
+from email.mime.text import MIMEText           # Creating email body text
+from email.utils import formataddr             # Formatting email headers
+from email.mime.base import MIMEBase           # Handling email attachments
+from email import encoders                     # Encoding email attachments
+
+import config
+```
+Create a new file called `config.py`, this is to simplify using the program, instead of wading through lots of code to change simple things like the recipient list we only have to edit `config.py`.
+
+I will be using Gmail but feel free to use any email provider. Ensure `config.py` is in the same directory as `client.py` and add the following with your own details:
+```
+smtp_addr = &#39;smtp.gmail.com&#39;      # Gmails SMTP server
+smtp_port = 587                   # SMTP supported port for Gmail
+
+attachments = [                   # Locations of Attachments, relative or full path, leave as empty [] for no attachments
+    &#39;important.pdf&#39;, 
+    &#39;cat.png&#39;,
+    &#39;/opt/opt_cat.jpeg&#39;,
+]
+
+which_sender_to_use = 0           # Leave at 0 to use the first sender in dictionary
+senders = {
+    &#39;user@gmail.com&#39;:&#39;PASSWORD&#39;,  # Your actual email and password from provider
+    &#39;user1@gmail.com&#39;:&#39;PASSWORD&#39;, # This is not particularly secure, consider using a throw-away account or encryption
+}
+
+receivers = {                     # The List of recipients, mail will go to each.
+    &#39;user@protonmail.com&#39;:&#39;User&#39;, # &lt;receiver_email&gt;:&lt;receiver_actual_name(Optional - leave as &quot;&quot; for no-name)&gt;
+    &#39;john@gmail.com&#39;:&#39;John Smith&#39;,
+    &#39;sparrow1828@outlook.com&#39;:&#39;Captain Jack Sparrow&#39;,
+}
+```
+We use port 587 for Gmail SMTP which allows us to start a plain text conversation then enable TLS afterwards.
+That&#39;s it for the setup, now we can jump into starting our SMTP client.
+
+&lt;h3&gt;Using SMTP&lt;/h3&gt;
+
+Now that we have a base to work with, lets go back to `client.py`.
+
+```
+smtp_client = smtplib.SMTP(config.smtp_addr, config.smtp_port)
+# smtp_client.set_debuglevel(True) # Uncomment for verbose logging in console
+
+smtp_client.ehlo() # Extended Hello to SMTP server, client identifies itself to initiate conversation
+smtp_client.starttls() # The connection now uses TLS encryption
+smtp_client.ehlo() # We introduce ourselves to the server again under TLS
+
+# Grab our username and password from config.py
+username = list(config.senders.keys())[config.which_sender_to_use]
+password = config.senders[username]
+
+smtp_client.login(username, password) # Attempt to login to our email account
+```
+If all went well we will now be logged in to our email account under TLS encryption. If you get an Authentication error and are using Gmail, ensure you have enabled [Less Secure Apps](https://support.google.com/accounts/answer/6010255?hl=en). Google classes all login attempts from not within a browser as insecure and blocks them by default.
+
+&lt;h3&gt;Creating email messages&lt;/h3&gt;
+
+We are now able to send emails using SMTP. This is not much use without being able to form sensible email messages complete with subjects, attachments and text. Lets write a message creating function in `client.py`.
+
+```
+def makeEmailMessage(receiver_name, receiver, subject, attachments=None, extra=&#39;&#39;):
+    # Make body using f-string, extra is an optional parameter to include text in body.
+    body = f&quot;&quot;&quot;Hi {receiver_name},
+
+{extra}&quot;&quot;&quot;
+    msg = MIMEMultipart() # Use MIME standard for email formatting
+    msg[&#39;From&#39;] = username # Email address used for login
+    msg[&#39;To&#39;] = formataddr((receiver_name, receiver)) # Actual name of receiver will show instead of email address
+    msg[&#39;Subject&#39;] = subject
+    body = MIMEText(body)
+    msg.attach(body) # This does not &quot;attach&quot; the body text as a file, it is added to the text content of email 
+
+    # Handle case of 0 attachments
+    if attachments is None:
+        attachments = []
+
+    # Every file in attachments will be added to msg using standard email encoding
+    # The files local name will be used to name it
+    for file in attachments:
+        attach_file = open(file, &#39;rb&#39;) # open in binary mode
+        email_file = MIMEBase(&#39;application&#39;, &#39;octate-stream&#39;)
+        email_file.set_payload((attach_file).read())
+        encoders.encode_base64(email_file)
+
+        email_file.add_header(&#39;Content-Disposition&#39;, &#39;attachment&#39;, filename=file)
+        msg.attach(email_file) # The processed file is now added to the email
+
+    return msg
+```
+
+&lt;h3&gt;Mass Mailing&lt;/h3&gt;
+
+Now we can start spamming emails and annoying everyone in our receivers dictionary from `config.py`. I&#39;m going to use a for loop in this example. If I was sending a static email with the same content in each email I would not use a loop, instead using a receivers list and sending all the mail at once like [in this stack overflow answer](https://stackoverflow.com/questions/8856117/how-to-send-email-to-multiple-recipients-using-python-smtplib).
+
+So, continuing on in `client.py`:
+
+```
+def genNuclearLaunchCodes(n): # Example of function which isn&#39;t purely static
+    return (&quot;6E 75 6B 65 21&quot; * n)
+
+iteration = 1
+for receiver in config.receivers:
+    msg = makeEmailMessage(config.receivers[receiver], receiver, &#39;SUBJECT HERE&#39;, config.attachments, genNuclearLaunchCodes(iteration))
+    smtp_client.send_message(msg, username, receiver) # The email will be sent through the SMTP account we&#39;ve logged into
+    print(f&#39;{iteration}: email sent to {receiver} from {username}&#39;)
+    iteration += 1
+```
+
+Add the correct data into `config.py` then we can run `client.py` and our mail will be sent. 
+
+That&#39;s the simple python mailer finished, thanks for reading.</description>
+    
+    <lastBuildDate>Mon, 18 Jan 2021 16:55:33 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/python-email-automation/23842.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Python Email Automation</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/python-email-automation/23842/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/python-email-automation/23842/6</link>
+        <pubDate>Fri, 12 Mar 2021 07:50:51 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-23842-6</guid>
+        <source url="https://d.clarkee.co.uk/t/python-email-automation/23842.rss">Python Email Automation</source>
+      </item>
+      <item>
+        <title>Python Email Automation</title>
+        <dc:creator><![CDATA[CQR.ADS]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for detailed instructions!</p>
+          <p><a href="https://d.clarkee.co.uk/t/python-email-automation/23842/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/python-email-automation/23842/5</link>
+        <pubDate>Mon, 18 Jan 2021 16:55:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-23842-5</guid>
+        <source url="https://d.clarkee.co.uk/t/python-email-automation/23842.rss">Python Email Automation</source>
+      </item>
+      <item>
+        <title>Python Email Automation</title>
+        <dc:creator><![CDATA[Tas-sos]]></dc:creator>
+        <description><![CDATA[
+            <p>Very good first approach! Welcome! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/python-email-automation/23842/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/python-email-automation/23842/4</link>
+        <pubDate>Sat, 21 Nov 2020 08:13:26 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-23842-4</guid>
+        <source url="https://d.clarkee.co.uk/t/python-email-automation/23842.rss">Python Email Automation</source>
+      </item>
+      <item>
+        <title>Python Email Automation</title>
+        <dc:creator><![CDATA[chr0]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you <a class="mention" href="https://d.clarkee.co.uk/u/ph03n1x_crus4d3r">@Ph03n1x_Crus4d3r</a>  <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> I read your post on Applications of XSS earlier and it was a great intro to the topic.</p>
+          <p><a href="https://d.clarkee.co.uk/t/python-email-automation/23842/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/python-email-automation/23842/3</link>
+        <pubDate>Wed, 11 Nov 2020 13:41:43 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-23842-3</guid>
+        <source url="https://d.clarkee.co.uk/t/python-email-automation/23842.rss">Python Email Automation</source>
+      </item>
+      <item>
+        <title>Python Email Automation</title>
+        <dc:creator><![CDATA[Ph03n1x_Crus4d3r]]></dc:creator>
+        <description><![CDATA[
+            <p>Great first post and welcome to the community! Look forward to more.</p>
+          <p><a href="https://d.clarkee.co.uk/t/python-email-automation/23842/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/python-email-automation/23842/2</link>
+        <pubDate>Tue, 10 Nov 2020 21:51:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-23842-2</guid>
+        <source url="https://d.clarkee.co.uk/t/python-email-automation/23842.rss">Python Email Automation</source>
+      </item>
+      <item>
+        <title>Python Email Automation</title>
+        <dc:creator><![CDATA[chr0]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi everyone, hope you’re all having a good day. <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>You’ve probably created many programs which output interesting files and text. Lets use Python to mass mail these outputs to as many people as we want, as many times as we want, without having to manually fill out 100s of emails.</p>
+<p>We can accomplish this using <code>smtplib</code> from the standard python library. Which uses <a href="https://en.wikipedia.org/wiki/Simple_Mail_Transfer_Protocol" rel="noopener nofollow ugc">Simple Mail Transfer Protocol</a> aka SMTP.</p>
+<p>Code availabe at <a href="https://github.com/chr0x6d/python_mail" rel="noopener nofollow ugc">https://github.com/chr0x6d/python_mail</a></p>
+<h3>What you'll need</h3>
+<ul>
+<li>Python 3.7+</li>
+<li>An email account which supports SMTP (Gmail and Outlook work fine)</li>
+<li>List of email recipients</li>
+</ul>
+<h3>Notes</h3>
+<ul>
+<li>I am far from an expert programmer, all criticism is welcome!</li>
+<li>This program is not secure in its current state, passwords are stored in plain-text. This is for simplicity, adapt the program to your own needs.
+</li>
+</ul>
+<hr>
+<h3>Setup</h3>
+<p>Create a new python file called <code>client.py</code> and lets start with adding in all the imports we’ll need. We’ll discuss these later.</p>
+<pre><code class="lang-auto">import smtplib
+from email.mime.multipart import MIMEMultipart # Creating email messages
+from email.mime.text import MIMEText           # Creating email body text
+from email.utils import formataddr             # Formatting email headers
+from email.mime.base import MIMEBase           # Handling email attachments
+from email import encoders                     # Encoding email attachments
+
+import config
+</code></pre>
+<p>Create a new file called <code>config.py</code>, this is to simplify using the program, instead of wading through lots of code to change simple things like the recipient list we only have to edit <code>config.py</code>.</p>
+<p>I will be using Gmail but feel free to use any email provider. Ensure <code>config.py</code> is in the same directory as <code>client.py</code> and add the following with your own details:</p>
+<pre><code class="lang-auto">smtp_addr = 'smtp.gmail.com'      # Gmails SMTP server
+smtp_port = 587                   # SMTP supported port for Gmail
+
+attachments = [                   # Locations of Attachments, relative or full path, leave as empty [] for no attachments
+    'important.pdf', 
+    'cat.png',
+    '/opt/opt_cat.jpeg',
+]
+
+which_sender_to_use = 0           # Leave at 0 to use the first sender in dictionary
+senders = {
+    'user@gmail.com':'PASSWORD',  # Your actual email and password from provider
+    'user1@gmail.com':'PASSWORD', # This is not particularly secure, consider using a throw-away account or encryption
+}
+
+receivers = {                     # The List of recipients, mail will go to each.
+    'user@protonmail.com':'User', # &lt;receiver_email&gt;:&lt;receiver_actual_name(Optional - leave as "" for no-name)&gt;
+    'john@gmail.com':'John Smith',
+    'sparrow1828@outlook.com':'Captain Jack Sparrow',
+}
+</code></pre>
+<p>We use port 587 for Gmail SMTP which allows us to start a plain text conversation then enable TLS afterwards.<br>
+That’s it for the setup, now we can jump into starting our SMTP client.</p>
+<h3>Using SMTP</h3>
+<p>Now that we have a base to work with, lets go back to <code>client.py</code>.</p>
+<pre><code class="lang-auto">smtp_client = smtplib.SMTP(config.smtp_addr, config.smtp_port)
+# smtp_client.set_debuglevel(True) # Uncomment for verbose logging in console
+
+smtp_client.ehlo() # Extended Hello to SMTP server, client identifies itself to initiate conversation
+smtp_client.starttls() # The connection now uses TLS encryption
+smtp_client.ehlo() # We introduce ourselves to the server again under TLS
+
+# Grab our username and password from config.py
+username = list(config.senders.keys())[config.which_sender_to_use]
+password = config.senders[username]
+
+smtp_client.login(username, password) # Attempt to login to our email account
+</code></pre>
+<p>If all went well we will now be logged in to our email account under TLS encryption. If you get an Authentication error and are using Gmail, ensure you have enabled <a href="https://support.google.com/accounts/answer/6010255?hl=en" rel="noopener nofollow ugc">Less Secure Apps</a>. Google classes all login attempts from not within a browser as insecure and blocks them by default.</p>
+<h3>Creating email messages</h3>
+<p>We are now able to send emails using SMTP. This is not much use without being able to form sensible email messages complete with subjects, attachments and text. Lets write a message creating function in <code>client.py</code>.</p>
+<pre><code class="lang-auto">def makeEmailMessage(receiver_name, receiver, subject, attachments=None, extra=''):
+    # Make body using f-string, extra is an optional parameter to include text in body.
+    body = f"""Hi {receiver_name},
+
+{extra}"""
+    msg = MIMEMultipart() # Use MIME standard for email formatting
+    msg['From'] = username # Email address used for login
+    msg['To'] = formataddr((receiver_name, receiver)) # Actual name of receiver will show instead of email address
+    msg['Subject'] = subject
+    body = MIMEText(body)
+    msg.attach(body) # This does not "attach" the body text as a file, it is added to the text content of email 
+
+    # Handle case of 0 attachments
+    if attachments is None:
+        attachments = []
+
+    # Every file in attachments will be added to msg using standard email encoding
+    # The files local name will be used to name it
+    for file in attachments:
+        attach_file = open(file, 'rb') # open in binary mode
+        email_file = MIMEBase('application', 'octate-stream')
+        email_file.set_payload((attach_file).read())
+        encoders.encode_base64(email_file)
+
+        email_file.add_header('Content-Disposition', 'attachment', filename=file)
+        msg.attach(email_file) # The processed file is now added to the email
+
+    return msg
+</code></pre>
+<h3>Mass Mailing</h3>
+<p>Now we can start spamming emails and annoying everyone in our receivers dictionary from <code>config.py</code>. I’m going to use a for loop in this example. If I was sending a static email with the same content in each email I would not use a loop, instead using a receivers list and sending all the mail at once like <a href="https://stackoverflow.com/questions/8856117/how-to-send-email-to-multiple-recipients-using-python-smtplib" rel="noopener nofollow ugc">in this stack overflow answer</a>.</p>
+<p>So, continuing on in <code>client.py</code>:</p>
+<pre><code class="lang-auto">def genNuclearLaunchCodes(n): # Example of function which isn't purely static
+    return ("6E 75 6B 65 21" * n)
+
+iteration = 1
+for receiver in config.receivers:
+    msg = makeEmailMessage(config.receivers[receiver], receiver, 'SUBJECT HERE', config.attachments, genNuclearLaunchCodes(iteration))
+    smtp_client.send_message(msg, username, receiver) # The email will be sent through the SMTP account we've logged into
+    print(f'{iteration}: email sent to {receiver} from {username}')
+    iteration += 1
+</code></pre>
+<p>Add the correct data into <code>config.py</code> then we can run <code>client.py</code> and our mail will be sent.</p>
+<p>That’s the simple python mailer finished, thanks for reading.</p>
+          <p><a href="https://d.clarkee.co.uk/t/python-email-automation/23842/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/python-email-automation/23842/1</link>
+        <pubDate>Tue, 10 Nov 2020 15:50:48 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-23842-1</guid>
+        <source url="https://d.clarkee.co.uk/t/python-email-automation/23842.rss">Python Email Automation</source>
+      </item>
+  </channel>
+</rss>

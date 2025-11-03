@@ -1,0 +1,584 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Kernel Mode Rootkits: File Deletion Protection</title>
+    <link>https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616</link>
+    <description>Hey guys, back with just another casual article from me this time around since one of my projects failed miserably and I don&#39;t really have the time for another serious one. Also I&#39;ve getting into something new, as you may have already guessed, kernel-mode development! Yeah, pretty exciting stuff and I&#39;m here to share a little something I&#39;ve learned that might be interesting to you all. Brace yourselves!
+
+### Disclaimer:
+The following article documents what I&#39;ve learned and may or may not be completely accurate because I am very new to this. Of course I would never intentionally provide misinformation to this community, but please approach it relatively lightly. If there are any mistakes, please do not hesitate to inform me so I can fix them. I would also like to apologise for any garbage code, I can&#39;t help it. :&#39;)
+
+---
+
+# Windows Kernel Mode Drivers and I/O Request Packets
+
+So just really briefly, since this is not an article about kernel mode or drivers in general, I will describe some basic concepts that will aid in the understanding of the content I will present. The first thing is what&#39;s called an &quot;I/O Request Packet&quot; (IRP for short) which represent the majority of what is delivered to the operating system and drivers. This can be things like a file request or a keyboard key press. What happens with IRPs and drivers is that the IRP is sent down a &quot;stack&quot; of drivers that are registered (with the I/O manager) to process them. It looks something like this:
+
+&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/2/27f2c2729edd7e81e5a4aad2cc581745ac958923.jpg&#39;&gt;
+&lt;sup&gt;Obtained from http://www.windowsbugcheck.com/2017/05/device-objects-and-driver-stack-part-2.html&lt;/sup&gt;
+
+The IRP falls down the stack until it reaches the device or driver that is capable of handling the specified request and then it will get sent back upwards once it is fulfilled. Note that the IRP does _not_ necessarily have to go all the way down to the bottom to be completed.
+
+---
+
+# File Deletion Protection
+
+Here I will present the high-level conceptual overview on how it is possible to protect a file from being deleted. The condition which I have selected in order for this mechanism to prevent a file from deletion is that the file must have the `.PROTECTED` extension (case-insensitive). Previously, I have described that IRPs must be sent down the driver stack until the bottom or until it can be completed. If a special driver can be slotted into a position in the driver stack before whatever fulfills the targeted IRPs, it has the power to filter the request and interrupt or modify it if desired. This notion serves as the core to the file deletion protection mechanism.
+
+In order to detect if IRPs should be interrupted from deletion, it simply needs to extract the file extension and compare it to whatever is disallowed for deletion. If the extensions match, the driver will prevent the IRP from any further processing by completing the request and sending it back up the driver stack with an error. It may look a little something like this:
+
+```makefile
+                            ^  +------------+  |
+                            +&gt; |  Driver 1  | &lt;+   IRP being sent down
+                            |  +------------+  |   the driver stack.
+                            |        ...       |
+ (If file should be         |  +------------+  |   (If the file should not
+  protected, send it ----&gt;  +- | Our driver | &lt;+    be protected, continue
+  back up prematurely.)        +------------+       sending it down.)
+                                     ...       
+                               +------------+     
+                               |  Driver n  |
+                               +------------+
+                                     ...
+                               +------------+
+                               |   Device   |
+                               +------------+ 
+```
+
+# Anti Delete
+
+So time for some juicy code to put theory to practice. The following code is example code of a &quot;minifilter&quot; driver which mainly handles file system requests.
+
+```c
+// The callbacks array defines what IRPs we want to process.
+CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
+	{ IRP_MJ_CREATE, 0, PreAntiDelete, NULL },				// DELETE_ON_CLOSE creation flag.
+	{ IRP_MJ_SET_INFORMATION, 0, PreAntiDelete, NULL },		// FileInformationClass == FileDispositionInformation(Ex).
+	{ IRP_MJ_OPERATION_END }
+};
+
+CONST FLT_REGISTRATION FilterRegistration = {
+	sizeof(FLT_REGISTRATION),				// Size
+	FLT_REGISTRATION_VERSION,				// Version
+	0,										// Flags
+	NULL,									// ContextRegistration
+	Callbacks,								// OperationRegistration
+	Unload,									// FilterUnloadCallback
+	NULL,									// InstanceSetupCallback
+	NULL,									// InstanceQueryTeardownCallback
+	NULL,									// InstanceTeardownStartCallback
+	NULL,									// InstanceTeardownCompleteCallback
+	NULL,									// GenerateFileNameCallback
+	NULL,									// NormalizeNameComponentCallback
+	NULL									// NormalizeContextCleanupCallback
+};
+
+PFLT_FILTER Filter;
+static UNICODE_STRING ProtectedExtention = RTL_CONSTANT_STRING(L&quot;PROTECTED&quot;);
+
+NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING RegistryPath) {
+	// We can use this to load some configuration settings.
+	UNREFERENCED_PARAMETER(RegistryPath);
+
+	DBG_PRINT(&quot;DriverEntry called.\n&quot;);
+
+	// Register the minifilter with the filter manager.
+	NTSTATUS status = FltRegisterFilter(DriverObject, &amp;FilterRegistration, &amp;Filter);
+	if (!NT_SUCCESS(status)) {
+		DBG_PRINT(&quot;Failed to register filter: &lt;0x%08x&gt;.\n&quot;, status);
+		return status;
+	}
+	
+	// Start filtering I/O.
+	status = FltStartFiltering(Filter);
+	if (!NT_SUCCESS(status)) {
+		DBG_PRINT(&quot;Failed to start filter: &lt;0x%08x&gt;.\n&quot;, status);
+		// If we fail, we need to unregister the minifilter.
+		FltUnregisterFilter(Filter);
+	}
+
+	return status;
+}
+```
+
+First of all, the IRPs that should be processed by the driver are [`IRP_MJ_CREATE`](https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-create) and [`IRP_MJ_SET_INFORMATION`](https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-set-information) which are requests made when a file (or directory) is created and when metadata is being set, respectively. Both of these IRPs have the ability to delete a file which will be detailed later. The `Callbacks` array is defined with the respective IRP to be processed and the pre-operation and post-operation callback functions. The pre-operation defines the function that is called when the IRP goes down the stack while the post-operation is the function that is called when the IRP goes back up after it has been completed. Note that the post-operation is `NULL` as this scenario does not require one; the interception of file deletion is only handled in the pre-operation.
+
+`DriverEntry` is the driver&#39;s `main` function where the registration with the filter manager is performed using `FltRegisterFilter`. Once that is successful, to start filtering IRPs, it must call the `FltStartFiltering` function with the filter handle. Also note that we have defined the extension to protect as `.PROTECTED` as aforementioned.
+
+It is also good practice to define an unload function so that if the driver has been requested to stop, it can perform an necessary cleanups. Its reference in this article is purely for completeness and does not serve any purpose for the main content.
+
+```c
+/*
+ * This is the driver unload routine used by the filter manager.
+ * When the driver is requested to unload, it will call this function
+ * and perform the necessary cleanups.
+ */
+NTSTATUS Unload(_In_ FLT_FILTER_UNLOAD_FLAGS Flags) {
+	UNREFERENCED_PARAMETER(Flags);
+
+	DBG_PRINT(&quot;Unload called.\n&quot;);
+
+	// Unregister the minifilter.
+	FltUnregisterFilter(Filter);
+
+	return STATUS_SUCCESS;
+}
+```
+
+The final function in this code is the `PreAntiDelete` pre-operation callback which handles the `IRP_MJ_CREATE` and `IRP_MJ_SET_INFORMATION` IRPs. `IRP_MJ_CREATE` includes functions that request a &quot;file handle or file object or device object&quot;&lt;sup&gt;[[1](https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-create#when-sent)]&lt;/sup&gt; to be opened such as [`ZwCreateFile`](https://msdn.microsoft.com/library/windows/hardware/ff566424). `IRP_MJ_SET_INFORMATION` includes functions that request to set &quot;metadata about a file or a file handle&quot;&lt;sup&gt;[[2](https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-set-information#when-sent)]&lt;/sup&gt; such as [`ZwSetInformationFile`](https://msdn.microsoft.com/library/windows/hardware/ff567096).
+
+```cpp
+/*
+ * This routine is called every time I/O is requested for:
+ * - file creates (IRP_MJ_CREATE) such as ZwCreateFile and 
+ * - file metadata sets on files or file handles 
+ *   (IRP_MJ_SET_INFORMATION) such as ZwSetInformation.
+ *
+ * This is a pre-operation callback routine which means that the
+ * IRP passes through this function on the way down the driver stack
+ * to the respective device or driver to be handled.
+ */
+FLT_PREOP_CALLBACK_STATUS PreAntiDelete(_Inout_ PFLT_CALLBACK_DATA Data, _In_ PCFLT_RELATED_OBJECTS FltObjects, _Flt_CompletionContext_Outptr_ PVOID *CompletionContext) {
+	UNREFERENCED_PARAMETER(CompletionContext);
+
+	/* 
+	 * This pre-operation callback code should be running at 
+	 * IRQL &lt;= APC_LEVEL as stated in the docs:
+	 * https://docs.microsoft.com/en-us/windows-hardware/drivers/ifs/writing-preoperation-callback-routines
+	 * and both ZwCreateFile and ZwSetInformaitonFile are also run at 
+	 * IRQL == PASSIVE_LEVEL:
+	 * - ZwCreateFile: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/ntifs/nf-ntifs-ntcreatefile#requirements
+	 * - ZwSetInformationFile: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/ntifs/nf-ntifs-ntsetinformationfile#requirements
+	 */
+	PAGED_CODE();
+
+	/*
+	 * By default, we don&#39;t want to call the post-operation routine
+	 * because there&#39;s no need to further process it and also
+	 * because there is none.
+	 */
+	FLT_PREOP_CALLBACK_STATUS ret = FLT_PREOP_SUCCESS_NO_CALLBACK;
+
+	// We don&#39;t care about directories.
+	BOOLEAN IsDirectory;
+	NTSTATUS status = FltIsDirectory(FltObjects-&gt;FileObject, FltObjects-&gt;Instance, &amp;IsDirectory);
+	if (NT_SUCCESS(status)) {
+		if (IsDirectory == TRUE) {
+			return ret;
+		}
+	}
+
+	/*
+	 * We don&#39;t want anything that doesn&#39;t have the DELETE_ON_CLOSE 
+	 * flag.
+	 */
+	if (Data-&gt;Iopb-&gt;MajorFunction == IRP_MJ_CREATE) {
+		if (!FlagOn(Data-&gt;Iopb-&gt;Parameters.Create.Options, FILE_DELETE_ON_CLOSE)) {
+			return ret;
+		}
+	}
+
+	/*
+	 * We don&#39;t want anything that doesn&#39;t have either 
+	 * FileDispositionInformation or FileDispositionInformationEx or 
+	 * file renames (which can just simply rename the extension).
+	 */
+	if (Data-&gt;Iopb-&gt;MajorFunction == IRP_MJ_SET_INFORMATION) {
+		switch (Data-&gt;Iopb-&gt;Parameters.SetFileInformation.FileInformationClass) {
+			case FileRenameInformation:
+			case FileRenameInformationEx:
+			case FileDispositionInformation:
+			case FileDispositionInformationEx:
+			case FileRenameInformationBypassAccessCheck:
+			case FileRenameInformationExBypassAccessCheck:
+			case FileShortNameInformation:
+				break;
+			default:
+				return ret;
+		}
+	}
+
+	/*
+	 * Here we can check if we want to allow a specific process to fall 
+	 * through the checks, e.g. our own application.
+	 * Since this is a PASSIVE_LEVEL operation, we can assume(?) that 
+	 * the thread context is the thread that requested the I/O. We can  
+	 * check the current thread and compare the EPROCESS of the 
+	 * authenticated application like so:
+	 *
+	 * if (IoThreadToProcess(Data-&gt;Thread) == UserProcess) {
+	 *     return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	 * }
+	 *
+	 * Of course, we would need to find and save the EPROCESS of the 
+	 * application somewhere first. Something like a communication port 
+	 * could work.
+	 */
+
+	PFLT_FILE_NAME_INFORMATION FileNameInfo = NULL;
+	// Make sure the file object exists.
+	if (FltObjects-&gt;FileObject != NULL) {
+		// Get the file name information with the normalized name.
+		status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &amp;FileNameInfo);
+		if (NT_SUCCESS(status)) {
+			// Now we want to parse the file name information to get the extension.
+			FltParseFileNameInformation(FileNameInfo);
+
+			// Compare the file extension (case-insensitive) and check if it is protected.
+			if (RtlCompareUnicodeString(&amp;FileNameInfo-&gt;Extension, &amp;ProtectedExtention, TRUE) == 0) {
+				DBG_PRINT(&quot;Protecting file deletion/rename!&quot;);
+				// Strings match, deny access!
+				Data-&gt;IoStatus.Status = STATUS_ACCESS_DENIED;
+				Data-&gt;IoStatus.Information = 0;
+				// Complete the I/O request and send it back up.
+				ret = FLT_PREOP_COMPLETE;
+			}
+
+			// Clean up file name information.
+			FltReleaseFileNameInformation(FileNameInfo);
+		}
+	}
+
+	return ret;
+}
+```
+
+For `IRP_MJ_CREATE`, we want to check for the `FILE_DELETE_ON_CLOSE` create option which is described as **&quot;Delete the file when the last handle to it is passed to NtClose. If this flag is set, the DELETE flag must be set in the DesiredAccess parameter.&quot;**&lt;sup&gt;[[3](https://docs.microsoft.com/en-us/windows/desktop/api/winternl/nf-winternl-ntcreatefile)]&lt;/sup&gt; If this flag is not present, we do not care about it so it is passed down the stack for further processing as represented by the `FLT_PREOP_SUCCESS_NO_CALLBACK` return value. Note that the `NO_CALLBACK` means that the post-operation routine should not be called when the IRP is completed and passed back up the stack which is what should always be returned by this function as there is no post-operation.
+
+For `IRP_MJ_SET_INFORMATION`, the `FileInformationClass` parameter should be checked. The `FileDispositionInformation` value is described as **&quot;Usually, sets the DeleteFile member of a FILE_DISPOSITION_INFORMATION to TRUE, so the file can be deleted when NtClose is called to release the last open handle to the file object. The caller must have opened the file with the DELETE flag set in the DesiredAccess parameter.&quot;**&lt;sup&gt;[[4](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/ntifs/nf-ntifs-ntsetinformationfile)]&lt;/sup&gt;. To prevent the file from simply being renamed such that the protected extension no longer exists, the `FileRenameInformation` and `FileShortNameInformation` values must also be checked.
+
+If the driver receives an IRP request that is selected for file deletion, it must parse the file name information to extract the extension by using the `FltGetFileNameInformation` and `FltParseFileNameInformation` functions. Then it is a simple string comparison between the requested file for deletion&#39;s extension and the protected extension to determine whether the delete operation should be allowed or disallowed. In the case of an unauthorised file deletion, the status of the operation is set to `STATUS_ACCESS_DENIED` and the pre-operation function completes the IRP.
+
+---
+
+# Demonstration
+
+Attempt to delete the file:
+
+![VirtualBox_Windows%207%20x86%20Kernel%20Development_17_07_2018_00_59_09|690x387](upload://3uY9oYs9PLFcdDJwLgTWdUmepOc.png)
+
+Attempt to rename the file:
+
+![VirtualBox_Windows%207%20x86%20Kernel%20Development_17_07_2018_00_59_24|690x387](upload://zIo6acy0KZmYALShKxERk4C1Ifc.png)
+
+---
+
+# _FIN_
+
+Hope that was educational and somewhat interesting or motivational. As usual, you can find the code on my [GitHub](https://github.com/NtRaiseHardError/Anti-Delete). Thanks for reading!</description>
+    
+    <lastBuildDate>Fri, 27 Jul 2018 15:04:51 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Kernel Mode Rootkits: File Deletion Protection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/7</link>
+        <pubDate>Wed, 15 Aug 2018 15:13:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7616-7</guid>
+        <source url="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616.rss">Kernel Mode Rootkits: File Deletion Protection</source>
+      </item>
+      <item>
+        <title>Kernel Mode Rootkits: File Deletion Protection</title>
+        <dc:creator><![CDATA[maknee]]></dc:creator>
+        <description><![CDATA[
+            <p>I see. Thanks for the guidance and awesome writeup! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/6</link>
+        <pubDate>Fri, 27 Jul 2018 15:04:51 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7616-6</guid>
+        <source url="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616.rss">Kernel Mode Rootkits: File Deletion Protection</source>
+      </item>
+      <item>
+        <title>Kernel Mode Rootkits: File Deletion Protection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah I understand that problem. I still read books dating back to 2007 for the core concepts on the Windows kernel. As for actually developing drivers, I reference the <a href="https://github.com/Microsoft/Windows-driver-samples">Windows driver samples on GitHub</a>, the <a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/">online documentation</a> and various forums like <a href="http://osronline.com/">OSR</a> very, <strong>very</strong>, <em><strong>VERY</strong></em> heavily just constantly switching back and forth learning what each line of code/function does. It’s pretty much the same thing when I first tried to learn the WinAPI. I then set up projects for myself to do to try and get familiar with how everything ties together.</p>
+          <p><a href="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/5</link>
+        <pubDate>Wed, 25 Jul 2018 23:35:53 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7616-5</guid>
+        <source url="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616.rss">Kernel Mode Rootkits: File Deletion Protection</source>
+      </item>
+      <item>
+        <title>Kernel Mode Rootkits: File Deletion Protection</title>
+        <dc:creator><![CDATA[maknee]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m also pretty new to working with the kernel. I fell into many traps while working (mostly my lack of understanding) How did you approach learning the material? I’ve been mostly a book reader – most books on windows drivers are like 10+ years now and pretty bland and lacking of examples. Any tips/resources to learn this type of information?</p>
+          <p><a href="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/4</link>
+        <pubDate>Wed, 25 Jul 2018 14:51:54 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7616-4</guid>
+        <source url="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616.rss">Kernel Mode Rootkits: File Deletion Protection</source>
+      </item>
+      <item>
+        <title>Kernel Mode Rootkits: File Deletion Protection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Yep, if you look in the demonstration section, I’ve used OSR Loader to install the driver as a service with the type <code>Minifilter</code> (you can’t see it in the screen capture). Currently the driver is installed under a “test mode” environment which allows test-signed drivers to be loaded but for real-world situations, you may need some kind of legitimate signature.</p>
+          <p><a href="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/3</link>
+        <pubDate>Tue, 17 Jul 2018 07:19:13 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7616-3</guid>
+        <source url="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616.rss">Kernel Mode Rootkits: File Deletion Protection</source>
+      </item>
+      <item>
+        <title>Kernel Mode Rootkits: File Deletion Protection</title>
+        <dc:creator><![CDATA[x55x06x45]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice write-up man.  Got a few noob questions.  I’ve never really delved into kernel-mode dev before.  How would this be inserted? I’m assuming it’s just along the lines of the normal process of installing a regular driver?   If so, does it need to be done with some sort of driver signing bypassing technique? Or is it more along the lines of patching?</p>
+          <p><a href="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/2</link>
+        <pubDate>Tue, 17 Jul 2018 07:02:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7616-2</guid>
+        <source url="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616.rss">Kernel Mode Rootkits: File Deletion Protection</source>
+      </item>
+      <item>
+        <title>Kernel Mode Rootkits: File Deletion Protection</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey guys, back with just another casual article from me this time around since one of my projects failed miserably and I don’t really have the time for another serious one. Also I’ve getting into something new, as you may have already guessed, kernel-mode development! Yeah, pretty exciting stuff and I’m here to share a little something I’ve learned that might be interesting to you all. Brace yourselves!</p>
+<h3>Disclaimer:</h3>
+<p>The following article documents what I’ve learned and may or may not be completely accurate because I am very new to this. Of course I would never intentionally provide misinformation to this community, but please approach it relatively lightly. If there are any mistakes, please do not hesitate to inform me so I can fix them. I would also like to apologise for any garbage code, I can’t help it. :’)</p>
+<hr>
+<h1>Windows Kernel Mode Drivers and I/O Request Packets</h1>
+<p>So just really briefly, since this is not an article about kernel mode or drivers in general, I will describe some basic concepts that will aid in the understanding of the content I will present. The first thing is what’s called an “I/O Request Packet” (IRP for short) which represent the majority of what is delivered to the operating system and drivers. This can be things like a file request or a keyboard key press. What happens with IRPs and drivers is that the IRP is sent down a “stack” of drivers that are registered (with the I/O manager) to process them. It looks something like this:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/27f2c2729edd7e81e5a4aad2cc581745ac958923.jpg" width="" height=""></p>
+<p><sup>Obtained from <a href="http://www.windowsbugcheck.com/2017/05/device-objects-and-driver-stack-part-2.html">http://www.windowsbugcheck.com/2017/05/device-objects-and-driver-stack-part-2.html</a></sup></p>
+<p>The IRP falls down the stack until it reaches the device or driver that is capable of handling the specified request and then it will get sent back upwards once it is fulfilled. Note that the IRP does <em>not</em> necessarily have to go all the way down to the bottom to be completed.</p>
+<hr>
+<h1>File Deletion Protection</h1>
+<p>Here I will present the high-level conceptual overview on how it is possible to protect a file from being deleted. The condition which I have selected in order for this mechanism to prevent a file from deletion is that the file must have the <code>.PROTECTED</code> extension (case-insensitive). Previously, I have described that IRPs must be sent down the driver stack until the bottom or until it can be completed. If a special driver can be slotted into a position in the driver stack before whatever fulfills the targeted IRPs, it has the power to filter the request and interrupt or modify it if desired. This notion serves as the core to the file deletion protection mechanism.</p>
+<p>In order to detect if IRPs should be interrupted from deletion, it simply needs to extract the file extension and compare it to whatever is disallowed for deletion. If the extensions match, the driver will prevent the IRP from any further processing by completing the request and sending it back up the driver stack with an error. It may look a little something like this:</p>
+<pre><code class="lang-makefile">                            ^  +------------+  |
+                            +&gt; |  Driver 1  | &lt;+   IRP being sent down
+                            |  +------------+  |   the driver stack.
+                            |        ...       |
+ (If file should be         |  +------------+  |   (If the file should not
+  protected, send it ----&gt;  +- | Our driver | &lt;+    be protected, continue
+  back up prematurely.)        +------------+       sending it down.)
+                                     ...       
+                               +------------+     
+                               |  Driver n  |
+                               +------------+
+                                     ...
+                               +------------+
+                               |   Device   |
+                               +------------+ 
+</code></pre>
+<h1>Anti Delete</h1>
+<p>So time for some juicy code to put theory to practice. The following code is example code of a “minifilter” driver which mainly handles file system requests.</p>
+<pre><code class="lang-auto">// The callbacks array defines what IRPs we want to process.
+CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
+	{ IRP_MJ_CREATE, 0, PreAntiDelete, NULL },				// DELETE_ON_CLOSE creation flag.
+	{ IRP_MJ_SET_INFORMATION, 0, PreAntiDelete, NULL },		// FileInformationClass == FileDispositionInformation(Ex).
+	{ IRP_MJ_OPERATION_END }
+};
+
+CONST FLT_REGISTRATION FilterRegistration = {
+	sizeof(FLT_REGISTRATION),				// Size
+	FLT_REGISTRATION_VERSION,				// Version
+	0,										// Flags
+	NULL,									// ContextRegistration
+	Callbacks,								// OperationRegistration
+	Unload,									// FilterUnloadCallback
+	NULL,									// InstanceSetupCallback
+	NULL,									// InstanceQueryTeardownCallback
+	NULL,									// InstanceTeardownStartCallback
+	NULL,									// InstanceTeardownCompleteCallback
+	NULL,									// GenerateFileNameCallback
+	NULL,									// NormalizeNameComponentCallback
+	NULL									// NormalizeContextCleanupCallback
+};
+
+PFLT_FILTER Filter;
+static UNICODE_STRING ProtectedExtention = RTL_CONSTANT_STRING(L"PROTECTED");
+
+NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING RegistryPath) {
+	// We can use this to load some configuration settings.
+	UNREFERENCED_PARAMETER(RegistryPath);
+
+	DBG_PRINT("DriverEntry called.\n");
+
+	// Register the minifilter with the filter manager.
+	NTSTATUS status = FltRegisterFilter(DriverObject, &amp;FilterRegistration, &amp;Filter);
+	if (!NT_SUCCESS(status)) {
+		DBG_PRINT("Failed to register filter: &lt;0x%08x&gt;.\n", status);
+		return status;
+	}
+	
+	// Start filtering I/O.
+	status = FltStartFiltering(Filter);
+	if (!NT_SUCCESS(status)) {
+		DBG_PRINT("Failed to start filter: &lt;0x%08x&gt;.\n", status);
+		// If we fail, we need to unregister the minifilter.
+		FltUnregisterFilter(Filter);
+	}
+
+	return status;
+}
+</code></pre>
+<p>First of all, the IRPs that should be processed by the driver are <a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-create"><code>IRP_MJ_CREATE</code></a> and <a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-set-information"><code>IRP_MJ_SET_INFORMATION</code></a> which are requests made when a file (or directory) is created and when metadata is being set, respectively. Both of these IRPs have the ability to delete a file which will be detailed later. The <code>Callbacks</code> array is defined with the respective IRP to be processed and the pre-operation and post-operation callback functions. The pre-operation defines the function that is called when the IRP goes down the stack while the post-operation is the function that is called when the IRP goes back up after it has been completed. Note that the post-operation is <code>NULL</code> as this scenario does not require one; the interception of file deletion is only handled in the pre-operation.</p>
+<p><code>DriverEntry</code> is the driver’s <code>main</code> function where the registration with the filter manager is performed using <code>FltRegisterFilter</code>. Once that is successful, to start filtering IRPs, it must call the <code>FltStartFiltering</code> function with the filter handle. Also note that we have defined the extension to protect as <code>.PROTECTED</code> as aforementioned.</p>
+<p>It is also good practice to define an unload function so that if the driver has been requested to stop, it can perform an necessary cleanups. Its reference in this article is purely for completeness and does not serve any purpose for the main content.</p>
+<pre><code class="lang-auto">/*
+ * This is the driver unload routine used by the filter manager.
+ * When the driver is requested to unload, it will call this function
+ * and perform the necessary cleanups.
+ */
+NTSTATUS Unload(_In_ FLT_FILTER_UNLOAD_FLAGS Flags) {
+	UNREFERENCED_PARAMETER(Flags);
+
+	DBG_PRINT("Unload called.\n");
+
+	// Unregister the minifilter.
+	FltUnregisterFilter(Filter);
+
+	return STATUS_SUCCESS;
+}
+</code></pre>
+<p>The final function in this code is the <code>PreAntiDelete</code> pre-operation callback which handles the <code>IRP_MJ_CREATE</code> and <code>IRP_MJ_SET_INFORMATION</code> IRPs. <code>IRP_MJ_CREATE</code> includes functions that request a “file handle or file object or device object”<sup>[<a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-create#when-sent">1</a>]</sup> to be opened such as <a href="https://msdn.microsoft.com/library/windows/hardware/ff566424"><code>ZwCreateFile</code></a>. <code>IRP_MJ_SET_INFORMATION</code> includes functions that request to set “metadata about a file or a file handle”<sup>[<a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-set-information#when-sent">2</a>]</sup> such as <a href="https://msdn.microsoft.com/library/windows/hardware/ff567096"><code>ZwSetInformationFile</code></a>.</p>
+<pre><code class="lang-cpp">/*
+ * This routine is called every time I/O is requested for:
+ * - file creates (IRP_MJ_CREATE) such as ZwCreateFile and 
+ * - file metadata sets on files or file handles 
+ *   (IRP_MJ_SET_INFORMATION) such as ZwSetInformation.
+ *
+ * This is a pre-operation callback routine which means that the
+ * IRP passes through this function on the way down the driver stack
+ * to the respective device or driver to be handled.
+ */
+FLT_PREOP_CALLBACK_STATUS PreAntiDelete(_Inout_ PFLT_CALLBACK_DATA Data, _In_ PCFLT_RELATED_OBJECTS FltObjects, _Flt_CompletionContext_Outptr_ PVOID *CompletionContext) {
+	UNREFERENCED_PARAMETER(CompletionContext);
+
+	/* 
+	 * This pre-operation callback code should be running at 
+	 * IRQL &lt;= APC_LEVEL as stated in the docs:
+	 * https://docs.microsoft.com/en-us/windows-hardware/drivers/ifs/writing-preoperation-callback-routines
+	 * and both ZwCreateFile and ZwSetInformaitonFile are also run at 
+	 * IRQL == PASSIVE_LEVEL:
+	 * - ZwCreateFile: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/ntifs/nf-ntifs-ntcreatefile#requirements
+	 * - ZwSetInformationFile: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/ntifs/nf-ntifs-ntsetinformationfile#requirements
+	 */
+	PAGED_CODE();
+
+	/*
+	 * By default, we don't want to call the post-operation routine
+	 * because there's no need to further process it and also
+	 * because there is none.
+	 */
+	FLT_PREOP_CALLBACK_STATUS ret = FLT_PREOP_SUCCESS_NO_CALLBACK;
+
+	// We don't care about directories.
+	BOOLEAN IsDirectory;
+	NTSTATUS status = FltIsDirectory(FltObjects-&gt;FileObject, FltObjects-&gt;Instance, &amp;IsDirectory);
+	if (NT_SUCCESS(status)) {
+		if (IsDirectory == TRUE) {
+			return ret;
+		}
+	}
+
+	/*
+	 * We don't want anything that doesn't have the DELETE_ON_CLOSE 
+	 * flag.
+	 */
+	if (Data-&gt;Iopb-&gt;MajorFunction == IRP_MJ_CREATE) {
+		if (!FlagOn(Data-&gt;Iopb-&gt;Parameters.Create.Options, FILE_DELETE_ON_CLOSE)) {
+			return ret;
+		}
+	}
+
+	/*
+	 * We don't want anything that doesn't have either 
+	 * FileDispositionInformation or FileDispositionInformationEx or 
+	 * file renames (which can just simply rename the extension).
+	 */
+	if (Data-&gt;Iopb-&gt;MajorFunction == IRP_MJ_SET_INFORMATION) {
+		switch (Data-&gt;Iopb-&gt;Parameters.SetFileInformation.FileInformationClass) {
+			case FileRenameInformation:
+			case FileRenameInformationEx:
+			case FileDispositionInformation:
+			case FileDispositionInformationEx:
+			case FileRenameInformationBypassAccessCheck:
+			case FileRenameInformationExBypassAccessCheck:
+			case FileShortNameInformation:
+				break;
+			default:
+				return ret;
+		}
+	}
+
+	/*
+	 * Here we can check if we want to allow a specific process to fall 
+	 * through the checks, e.g. our own application.
+	 * Since this is a PASSIVE_LEVEL operation, we can assume(?) that 
+	 * the thread context is the thread that requested the I/O. We can  
+	 * check the current thread and compare the EPROCESS of the 
+	 * authenticated application like so:
+	 *
+	 * if (IoThreadToProcess(Data-&gt;Thread) == UserProcess) {
+	 *     return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	 * }
+	 *
+	 * Of course, we would need to find and save the EPROCESS of the 
+	 * application somewhere first. Something like a communication port 
+	 * could work.
+	 */
+
+	PFLT_FILE_NAME_INFORMATION FileNameInfo = NULL;
+	// Make sure the file object exists.
+	if (FltObjects-&gt;FileObject != NULL) {
+		// Get the file name information with the normalized name.
+		status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &amp;FileNameInfo);
+		if (NT_SUCCESS(status)) {
+			// Now we want to parse the file name information to get the extension.
+			FltParseFileNameInformation(FileNameInfo);
+
+			// Compare the file extension (case-insensitive) and check if it is protected.
+			if (RtlCompareUnicodeString(&amp;FileNameInfo-&gt;Extension, &amp;ProtectedExtention, TRUE) == 0) {
+				DBG_PRINT("Protecting file deletion/rename!");
+				// Strings match, deny access!
+				Data-&gt;IoStatus.Status = STATUS_ACCESS_DENIED;
+				Data-&gt;IoStatus.Information = 0;
+				// Complete the I/O request and send it back up.
+				ret = FLT_PREOP_COMPLETE;
+			}
+
+			// Clean up file name information.
+			FltReleaseFileNameInformation(FileNameInfo);
+		}
+	}
+
+	return ret;
+}
+</code></pre>
+<p>For <code>IRP_MJ_CREATE</code>, we want to check for the <code>FILE_DELETE_ON_CLOSE</code> create option which is described as <strong>"Delete the file when the last handle to it is passed to NtClose. If this flag is set, the DELETE flag must be set in the DesiredAccess parameter."</strong><sup>[<a href="https://docs.microsoft.com/en-us/windows/desktop/api/winternl/nf-winternl-ntcreatefile">3</a>]</sup> If this flag is not present, we do not care about it so it is passed down the stack for further processing as represented by the <code>FLT_PREOP_SUCCESS_NO_CALLBACK</code> return value. Note that the <code>NO_CALLBACK</code> means that the post-operation routine should not be called when the IRP is completed and passed back up the stack which is what should always be returned by this function as there is no post-operation.</p>
+<p>For <code>IRP_MJ_SET_INFORMATION</code>, the <code>FileInformationClass</code> parameter should be checked. The <code>FileDispositionInformation</code> value is described as <strong>"Usually, sets the DeleteFile member of a FILE_DISPOSITION_INFORMATION to TRUE, so the file can be deleted when NtClose is called to release the last open handle to the file object. The caller must have opened the file with the DELETE flag set in the DesiredAccess parameter."</strong><sup>[<a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/ntifs/nf-ntifs-ntsetinformationfile">4</a>]</sup>. To prevent the file from simply being renamed such that the protected extension no longer exists, the <code>FileRenameInformation</code> and <code>FileShortNameInformation</code> values must also be checked.</p>
+<p>If the driver receives an IRP request that is selected for file deletion, it must parse the file name information to extract the extension by using the <code>FltGetFileNameInformation</code> and <code>FltParseFileNameInformation</code> functions. Then it is a simple string comparison between the requested file for deletion’s extension and the protected extension to determine whether the delete operation should be allowed or disallowed. In the case of an unauthorised file deletion, the status of the operation is set to <code>STATUS_ACCESS_DENIED</code> and the pre-operation function completes the IRP.</p>
+<hr>
+<h1>Demonstration</h1>
+<p>Attempt to delete the file:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/1/1886bf05e93bfd2a2e45c77275c400e80206f0bc.png" alt="VirtualBox_Windows%207%20x86%20Kernel%20Development_17_07_2018_00_59_09" data-base62-sha1="3uY9oYs9PLFcdDJwLgTWdUmepOc" width="690" height="387"></p>
+<p>Attempt to rename the file:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/f/fa509f3ab57edcdde236dfa570d39fa163a78db6.png" alt="VirtualBox_Windows%207%20x86%20Kernel%20Development_17_07_2018_00_59_24" data-base62-sha1="zIo6acy0KZmYALShKxERk4C1Ifc" width="690" height="387"></p>
+<hr>
+<h1><em>FIN</em></h1>
+<p>Hope that was educational and somewhat interesting or motivational. As usual, you can find the code on my <a href="https://github.com/NtRaiseHardError/Anti-Delete">GitHub</a>. Thanks for reading!</p>
+          <p><a href="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616/1</link>
+        <pubDate>Mon, 16 Jul 2018 15:13:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7616-1</guid>
+        <source url="https://d.clarkee.co.uk/t/kernel-mode-rootkits-file-deletion-protection/7616.rss">Kernel Mode Rootkits: File Deletion Protection</source>
+      </item>
+  </channel>
+</rss>

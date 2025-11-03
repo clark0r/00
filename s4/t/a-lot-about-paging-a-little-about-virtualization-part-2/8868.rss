@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>A lot about Paging, a little about Virtualization - Part #2</title>
+    <link>https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868</link>
+    <description>&lt;h2&gt;Part #2 - A lot about Paging, a little about Virtualization&lt;/h2&gt;
+
+&gt; **Disclaimer**
+&gt;
+&gt;
+&gt;
+&gt; This article is based on extensive research and I am not an expert in this field. The only intention I’ve got was “ *to understand how virtualization is working and share it* ”. Please tell me any mistake you discover. I will correct it as quick as possible.
+
+So far we have talked about the processors part of virtualization. But what is with the memory? If a guest could do funny things in the memory it&#39;s game over, isn&#39;t it? Of cause it is, so in order to explain how the VMM keeps control over the memory, we&#39;ll have to take a look how memory is organized.
+
+Most explanations describe memory management linear. So, you have cells which can store bytes and those cells are indexed from 0x00000000-0xFFFFFFFF, those indexes are the (32 bit)-addresses used by the CPU.
+
+&lt;pre&gt;
+ ______________
+|              |&gt; [0x00000000]
+|              |
+|              |
+    ........
+|              |
+|              |
+|______________|&gt; [0xFFFFFFFF]
+
+&lt;/pre&gt;
+
+But this is no longer true for most computers (small embedded systems sometimes address memory like that to save resources).
+
+Instead we have a memory management unit (MMU) which is sitting in your CPU and translates virtual addresses instead of physical ones (_virtual_ doesn&#39;t refers to virtualization. It&#39;s just called this way).
+Paging is a pretty simple concept although it takes some time until you get the calculation part right and it feels somehow familiar.
+
+The idea is that we take 4KB of physical memory and store the physical base address of this 4KB in a table entry.
+The 4KB are called a page. The table we store it in is called __Page Table__ (PT).
+
+Intel tells the programmers in its manual that a PT can hold 512 pages. 512 pages à 4KB are roughly 2MB of memory we could address.
+But we want to address more memory than 2MB, so we store the physical base address of 512 PTs into one __Page Directory Entry__ (PDE). One PT à 2MB * 512 = 1GB per PDE.
+
+1GB per PDE is still not enough. So we do it again, take 512 PDEs and store the physical base addresses of the those entries into a _Page Directory Pointer Table Entry_ (PDPTE).
+And because we can, 512 PDPTEs into one __Page Map Level 4 entry__ (PML4E).
+
+![PageToTable|675x500](upload://4EHsPT0UPZhTL1WFYgPGX9TxBsU.png) 
+
+A physical address could be read like &quot;give me the 0xffec1230-th byte in memory&quot;. The virtual address instead contains all the indexes of the different pointer tables which leads the MMU to the correct byte:
+
+Virtual 64bit address:
+&lt;pre&gt;
+ FLAGS           |PML4     |PDPTE    |PDE      |PT       |Offset into page
+ 0000000000000000|000000000|000000000|000000000|000000000|000000000000
+      [16bit]    |  [9bit] |  [9bit] |  [9bit] | [9bit]  |  [12bit]
+      
+(9bit encode 0-511)
+&lt;/pre&gt;
+
+Don&#39;t freak out, here comes an example:
+
+Let&#39;s say we have this virtual address: 0x00000000007FC031. Written down in bits it looks like that:
+&lt;pre&gt;
+                            |PML4     |PDPTE    |PDE      |PT       |Offset into page
+Binary:     0000000000000000|000000000|000000000|000000011|111111100|000000110001
+Decimal:                         0         0         3        508        49
+&lt;/pre&gt;
+Based on the virtual address the MMU looks up the first entry in the PML4 (which has an index of 0).
+This one holds a physical address which is pointing to a PDPT.
+There again it shall follow the pointer in the first entry to a PD.
+In this PD it selects the fourth PT.
+In the PT it looks up the pointer at the 509th entry.
+Finally, this last pointer points the MMU to a page. In this page the 50th byte is read or written.
+
+![VA_to_PA|690x491](upload://tC5gamaHo5HkF8C0gYz8mjhEOaU.png) 
+
+Keep in mind that the actual physical address of each table _entry_ consists of two parts. The _leading_ bits of the physical address stored in an table entry, plus the _index_ from the virtual address. Those parts get appended to create a valid physical address.
+
+Maybe you already knew that, but the address BUS in 64bit computers is _most the time_ just 48bit wide. So in reality processors only use 48bit to address memory, not 64. This means that the pointers to the next table entry or bit aren&#39;t 64bit long.
+
+But because each table _entry_ is 64bit long, the pointer to the next entry doesn&#39;t use all bits. 
+
+In fact the a table entry stores the first 36bit of the final pointer. If the index is 9bits, it gets attached together with 3 extra bits. Those 3 extra bits are padding. If the appended index identifies a byte, those 3 bits won&#39;t be used.
+
+&lt;pre&gt;
+  pointer from table entry                    index     padding
+ |      [36bits]                            | [9bits]  |
+ | 0000000000000000000000000000000000000000 | 00000000 | 000
+&lt;/pre&gt;
+&lt;pre&gt;
+  pointer from table entry                    index of byte
+ |      [36bits]                            | [12bits]
+ | 0000000000000000000000000000000000000000 | 00000000000
+&lt;/pre&gt;
+
+&lt;hr&gt;
+
+Paging is a tradeoff: The MMU has to translate virtual addresses into physical ones. This means the processor needs more time to access memory. But on the other hand, we can also do way more interesting things.
+Because the pointer to the next entry isn&#39;t occupying the whole 64 bits (but 36bits), we can use the rest of them to store flags.
+As an example for all the other entries we take a look at a Page Table Entry:
+
+![PTEntry|690x50](upload://grzL1JeuTBCpFo5j1rZuGcWfAXJ.png) 
+
+Every page and its prior table entry gets a privilege level assigned (red). The privilege level can be 0 which makes this page and therefore its stored data, code or table entries only accessible by the kernel or the OS. Only accessible by the OS/kernel means, that the processor must execute OS/kernel code while requesting the data from the memory. Otherwise the MMU will through a Page Fault Exception.
+If it is set to 1 it is accessible by user applications.
+
+Read/write flags (blue) are self-explanatory.
+
+And last but obviously not least, there is the execute-disable bit (green), which will prevent any execution of the page content. This is a security feature to prevent malware to execute code, which is written in a data segment of a process. But don&#39;t worry, [there are ways around that](https://0x00sec.org/t/exploit-mitigation-techniques-data-execution-prevention-dep/4634).
+
+&lt;hr&gt;
+
+So why have we gone through all this? Well, first of all it&#39;s basic computer science knowledge :P. And secondly, Intel supports hardware wise memory virtualization based on this concept.
+
+Just to make it clear: The MMU only translates the given virtual address into a physical one and delivers the data back to the processor. Setting up all the page tables and assign them to running processes is still done by the kernel.
+
+So if you boot up a virtualized guest on your computer it will set up the page tables naturally. Although, the host already had set up its own paging structures. To prevent a complete jumble in your memory, the guests access to the memory needs to be manipulated as well.
+
+In the past, this had to be done via the VMM which held a shadow (aka a copy) of the guest paging tables and translated the guest pages into the physical ones, which is incredible slow. So Intel added an Extended Page Tables (EPT) functionality into its processors, which does the translation process in the MMU and with it much quicker.
+
+If the processor is in a VM-non root state and the guest requests memory, the MMU will first calculate the guest physical address as normal.
+At this point the MMU looks up a special pointer called the _Extended Page Table Pointer_.
+This pointer is simply 36bits long. In the next step the MMU appends bit 47:39 of the _guests physical address_ to it plus 3 bits.
+ 
+&lt;pre&gt;
+ |      [36bits]                            | [9bits]  |
+ | 0000000000000000000000000000000000000000 | 00000000 | 000
+&lt;/pre&gt;
+
+Looks familiar? It is indeed the same translate procedure as usual. Although, this time the MMU isn&#39;t using a virtual address to read the indexes from, but the guest physical address.
+
+And this was basically it. The guests memory gets mapped into the hosts memory without overwriting whings. The host has every opportunity to manipulate the guests memory, while the guest is not even aware it is using a different paging structure.
+
+&lt;hr&gt;
+
+If paging was completely new for you, this was probably a hard read. I tried to make it accessible and haven&#39;t covered things like [caching](https://en.wikipedia.org/wiki/Translation_lookaside_buffer) or memory segmentation with the [GDT](https://en.wikipedia.org/wiki/Global_Descriptor_Table).
+Please let me know, if there are any unclear statements or mistakes.
+
+In the next part I initially planned to write about VT-d, but I am pretty sick of starring at Intel manuals. So when I have some spare time I will introduce Qubes OS, which uses virtualization heavily. Or do a write up about an exploit which breaks out of a guest. Or even write a PoC [Bluepill](https://en.wikipedia.org/wiki/Blue_Pill_(software)) like rootkit.
+&lt;hr&gt;
+&lt;div align=&quot;center&quot;&gt;&lt;a href=&quot;https://0x00sec.org/t/the-vmcs-part-1/8739&quot;&gt;&lt;--- Part #1 - The VMCS&lt;/a&gt;&lt;/div&gt;
+&lt;hr&gt;
+*Do it yourself*
+
+* [https://rayanfam.com/topics/hypervisor-from-scratch-part-1/ ](https://rayanfam.com/topics/hypervisor-from-scratch-part-1/) (building a kernel module)
+* https://software.intel.com/sites/default/files/managed/7c/f1/326019-sdm-vol-3c.pdf (raw information)</description>
+    
+    <lastBuildDate>Fri, 05 Oct 2018 11:52:29 +0000</lastBuildDate>
+    <category>Hardware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>A lot about Paging, a little about Virtualization - Part #2</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868/4</link>
+        <pubDate>Sat, 03 Nov 2018 19:18:53 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-8868-4</guid>
+        <source url="https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868.rss">A lot about Paging, a little about Virtualization - Part #2</source>
+      </item>
+      <item>
+        <title>A lot about Paging, a little about Virtualization - Part #2</title>
+        <dc:creator><![CDATA[Rot127]]></dc:creator>
+        <description><![CDATA[
+            <p>Great book! Thanks for sharing it. Added it to the <a href="https://0x00sec.org/t/cs-related-books-wiki/4854/7">wiki</a>.<br>
+If you know any other resources like that you should definitely add them there as well.</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868/3</link>
+        <pubDate>Fri, 05 Oct 2018 11:52:29 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-8868-3</guid>
+        <source url="https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868.rss">A lot about Paging, a little about Virtualization - Part #2</source>
+      </item>
+      <item>
+        <title>A lot about Paging, a little about Virtualization - Part #2</title>
+        <dc:creator><![CDATA[lordkeks]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks alot for sharing your knowledge <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> this is information usually difficult to get explained, outside of a university course.<br>
+This is also covered in the open source book “Operating Systems - Three Easy Pieces”.<br>
+Very easy to read, but packed with much information!<br>
+<a href="http://pages.cs.wisc.edu/~remzi/OSTEP/" rel="nofollow noopener">Operating System - Three Easy Peaces</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868/2</link>
+        <pubDate>Fri, 05 Oct 2018 07:52:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-8868-2</guid>
+        <source url="https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868.rss">A lot about Paging, a little about Virtualization - Part #2</source>
+      </item>
+      <item>
+        <title>A lot about Paging, a little about Virtualization - Part #2</title>
+        <dc:creator><![CDATA[Rot127]]></dc:creator>
+        <description><![CDATA[
+            <h2>Part #2 - A lot about Paging, a little about Virtualization</h2>
+<blockquote>
+<p><strong>Disclaimer</strong></p>
+<p>This article is based on extensive research and I am not an expert in this field. The only intention I’ve got was “ <em>to understand how virtualization is working and share it</em> ”. Please tell me any mistake you discover. I will correct it as quick as possible.</p>
+</blockquote>
+<p>So far we have talked about the processors part of virtualization. But what is with the memory? If a guest could do funny things in the memory it’s game over, isn’t it? Of cause it is, so in order to explain how the VMM keeps control over the memory, we’ll have to take a look how memory is organized.</p>
+<p>Most explanations describe memory management linear. So, you have cells which can store bytes and those cells are indexed from 0x00000000-0xFFFFFFFF, those indexes are the (32 bit)-addresses used by the CPU.</p>
+<pre> ______________
+|              |&gt; [0x00000000]
+|              |
+|              |
+    ........
+|              |
+|              |
+|______________|&gt; [0xFFFFFFFF]
+
+</pre>
+<p>But this is no longer true for most computers (small embedded systems sometimes address memory like that to save resources).</p>
+<p>Instead we have a memory management unit (MMU) which is sitting in your CPU and translates virtual addresses instead of physical ones (<em>virtual</em> doesn’t refers to virtualization. It’s just called this way).<br>
+Paging is a pretty simple concept although it takes some time until you get the calculation part right and it feels somehow familiar.</p>
+<p>The idea is that we take 4KB of physical memory and store the physical base address of this 4KB in a table entry.<br>
+The 4KB are called a page. The table we store it in is called <strong>Page Table</strong> (PT).</p>
+<p>Intel tells the programmers in its manual that a PT can hold 512 pages. 512 pages à 4KB are roughly 2MB of memory we could address.<br>
+But we want to address more memory than 2MB, so we store the physical base address of 512 PTs into one <strong>Page Directory Entry</strong> (PDE). One PT à 2MB * 512 = 1GB per PDE.</p>
+<p>1GB per PDE is still not enough. So we do it again, take 512 PDEs and store the physical base addresses of the those entries into a <em>Page Directory Pointer Table Entry</em> (PDPTE).<br>
+And because we can, 512 PDPTEs into one <strong>Page Map Level 4 entry</strong> (PML4E).</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/2/20a283c0ddea5629a5ac7aaada246a417f29779c.png" data-download-href="/uploads/short-url/4EHsPT0UPZhTL1WFYgPGX9TxBsU.png?dl=1" title="PageToTable" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/20a283c0ddea5629a5ac7aaada246a417f29779c.png" alt="PageToTable" data-base62-sha1="4EHsPT0UPZhTL1WFYgPGX9TxBsU" width="675" height="500"></a></div><p></p>
+<p>A physical address could be read like “give me the 0xffec1230-th byte in memory”. The virtual address instead contains all the indexes of the different pointer tables which leads the MMU to the correct byte:</p>
+<p>Virtual 64bit address:</p>
+<pre> FLAGS           |PML4     |PDPTE    |PDE      |PT       |Offset into page
+ 0000000000000000|000000000|000000000|000000000|000000000|000000000000
+      [16bit]    |  [9bit] |  [9bit] |  [9bit] | [9bit]  |  [12bit]
+      
+(9bit encode 0-511)
+</pre>
+<p>Don’t freak out, here comes an example:</p>
+<p>Let’s say we have this virtual address: 0x00000000007FC031. Written down in bits it looks like that:</p>
+<pre>                            |PML4     |PDPTE    |PDE      |PT       |Offset into page
+Binary:     0000000000000000|000000000|000000000|000000011|111111100|000000110001
+Decimal:                         0         0         3        508        49
+</pre>
+<p>Based on the virtual address the MMU looks up the first entry in the PML4 (which has an index of 0).<br>
+This one holds a physical address which is pointing to a PDPT.<br>
+There again it shall follow the pointer in the first entry to a PD.<br>
+In this PD it selects the fourth PT.<br>
+In the PT it looks up the pointer at the 509th entry.<br>
+Finally, this last pointer points the MMU to a page. In this page the 50th byte is read or written.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/c/cf8d27d246aa28fe65619d66c801e7067297c75c.png" data-download-href="/uploads/short-url/tC5gamaHo5HkF8C0gYz8mjhEOaU.png?dl=1" title="VA_to_PA" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/cf8d27d246aa28fe65619d66c801e7067297c75c.png" alt="VA_to_PA" data-base62-sha1="tC5gamaHo5HkF8C0gYz8mjhEOaU" width="690" height="491"></a></div><p></p>
+<p>Keep in mind that the actual physical address of each table <em>entry</em> consists of two parts. The <em>leading</em> bits of the physical address stored in an table entry, plus the <em>index</em> from the virtual address. Those parts get appended to create a valid physical address.</p>
+<p>Maybe you already knew that, but the address BUS in 64bit computers is <em>most the time</em> just 48bit wide. So in reality processors only use 48bit to address memory, not 64. This means that the pointers to the next table entry or bit aren’t 64bit long.</p>
+<p>But because each table <em>entry</em> is 64bit long, the pointer to the next entry doesn’t use all bits.</p>
+<p>In fact the a table entry stores the first 36bit of the final pointer. If the index is 9bits, it gets attached together with 3 extra bits. Those 3 extra bits are padding. If the appended index identifies a byte, those 3 bits won’t be used.</p>
+<pre>  pointer from table entry                    index     padding
+ |      [36bits]                            | [9bits]  |
+ | 0000000000000000000000000000000000000000 | 00000000 | 000
+</pre>
+<pre>  pointer from table entry                    index of byte
+ |      [36bits]                            | [12bits]
+ | 0000000000000000000000000000000000000000 | 00000000000
+</pre>
+<hr>
+<p>Paging is a tradeoff: The MMU has to translate virtual addresses into physical ones. This means the processor needs more time to access memory. But on the other hand, we can also do way more interesting things.<br>
+Because the pointer to the next entry isn’t occupying the whole 64 bits (but 36bits), we can use the rest of them to store flags.<br>
+As an example for all the other entries we take a look at a Page Table Entry:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7340ceb7d80701d29630306196c3a3ab7558582f.png" alt="PTEntry" data-base62-sha1="grzL1JeuTBCpFo5j1rZuGcWfAXJ" width="690" height="50"></p>
+<p>Every page and its prior table entry gets a privilege level assigned (red). The privilege level can be 0 which makes this page and therefore its stored data, code or table entries only accessible by the kernel or the OS. Only accessible by the OS/kernel means, that the processor must execute OS/kernel code while requesting the data from the memory. Otherwise the MMU will through a Page Fault Exception.<br>
+If it is set to 1 it is accessible by user applications.</p>
+<p>Read/write flags (blue) are self-explanatory.</p>
+<p>And last but obviously not least, there is the execute-disable bit (green), which will prevent any execution of the page content. This is a security feature to prevent malware to execute code, which is written in a data segment of a process. But don’t worry, <a href="https://0x00sec.org/t/exploit-mitigation-techniques-data-execution-prevention-dep/4634" rel="noopener nofollow ugc">there are ways around that</a>.</p>
+<hr>
+<p>So why have we gone through all this? Well, first of all it’s basic computer science knowledge :P. And secondly, Intel supports hardware wise memory virtualization based on this concept.</p>
+<p>Just to make it clear: The MMU only translates the given virtual address into a physical one and delivers the data back to the processor. Setting up all the page tables and assign them to running processes is still done by the kernel.</p>
+<p>So if you boot up a virtualized guest on your computer it will set up the page tables naturally. Although, the host already had set up its own paging structures. To prevent a complete jumble in your memory, the guests access to the memory needs to be manipulated as well.</p>
+<p>In the past, this had to be done via the VMM which held a shadow (aka a copy) of the guest paging tables and translated the guest pages into the physical ones, which is incredible slow. So Intel added an Extended Page Tables (EPT) functionality into its processors, which does the translation process in the MMU and with it much quicker.</p>
+<p>If the processor is in a VM-non root state and the guest requests memory, the MMU will first calculate the guest physical address as normal.<br>
+At this point the MMU looks up a special pointer called the <em>Extended Page Table Pointer</em>.<br>
+This pointer is simply 36bits long. In the next step the MMU appends bit 47:39 of the <em>guests physical address</em> to it plus 3 bits.</p>
+<pre> |      [36bits]                            | [9bits]  |
+ | 0000000000000000000000000000000000000000 | 00000000 | 000
+</pre>
+<p>Looks familiar? It is indeed the same translate procedure as usual. Although, this time the MMU isn’t using a virtual address to read the indexes from, but the guest physical address.</p>
+<p>And this was basically it. The guests memory gets mapped into the hosts memory without overwriting whings. The host has every opportunity to manipulate the guests memory, while the guest is not even aware it is using a different paging structure.</p>
+<hr>
+<p>If paging was completely new for you, this was probably a hard read. I tried to make it accessible and haven’t covered things like <a href="https://en.wikipedia.org/wiki/Translation_lookaside_buffer" rel="noopener nofollow ugc">caching</a> or memory segmentation with the <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table" rel="noopener nofollow ugc">GDT</a>.<br>
+Please let me know, if there are any unclear statements or mistakes.</p>
+<p>In the next part I initially planned to write about VT-d, but I am pretty sick of starring at Intel manuals. So when I have some spare time I will introduce Qubes OS, which uses virtualization heavily. Or do a write up about an exploit which breaks out of a guest. Or even write a PoC <a href="https://en.wikipedia.org/wiki/Blue_Pill_(software)" rel="noopener nofollow ugc">Bluepill</a> like rootkit.</p>
+<hr>
+<div align="center"><a href="https://0x00sec.org/t/the-vmcs-part-1/8739" rel="noopener nofollow ugc">&lt;--- Part #1 - The VMCS</a></div>
+<hr>
+*Do it yourself*
+<ul>
+<li><a href="https://rayanfam.com/topics/hypervisor-from-scratch-part-1/" rel="noopener nofollow ugc">https://rayanfam.com/topics/hypervisor-from-scratch-part-1/ </a> (building a kernel module)</li>
+<li><a href="https://software.intel.com/sites/default/files/managed/7c/f1/326019-sdm-vol-3c.pdf" rel="noopener nofollow ugc">https://software.intel.com/sites/default/files/managed/7c/f1/326019-sdm-vol-3c.pdf</a> (raw information)</li>
+</ul>
+          <p><a href="https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868/1</link>
+        <pubDate>Thu, 04 Oct 2018 19:18:48 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-8868-1</guid>
+        <source url="https://d.clarkee.co.uk/t/a-lot-about-paging-a-little-about-virtualization-part-2/8868.rss">A lot about Paging, a little about Virtualization - Part #2</source>
+      </item>
+  </channel>
+</rss>

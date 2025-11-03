@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+    <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038</link>
+    <description>In our walk in linux, there comes a point where we need to hack ( pentest ) in a safe environment. The first thing we usually do is install Virtualization Softwares and install all the distros our system can take. In stages of hacking, to compromise the victim machine, we need some sort of program to infect the system. The down-side is, AntiVirus products have signatures of favourite Metasploit files and to successfully compromise the victim, we need to disable this products which isn&#39;t what we will be doing in real life. This calls for the development of our own program. Today, we touch on one of the many programs ( payloads actually ), that is, a reverse tcp program.&lt;br&gt;
+Reverse TCP: In a normal forward connection, a client connects to a server through the server&#39;s open port, but in the case of a reverse connection, the client opens the port that the server connects to. The most common way a reverse connection is used is to bypass firewall and router security restrictions.&lt;br&gt;
+For example, a backdoor running on a computer behind a firewall that blocks incoming connections can easily open an outbound connection to a remote host on the Internet. Once the connection is established, the remote host can send commands to the backdoor.This method of communication is helpful because starting a local shell on a victim machine can be easily and even without user control be detected by the system itself.&lt;br&gt;
+      In this series, we will be developing a reverse tcp program in python. Why should this be in parts ? This is because, with every part we introduce a new function or command or code into our shell making it more flexible. We are going to build our shell from ground up into a devastaing awesome fantastic fabulous catastrophic delicious ... ( I think thats enough ) shell.&lt;br&gt;
+In today&#39;s tutorial, we are going to initiate a connection, send and receive outputs. Lets begin ...&lt;br&gt;
+&lt;strong&gt;ATTACKER&#39;S SERVER SIDE&lt;/strong&gt;&lt;br&gt;&lt;br&gt;As the attacker, I stated earlier that we cannot initiate the connection and become a client because this could raise flags or we could be blocked even by a simple firewall. However, we can become the server and then reverse the connection to send commands to the client. We setup sockets and reverse the connection.&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/d42f5efd077fb1326d0568c8cba72c3eb7b78b5f.png&quot; width=&quot;578&quot; height=&quot;500&quot;&gt;&lt;br&gt;
+Lets break it down, shall we ?
+&lt;ul&gt;
+    &lt;li&gt;TODO: Strip &lt;strong&gt;subprocess as sp&lt;/strong&gt; from the import statements. Its not needed now.&lt;/li&gt;
+    &lt;li&gt;We accept socket information from the sys.argv module&lt;/li&gt;
+    &lt;li&gt;We setup the socket, bind the socket and listen for connections on the socket&lt;/li&gt;
+    &lt;li&gt;Should any come through, we accept and print a message&lt;/li&gt;
+    &lt;li&gt;We run our script into a while loop to send commands and receive output&lt;/li&gt;
+    &lt;li&gt;If an entered command is empty, we skip to the while loop again&lt;/li&gt;
+    &lt;li&gt;If not, should the command be &lt;strong&gt;exit()&lt;/strong&gt;, we send the command to the client and close our local sockets also.&lt;/li&gt;
+    &lt;li&gt;If any of the last two lines above does not come in, we send the comand and receive the output. The client obeys a rule by appending the output size to the output ( We will go into that in the client side )&lt;/li&gt;
+    &lt;li&gt;We strip the output size and assign it to &lt;strong&gt;total_size&lt;/strong&gt;. The rest of the output is assigned to &lt;Strong&gt;result&lt;/strong&gt;.&lt;/li&gt;
+    &lt;li&gt;If the sent output size does not match the length of the received output in the result variable. We run into a while loop opening the connection to receive the remaining data and updating the length of the result variable until the total_size is less or equal to the length of the result variable.&lt;/li&gt;
+    &lt;li&gt;We print the results and strip the last annoying new line string.&lt;/li&gt;
+    &lt;li&gt;If anything should fail, the socket is closed&lt;/li&gt;
+&lt;/ul&gt;
+That wasn&#39;t hard right !!. I would not be explaining line by line as our shell becomes complex, only the needed and important parts. Lets write our client socket.&lt;br&gt;
+&lt;strong&gt;VICTIM&#39;S CLIENT SIDE&lt;/strong&gt;&lt;br&gt;&lt;br&gt;The victim connects to us so the codes shouldn&#39;t be much.&lt;br&gt;&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/1395471861c0b2eb57db7ed7ea50665e9c18afaa.png&quot; width=&quot;690&quot; height=&quot;462&quot;&gt;&lt;br&gt;
+Lets break it down, shall we ?
+&lt;ul&gt;
+    &lt;li&gt;We accept socket information from the sys.argv module through command-line ( We will deal with that later ).&lt;/li&gt;
+    &lt;li&gt;We setup the socket and connect to the assigned address&lt;/li&gt;
+    &lt;li&gt;If connected, we receive the command sent by the server&lt;/li&gt;
+    &lt;li&gt;If the command is not &lt;storng&gt;exit()&lt;/strong&gt;, pipe and execute the command. The output of the executed command is assigned to the variable &lt;strong&gt;sh&lt;/strong&gt;&lt;/li&gt;
+    &lt;li&gt;( out, err ) are the standard stdout and stderr streams.&lt;/li&gt;
+    &lt;li&gt;We assign the output of the streams to the &lt;strong&gt;result&lt;/strong&gt; variable.&lt;/li&gt;
+    &lt;li&gt;The length is 16 bytes long to help the server ( attacker ) identify the size&lt;/li&gt;
+    &lt;li&gt;We calculate the length and send it appended by the output&lt;/li&gt;
+    &lt;li&gt;Else: If the received command is &lt;strong&gt;exit()&lt;/strong&gt;, we break the loop and close the connection.&lt;/li&gt;
+&lt;/ul&gt;
+Lets execute our attacker ( server ) script and see what we&#39;ve got&lt;br&gt;
+
+&lt;span style=&#39;color:red&#39;&gt;root@Sploit:&lt;/span&gt;&lt;span style=&#39;color:#729FCF&#39;&gt;~/Desktop&lt;/span&gt;# python reverseTcp.py &#39;&#39; 8000&lt;br&gt;
+
+The client should connect passing the host information on the command line.&lt;br&gt;
+
+&lt;span style=&#39;color:red&#39;&gt;root@Sploit:&lt;/span&gt;&lt;span style=&#39;color:#729FCF&#39;&gt;~/Desktop&lt;/span&gt;# python connect.py 127.0.0.1 8000&lt;br&gt;
+Here is a screenshot of the attacker&#39;s server script:&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/7e7fd2651134716fa11165ac04197caa0938e2ba.png&quot; width=&quot;690&quot; height=&quot;460&quot;&gt;&lt;br&gt;
+As expected, the client console should be empty because we aren&#39;t printing anything.&lt;br&gt;
+&lt;strong&gt;1 FUTURE SCREENSHOT&lt;/strong&gt;&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/1cc4dd85fbfba45bac8b16b4678febd9d24b2ec7.png&quot; width=&quot;400&quot; height=&quot;500&quot;&gt;&lt;BR&gt;
+Hope you stay tuned.&lt;br&gt;
+&lt;strong&gt;LETS END IT - CONCLUSION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;We have simply created our reverse tcp connection and now we will move on to writing some basic functions to help us and also maybe add some colours. The code however can be implemented on the windows machine although the operating system is not our choice of platform for this series.&lt;br&gt;
+Corrections, Modifications, Updates are welcome.</description>
+    
+    <lastBuildDate>Fri, 22 Dec 2017 00:29:58 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/11</link>
+        <pubDate>Fri, 22 Dec 2017 00:57:31 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-11</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/10</link>
+        <pubDate>Fri, 22 Dec 2017 00:29:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-10</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 31 hours. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/9</link>
+        <pubDate>Tue, 07 Nov 2017 23:00:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-9</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[Sandro_Melo]]></dc:creator>
+        <description><![CDATA[
+            <p>Very nice examples, thank very much… but I would like to know what the github address where can I download this examples?</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/8</link>
+        <pubDate>Mon, 06 Nov 2017 05:30:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-8</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[me1]]></dc:creator>
+        <description><![CDATA[
+            <p>hey nice tut, but I would like to understand a little bit more in the client, whe u call sp.Popen() and sh.communicate(), thx!</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/7</link>
+        <pubDate>Mon, 06 Nov 2017 04:47:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-7</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Thats a pretty good reference! Good share.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/6</link>
+        <pubDate>Fri, 02 Sep 2016 22:28:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-6</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks <a class="mention" href="https://d.clarkee.co.uk/u/smartone">@SmartOne</a> . Really appreciate</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/5</link>
+        <pubDate>Fri, 02 Sep 2016 14:38:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-5</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>Here’s a <a href="https://github.com/adam-p/markdown-here/wiki/Markdown-Cheatsheet#code" rel="nofollow noopener">Cheat Sheet</a> for the “interface” used at 0x00sec - Markdown <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/4</link>
+        <pubDate>Fri, 02 Sep 2016 14:37:48 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-4</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+        <description><![CDATA[
+            <p>OK. I will try in upcoming tutorials.</p>
+<p>Thanks anyway.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/3</link>
+        <pubDate>Fri, 02 Sep 2016 14:24:05 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-3</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice article although you should embed the code using the supplied support. As well as upload the code somewhere.</p>
+<p>Good job nonetheless!</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/2</link>
+        <pubDate>Fri, 02 Sep 2016 14:21:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-2</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 1</title>
+        <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+        <description><![CDATA[
+            <p>In our walk in linux, there comes a point where we need to hack ( pentest ) in a safe environment. The first thing we usually do is install Virtualization Softwares and install all the distros our system can take. In stages of hacking, to compromise the victim machine, we need some sort of program to infect the system. The down-side is, AntiVirus products have signatures of favourite Metasploit files and to successfully compromise the victim, we need to disable this products which isn’t what we will be doing in real life. This calls for the development of our own program. Today, we touch on one of the many programs ( payloads actually ), that is, a reverse tcp program.<br><br>
+Reverse TCP: In a normal forward connection, a client connects to a server through the server’s open port, but in the case of a reverse connection, the client opens the port that the server connects to. The most common way a reverse connection is used is to bypass firewall and router security restrictions.<br><br>
+For example, a backdoor running on a computer behind a firewall that blocks incoming connections can easily open an outbound connection to a remote host on the Internet. Once the connection is established, the remote host can send commands to the backdoor.This method of communication is helpful because starting a local shell on a victim machine can be easily and even without user control be detected by the system itself.<br><br>
+In this series, we will be developing a reverse tcp program in python. Why should this be in parts ? This is because, with every part we introduce a new function or command or code into our shell making it more flexible. We are going to build our shell from ground up into a devastaing awesome fantastic fabulous catastrophic delicious … ( I think thats enough ) shell.<br><br>
+In today’s tutorial, we are going to initiate a connection, send and receive outputs. Lets begin …<br><br>
+<strong>ATTACKER’S SERVER SIDE</strong><br><br>As the attacker, I stated earlier that we cannot initiate the connection and become a client because this could raise flags or we could be blocked even by a simple firewall. However, we can become the server and then reverse the connection to send commands to the client. We setup sockets and reverse the connection.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/d/d42f5efd077fb1326d0568c8cba72c3eb7b78b5f.png" width="578" height="500"><br><br>
+Lets break it down, shall we ?</p>
+<ul>
+    <li>TODO: Strip <strong>subprocess as sp</strong> from the import statements. Its not needed now.</li>
+    <li>We accept socket information from the sys.argv module</li>
+    <li>We setup the socket, bind the socket and listen for connections on the socket</li>
+    <li>Should any come through, we accept and print a message</li>
+    <li>We run our script into a while loop to send commands and receive output</li>
+    <li>If an entered command is empty, we skip to the while loop again</li>
+    <li>If not, should the command be <strong>exit()</strong>, we send the command to the client and close our local sockets also.</li>
+    <li>If any of the last two lines above does not come in, we send the comand and receive the output. The client obeys a rule by appending the output size to the output ( We will go into that in the client side )</li>
+    <li>We strip the output size and assign it to <strong>total_size</strong>. The rest of the output is assigned to <strong>result</strong>.</li>
+    <li>If the sent output size does not match the length of the received output in the result variable. We run into a while loop opening the connection to receive the remaining data and updating the length of the result variable until the total_size is less or equal to the length of the result variable.</li>
+    <li>We print the results and strip the last annoying new line string.</li>
+    <li>If anything should fail, the socket is closed</li>
+</ul>
+That wasn't hard right !!. I would not be explaining line by line as our shell becomes complex, only the needed and important parts. Lets write our client socket.<br>
+<strong>VICTIM'S CLIENT SIDE</strong><br><br>The victim connects to us so the codes shouldn't be much.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/1/1395471861c0b2eb57db7ed7ea50665e9c18afaa.png" width="690" height="462"><br>
+Lets break it down, shall we ?
+<ul>
+    <li>We accept socket information from the sys.argv module through command-line ( We will deal with that later ).</li>
+    <li>We setup the socket and connect to the assigned address</li>
+    <li>If connected, we receive the command sent by the server</li>
+    <li>If the command is not exit(), pipe and execute the command. The output of the executed command is assigned to the variable <strong>sh</strong>
+</li>
+    <li>( out, err ) are the standard stdout and stderr streams.</li>
+    <li>We assign the output of the streams to the <strong>result</strong> variable.</li>
+    <li>The length is 16 bytes long to help the server ( attacker ) identify the size</li>
+    <li>We calculate the length and send it appended by the output</li>
+    <li>Else: If the received command is <strong>exit()</strong>, we break the loop and close the connection.</li>
+</ul>
+Lets execute our attacker ( server ) script and see what we've got<br>
+<p><span>root@Sploit:</span><span>~/Desktop</span># python reverseTcp.py ‘’ 8000<br></p>
+<p>The client should connect passing the host information on the command line.<br></p>
+<p><span>root@Sploit:</span><span>~/Desktop</span># python connect.py 127.0.0.1 8000<br><br>
+Here is a screenshot of the attacker’s server script:<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/7/7e7fd2651134716fa11165ac04197caa0938e2ba.png" width="690" height="460"><br><br>
+As expected, the client console should be empty because we aren’t printing anything.<br><br>
+<strong>1 FUTURE SCREENSHOT</strong><br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/1/1cc4dd85fbfba45bac8b16b4678febd9d24b2ec7.png" width="400" height="500"><br><br>
+Hope you stay tuned.<br><br>
+<strong>LETS END IT - CONCLUSION</strong><br><br>We have simply created our reverse tcp connection and now we will move on to writing some basic functions to help us and also maybe add some colours. The code however can be implemented on the windows machine although the operating system is not our choice of platform for this series.<br><br>
+Corrections, Modifications, Updates are welcome.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038/1</link>
+        <pubDate>Fri, 02 Sep 2016 13:49:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1038-1</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-1/1038.rss">How To Make A Reverse TCP Backdoor In Python - Part 1</source>
+      </item>
+  </channel>
+</rss>

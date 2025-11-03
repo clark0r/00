@@ -1,0 +1,565 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>[C] Dynamic Memory (Part 5.0): Make Your Own Malloc</title>
+    <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076</link>
+    <description>Hello 0x00sec! This is the fifth installment of my Dynamic Memory series. In my [last](https://0x00sec.org/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063) article, I went through using `brk` and `sbrk` to alter a process&#39;s program break.
+
+After a decent amount of studying, I have some code to show all of you.
+
+I set out to roughly implement `malloc` and `free` and I have done so. `valgrind` shows no errors and my program&#39;s readouts make sense.
+
+___Note:___ _As @dtm would say, what follows is more my findings than an outright tutorial. I am no master of this; I&#39;m learning while teaching, as many often do._
+
+---
+# Headers
+
+Before anything else, I need to present the header file: **my-malloc.h**
+
+```c
+#include &lt;stddef.h&gt;
+
+#ifndef MY_MALLOC_HDR
+#define MY_MALLOC_HDR
+
+#define FREE 1
+#define NOT_FREE 0
+
+/*
+    Defining a basic chunk type here.
+
+    It should pad to be the next power of 2 &gt;=
+    user-requested amount of memory.
+
+*/
+typedef struct _chunk {
+    size_t  _chunk_sz; /* not including metadata */
+
+    /* to see if the chunk is free: */
+    unsigned char _free;
+
+    struct _chunk  *next,
+                  *prev;
+
+} _chunk;
+
+typedef struct _mem_session {
+    _chunk *_first_chunk,
+           *_last_chunk;
+    size_t _chunks_allocated;
+} _mem_session;
+
+extern _mem_session *_session;
+
+void *my_malloc(size_t bytes);
+void my_free(void *ptr);
+
+void   _create_session();
+_chunk *_find_free_chunk( size_t bytes );
+
+#endif
+```
+
+There is a lot of stuff in this header. The first thing is the type definition of `_chunk`, which, as its name may suggest, represents a chunk of memory.
+
+Following that, there is a type called `_mem_session`. This will be a global session that keeps track of all of the program&#39;s chunks. This will be the first thing stored on the heap.
+
+Upon a closer look, you&#39;ll see that `_chunk` is actually a doublely-linked list and `_mem_session` keeps track of that list&#39;s start and end. `_mem_session` also records how many `_chunk`s there are, the length of the linked list. _If you need a refresher on linked lists, I have a tutorial [here](https://0x00sec.org/t/data-structures-part-1-0-linked-list-class-implementations/237)._
+
+We note an `extern` variable called `_session` that points to a `_mem_session` instance. This pointer is how we will keep track of all of the chunks during runtime.
+
+There are four functions. The respective purposes of the first two should be quite obvious. `_create_session` does some first-time initialization. `_find_free_chunk` does as its name describes, but I&#39;ll save revealing its exact functionality for later.
+
+---
+# Concept
+
+Now that I&#39;ve shown you the header, it&#39;s likely that you have some questions. First, let me explain in more detail what a `_chunk` represents.
+
+Imagine our heap space like so:
+
+    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+    |                                         |##############|
+    |                       Program Break --&gt; |##############|
+    |                                         |##############|
+    |                                         |##############|
+    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+We have a bunch of memory and it&#39;s cut off by the break. Memory beyond the break is not currently ours to use.
+
+When we extend the break, we can use that memory. But we need to keep this memory organized. Such is the reason for chunks. Each chunk has a certain size -- and that size is a multiple of `4`.
+
+    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+    |                                         |****##########|
+    |                                         |****##########|
+    |                                         |****##########|
+    |                                         |****##########|
+    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+Imagine that the astericks represent a new chunk. What if we allocated a second chunk?
+
+    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+    |                                         |********######|
+    |                                         |********######|
+    |                                         |********######|
+    |                                         |********######|
+    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+Well, now you can&#39;t discern the two chunks! What we need is some metadata: information about each chunk. What would be good to know about a chunk?
+
+* The size of the chunk
+* The chunk before it
+* The chunk after it
+* Is the chunk being used?
+
+Let&#39;s add metadata to our visual:
+
+    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+    |                                     |$$****$$****######|
+    |                                     |$$****$$****######|
+    |                                     |$$****$$****######|
+    |                                     |$$****$$****######|
+    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+While we _do_ have to use a little extra memory, we can now differentiate between chunks. This is the use of the struct `_chunk`.
+
+---
+# Starting to code `my_malloc`.
+
+Now it&#39;s time to jump into `my_malloc`!
+
+```c
+#include &lt;stddef.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdlib.h&gt; /* just for exit() */
+
+#include &quot;my-malloc.h&quot;
+
+_mem_session *_session = NULL;
+```
+
+Above are our inclusions. We also give `_session` a value of `NULL`, meaning that each time the program runs it has no `_mem_session` until we give it one.
+
+```c
+void *my_malloc(size_t bytes) {
+
+    /* Round up to nearest power of 2. */
+    size_t cnt = (((bytes-1)&gt;&gt;2)&lt;&lt;2) + 4;
+
+    if (_session == NULL) {
+        _create_session();
+    }
+
+    _chunk *c = _find_free_chunk( cnt );
+
+    // ...
+}
+```
+As can be seen in the above code, the first thing we do is figure out how many bytes to allocate. I briefly mentioned that we want each chunk to store a number of bytes that is a multiple of `4`. That formula is explained in [1].
+
+Next, a session is created/initialized if none exist. This happens on the first call of `my_malloc`.
+
+Last in the above snippet, `_find_free_chunk` is called to look for any existing _free_ chunks that are large enough to hold `cnt` bytes.
+
+___A note on Free Chunks:___ _As can be seen in [2], free chunks can and do exist. They are chunks that were previously allocated but were freed. They still exist in memory so as to be reused in the future. Thus, in the metadata of a chunk, we note if said chunk is a free chunk or not. Also, two free chunks cannot be adjacent. When there are two free chunks side-by-side in RAM (in this context: virtual memory), they are merged into one big chunk._
+
+```c
+void *my_malloc(size_t bytes) {
+
+    //...
+
+    if (c == NULL) {
+
+        void *ptr = sbrk(0);
+
+        if ( brk(ptr + sizeof(_chunk) + cnt) &lt; 0) {
+            perror(&quot;couldn&#39;t allocate memory&quot;);
+            exit(2);
+        }
+
+        c = (_chunk*)ptr;
+        c-&gt;_chunk_sz = cnt;
+        c-&gt;_free = NOT_FREE;
+
+        c-&gt;prev = _session-&gt;_last_chunk;
+        c-&gt;next = NULL;
+        _session-&gt;_last_chunk = c;
+
+        _session-&gt;_chunks_allocated++;
+
+        printf(&quot;New chunk at %p\n&quot;, c);
+        printf(&quot;Result of ptr + sizeof(_chunk): %p\n&quot;, ptr + sizeof(_chunk));
+        printf(&quot;Size of a chunk: %i\n&quot;, (int)sizeof(_chunk));
+        printf(&quot;Amount of space requested: %i\n&quot;, (int)bytes);
+        printf(&quot;Amount given: %i\n&quot;, (int)cnt);
+
+    } else {
+
+        // ...
+    }
+
+    // ...
+}
+```
+
+We act based on the result of `_find_free_chunk`. If no viable chunk is found, meaning that `c = NULL`, we will add a new one to the heap. How? You guessed it! By extending the program break.
+
+1. Record current program break.
+2. Extend program break to fit chunk metadata and user data.
+3. Hold pointer to the beginning of the metadata in `c`.
+4. Track the size of the chunk with `c-&gt;_chunk_sz = cnt`.
+5. Mark the chunk as not free.
+6. Put the chunk in the session&#39;s chunk chain and increment `_session-&gt;_chunks_allocated` to signify the existence of this chunk.
+
+### What if there _is_ an available chunk?
+
+In that case, the code inside the `else` is executed:
+
+```c
+void *my_malloc(size_t bytes) {
+
+    // ...
+
+    if (c == NULL) {
+
+        // ...
+
+    } else {
+
+        c-&gt;_free = NOT_FREE;
+
+        // ...
+
+    }
+
+    return (sizeof(_chunk) + (char*)c);
+    /* will break if all resources are used*/
+
+}
+```
+
+If a free, usable chunk already exists, all we must do is note that we are now using the chunk. There are optimizations to be made that exceed the scope of this tutorial. It is important that these fundamentals of `my_malloc` are understood before we proceed. Also, I prefer brief articles.
+
+As can be seen in the code, `my_malloc` returns `void *`. The last thing we do is return a pointer offset. If we take the pointer to our chunk metadata and add the size of the chunk metadata, we get the pointer to the user data. ___Note:___ _The `char*` cast is so that we increment the pointer by bytes. A further explanation can be found [here](https://stackoverflow.com/questions/10554260/pointer-offset-doesnt-work-in-memset)._
+
+The counterpart to `my_malloc` is `my_free`:
+
+```c
+void my_free(void *ptr) {
+
+    printf(&quot;[*] Now freeing...\n&quot;);
+
+    if ( ptr &lt; (void*)((char*)_session-&gt;_first_chunk + sizeof(_chunk))
+        || ptr &gt; (void*)((char*)_session-&gt;_last_chunk + sizeof(_chunk)) ) {
+        perror(&quot;Invalid Free. Out of range!&quot;);
+        exit(3);
+    }
+
+    _chunk *c = (_chunk*)((char*)ptr - sizeof(_chunk) );
+
+    c-&gt;_free = FREE;
+
+    // ...
+}
+```
+While `my_free` actually does much more than shown above, these dozen lines or so make up the most fundamental part of the function.
+
+We make sure that the pointer is valid, meaning in the correct range of our heap. Then, we get a pointer to the chunk&#39;s metadata by doing some sweet pointer gymnastics (@0x00pf).
+
+Last, we mark the chunk as `FREE` so that it can be reused down the road.
+
+---
+# Conclusion
+
+I have written a lot more code than presented above; yet, I believe it to be paramount that what was shown today is understood. Thus, I&#39;m omitting optimizations and tricks that would certainly lead to confusion.
+
+Shortly, I will release another paper (or several) outlining the more complex aspects of the code.
+
+Later...
+@oaktree
+
+P.S. [This next article (Part 6.0)](https://0x00sec.org/t/c-dynamic-memory-part-6-0-a-closer-look-at-my-malloc/1202) covers more details of `my_malloc()`, including a few optimizations.
+
+---
+# References
+1. [A Malloc Tutorial](http://www.inf.udec.cl/~leo/Malloc_tutorial.pdf), Marwin Burelle
+2. [Understanding Glibc Malloc](https://sploitfun.wordpress.com/2015/02/10/understanding-glibc-malloc/), sploitfun</description>
+    
+    <lastBuildDate>Wed, 30 Nov 2016 16:40:20 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>[C] Dynamic Memory (Part 5.0): Make Your Own Malloc</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076/3</link>
+        <pubDate>Sun, 21 Jan 2018 00:30:04 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1076-3</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076.rss">[C] Dynamic Memory (Part 5.0): Make Your Own Malloc</source>
+      </item>
+      <item>
+        <title>[C] Dynamic Memory (Part 5.0): Make Your Own Malloc</title>
+        <dc:creator><![CDATA[Cal0X]]></dc:creator>
+        <description><![CDATA[
+            <p>I can’t believe I missed this. That’s real work right there man. Much appreciation to you.</p>
+<p>Regards,</p>
+<p>Cal0X</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076/2</link>
+        <pubDate>Wed, 30 Nov 2016 16:40:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1076-2</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076.rss">[C] Dynamic Memory (Part 5.0): Make Your Own Malloc</source>
+      </item>
+      <item>
+        <title>[C] Dynamic Memory (Part 5.0): Make Your Own Malloc</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello 0x00sec! This is the fifth installment of my Dynamic Memory series. In my <a href="https://0x00sec.org/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063">last</a> article, I went through using <code>brk</code> and <code>sbrk</code> to alter a process’s program break.</p>
+<p>After a decent amount of studying, I have some code to show all of you.</p>
+<p>I set out to roughly implement <code>malloc</code> and <code>free</code> and I have done so. <code>valgrind</code> shows no errors and my program’s readouts make sense.</p>
+<p><em><strong>Note:</strong></em> <em>As <a class="mention" href="https://d.clarkee.co.uk/u/dtm">@dtm</a> would say, what follows is more my findings than an outright tutorial. I am no master of this; I’m learning while teaching, as many often do.</em></p>
+<hr>
+<h1>Headers</h1>
+<p>Before anything else, I need to present the header file: <strong>my-malloc.h</strong></p>
+<pre><code class="lang-auto">#include &lt;stddef.h&gt;
+
+#ifndef MY_MALLOC_HDR
+#define MY_MALLOC_HDR
+
+#define FREE 1
+#define NOT_FREE 0
+
+/*
+    Defining a basic chunk type here.
+
+    It should pad to be the next power of 2 &gt;=
+    user-requested amount of memory.
+
+*/
+typedef struct _chunk {
+    size_t  _chunk_sz; /* not including metadata */
+
+    /* to see if the chunk is free: */
+    unsigned char _free;
+
+    struct _chunk  *next,
+                  *prev;
+
+} _chunk;
+
+typedef struct _mem_session {
+    _chunk *_first_chunk,
+           *_last_chunk;
+    size_t _chunks_allocated;
+} _mem_session;
+
+extern _mem_session *_session;
+
+void *my_malloc(size_t bytes);
+void my_free(void *ptr);
+
+void   _create_session();
+_chunk *_find_free_chunk( size_t bytes );
+
+#endif
+</code></pre>
+<p>There is a lot of stuff in this header. The first thing is the type definition of <code>_chunk</code>, which, as its name may suggest, represents a chunk of memory.</p>
+<p>Following that, there is a type called <code>_mem_session</code>. This will be a global session that keeps track of all of the program’s chunks. This will be the first thing stored on the heap.</p>
+<p>Upon a closer look, you’ll see that <code>_chunk</code> is actually a doublely-linked list and <code>_mem_session</code> keeps track of that list’s start and end. <code>_mem_session</code> also records how many <code>_chunk</code>s there are, the length of the linked list. <em>If you need a refresher on linked lists, I have a tutorial <a href="https://0x00sec.org/t/data-structures-part-1-0-linked-list-class-implementations/237">here</a>.</em></p>
+<p>We note an <code>extern</code> variable called <code>_session</code> that points to a <code>_mem_session</code> instance. This pointer is how we will keep track of all of the chunks during runtime.</p>
+<p>There are four functions. The respective purposes of the first two should be quite obvious. <code>_create_session</code> does some first-time initialization. <code>_find_free_chunk</code> does as its name describes, but I’ll save revealing its exact functionality for later.</p>
+<hr>
+<h1>Concept</h1>
+<p>Now that I’ve shown you the header, it’s likely that you have some questions. First, let me explain in more detail what a <code>_chunk</code> represents.</p>
+<p>Imagine our heap space like so:</p>
+<pre><code>+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+|                                         |##############|
+|                       Program Break --&gt; |##############|
+|                                         |##############|
+|                                         |##############|
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+</code></pre>
+<p>We have a bunch of memory and it’s cut off by the break. Memory beyond the break is not currently ours to use.</p>
+<p>When we extend the break, we can use that memory. But we need to keep this memory organized. Such is the reason for chunks. Each chunk has a certain size – and that size is a multiple of <code>4</code>.</p>
+<pre><code>+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+|                                         |****##########|
+|                                         |****##########|
+|                                         |****##########|
+|                                         |****##########|
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+</code></pre>
+<p>Imagine that the astericks represent a new chunk. What if we allocated a second chunk?</p>
+<pre><code>+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+|                                         |********######|
+|                                         |********######|
+|                                         |********######|
+|                                         |********######|
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+</code></pre>
+<p>Well, now you can’t discern the two chunks! What we need is some metadata: information about each chunk. What would be good to know about a chunk?</p>
+<ul>
+<li>The size of the chunk</li>
+<li>The chunk before it</li>
+<li>The chunk after it</li>
+<li>Is the chunk being used?</li>
+</ul>
+<p>Let’s add metadata to our visual:</p>
+<pre><code>+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+|                                     |$$****$$****######|
+|                                     |$$****$$****######|
+|                                     |$$****$$****######|
+|                                     |$$****$$****######|
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+</code></pre>
+<p>While we <em>do</em> have to use a little extra memory, we can now differentiate between chunks. This is the use of the struct <code>_chunk</code>.</p>
+<hr>
+<h1>Starting to code <code>my_malloc</code>.</h1>
+<p>Now it’s time to jump into <code>my_malloc</code>!</p>
+<pre><code class="lang-auto">#include &lt;stddef.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdlib.h&gt; /* just for exit() */
+
+#include "my-malloc.h"
+
+_mem_session *_session = NULL;
+</code></pre>
+<p>Above are our inclusions. We also give <code>_session</code> a value of <code>NULL</code>, meaning that each time the program runs it has no <code>_mem_session</code> until we give it one.</p>
+<pre><code class="lang-auto">void *my_malloc(size_t bytes) {
+
+    /* Round up to nearest power of 2. */
+    size_t cnt = (((bytes-1)&gt;&gt;2)&lt;&lt;2) + 4;
+
+    if (_session == NULL) {
+        _create_session();
+    }
+
+    _chunk *c = _find_free_chunk( cnt );
+
+    // ...
+}
+</code></pre>
+<p>As can be seen in the above code, the first thing we do is figure out how many bytes to allocate. I briefly mentioned that we want each chunk to store a number of bytes that is a multiple of <code>4</code>. That formula is explained in [1].</p>
+<p>Next, a session is created/initialized if none exist. This happens on the first call of <code>my_malloc</code>.</p>
+<p>Last in the above snippet, <code>_find_free_chunk</code> is called to look for any existing <em>free</em> chunks that are large enough to hold <code>cnt</code> bytes.</p>
+<p><em><strong>A note on Free Chunks:</strong></em> <em>As can be seen in [2], free chunks can and do exist. They are chunks that were previously allocated but were freed. They still exist in memory so as to be reused in the future. Thus, in the metadata of a chunk, we note if said chunk is a free chunk or not. Also, two free chunks cannot be adjacent. When there are two free chunks side-by-side in RAM (in this context: virtual memory), they are merged into one big chunk.</em></p>
+<pre><code class="lang-auto">void *my_malloc(size_t bytes) {
+
+    //...
+
+    if (c == NULL) {
+
+        void *ptr = sbrk(0);
+
+        if ( brk(ptr + sizeof(_chunk) + cnt) &lt; 0) {
+            perror("couldn't allocate memory");
+            exit(2);
+        }
+
+        c = (_chunk*)ptr;
+        c-&gt;_chunk_sz = cnt;
+        c-&gt;_free = NOT_FREE;
+
+        c-&gt;prev = _session-&gt;_last_chunk;
+        c-&gt;next = NULL;
+        _session-&gt;_last_chunk = c;
+
+        _session-&gt;_chunks_allocated++;
+
+        printf("New chunk at %p\n", c);
+        printf("Result of ptr + sizeof(_chunk): %p\n", ptr + sizeof(_chunk));
+        printf("Size of a chunk: %i\n", (int)sizeof(_chunk));
+        printf("Amount of space requested: %i\n", (int)bytes);
+        printf("Amount given: %i\n", (int)cnt);
+
+    } else {
+
+        // ...
+    }
+
+    // ...
+}
+</code></pre>
+<p>We act based on the result of <code>_find_free_chunk</code>. If no viable chunk is found, meaning that <code>c = NULL</code>, we will add a new one to the heap. How? You guessed it! By extending the program break.</p>
+<ol>
+<li>Record current program break.</li>
+<li>Extend program break to fit chunk metadata and user data.</li>
+<li>Hold pointer to the beginning of the metadata in <code>c</code>.</li>
+<li>Track the size of the chunk with <code>c-&gt;_chunk_sz = cnt</code>.</li>
+<li>Mark the chunk as not free.</li>
+<li>Put the chunk in the session’s chunk chain and increment <code>_session-&gt;_chunks_allocated</code> to signify the existence of this chunk.</li>
+</ol>
+<h3>What if there <em>is</em> an available chunk?</h3>
+<p>In that case, the code inside the <code>else</code> is executed:</p>
+<pre><code class="lang-auto">void *my_malloc(size_t bytes) {
+
+    // ...
+
+    if (c == NULL) {
+
+        // ...
+
+    } else {
+
+        c-&gt;_free = NOT_FREE;
+
+        // ...
+
+    }
+
+    return (sizeof(_chunk) + (char*)c);
+    /* will break if all resources are used*/
+
+}
+</code></pre>
+<p>If a free, usable chunk already exists, all we must do is note that we are now using the chunk. There are optimizations to be made that exceed the scope of this tutorial. It is important that these fundamentals of <code>my_malloc</code> are understood before we proceed. Also, I prefer brief articles.</p>
+<p>As can be seen in the code, <code>my_malloc</code> returns <code>void *</code>. The last thing we do is return a pointer offset. If we take the pointer to our chunk metadata and add the size of the chunk metadata, we get the pointer to the user data. <em><strong>Note:</strong></em> <em>The <code>char*</code> cast is so that we increment the pointer by bytes. A further explanation can be found <a href="https://stackoverflow.com/questions/10554260/pointer-offset-doesnt-work-in-memset" rel="nofollow noopener">here</a>.</em></p>
+<p>The counterpart to <code>my_malloc</code> is <code>my_free</code>:</p>
+<pre><code class="lang-auto">void my_free(void *ptr) {
+
+    printf("[*] Now freeing...\n");
+
+    if ( ptr &lt; (void*)((char*)_session-&gt;_first_chunk + sizeof(_chunk))
+        || ptr &gt; (void*)((char*)_session-&gt;_last_chunk + sizeof(_chunk)) ) {
+        perror("Invalid Free. Out of range!");
+        exit(3);
+    }
+
+    _chunk *c = (_chunk*)((char*)ptr - sizeof(_chunk) );
+
+    c-&gt;_free = FREE;
+
+    // ...
+}
+</code></pre>
+<p>While <code>my_free</code> actually does much more than shown above, these dozen lines or so make up the most fundamental part of the function.</p>
+<p>We make sure that the pointer is valid, meaning in the correct range of our heap. Then, we get a pointer to the chunk’s metadata by doing some sweet pointer gymnastics (<a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>).</p>
+<p>Last, we mark the chunk as <code>FREE</code> so that it can be reused down the road.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>I have written a lot more code than presented above; yet, I believe it to be paramount that what was shown today is understood. Thus, I’m omitting optimizations and tricks that would certainly lead to confusion.</p>
+<p>Shortly, I will release another paper (or several) outlining the more complex aspects of the code.</p>
+<p>Later…<br>
+<a class="mention" href="https://d.clarkee.co.uk/u/oaktree">@oaktree</a></p>
+<p>P.S. <a href="https://0x00sec.org/t/c-dynamic-memory-part-6-0-a-closer-look-at-my-malloc/1202">This next article (Part 6.0)</a> covers more details of <code>my_malloc()</code>, including a few optimizations.</p>
+<hr>
+<h1>References</h1>
+<ol>
+<li>
+<a href="http://www.inf.udec.cl/~leo/Malloc_tutorial.pdf" rel="nofollow noopener">A Malloc Tutorial</a>, Marwin Burelle</li>
+<li>
+<a href="https://sploitfun.wordpress.com/2015/02/10/understanding-glibc-malloc/" rel="nofollow noopener">Understanding Glibc Malloc</a>, sploitfun</li>
+</ol>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076/1</link>
+        <pubDate>Mon, 12 Sep 2016 02:23:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1076-1</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076.rss">[C] Dynamic Memory (Part 5.0): Make Your Own Malloc</source>
+      </item>
+  </channel>
+</rss>

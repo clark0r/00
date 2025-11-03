@@ -1,0 +1,366 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+    <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215</link>
+    <description>Ello Badass 0x00&#39;ers!
+
+&quot;Use a VPN!&quot;, &quot;Use Tor!&quot;, &quot;What, you don&#39;t use a VPN?&quot;
+
+These are probably just some of the phrases you have heard thrown about privacy. Using a VPN will help you stay safer from adversaries attempting to discover your identity. Perhaps you wish to remain anonymous from corporations or want to hide your traffic from your ISP. There are hundreds of reasons to use a VPN at home. 
+
+But using a VPN is just so damn annoying am I right? You gotta start it up every time you boot, sometimes you get a netsplit, or your wifi card craps out and your connection breaks. Or that annoying time you put your laptop lid down, and then bring it up, and you&#39;ve rejoined IRC with your IP naked, while you wait for your VPN to reconnect. Not to mention the paranoia that perhaps it isn&#39;t running. 
+
+Here I present to you, a transparent proxy, or VPN gateway. Once configured, you&#39;ll be able to just change your wifi settings, and instantly be protected on any device you connect to your network, you won&#39;t have to worry about IP leaks, and the minute you open your laptop lid, you&#39;ll be using the VPN. 
+
+#### Community Assigned Level:
+[poll type=regular]
+* Newbie
+* Wannabe
+* Hacker
+* Wizard
+* Guru
+[/poll]
+
+#### Required Skills and Items
+* Linux CLI
+* Following instructions
+* A configured Pi or Server
+ 
+
+-----
+# Setting up a VPN Gateway
+
+### Get your Pi!
+Get your Pi, install Raspbian on it.
+
+
+### Install required packages
+
+```bash
+sudo apt update &amp;&amp; sudo apt install openvpn easy-rsa dnsmasq iptables resolvconf 
+```
+
+### Configure OpenVPN settings
+Get your VPN client file, you can obtain this by purchasing a VPN, or using the free [0x00sec VPN](https://0x00sec.org/t/free-vpn-anybody/1450) (if you&#39;re a member).
+
+Put the file at `/etc/openvpn/client.conf`
+
+Now start OpenVPN
+
+```
+sudo service openvpn start
+```
+This should start without any problems, you can find out if everything worked out fine by running `ifconfig tun0`, 
+
+You should get something like this.
+```text
+ifconfig tun0
+tun0      Link encap:UNSPEC  HWaddr 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00
+          inet addr:10.8.0.10  P-t-P:10.8.0.9  Mask:255.255.255.255
+          UP POINTOPOINT RUNNING NOARP MULTICAST  MTU:1500  Metric:1
+```
+
+If it returns something like this
+
+```text
+tun0: error fetching interface information: Device not found
+```
+You have had a problem starting OpenVPN, in which case you need to sort that out before continuing.
+
+### Configure your Firewall
+
+Allow forwarding of traffic on the box
+
+```
+sudo sysctl -w net.ipv4.ip_forward=1
+```
+Make this persistent by adding `net.ipv4.ip_forward = 1` to /etc/sysctl.conf
+
+Configure your ports and forward traffic to tun0
+```bash
+sudo iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
+sudo iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
+sudo iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A INPUT -i lo -j ACCEPT
+sudo iptables -A INPUT -i eth0 -p icmp -j ACCEPT
+sudo iptables -A INPUT -i eth0 -p tcp --dport 22 -j ACCEPT
+sudo iptables -A INPUT -i eth0 -p tcp --dport 53 -j ACCEPT
+sudo iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+sudo iptables -P FORWARD DROP
+sudo iptables -P INPUT DROP
+sudo iptables -L
+```
+
+Make rules persistent
+```bash
+sudo apt-get install iptables-persistent
+```
+
+Upon install, it should prompt you if you want to make the rules persistent now, choose yes.
+
+### Configure DNS
+
+Open `/etc/resolv.conf` and insert
+```text
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+```
+
+### Start services
+
+```bash
+sudo service dnsmasq start
+sudo service resolvconf start
+```
+
+## Configure your Client
+Congrats! If you made it this far, everything should be set up correctly! Now you just need to set your default gateway on your client device to the IP of the the Pi. You can do this temporarily in Linux by running 
+
+```bash
+sudo route add default gw &lt;IP of Pi&gt;
+```
+
+
+# Conclusions
+You&#39;ve configured a VPN gateway, this way you can use your VPN without worrying about connecting to it, you can look after your privacy without it being a hassle. You can also chain VPN&#39;s in this way. Perhaps connect to a CTF VPN while still hiding your IP? ;)
+
+If you have any questions, drop them below! And if you have any issues, again, drop them below!
+
+I hope this has been of help to some out there! I&#39;m out ;)</description>
+    
+    <lastBuildDate>Fri, 22 Dec 2017 00:36:44 +0000</lastBuildDate>
+    <category>Linux</category>
+    <atom:link href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/10</link>
+        <pubDate>Sun, 21 Jan 2018 00:36:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2215-10</guid>
+        <source url="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss">Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</source>
+      </item>
+      <item>
+        <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/9</link>
+        <pubDate>Fri, 22 Dec 2017 00:36:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2215-9</guid>
+        <source url="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss">Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</source>
+      </item>
+      <item>
+        <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 4 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/8</link>
+        <pubDate>Sat, 09 Dec 2017 18:00:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2215-8</guid>
+        <source url="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss">Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</source>
+      </item>
+      <item>
+        <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>What about it?<br>
+<br><br></p>
+<p>…</p>
+          <p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/7</link>
+        <pubDate>Mon, 04 Dec 2017 20:12:17 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2215-7</guid>
+        <source url="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss">Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</source>
+      </item>
+      <item>
+        <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+        <dc:creator><![CDATA[Raw-x]]></dc:creator>
+        <description><![CDATA[
+            <p>What about using IBM X-Force DNS 9.9.9.9 into /etc/resolv.conf ?</p>
+          <p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/6</link>
+        <pubDate>Sun, 03 Dec 2017 22:44:34 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2215-6</guid>
+        <source url="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss">Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</source>
+      </item>
+      <item>
+        <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+        <dc:creator><![CDATA[thisadamis]]></dc:creator>
+        <description><![CDATA[
+            <p>ok awesome thanks guys! I get mine on Sunday. I may be back for more questions.</p>
+          <p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/5</link>
+        <pubDate>Fri, 04 Aug 2017 12:47:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2215-5</guid>
+        <source url="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss">Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</source>
+      </item>
+      <item>
+        <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="thisadamis" data-post="2" data-topic="2215">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/t/e56c9b/48.png" class="avatar"> thisadamis:</div>
+<blockquote>
+<p>Is the PI 3 capable of handling all 8 devices in my house? I hear that the network bus shares with the USB bus and because of that my throughput is limited.  Is this true?</p>
+</blockquote>
+</aside>
+<p>I don’t know about the PI3 but it was the case with the previous version. However, according to <a class="mention" href="https://d.clarkee.co.uk/u/pry0cc">@pry0cc</a>, the throughput limitation is acceptable.</p>
+<aside class="quote no-group" data-username="thisadamis" data-post="2" data-topic="2215">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/t/e56c9b/48.png" class="avatar"> thisadamis:</div>
+<blockquote>
+<p>Is the wifi signal as strong as my router I have now?</p>
+</blockquote>
+</aside>
+<p>I don’t think so. However, you can use an external wifi antenna to solve this issue.</p>
+<p>Hope it helps.</p>
+<p>Best,<br>
+Nitrax</p>
+<p><strong>Edit: <a class="mention" href="https://d.clarkee.co.uk/u/pry0cc">@pry0cc</a> was faster than me ahah</strong></p>
+          <p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/4</link>
+        <pubDate>Fri, 04 Aug 2017 12:25:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2215-4</guid>
+        <source url="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss">Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</source>
+      </item>
+      <item>
+        <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>I would not trust the wifi signal, this tutorial does not set up a wifi network, it is merely a gateway, a device that sits on your network.</p>
+<p>I suggest plugging it in via Ethernet, and configuring your wifi settings to use this as a gateway, then you can use your router as normal as the AP.</p>
+<p>I think it would be possible for all 8 devices, but throughput may indeed be limited. I run my laptop and my phone on mine, for more devices I would suggest using a bigger server, perhaps a NAS or something?</p>
+          <p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/3</link>
+        <pubDate>Fri, 04 Aug 2017 12:22:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2215-3</guid>
+        <source url="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss">Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</source>
+      </item>
+      <item>
+        <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+        <dc:creator><![CDATA[thisadamis]]></dc:creator>
+        <description><![CDATA[
+            <p>I want to do this but had a couple questions.</p>
+<ol>
+<li>
+<p>Is the wifi signal as strong as my router I have now?</p>
+</li>
+<li>
+<p>Is the PI 3 capable of handling all 8 devices in my house? I hear that the network bus shares with the USB bus and because of that my throughput is limited.  Is this true?</p>
+</li>
+</ol>
+          <p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/2</link>
+        <pubDate>Fri, 04 Aug 2017 12:20:40 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2215-2</guid>
+        <source url="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss">Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</source>
+      </item>
+      <item>
+        <title>Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Ello Badass 0x00’ers!</p>
+<p>“Use a VPN!”, “Use Tor!”, “What, you don’t use a VPN?”</p>
+<p>These are probably just some of the phrases you have heard thrown about privacy. Using a VPN will help you stay safer from adversaries attempting to discover your identity. Perhaps you wish to remain anonymous from corporations or want to hide your traffic from your ISP. There are hundreds of reasons to use a VPN at home.</p>
+<p>But using a VPN is just so damn annoying am I right? You gotta start it up every time you boot, sometimes you get a netsplit, or your wifi card craps out and your connection breaks. Or that annoying time you put your laptop lid down, and then bring it up, and you’ve rejoined IRC with your IP naked, while you wait for your VPN to reconnect. Not to mention the paranoia that perhaps it isn’t running.</p>
+<p>Here I present to you, a transparent proxy, or VPN gateway. Once configured, you’ll be able to just change your wifi settings, and instantly be protected on any device you connect to your network, you won’t have to worry about IP leaks, and the minute you open your laptop lid, you’ll be using the VPN.</p>
+<h4>Community Assigned Level:</h4>
+<p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/1">Click to view the poll.</a></p>
+<h4>Required Skills and Items</h4>
+<ul>
+<li>Linux CLI</li>
+<li>Following instructions</li>
+<li>A configured Pi or Server</li>
+</ul>
+<hr>
+<h1>Setting up a VPN Gateway</h1>
+<h3>Get your Pi!</h3>
+<p>Get your Pi, install Raspbian on it.</p>
+<h3>Install required packages</h3>
+<pre><code class="lang-bash">sudo apt update &amp;&amp; sudo apt install openvpn easy-rsa dnsmasq iptables resolvconf 
+</code></pre>
+<h3>Configure OpenVPN settings</h3>
+<p>Get your VPN client file, you can obtain this by purchasing a VPN, or using the free <a href="https://0x00sec.org/t/free-vpn-anybody/1450">0x00sec VPN</a> (if you’re a member).</p>
+<p>Put the file at <code>/etc/openvpn/client.conf</code></p>
+<p>Now start OpenVPN</p>
+<pre><code class="lang-auto">sudo service openvpn start
+</code></pre>
+<p>This should start without any problems, you can find out if everything worked out fine by running <code>ifconfig tun0</code>,</p>
+<p>You should get something like this.</p>
+<pre><code class="lang-nohighlight">ifconfig tun0
+tun0      Link encap:UNSPEC  HWaddr 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00
+          inet addr:10.8.0.10  P-t-P:10.8.0.9  Mask:255.255.255.255
+          UP POINTOPOINT RUNNING NOARP MULTICAST  MTU:1500  Metric:1
+</code></pre>
+<p>If it returns something like this</p>
+<pre><code class="lang-nohighlight">tun0: error fetching interface information: Device not found
+</code></pre>
+<p>You have had a problem starting OpenVPN, in which case you need to sort that out before continuing.</p>
+<h3>Configure your Firewall</h3>
+<p>Allow forwarding of traffic on the box</p>
+<pre><code class="lang-auto">sudo sysctl -w net.ipv4.ip_forward=1
+</code></pre>
+<p>Make this persistent by adding <code>net.ipv4.ip_forward = 1</code> to /etc/sysctl.conf</p>
+<p>Configure your ports and forward traffic to tun0</p>
+<pre><code class="lang-bash">sudo iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
+sudo iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
+sudo iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A INPUT -i lo -j ACCEPT
+sudo iptables -A INPUT -i eth0 -p icmp -j ACCEPT
+sudo iptables -A INPUT -i eth0 -p tcp --dport 22 -j ACCEPT
+sudo iptables -A INPUT -i eth0 -p tcp --dport 53 -j ACCEPT
+sudo iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+sudo iptables -P FORWARD DROP
+sudo iptables -P INPUT DROP
+sudo iptables -L
+</code></pre>
+<p>Make rules persistent</p>
+<pre><code class="lang-bash">sudo apt-get install iptables-persistent
+</code></pre>
+<p>Upon install, it should prompt you if you want to make the rules persistent now, choose yes.</p>
+<h3>Configure DNS</h3>
+<p>Open <code>/etc/resolv.conf</code> and insert</p>
+<pre><code class="lang-nohighlight">nameserver 8.8.8.8
+nameserver 8.8.4.4
+</code></pre>
+<h3>Start services</h3>
+<pre><code class="lang-bash">sudo service dnsmasq start
+sudo service resolvconf start
+</code></pre>
+<h2>Configure your Client</h2>
+<p>Congrats! If you made it this far, everything should be set up correctly! Now you just need to set your default gateway on your client device to the IP of the the Pi. You can do this temporarily in Linux by running</p>
+<pre><code class="lang-bash">sudo route add default gw &lt;IP of Pi&gt;
+</code></pre>
+<h1>Conclusions</h1>
+<p>You’ve configured a VPN gateway, this way you can use your VPN without worrying about connecting to it, you can look after your privacy without it being a hassle. You can also chain VPN’s in this way. Perhaps connect to a CTF VPN while still hiding your IP? <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<p>If you have any questions, drop them below! And if you have any issues, again, drop them below!</p>
+<p>I hope this has been of help to some out there! I’m out <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215/1</link>
+        <pubDate>Fri, 09 Jun 2017 15:37:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2215-1</guid>
+        <source url="https://d.clarkee.co.uk/t/setting-up-an-easy-vpn-gateway-on-a-pi-transparent-proxy/2215.rss">Setting up an Easy VPN Gateway on a Pi - Transparent Proxy</source>
+      </item>
+  </channel>
+</rss>

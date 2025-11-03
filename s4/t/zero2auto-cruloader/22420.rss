@@ -1,0 +1,591 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Zero2Auto - CruLoader</title>
+    <link>https://d.clarkee.co.uk/t/zero2auto-cruloader/22420</link>
+    <description># Zero2Auto - CruLoader
+
+## Preface
+As part of the course we were instructed to analyze a custom malware sample developed for us, below is a full analysis of that sample plus a an automated script to extract the final payload of that sample.
+***
+Hi there,
+
+During an ongoing investigation, one of our IR team members managed to locate an unknown sample on an infected machine belonging to one of our clients. We cannot pass that sample onto you currently as we are still analyzing it to determine what data was exfilatrated. However, one of our backend analysts developed a YARA rule based on the malware packer, and we were able to locate a similar binary that seemed to be an earlier version of the sample we&#39;re dealing with. Would you be able to take a look at it? We&#39;re all hands on deck here, dealing with this situation, and so we are unable to take a look at it ourselves.
+We&#39;re not too sure how much the binary has changed, though developing some automation tools might be a good idea, in case the threat actors behind it start utilizing something like Cutwail to push their samples.
+I have uploaded the sample alongside this email.
+
+Thanks, and Good Luck!
+***
+## Basic Static &amp; Dynamic Anaylsis
+
+### Sample information:
+
+SHA-256: **[Redacted]**
+
+Intezer: **[Redacted]**
+
+Any.run:
+**[Redacted]**
+
+VirusTotal:
+**[Redacted]**
+
+We begin by running the sample in a sandboxed environment like any.run. We can immediately see that this process launches itself and **svchost** as a sub process. This can also be confirmed within Intezer, and in Intezer one can examine the strings contained within each sub process. We can assume there is process injection happening.
+
+![|624x275](upload://plEaOqHnm5EWokcvloDHXLfTEIl.png)
+
+![|499x277](upload://6GFTLiiqyQSaDRLcLeTlaxwOmsv.png)
+
+Regarding any connection made to outer servers, we can see that **pastebin.com** is being contacted.
+
+![|470x187](upload://xaXqnUpfpmd5l2tXPaaxMsWwOqS.png)
+
+There is a suspicious looking resource within the resource section:
+
+![|624x47](upload://a5x7H2VLDPXHM1u3Ey8JN58V7t7.png)
+
+Before the sandbox quit on **Any.run** – one can see a strange looking **MessageBox** string.
+
+![|500x187](upload://mbIEuTJ8RkO3Z6IVJ2jvuzPWS8i.png)
+
+Finally, the strings found in all first 3 loaded process appear to encrypt, and this can be easily confirmed within Intezer:
+
+![|239x158](upload://jq73AJfTlBgOEZ7SkMLeWXIkr8P.png)
+![|261x160](upload://3jUoaTpnEaPY1OEOs59lFYeO3ct.png)
+
+**Summary**:
+We’re going to be looking for process injection, I suspect that the resource located within the resource section would be mapped into memory, unpacked or decrypted and then injected into the second sub process. There are 4 sub process in total so our final payload would be located on the fourth sub process. It is assumed that the payload would connect to pastebin and display a message box. There is definitely string encryption going on, so we’ll have to deal with that as well.
+
+***
+
+## Static and Dynamic Anaylsis
+
+This binary is compiled with Visual Studio C++, the implications of that mean that the actual main function is located somewhere within the start function and I’ve located it by recursively traversing xrefs from one of the imported functions. The main function is located at **0x00401400**
+
+![|233x350](upload://riLzkWwG3Al8ZHUEbenk16JYyvi.png)
+
+When viewing the code of the main function one can see gibberish strings being pushed before function calls:
+
+![|269x272](upload://mjVspkcrSzYl17u1LDQlSmoeXdt.png)
+
+The function that is called after each push is the same, I instantly assume there is some string encryption going on. The extensive use of **LoadLibraryA** and **GetProcAddress** also makes me assume these strings are API strings that are resolved using **LoadLibraryA** and **GetProcAddress**.
+
+At **loc_401550** and **loc_401570** one can located something that resembles a **RC4 KSA** routine, it is easily recognized by the two loop procedures iterating **256** times.
+
+![|285x456](upload://j0fklFRvCBX94DqcR9dHWbojlRy.png)
+
+These are just quick assumptions I’ve made by looking at the binary, the rest of it is filled with obfuscated code and otherwise an extensive use of registers and dynamic resolving so we’ll have to resort to dynamic analysis. I’ve disabled **ASLR** for this binary with **CFF explorer** so it would be easier to debug it.
+I’ve set relevant breakpoints within the debugger. So all the resource related functions to locate any resource loading, **CreateProcessInternalW** for process initialization and **VirtualProtect**, **VirtualAllocEx** and **WriteProcessMemory** for injection. In addition I’ve set breakpoints on **OutputDebugString** and **IsDebuggerPresent** to catch easy implemented anti analysis.
+
+![|624x99](upload://gTVtJRQEJmxcowxQPY79BEP5058.png)
+
+First, as assumed the **sub_401300** seems to be resolving strings:
+
+![|624x280](upload://f0ZKjBfmBDNrtic2hhnb8SOLyoW.png)
+
+The function **func_StringDecrypt** seems to be decrypting strings using some kind of custom base64 decoding, The reason I suspect is – is because the use of the full alphanumeric string that is being passed within this function. This function would be studied extensively later on in this paper and we’ll attempt to generate an automation script for it to decode all strings within this sample.
+
+![|624x123](upload://ib5BGgm9JsZmpCO6zfMJ4WFwN0Z.png)
+
+Then the sample does something interesting:
+
+![|490x552](upload://rQ6aE4Mf1A6mbISISQmm1WjEktj.png)
+
+It allocates space for the resource but it skips the first **0x1C** bytes within the resource.
+
+Hmm, perhaps this is the decryption key for the **RC4** algorithm we saw before?
+
+![|590x29](upload://61pfqk0R7Wx42QkUjrznK1JzTtV.png)
+
+Then a call is performed to **sub_402DB0** which I renamed to **func_CopyResourceWithoutKeyToAllocMem** because that is exactly what it does, it just copies the resource without its key, so starting at offset **0x1C**.
+
+![|505x152](upload://kVeQ9XhBDwUhV7F0KS4uUsDekAx.png)
+
+because that is exactly what it does, it just copies the resource without its key, so starting at offset **0x1C**. This function would seem very confusing at first, but if we set a hardware **breakpoint** on the allocated memory we’ll break within this function we can confirm this. Because at 00403002 it performs this copying procedure and then it just exists the function:
+
+![|589x170](upload://h8urxjYWD0UlEiX3CNNDmAryIf7.png)
+
+![|565x222](upload://yLuDVOIUeLWxG1Il8QTPHhJ6meZ.png)
+
+Then **sub_4025B0** is executed, it receives a stack address and we simply skip this function while looking at that address on dump we can see that it simply zeroes it out.
+
+![|593x167](upload://tQDvNN64tdKVjtOPJELwdw7cYq9.png)
+
+So thankfully I’m saving a lot of time by skipping these rabbit holes.
+
+Then the assumed **RC4** algorithm executes, what I want to do is locate the address to where the sample mapped the resource to memory as I suspect that it’s going to be decrypted.
+
+![|590x166](upload://neIjfyUJIuVmSiE7qZCATWil4Re.png)
+
+So I’m going to skip the RC4 decryption routine and jump straight to address 0x40161D
+
+![|594x165](upload://hZaMYwjbPilHKlcKxb6PEMUiBTf.png)
+
+Yay! I decide to dump the new PE file out to disk but we’re not done yet. We have to see how it’s going to be injected to memory.
+
+We jump into **sub_401000**:
+
+![|445x131](upload://nPkW0hvDbKAGaqK6J3FtkA0OLHQ.png)
+
+First the sample resolves the **ImageBase** of the current executing sample and then it attempts to confirm and locate the address of the **NT_Headers** of the decrypted payload.
+
+Then the current process main.bin is created in suspended mode
+
+![|624x49](upload://zvLIPj0hjNqywQfsXUU5NtkqvFF.png)
+
+Seems like there is going to be process injection involved.
+
+![|566x160](upload://dZGnCPmkrgXnzmlyZoJCejsw9C9.png)
+
+First memory is allocated within the new process. The sample attempts to execute **VirtualAllocEx** on the new process. Attempting to allocate memory at the payloads PE default **ImageBase** and with the virtual Size of the image. This won’t work though under our modified execution since we disabled **ASLR**. Why? Because both processes execute at the same **ImageBase**, the new process already has memory allocated within that region, so we must enable **ASLR** and start again. So, lets do that just that and we’ll see that it would work.
+
+Then the sample will copy the payloads section to their correct virtual addresses:
+
+![|436x453](upload://elHCc9VoPGnQdDVBXYBRWsGk1Gw.png)
+
+Then something very interesting happens:
+The **ImageBase** of the payload is written to the **PEB** of the new process, specifically at offset 0x8.
+
+![|179x72](upload://hjtXHbeAcVsNLyDbLV2g9hTEhhA.png)
+
+![|458x235](upload://elPjWuIzdZZcczPOGeuy2rqWS5W.png)
+
+![|514x101](upload://nYkqbNEAYDJ4jY9W5Xa3TTMwj5B.png)
+
+We can assume that the payload would use this to resolve its own APIs.
+
+Finally, **SetThreadContext** and **ResumeThread** are called, and the injected payload executes.
+
+![|395x91](upload://w2ZqfumdQsV7d7qsJDaaAvJaTEg.png)
+
+***
+
+## Second Payload Analysis
+
+### Sample information:
+
+SHA-256: **[Redacted]**
+
+Intezer: **[Redacted]**
+
+Any.run: **[Redacted]**
+
+VirusTotal: **[Redacted]**
+
+## Advanced Static and Dynamic Analysis
+I’m going to assume process injection again and go straight into analysis, I’ll disable **ASLR** for this execution as I would be executing the second stage payload independently and so the previous problem, we encountered due disabling **ASLR** shouldn’t bother us.
+
+It is observed that this second stage contains API hashing as the extensive use of **CRC32** constants indicates that:
+
+![|320x171](upload://7AA9bX7BObB1glpaiNwmyiWIjOb.png)
+
+In addition, the function that was seen in the first stage loader that simply copies the payload into memory from the resource section can be seen:
+
+![|383x406](upload://16PEjSx0aViZNsO4E6zJ8beK7Yy.png)
+
+I’ve set relevant breakpoints within the debugger. So, all the resource related functions to locate any resource loading, **CreateProcessInternalW** for process initialization and **VirtualProtect**, **VirtualAllocEx** and **WriteProcessMemory** for injection. In addition, I’ve set breakpoints on **OutputDebugString** and **IsDebuggerPresent** to catch easy implemented anti analysis.
+
+The malware takes the name of the file that its currently executing from and hashes it using a **CRC32** hashing algorithm, it can be identified by the **CRC32** hashing constants found within this function. The sample then compares the result against a constant value. I’m assuming its using this method as an anti-analysis method to check if the samples name is “sample” or “malware” its really hard to tell. If this check matches the sample quits execution.
+
+![|624x73](upload://fR6fmFNcBzflnOo6P3hIw5klOri.png)
+
+Then an API resolving routine called which utilizes the **CRC32** hashing algorithm we seen earlier:
+
+![|298x79](upload://2dwp44n2uJOMa72u1SdtELGXKca.png)
+
+The **HashID**(EDX) and the **ID**(ECX) which identifies the library to which to resolve the API from
+
+![|459x58](upload://vbTnaM14AOyExtqMSuBs962xvLP.png)
+![|624x120](upload://2lhQuijuBIVoIKuuVvFajWg401X.png)
+
+I will not explain how the API Hashing and resolving in depth. Basically the export table of each loaded DLL is hashed to check which function name matches the hash passed into the function. If anyone wants to read about how that might be implemented they can read about it [on my github right here](https://github.com/DanusMinimus/API-Hash).
+
+The sample loads **IsDebuggerPresent** to check if the malware is executing under a debugger, this can be easily circumvented.
+The next anti analysis method located within **sub_401000** checks if any blacklisted process is running – the malware hashes each running process and then checks if the hash matches to a pre-computed hash array. If they match the malware quits execution.
+![|378x109](upload://9FwbH0iXnks6wi1jdvGfwlbcV8I.png)
+
+Then the sample executes **sub_401D50** which resolves a lot of APIs that might indicate process injection:
+
+![|130x291](upload://betzr9uAXbtiGr58KWoVguUNOb4.png)
+
+1. Start **svchost** with suspended flags
+2. Copy current PE into allocated memory
+3. Allocate Memory in **svchost**
+4. Rebuild current PE payload relocation table
+5. Write payload into **svchost**
+6. Use **CreateRemoteThread** to execute function **sub_401DC0**
+
+To continue execution, we simply must attach to a second debugger instance and set a **breakpoint** on the functions location and after running **CreateRemoteThread** we should hit it.
+
+![|611x395](upload://mnITs8RtkjXflPZUH2ITXgrDYHF.png)
+
+After setting up the **breakpoint** lets resume execution of the **svchost** instance and then skip **CreateRemoteThread** and see if anything happens. ![|624x103](upload://vIj3uMy2r7zqb6BlRQh8F4GR4CY.png)
+
+Success! We can continue analyzing this function within our documented IDA instance as this function is located in the second stage payload.
+
+It’s important to note that interestingly enough – this function is called previously at **loc_402085** when the **func_CRC32Hash** returns a hashed value for the current executing process name which matches a hardcoded hash.
+
+![|624x229](upload://oge5jlIezM9rmMYpJnEnbgsc3Ze.png)
+I quickly assumed that this is a method to detect if the binary is running from **svchost**, because as we seen in the malware’s execution process tree, it executes **svchost** twice. I later confirmed this check by renaming the sample to **svchost.exe** and it worked:
+
+![|624x80](upload://wDcg7ssmiAEBTh0v8zBHsyfuhXo.png)
+
+Let’s continue with the analysis.
+
+This function first resolves a few Internet WINAPIs:
+
+![|624x203](upload://9OXBwZeFbSCfbJKW1Ryhh27GM5B.png)
+
+Then a strange string located at offset **0x0413C7C** is passed into a code block and decrypted by a very simple algorithm:
+
+![|242x203](upload://hQ24BrwLgSZML4XkBdgpEPS7ftI.png)
+
+So, our encrypted byte sequence:
+
+![|608x18](upload://15A5G20rwZHsvTqHNSbqtFdb7cO.png)
+
+Returns:
+![|439x34](upload://ceEZaU1g8mbVcMBpfpdgbT8Q8xV.png)
+
+Which resolves to **[Redacted]**
+![|499x191](upload://6c4pao0NHaQEZBybSU5zH7ZBKjf.png)
+
+Hmm.. This might indicate stenography is involved. Let’s continue with the analysis
+
+This pastebin link is passed into **sub_401290** this function returns the image link contained within the pastebin and saves it within the memory.
+
+This resolved link is passed into **sub_4013A0**, first the function reads the contents of the image file linked passed into it. Using **sub_401290** which I renamed to **func_ReadWebContents**
+
+![|340x335](upload://9tZCLGJufbkNgcqt6X9pUTEG6P7.png)
+
+Then the function decodes a string located with **qword_413CA4**
+![|339x16](upload://2BNRYSpBSVXwatHMIY4DC21sxpY.png)
+
+Which resolves to **output.jpg**, then it computes a path to the Temp directory and converts the it to a WCHAR type string, then specially picked bytes are extracted from the data section to compute this path:
+
+![|422x21](upload://5KjZZOemWYigmxNmaDZik45zIuU.png)
+
+Then **CreateDirectory** is invoked to create the **cruloader** folder, after which the **output.jpg** file string is append to this path to create the following string:
+
+![|502x24](upload://1rcbBQ0qub21DxEiGrmHUJbvNH8.png)
+
+**CreateFileW** is then invoked to create this file:
+
+![|367x188](upload://oXxZcrLdsTyuZ75nuzHD2K1VYoo.png)
+
+Then the PNG file extracted from the previous website is copied into this file using **WriteFile**
+![|624x325](upload://bm5Sdo961shw9oaJ5aV4OEqAJqx.png)
+
+![|357x220](upload://i0N3nqF30BoEU1l0DcHOGTYemBq.png)
+Afterwards the sample attempts to locate a string **“redaolurc”** (which is **cruloader** reversed) within the image data download
+
+![|624x193](upload://sKYeo7n8mJY3NyfFtUHl4c8yIsC.png)
+
+After locating the string within the image data, this offset is used to access encrypted data. The data is xored with **xmmword**(which is 128-bit) 40 times. The xor key is **0x61**(‘a’). One could also notice that there are a lot of ‘a’ characters within the encoded payload. These ‘a’ characters are actually zeroes within the binary, because 0 ^ 0x61 = 0x61 so this payload isn’t obfuscated with high class obfuscation as on could infer this pretty quickly.
+
+![|540x14](upload://u8zq36M3Ju3Ac7SvxnFzYungx5F.png)
+
+![|400x449](upload://qcSqQHmjxTWzzc70Z2s9EarTDEY.png)
+
+And the result is a valid PE file:
+
+![|598x170](upload://3S6HJiwLyvFitui9PNHM3eNSNXM.png)
+
+After dumping this PE I’ve observed it within IDA and it would appear as if this is the final payload!
+
+![|624x162](upload://2LqZ2cbMSh71Id7IZXYUc4WNrTt.png)
+
+This PE Is then mapped, relocated and then fixed with **VirtualProtect** and finally injected into **svchost.exe** again within the function sub_401750 this executing the final payload.
+
+![|474x201](upload://gooixmmm1g7w25z47RNUpWU7uku.png)
+
+And that’s pretty much it!
+
+***
+
+## Automation
+
+Alright, Let’s begin attempting to automate the process of extracting all payloads and dumping them on disk.
+
+We begin with the resource section; this one is pretty easy.
+
+![|624x37](upload://dywv2s2V9gU8jpoK8hfy2QPv41q.png)
+
+First we begin looking for a string at offset 0x60 + 0xc from the begging of the resource section, and load the string which is 16 bytes in length.
+
+![|483x104](upload://5Rv66rokx0ge8HGZhb64icEL5PI.png)
+
+Then, we load the rest of the payload into another variable
+
+![|624x272](upload://v6qIv4B10bxZDEeLQcrq0HAgryy.png)
+
+Then we use the ARC4 python module to decrypt this data and dump it on disk
+
+![|457x197](upload://6azUG4fcBS6TVh44jrgAFoOzdr4.png)
+
+Now as we posses the second payload, we must locate the pastebin URL inside the PE file.
+
+![|624x147](upload://2Mfzx9Y3I0Guqfqsg8kqPPi3WG1.png)
+
+We know our URL is located two **XMM_WORDS** (32 bytes) in size after the offset of the string **“cruloader”** so let’s set this up:
+
+![|276x66](upload://2CpRJlvLCEwmLqVgLoFAbGThxTx.png)
+
+![|624x247](upload://8Fm4RV2bNftl5dPHsLIsgSKuUqh.png)
+
+We calculate the offset by locating the **“cruloader”** string, adding 3 bytes to skip the null bytes and then jumping after both irrelevant **XMM_WORDS**. We extract our data and we set the **XOR** key to 0xC5
+
+Then for each byte extracted we perform a four **ROL** and then a xor to match the decryption algorithm
+
+![|301x231](upload://ws9W9yE07LclKn659Dq4ZtkhqPZ.png)
+
+![|526x89](upload://gcjdZQrUSWdCUCQ28hAc1DhVEId.png)
+
+We then use **URLLIB** to extract the pastebin URL and then we use that same lib to extract the contents of the payload image
+
+![|549x143](upload://rzYdnP2H6erq9a0RD3KtSfJmKAS.png)
+
+Finally, to locate the payload within the **PNG** payload file we locate the reverse **“cruloader”** string, extract the payload and then xor it with **0x61**.
+
+![|624x153](upload://vpOpuDq0Bj9jH14DotlaqT5hH5B.png)
+
+And that’s it! Easy as that!
+
+I really enjoyed this challenge and I’m looking forward to continuing the course 😊
+Hope you enjoyed reading this!</description>
+    
+    <lastBuildDate>Sun, 26 Jul 2020 23:03:40 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/zero2auto-cruloader/22420.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Zero2Auto - CruLoader</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/zero2auto-cruloader/22420/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/zero2auto-cruloader/22420/3</link>
+        <pubDate>Wed, 25 Nov 2020 04:47:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22420-3</guid>
+        <source url="https://d.clarkee.co.uk/t/zero2auto-cruloader/22420.rss">Zero2Auto - CruLoader</source>
+      </item>
+      <item>
+        <title>Zero2Auto - CruLoader</title>
+        <dc:creator><![CDATA[markeurope]]></dc:creator>
+        <description><![CDATA[
+            <p>too complicated but thank you</p>
+          <p><a href="https://d.clarkee.co.uk/t/zero2auto-cruloader/22420/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/zero2auto-cruloader/22420/2</link>
+        <pubDate>Sun, 26 Jul 2020 23:03:40 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22420-2</guid>
+        <source url="https://d.clarkee.co.uk/t/zero2auto-cruloader/22420.rss">Zero2Auto - CruLoader</source>
+      </item>
+      <item>
+        <title>Zero2Auto - CruLoader</title>
+        <dc:creator><![CDATA[Danus]]></dc:creator>
+        <description><![CDATA[
+            <h1>Zero2Auto - CruLoader</h1>
+<h2>Preface</h2>
+<p>As part of the course we were instructed to analyze a custom malware sample developed for us, below is a full analysis of that sample plus a an automated script to extract the final payload of that sample.</p>
+<hr>
+<p>Hi there,</p>
+<p>During an ongoing investigation, one of our IR team members managed to locate an unknown sample on an infected machine belonging to one of our clients. We cannot pass that sample onto you currently as we are still analyzing it to determine what data was exfilatrated. However, one of our backend analysts developed a YARA rule based on the malware packer, and we were able to locate a similar binary that seemed to be an earlier version of the sample we’re dealing with. Would you be able to take a look at it? We’re all hands on deck here, dealing with this situation, and so we are unable to take a look at it ourselves.<br>
+We’re not too sure how much the binary has changed, though developing some automation tools might be a good idea, in case the threat actors behind it start utilizing something like Cutwail to push their samples.<br>
+I have uploaded the sample alongside this email.</p>
+<p>Thanks, and Good Luck!</p>
+<hr>
+<h2>Basic Static &amp; Dynamic Anaylsis</h2>
+<h3>Sample information:</h3>
+<p>SHA-256: <strong>[Redacted]</strong></p>
+<p>Intezer: <strong>[Redacted]</strong></p>
+<p>Any.run:<br>
+<strong>[Redacted]</strong></p>
+<p>VirusTotal:<br>
+<strong>[Redacted]</strong></p>
+<p>We begin by running the sample in a sandboxed environment like any.run. We can immediately see that this process launches itself and <strong>svchost</strong> as a sub process. This can also be confirmed within Intezer, and in Intezer one can examine the strings contained within each sub process. We can assume there is process injection happening.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/b/b1a8cdf8d0fc23d4e49e45a57570128aa04761f5.png" data-download-href="/uploads/short-url/plEaOqHnm5EWokcvloDHXLfTEIl.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/b/b1a8cdf8d0fc23d4e49e45a57570128aa04761f5_2_624x275.png" alt="" data-base62-sha1="plEaOqHnm5EWokcvloDHXLfTEIl" width="624" height="275" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/b/b1a8cdf8d0fc23d4e49e45a57570128aa04761f5_2_624x275.png, https://0x00sec.s3.amazonaws.com/original/2X/b/b1a8cdf8d0fc23d4e49e45a57570128aa04761f5.png 1.5x, https://0x00sec.s3.amazonaws.com/original/2X/b/b1a8cdf8d0fc23d4e49e45a57570128aa04761f5.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/b/b1a8cdf8d0fc23d4e49e45a57570128aa04761f5_2_10x10.png"></a></div><p></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2ee00225c612a4379738873b451952704d24068f.png" alt="" data-base62-sha1="6GFTLiiqyQSaDRLcLeTlaxwOmsv" width="499" height="277"></p>
+<p>Regarding any connection made to outer servers, we can see that <strong><a href="http://pastebin.com" rel="noopener nofollow ugc">pastebin.com</a></strong> is being contacted.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/e884dc4d7798ff6f2d13222759e36be62784d9ea.png" alt="" data-base62-sha1="xaXqnUpfpmd5l2tXPaaxMsWwOqS" width="470" height="187"></p>
+<p>There is a suspicious looking resource within the resource section:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/4/46b5e4467690252f63a0abba2f5b8706205d5f01.png" data-download-href="/uploads/short-url/a5x7H2VLDPXHM1u3Ey8JN58V7t7.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/46b5e4467690252f63a0abba2f5b8706205d5f01.png" alt="" data-base62-sha1="a5x7H2VLDPXHM1u3Ey8JN58V7t7" width="624" height="47" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/4/46b5e4467690252f63a0abba2f5b8706205d5f01_2_10x10.png"></a></div><p></p>
+<p>Before the sandbox quit on <strong>Any.run</strong> – one can see a strange looking <strong>MessageBox</strong> string.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/9b82fd7fe8fbd681647d921b3daf78784480deda.png" alt="" data-base62-sha1="mbIEuTJ8RkO3Z6IVJ2jvuzPWS8i" width="500" height="187"></p>
+<p>Finally, the strings found in all first 3 loaded process appear to encrypt, and this can be easily confirmed within Intezer:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/8/881cfec6655148e529ac1545df4967c9700f10cf.png" alt="" data-base62-sha1="jq73AJfTlBgOEZ7SkMLeWXIkr8P" width="239" height="158"><br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/1/1746ab522653854d36bb541912582bf170525ca1.png" data-download-href="/uploads/short-url/3jUoaTpnEaPY1OEOs59lFYeO3ct.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/1/1746ab522653854d36bb541912582bf170525ca1_2_261x160.png" alt="" data-base62-sha1="3jUoaTpnEaPY1OEOs59lFYeO3ct" width="261" height="160" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/1/1746ab522653854d36bb541912582bf170525ca1_2_261x160.png, https://0x00sec.s3.amazonaws.com/optimized/2X/1/1746ab522653854d36bb541912582bf170525ca1_2_391x240.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/2X/1/1746ab522653854d36bb541912582bf170525ca1_2_522x320.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/1/1746ab522653854d36bb541912582bf170525ca1_2_10x10.png"></a></div><p></p>
+<p><strong>Summary</strong>:<br>
+We’re going to be looking for process injection, I suspect that the resource located within the resource section would be mapped into memory, unpacked or decrypted and then injected into the second sub process. There are 4 sub process in total so our final payload would be located on the fourth sub process. It is assumed that the payload would connect to pastebin and display a message box. There is definitely string encryption going on, so we’ll have to deal with that as well.</p>
+<hr>
+<h2>Static and Dynamic Anaylsis</h2>
+<p>This binary is compiled with Visual Studio C++, the implications of that mean that the actual main function is located somewhere within the start function and I’ve located it by recursively traversing xrefs from one of the imported functions. The main function is located at <strong>0x00401400</strong></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/b/bf59ca1c6fd5521883a486db385e01c17d57178c.png" alt="" data-base62-sha1="riLzkWwG3Al8ZHUEbenk16JYyvi" width="233" height="350"></p>
+<p>When viewing the code of the main function one can see gibberish strings being pushed before function calls:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/9/9c7079266ff70c5b09ae6ade353d1017b8a1867f.png" data-download-href="/uploads/short-url/mjVspkcrSzYl17u1LDQlSmoeXdt.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/9c7079266ff70c5b09ae6ade353d1017b8a1867f.png" alt="" data-base62-sha1="mjVspkcrSzYl17u1LDQlSmoeXdt" width="269" height="272" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/9/9c7079266ff70c5b09ae6ade353d1017b8a1867f_2_10x10.png"></a></div><p></p>
+<p>The function that is called after each push is the same, I instantly assume there is some string encryption going on. The extensive use of <strong>LoadLibraryA</strong> and <strong>GetProcAddress</strong> also makes me assume these strings are API strings that are resolved using <strong>LoadLibraryA</strong> and <strong>GetProcAddress</strong>.</p>
+<p>At <strong>loc_401550</strong> and <strong>loc_401570</strong> one can located something that resembles a <strong>RC4 KSA</strong> routine, it is easily recognized by the two loop procedures iterating <strong>256</strong> times.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/8/853075b5aa7a9b1e4d54b3972c690dfc07bc54d4.png" data-download-href="/uploads/short-url/j0fklFRvCBX94DqcR9dHWbojlRy.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/8/853075b5aa7a9b1e4d54b3972c690dfc07bc54d4.png" alt="" data-base62-sha1="j0fklFRvCBX94DqcR9dHWbojlRy" width="285" height="456" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/8/853075b5aa7a9b1e4d54b3972c690dfc07bc54d4_2_10x10.png"></a></div><p></p>
+<p>These are just quick assumptions I’ve made by looking at the binary, the rest of it is filled with obfuscated code and otherwise an extensive use of registers and dynamic resolving so we’ll have to resort to dynamic analysis. I’ve disabled <strong>ASLR</strong> for this binary with <strong>CFF explorer</strong> so it would be easier to debug it.<br>
+I’ve set relevant breakpoints within the debugger. So all the resource related functions to locate any resource loading, <strong>CreateProcessInternalW</strong> for process initialization and <strong>VirtualProtect</strong>, <strong>VirtualAllocEx</strong> and <strong>WriteProcessMemory</strong> for injection. In addition I’ve set breakpoints on <strong>OutputDebugString</strong> and <strong>IsDebuggerPresent</strong> to catch easy implemented anti analysis.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/7/767537c7581d0edf4d0d8da70bb70235be510606.png" data-download-href="/uploads/short-url/gTVtJRQEJmxcowxQPY79BEP5058.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/767537c7581d0edf4d0d8da70bb70235be510606.png" alt="" data-base62-sha1="gTVtJRQEJmxcowxQPY79BEP5058" width="624" height="99" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/7/767537c7581d0edf4d0d8da70bb70235be510606_2_10x10.png"></a></div><p></p>
+<p>First, as assumed the <strong>sub_401300</strong> seems to be resolving strings:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/6/693d6e043fc54eac36e0cd4580fde78ddce189fa.png" data-download-href="/uploads/short-url/f0ZKjBfmBDNrtic2hhnb8SOLyoW.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/693d6e043fc54eac36e0cd4580fde78ddce189fa.png" alt="" data-base62-sha1="f0ZKjBfmBDNrtic2hhnb8SOLyoW" width="624" height="280" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/6/693d6e043fc54eac36e0cd4580fde78ddce189fa_2_10x10.png"></a></div><p></p>
+<p>The function <strong>func_StringDecrypt</strong> seems to be decrypting strings using some kind of custom base64 decoding, The reason I suspect is – is because the use of the full alphanumeric string that is being passed within this function. This function would be studied extensively later on in this paper and we’ll attempt to generate an automation script for it to decode all strings within this sample.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/7/7f6811edd2499307bbe52df9c7868338c9baa2d1.png" data-download-href="/uploads/short-url/ib5BGgm9JsZmpCO6zfMJ4WFwN0Z.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7f6811edd2499307bbe52df9c7868338c9baa2d1.png" alt="" data-base62-sha1="ib5BGgm9JsZmpCO6zfMJ4WFwN0Z" width="624" height="123" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/7/7f6811edd2499307bbe52df9c7868338c9baa2d1_2_10x10.png"></a></div><p></p>
+<p>Then the sample does something interesting:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/c/c31e5e6d7dd1ca971f92054cbeb56e10d2113f59.png" data-download-href="/uploads/short-url/rQ6aE4Mf1A6mbISISQmm1WjEktj.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/c31e5e6d7dd1ca971f92054cbeb56e10d2113f59.png" alt="" data-base62-sha1="rQ6aE4Mf1A6mbISISQmm1WjEktj" width="443" height="500" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/c/c31e5e6d7dd1ca971f92054cbeb56e10d2113f59_2_10x10.png"></a></div><p></p>
+<p>It allocates space for the resource but it skips the first <strong>0x1C</strong> bytes within the resource.</p>
+<p>Hmm, perhaps this is the decryption key for the <strong>RC4</strong> algorithm we saw before?</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2a35c452b6e91b4ffd03c5667d769aab4918a0b3.png" alt="" data-base62-sha1="61pfqk0R7Wx42QkUjrznK1JzTtV" width="590" height="29"></p>
+<p>Then a call is performed to <strong>sub_402DB0</strong> which I renamed to <strong>func_CopyResourceWithoutKeyToAllocMem</strong> because that is exactly what it does, it just copies the resource without its key, so starting at offset <strong>0x1C</strong>.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/92a3e39710f69028bd173ea52aff8ff104c974a9.png" alt="" data-base62-sha1="kVeQ9XhBDwUhV7F0KS4uUsDekAx" width="505" height="152"></p>
+<p>because that is exactly what it does, it just copies the resource without its key, so starting at offset <strong>0x1C</strong>. This function would seem very confusing at first, but if we set a hardware <strong>breakpoint</strong> on the allocated memory we’ll break within this function we can confirm this. Because at 00403002 it performs this copying procedure and then it just exists the function:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/781aac6a248a4a5ebaa6adb991b14a46ed6b1379.png" alt="" data-base62-sha1="h8urxjYWD0UlEiX3CNNDmAryIf7" width="589" height="170"></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f3a8514cfe205c9893d71129669104790c9ba4b9.png" alt="" data-base62-sha1="yLuDVOIUeLWxG1Il8QTPHhJ6meZ" width="565" height="222"></p>
+<p>Then <strong>sub_4025B0</strong> is executed, it receives a stack address and we simply skip this function while looking at that address on dump we can see that it simply zeroes it out.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/d13247593b0070b3c2f6302496bbf96d45a83195.png" alt="" data-base62-sha1="tQDvNN64tdKVjtOPJELwdw7cYq9" width="593" height="167"></p>
+<p>So thankfully I’m saving a lot of time by skipping these rabbit holes.</p>
+<p>Then the assumed <strong>RC4</strong> algorithm executes, what I want to do is locate the address to where the sample mapped the resource to memory as I suspect that it’s going to be decrypted.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a2dbd1b1b1fefd3726d402ac6b5ce5312d7de0ec.png" alt="" data-base62-sha1="neIjfyUJIuVmSiE7qZCATWil4Re" width="590" height="166"></p>
+<p>So I’m going to skip the RC4 decryption routine and jump straight to address 0x40161D</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7e0f3ab485829391fc919532ba18cf7fd6865065.png" alt="" data-base62-sha1="hZaMYwjbPilHKlcKxb6PEMUiBTf" width="594" height="165"></p>
+<p>Yay! I decide to dump the new PE file out to disk but we’re not done yet. We have to see how it’s going to be injected to memory.</p>
+<p>We jump into <strong>sub_401000</strong>:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a6ffa02b9fb9576138028929398b06a84dcad9ca.png" alt="" data-base62-sha1="nPkW0hvDbKAGaqK6J3FtkA0OLHQ" width="445" height="131"></p>
+<p>First the sample resolves the <strong>ImageBase</strong> of the current executing sample and then it attempts to confirm and locate the address of the <strong>NT_Headers</strong> of the decrypted payload.</p>
+<p>Then the current process main.bin is created in suspended mode</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/f/f8e373510b66a17b8aafb48d4508c6817bad5823.png" data-download-href="/uploads/short-url/zvLIPj0hjNqywQfsXUU5NtkqvFF.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f8e373510b66a17b8aafb48d4508c6817bad5823.png" alt="" data-base62-sha1="zvLIPj0hjNqywQfsXUU5NtkqvFF" width="624" height="49" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/f/f8e373510b66a17b8aafb48d4508c6817bad5823_2_10x10.png"></a></div><p></p>
+<p>Seems like there is going to be process injection involved.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/6215474b6ec517ea2760953df980f0e4c5b52c41.png" alt="" data-base62-sha1="dZGnCPmkrgXnzmlyZoJCejsw9C9" width="566" height="160"></p>
+<p>First memory is allocated within the new process. The sample attempts to execute <strong>VirtualAllocEx</strong> on the new process. Attempting to allocate memory at the payloads PE default <strong>ImageBase</strong> and with the virtual Size of the image. This won’t work though under our modified execution since we disabled <strong>ASLR</strong>. Why? Because both processes execute at the same <strong>ImageBase</strong>, the new process already has memory allocated within that region, so we must enable <strong>ASLR</strong> and start again. So, lets do that just that and we’ll see that it would work.</p>
+<p>Then the sample will copy the payloads section to their correct virtual addresses:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/64927f4f2cf4950112291325481456cb4d9958d0.png" alt="" data-base62-sha1="elHCc9VoPGnQdDVBXYBRWsGk1Gw" width="436" height="453"></p>
+<p>Then something very interesting happens:<br>
+The <strong>ImageBase</strong> of the payload is written to the <strong>PEB</strong> of the new process, specifically at offset 0x8.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7958c520fcb283055dcb3fc71a4d3d2d03e385d6.png" alt="" data-base62-sha1="hjtXHbeAcVsNLyDbLV2g9hTEhhA" width="179" height="72"></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/649618079423af112dc93477514aeaa048333c38.png" alt="" data-base62-sha1="elPjWuIzdZZcczPOGeuy2rqWS5W" width="458" height="235"></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a803d4ad6b1b9b9dbc6c3aa538fff1d5cf7fba07.png" alt="" data-base62-sha1="nYkqbNEAYDJ4jY9W5Xa3TTMwj5B" width="514" height="101"></p>
+<p>We can assume that the payload would use this to resolve its own APIs.</p>
+<p>Finally, <strong>SetThreadContext</strong> and <strong>ResumeThread</strong> are called, and the injected payload executes.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/e09c1cdc8e957f9f019cf16c53fc124c385c983c.png" alt="" data-base62-sha1="w2ZqfumdQsV7d7qsJDaaAvJaTEg" width="395" height="91"></p>
+<hr>
+<h2>Second Payload Analysis</h2>
+<h3>Sample information:</h3>
+<p>SHA-256: <strong>[Redacted]</strong></p>
+<p>Intezer: <strong>[Redacted]</strong></p>
+<p>Any.run: <strong>[Redacted]</strong></p>
+<p>VirusTotal: <strong>[Redacted]</strong></p>
+<h2>Advanced Static and Dynamic Analysis</h2>
+<p>I’m going to assume process injection again and go straight into analysis, I’ll disable <strong>ASLR</strong> for this execution as I would be executing the second stage payload independently and so the previous problem, we encountered due disabling <strong>ASLR</strong> shouldn’t bother us.</p>
+<p>It is observed that this second stage contains API hashing as the extensive use of <strong>CRC32</strong> constants indicates that:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/3531de48d279186cdf225e9dc5fa0a4b35c268f3.png" alt="" data-base62-sha1="7AA9bX7BObB1glpaiNwmyiWIjOb" width="320" height="171"></p>
+<p>In addition, the function that was seen in the first stage loader that simply copies the payload into memory from the resource section can be seen:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/0/07c7e94ca228965d34eff24c0b7d48bc9332be56.png" alt="" data-base62-sha1="16PEjSx0aViZNsO4E6zJ8beK7Yy" width="383" height="406"></p>
+<p>I’ve set relevant breakpoints within the debugger. So, all the resource related functions to locate any resource loading, <strong>CreateProcessInternalW</strong> for process initialization and <strong>VirtualProtect</strong>, <strong>VirtualAllocEx</strong> and <strong>WriteProcessMemory</strong> for injection. In addition, I’ve set breakpoints on <strong>OutputDebugString</strong> and <strong>IsDebuggerPresent</strong> to catch easy implemented anti analysis.</p>
+<p>The malware takes the name of the file that its currently executing from and hashes it using a <strong>CRC32</strong> hashing algorithm, it can be identified by the <strong>CRC32</strong> hashing constants found within this function. The sample then compares the result against a constant value. I’m assuming its using this method as an anti-analysis method to check if the samples name is “sample” or “malware” its really hard to tell. If this check matches the sample quits execution.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/6/6f21414ae6a7e89fbce0527c6382be4d004e315c.png" data-download-href="/uploads/short-url/fR6fmFNcBzflnOo6P3hIw5klOri.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/6f21414ae6a7e89fbce0527c6382be4d004e315c.png" alt="" data-base62-sha1="fR6fmFNcBzflnOo6P3hIw5klOri" width="624" height="73" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/6/6f21414ae6a7e89fbce0527c6382be4d004e315c_2_10x10.png"></a></div><p></p>
+<p>Then an API resolving routine called which utilizes the <strong>CRC32</strong> hashing algorithm we seen earlier:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/0/0f8bab987c36bb355f96b775d4c041bc8590be12.png" alt="" data-base62-sha1="2dwp44n2uJOMa72u1SdtELGXKca" width="298" height="79"></p>
+<p>The <strong>HashID</strong>(EDX) and the <strong>ID</strong>(ECX) which identifies the library to which to resolve the API from</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/da9b8f4b551e58edcbc7c5e8c414fe55bffccba9.png" alt="" data-base62-sha1="vbTnaM14AOyExtqMSuBs962xvLP" width="459" height="58"><br>
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/1/106c61c1907591581fef88c71509637e4de41cd9.png" alt="" data-base62-sha1="2lhQuijuBIVoIKuuVvFajWg401X" width="624" height="120"></p>
+<p>I will not explain how the API Hashing and resolving in depth. Basically the export table of each loaded DLL is hashed to check which function name matches the hash passed into the function. If anyone wants to read about how that might be implemented they can read about it <a href="https://github.com/DanusMinimus/API-Hash" rel="noopener nofollow ugc">on my github right here</a>.</p>
+<p>The sample loads <strong>IsDebuggerPresent</strong> to check if the malware is executing under a debugger, this can be easily circumvented.<br>
+The next anti analysis method located within <strong>sub_401000</strong> checks if any blacklisted process is running – the malware hashes each running process and then checks if the hash matches to a pre-computed hash array. If they match the malware quits execution.<br>
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/4/43c50f3d14c789a4df20ec66f50cd01e88e87030.png" alt="" data-base62-sha1="9FwbH0iXnks6wi1jdvGfwlbcV8I" width="378" height="109"></p>
+<p>Then the sample executes <strong>sub_401D50</strong> which resolves a lot of APIs that might indicate process injection:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/4/4ebada267efc55fa472385e635de4252e5b19e2e.png" data-download-href="/uploads/short-url/betzr9uAXbtiGr58KWoVguUNOb4.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/4/4ebada267efc55fa472385e635de4252e5b19e2e_2_130x291.png" alt="" data-base62-sha1="betzr9uAXbtiGr58KWoVguUNOb4" width="130" height="291" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/4/4ebada267efc55fa472385e635de4252e5b19e2e_2_130x291.png, https://0x00sec.s3.amazonaws.com/optimized/2X/4/4ebada267efc55fa472385e635de4252e5b19e2e_2_195x436.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/2X/4/4ebada267efc55fa472385e635de4252e5b19e2e_2_260x582.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/4/4ebada267efc55fa472385e635de4252e5b19e2e_2_10x10.png"></a></div><p></p>
+<ol>
+<li>Start <strong>svchost</strong> with suspended flags</li>
+<li>Copy current PE into allocated memory</li>
+<li>Allocate Memory in <strong>svchost</strong>
+</li>
+<li>Rebuild current PE payload relocation table</li>
+<li>Write payload into <strong>svchost</strong>
+</li>
+<li>Use <strong>CreateRemoteThread</strong> to execute function <strong>sub_401DC0</strong>
+</li>
+</ol>
+<p>To continue execution, we simply must attach to a second debugger instance and set a <strong>breakpoint</strong> on the functions location and after running <strong>CreateRemoteThread</strong> we should hit it.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/9cde5cbf9d171b0a4591ec7d647e61db7dab023b.png" alt="" data-base62-sha1="mnITs8RtkjXflPZUH2ITXgrDYHF" width="611" height="395"></p>
+<p>After setting up the <strong>breakpoint</strong> lets resume execution of the <strong>svchost</strong> instance and then skip <strong>CreateRemoteThread</strong> and see if anything happens. </p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/d/de459281f3d61ddde4174e96fe317cfec9b80038.png" data-download-href="/uploads/short-url/vIj3uMy2r7zqb6BlRQh8F4GR4CY.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/de459281f3d61ddde4174e96fe317cfec9b80038.png" alt="" data-base62-sha1="vIj3uMy2r7zqb6BlRQh8F4GR4CY" width="624" height="103" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/d/de459281f3d61ddde4174e96fe317cfec9b80038_2_10x10.png"></a></div><p></p>
+<p>Success! We can continue analyzing this function within our documented IDA instance as this function is located in the second stage payload.</p>
+<p>It’s important to note that interestingly enough – this function is called previously at <strong>loc_402085</strong> when the <strong>func_CRC32Hash</strong> returns a hashed value for the current executing process name which matches a hardcoded hash.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/a/aa09c32846f1d7e5923b5290b9636fbe6ea59c80.png" data-download-href="/uploads/short-url/oge5jlIezM9rmMYpJnEnbgsc3Ze.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/a/aa09c32846f1d7e5923b5290b9636fbe6ea59c80_2_624x229.png" alt="" data-base62-sha1="oge5jlIezM9rmMYpJnEnbgsc3Ze" width="624" height="229" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/a/aa09c32846f1d7e5923b5290b9636fbe6ea59c80_2_624x229.png, https://0x00sec.s3.amazonaws.com/optimized/2X/a/aa09c32846f1d7e5923b5290b9636fbe6ea59c80_2_936x343.png 1.5x, https://0x00sec.s3.amazonaws.com/original/2X/a/aa09c32846f1d7e5923b5290b9636fbe6ea59c80.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/a/aa09c32846f1d7e5923b5290b9636fbe6ea59c80_2_10x10.png"></a></div><br>
+I quickly assumed that this is a method to detect if the binary is running from <strong>svchost</strong>, because as we seen in the malware’s execution process tree, it executes <strong>svchost</strong> twice. I later confirmed this check by renaming the sample to <strong>svchost.exe</strong> and it worked:<p></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/e/e4b3e1f3965b971dbc44b271abaadf17932b3be6.png" data-download-href="/uploads/short-url/wDcg7ssmiAEBTh0v8zBHsyfuhXo.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/e/e4b3e1f3965b971dbc44b271abaadf17932b3be6_2_624x80.png" alt="" data-base62-sha1="wDcg7ssmiAEBTh0v8zBHsyfuhXo" width="624" height="80" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/e/e4b3e1f3965b971dbc44b271abaadf17932b3be6_2_624x80.png, https://0x00sec.s3.amazonaws.com/optimized/2X/e/e4b3e1f3965b971dbc44b271abaadf17932b3be6_2_936x120.png 1.5x, https://0x00sec.s3.amazonaws.com/original/2X/e/e4b3e1f3965b971dbc44b271abaadf17932b3be6.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/e/e4b3e1f3965b971dbc44b271abaadf17932b3be6_2_10x10.png"></a></div><p></p>
+<p>Let’s continue with the analysis.</p>
+<p>This function first resolves a few Internet WINAPIs:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/44d64d01cda38f0da1a5286cb44ab8a6317be6bb.png" alt="" data-base62-sha1="9OXBwZeFbSCfbJKW1Ryhh27GM5B" width="624" height="203"></p>
+<p>Then a strange string located at offset <strong>0x0413C7C</strong> is passed into a code block and decrypted by a very simple algorithm:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7d06b77944eb466372c1b340bf37176129d82db6.png" alt="" data-base62-sha1="hQ24BrwLgSZML4XkBdgpEPS7ftI" width="242" height="203"></p>
+<p>So, our encrypted byte sequence:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/0/07a3b606bf78465dfb9334773ac0c999f431a9ce.png" alt="" data-base62-sha1="15A5G20rwZHsvTqHNSbqtFdb7cO" width="608" height="18"></p>
+<p>Returns:<br>
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/5/55c25aa5b35e4173635d1bffe774051c9560ea17.png" alt="" data-base62-sha1="ceEZaU1g8mbVcMBpfpdgbT8Q8xV" width="439" height="34"></p>
+<p>Which resolves to <strong>[Redacted]</strong><br>
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2b6a5c18203384236d79ec780242fef9f8437a69.png" alt="" data-base62-sha1="6c4pao0NHaQEZBybSU5zH7ZBKjf" width="499" height="191"></p>
+<p>Hmm… This might indicate stenography is involved. Let’s continue with the analysis</p>
+<p>This pastebin link is passed into <strong>sub_401290</strong> this function returns the image link contained within the pastebin and saves it within the memory.</p>
+<p>This resolved link is passed into <strong>sub_4013A0</strong>, first the function reads the contents of the image file linked passed into it. Using <strong>sub_401290</strong> which I renamed to <strong>func_ReadWebContents</strong></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/42778a1e92da889e27b8655b91c62db039f4bf49.png" alt="" data-base62-sha1="9tZCLGJufbkNgcqt6X9pUTEG6P7" width="340" height="335"></p>
+<p>Then the function decodes a string located with <strong>qword_413CA4</strong><br>
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/1/124a57751021f00a4b1b6be49d668e5be9499abe.png" alt="" data-base62-sha1="2BNRYSpBSVXwatHMIY4DC21sxpY" width="339" height="16"></p>
+<p>Which resolves to <strong>output.jpg</strong>, then it computes a path to the Temp directory and converts the it to a WCHAR type string, then specially picked bytes are extracted from the data section to compute this path:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/28475db7c4c10f22a7b1ad87ea677a5b71c63ee4.png" alt="" data-base62-sha1="5KjZZOemWYigmxNmaDZik45zIuU" width="422" height="21"></p>
+<p>Then <strong>CreateDirectory</strong> is invoked to create the <strong>cruloader</strong> folder, after which the <strong>output.jpg</strong> file string is append to this path to create the following string:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/0/0a153237646743396fb9996e6254a70ee212edce.png" alt="" data-base62-sha1="1rcbBQ0qub21DxEiGrmHUJbvNH8" width="502" height="24"></p>
+<p><strong>CreateFileW</strong> is then invoked to create this file:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/aeef65d105d85f1c451d0d29cf4391241c449060.png" alt="" data-base62-sha1="oXxZcrLdsTyuZ75nuzHD2K1VYoo" width="367" height="188"></p>
+<p>Then the PNG file extracted from the previous website is copied into this file using <strong>WriteFile</strong><br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/4/4f974c44154e67a449b4af9675d43f4d16647d21.png" data-download-href="/uploads/short-url/bm5Sdo961shw9oaJ5aV4OEqAJqx.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/4f974c44154e67a449b4af9675d43f4d16647d21.png" alt="" data-base62-sha1="bm5Sdo961shw9oaJ5aV4OEqAJqx" width="624" height="325" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/4/4f974c44154e67a449b4af9675d43f4d16647d21_2_10x10.png"></a></div><p></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/7/7e3e07072d78ed53d49fb66a45ca8c65d6987658.png" data-download-href="/uploads/short-url/i0N3nqF30BoEU1l0DcHOGTYemBq.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/7/7e3e07072d78ed53d49fb66a45ca8c65d6987658_2_357x220.png" alt="" data-base62-sha1="i0N3nqF30BoEU1l0DcHOGTYemBq" width="357" height="220" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/7/7e3e07072d78ed53d49fb66a45ca8c65d6987658_2_357x220.png, https://0x00sec.s3.amazonaws.com/optimized/2X/7/7e3e07072d78ed53d49fb66a45ca8c65d6987658_2_535x330.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/2X/7/7e3e07072d78ed53d49fb66a45ca8c65d6987658_2_714x440.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/7/7e3e07072d78ed53d49fb66a45ca8c65d6987658_2_10x10.png"></a></div><br>
+Afterwards the sample attempts to locate a string <strong>“redaolurc”</strong> (which is <strong>cruloader</strong> reversed) within the image data download<p></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/c/c98c2544bd281b4a22015219e5b5d3fd8496ad0e.png" data-download-href="/uploads/short-url/sKYeo7n8mJY3NyfFtUHl4c8yIsC.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/c/c98c2544bd281b4a22015219e5b5d3fd8496ad0e_2_624x193.png" alt="" data-base62-sha1="sKYeo7n8mJY3NyfFtUHl4c8yIsC" width="624" height="193" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/c/c98c2544bd281b4a22015219e5b5d3fd8496ad0e_2_624x193.png, https://0x00sec.s3.amazonaws.com/original/2X/c/c98c2544bd281b4a22015219e5b5d3fd8496ad0e.png 1.5x, https://0x00sec.s3.amazonaws.com/original/2X/c/c98c2544bd281b4a22015219e5b5d3fd8496ad0e.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/c/c98c2544bd281b4a22015219e5b5d3fd8496ad0e_2_10x10.png"></a></div><p></p>
+<p>After locating the string within the image data, this offset is used to access encrypted data. The data is xored with <strong>xmmword</strong>(which is 128-bit) 40 times. The xor key is <strong>0x61</strong>(‘a’). One could also notice that there are a lot of ‘a’ characters within the encoded payload. These ‘a’ characters are actually zeroes within the binary, because 0 ^ 0x61 = 0x61 so this payload isn’t obfuscated with high class obfuscation as on could infer this pretty quickly.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/d33941f3cefe393d2fa4de90ce90c6e3dee11293.png" alt="" data-base62-sha1="u8zq36M3Ju3Ac7SvxnFzYungx5F" width="540" height="14"></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/b/b7ad3069fb08a03094966453f4bfffd2cbb9f8c0.png" alt="" data-base62-sha1="qcSqQHmjxTWzzc70Z2s9EarTDEY" width="400" height="449"></p>
+<p>And the result is a valid PE file:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/1b2451ba414f635fb70c20639f45b8c16c01e59e.png" alt="" data-base62-sha1="3S6HJiwLyvFitui9PNHM3eNSNXM" width="598" height="170"></p>
+<p>After dumping this PE I’ve observed it within IDA and it would appear as if this is the final payload!</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/1/13610ade6b92d083d79d8766f48c67e64e9ce873.png" data-download-href="/uploads/short-url/2LqZ2cbMSh71Id7IZXYUc4WNrTt.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/13610ade6b92d083d79d8766f48c67e64e9ce873.png" alt="" data-base62-sha1="2LqZ2cbMSh71Id7IZXYUc4WNrTt" width="624" height="162" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/1/13610ade6b92d083d79d8766f48c67e64e9ce873_2_10x10.png"></a></div><p></p>
+<p>This PE Is then mapped, relocated and then fixed with <strong>VirtualProtect</strong> and finally injected into <strong>svchost.exe</strong> again within the function sub_401750 this executing the final payload.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/72e4a4d8e1099066780f7a6aae9e4184b622cdb6.png" alt="" data-base62-sha1="gooixmmm1g7w25z47RNUpWU7uku" width="474" height="201"></p>
+<p>And that’s pretty much it!</p>
+<hr>
+<h2>Automation</h2>
+<p>Alright, Let’s begin attempting to automate the process of extracting all payloads and dumping them on disk.</p>
+<p>We begin with the resource section; this one is pretty easy.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/5/5f035540468d2a90a48eab2d620dab67ada359a0.png" data-download-href="/uploads/short-url/dywv2s2V9gU8jpoK8hfy2QPv41q.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5f035540468d2a90a48eab2d620dab67ada359a0.png" alt="" data-base62-sha1="dywv2s2V9gU8jpoK8hfy2QPv41q" width="624" height="37" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/5/5f035540468d2a90a48eab2d620dab67ada359a0_2_10x10.png"></a></div><p></p>
+<p>First we begin looking for a string at offset 0x60 + 0xc from the begging of the resource section, and load the string which is 16 bytes in length.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/29171d42d54c8d1ad8ed4bb9048f07c7a592a2a2.png" alt="" data-base62-sha1="5Rv66rokx0ge8HGZhb64icEL5PI" width="483" height="104"></p>
+<p>Then, we load the rest of the payload into another variable</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/d/d9fd7e4247d4a5329651c9ea51ac38b717ded42a.png" data-download-href="/uploads/short-url/v6qIv4B10bxZDEeLQcrq0HAgryy.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/d9fd7e4247d4a5329651c9ea51ac38b717ded42a.png" alt="" data-base62-sha1="v6qIv4B10bxZDEeLQcrq0HAgryy" width="624" height="272" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/d/d9fd7e4247d4a5329651c9ea51ac38b717ded42a_2_10x10.png"></a></div><p></p>
+<p>Then we use the ARC4 python module to decrypt this data and dump it on disk</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2b3f3084f08e1556a29cdea2ccb88a9d7287100a.png" alt="" data-base62-sha1="6azUG4fcBS6TVh44jrgAFoOzdr4" width="457" height="197"></p>
+<p>Now as we posses the second payload, we must locate the pastebin URL inside the PE file.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/1/1378a7914b3ec171a43c00abd7feec56fa1f347d.png" data-download-href="/uploads/short-url/2Mfzx9Y3I0Guqfqsg8kqPPi3WG1.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/1378a7914b3ec171a43c00abd7feec56fa1f347d.png" alt="" data-base62-sha1="2Mfzx9Y3I0Guqfqsg8kqPPi3WG1" width="624" height="147" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/1/1378a7914b3ec171a43c00abd7feec56fa1f347d_2_10x10.png"></a></div><p></p>
+<p>We know our URL is located two <strong>XMM_WORDS</strong> (32 bytes) in size after the offset of the string <strong>“cruloader”</strong> so let’s set this up:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/125c137c4c9818d5a831f3365428e29395dfc35f.png" alt="" data-base62-sha1="2CpRJlvLCEwmLqVgLoFAbGThxTx" width="276" height="66"></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/3/3cbe2aae17347503af50cbd9083e2b4d0b54586d.png" data-download-href="/uploads/short-url/8Fm4RV2bNftl5dPHsLIsgSKuUqh.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/3cbe2aae17347503af50cbd9083e2b4d0b54586d.png" alt="" data-base62-sha1="8Fm4RV2bNftl5dPHsLIsgSKuUqh" width="624" height="247" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/3/3cbe2aae17347503af50cbd9083e2b4d0b54586d_2_10x10.png"></a></div><p></p>
+<p>We calculate the offset by locating the <strong>“cruloader”</strong> string, adding 3 bytes to skip the null bytes and then jumping after both irrelevant <strong>XMM_WORDS</strong>. We extract our data and we set the <strong>XOR</strong> key to 0xC5</p>
+<p>Then for each byte extracted we perform a four <strong>ROL</strong> and then a xor to match the decryption algorithm</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/e3747a462e8b93a1f1e5f63ed5a437390c3b6c57.png" alt="" data-base62-sha1="ws9W9yE07LclKn659Dq4ZtkhqPZ" width="301" height="231"></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7187043c0d0abba2c3056c644e744a06416988fd.png" alt="" data-base62-sha1="gcjdZQrUSWdCUCQ28hAc1DhVEId" width="526" height="89"></p>
+<p>We then use <strong>URLLIB</strong> to extract the pastebin URL and then we use that same lib to extract the contents of the payload image</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/c14ba4926aa668dd625d670a6d319a91514c6ce6.png" alt="" data-base62-sha1="rzYdnP2H6erq9a0RD3KtSfJmKAS" width="549" height="143"></p>
+<p>Finally, to locate the payload within the <strong>PNG</strong> payload file we locate the reverse <strong>“cruloader”</strong> string, extract the payload and then xor it with <strong>0x61</strong>.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/d/dc2e61293f10b43bafb58b23982dba5912771b6f.png" data-download-href="/uploads/short-url/vpOpuDq0Bj9jH14DotlaqT5hH5B.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/dc2e61293f10b43bafb58b23982dba5912771b6f.png" alt="" data-base62-sha1="vpOpuDq0Bj9jH14DotlaqT5hH5B" width="624" height="153" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/d/dc2e61293f10b43bafb58b23982dba5912771b6f_2_10x10.png"></a></div><p></p>
+<p>And that’s it! Easy as that!</p>
+<p>I really enjoyed this challenge and I’m looking forward to continuing the course <img src="https://0x00sec.org/images/emoji/twitter/blush.png?v=9" title=":blush:" class="emoji" alt=":blush:"><br>
+Hope you enjoyed reading this!</p>
+          <p><a href="https://d.clarkee.co.uk/t/zero2auto-cruloader/22420/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/zero2auto-cruloader/22420/1</link>
+        <pubDate>Sun, 26 Jul 2020 12:37:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-22420-1</guid>
+        <source url="https://d.clarkee.co.uk/t/zero2auto-cruloader/22420.rss">Zero2Auto - CruLoader</source>
+      </item>
+  </channel>
+</rss>

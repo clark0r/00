@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Graph Algorithms (Part 1.1): Dijkstra&#39;s Shortest Path [Code v1]</title>
+    <link>https://d.clarkee.co.uk/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482</link>
+    <description>Hey 0x00sec people! Not long ago, I said I would put up some source code for Dijkstra&#39;s Algorithm. Today, I&#39;ll be showing you just _one_ way to do it. We&#39;ll be utilizing an **Adjacency Matrix**, which is simply a 2D Array. _As we progress, each implementation will be more efficient than the last._
+
+Taking a page from @dtm&#39;s book, this post is best understood when the reader has:
+
+    Intermediate C++ Skills
+    read the first article
+
+# Representation of A Graph
+
+The first step in implementing any algorithm is understanding how to represent relevant data in a computer. So, how would we represent a graph in memory?
+
+There are really just two ways:
+
+1. Adjacency Matrix
+2. Adjacency List
+
+Today, we&#39;re going to use the first one. Take a look at the image below:
+
+![matrix and graph representation](//0x00sec.s3.amazonaws.com/original/1X/446c623541ed9008901f76c1b05ff5526f4fcee0.png)
+
+On the left, what is shown is a graph much like the one from the [first part of this series](https://0x00sec.org/t/graph-algorithms-part-1-0-dijkstras-shortest-path-concept/419). To the right of that graph is its corresponding representation in an adjacency matrix.
+
+This particular adjacency matrix is a Boolean one: a `1` means that an edge connects the two nodes. A matrix&#39;s values can also be used to keep track of distances.
+
+&gt; Note: A matrix is represented in computer as a 2D array. The outer array makes up the rows; the inner the columns. Generally:  `some_matrix[row][col]`.
+
+----
+# Let&#39;s Start Coding
+
+```java
+#include &lt;iostream&gt;
+#include &lt;vector&gt;
+#include &lt;algorithm&gt;
+#include &lt;limits&gt;
+
+int dijkstra(std::vector&lt; std::vector&lt;int&gt; &gt;&amp; matrix, int start, int end) {
+
+	std::vector&lt;int&gt; distances(matrix.size()), previous(matrix.size());
+	std::vector&lt;int&gt; nodes, path;
+
+        // ...
+```
+We include our headers and then declare the function `dijkstra`. This function takes, as parameters, an adjacency matrix represented by a 2D `std::vector`, a starting point, and an ending point. The start/end points are assumed to be from a zero-based index.
+
+Then, we declare a few more vectors.
+
+* `distances` will keep track of the distance between each node and the `start` node.
+* `previous` keeps track of the order of visitation of the nodes.
+* `nodes` is a `std::vector&lt;int&gt;` containing all of the nodes.
+* `path` is simply the path to take from `start` to `end`. It&#39;s empty because we have yet to find the path.
+
+```java
+       // ...
+
+        for (int i = 0, n = matrix[start].size(); i &lt; n; i++) {
+
+		if (i == start)
+			distances[i] = 0;
+		else
+			distances[i] = std::numeric_limits&lt;int&gt;::max();
+
+		nodes.push_back(i);
+	}
+
+        // ...
+```
+We now go through each node, and set the distance to &quot;infinity,&quot; represented by the maximum value of an integer (`numeric_limits&lt;int&gt;::max()`). _But_, if the `i`th node is our `start` node, we set the distance to `0`. We then `push_back` each node.
+
+```java
+        // ...
+        auto comp = [&amp;](int l, int r) {return distances[l] &gt; distances[r];};
+	std::sort(nodes.begin(), nodes.end(), comp);
+
+        // ...
+```
+Okay, that first line there seems a little daunting. Basically, we create a custom comparator, so that we can sort `nodes` by the distance between each node and `start`, with the smallest distances at the end, or back, of `nodes`.
+
+```java
+        // ...
+        while(!nodes.empty()) {
+		int smallest = nodes.back();
+		nodes.pop_back();
+
+		if (smallest == end) {
+
+			while(smallest != start) {
+
+				path.push_back(smallest);
+				smallest = previous[smallest];
+			}
+			
+			path.push_back(start);
+			std::reverse(path.begin(), path.end());
+			break;
+		}
+
+		if (distances[smallest] == std::numeric_limits&lt;int&gt;::max())
+			break;
+
+		for(int i = 0, n = matrix[smallest].size(); i &lt; n; i++) {
+			int tmp = distances[smallest] + matrix[smallest][i];
+			
+			if (tmp &lt; 0)
+				tmp = std::numeric_limits&lt;int&gt;::max();
+				// combat integer overflow!
+			
+			if (tmp &lt; distances[i]) {
+				distances[i] = tmp;
+				previous[i] = smallest;
+
+				std::sort(nodes.begin(), nodes.end(), comp);
+			}
+		}
+	}
+        // ...
+```
+Now we enter a `while` loop, which says, &quot;while we still have nodes...&quot; The first thing we&#39;re going to do is take the smallest node in `nodes` and &quot;visit&quot; it by popping it off of `nodes` and storing it in `smallest`.
+
+Skip those first two `if`s and go to that `for` loop. This loop says, &quot;for each node connected to `smallest`, do...&quot;
+
+In the loop, we first make a variable `tmp` equal to the sum of `distances[smallest]` and `matrix[smallest][i]`. This means, `tmp` is equal to the distance from `start` to `smallest` plus the distance from `smallest` to node `i`. `tmp` is, therefore, a possible distance from `start` to node `i`. But, we only want to use this distance if it&#39;s less than the one we _already_ may have.
+
+First, let&#39;s make sure we didn&#39;t add `numeric_limits&lt;int&gt;::max()` to some number above zero and accidentally overflow `tmp` to the negatives. We correct `tmp` to `numeric_limits&lt;int&gt;::max()` if we _did_ overflow it. 
+
+Now we&#39;re at the second `if` in the `for` loop. If `tmp` is smaller than `distances[i]`, it means that we have found a better route from `start` to `i`. So, we update the distance and record that the node we visit before `i` should be `smallest`. Since we have updated a distance, we also need to re`sort` `nodes`.
+
+Okay, let&#39;s go back to the first `if` in the `while` loop. If/when we reach the end, the code inside this `if` runs. We build up the `path` by calling on previous, and then recursively defining `smallest` as the `smallest` that came before it. Then, we `push_back( start )` to complete the path. We have to `reverse` it first, though, since the first element in `path` is `end` and the last is `start`.
+
+The second `if` in the `while` loop handles the corner case of not being able to reach `end` from `start`. If the smallest distance is `numeric_limits&lt;int&gt;::max()`, our &quot;infinity&quot;, then `end` can never be reached.
+
+```java
+        // ...
+        for(auto&amp; v : path) std::cout &lt;&lt; v &lt;&lt; &quot; &quot;;
+        	std::cout &lt;&lt; &quot;\n&quot;;
+
+        	return distances[end];
+    } // end of dijkstra()
+```
+In this final snippet of `dijkstra`, we print out the `path` and then `return distances[end]`, the distance from `start` to `end`.
+
+I&#39;ll leave the `main()` function up to you guys, but [here](http://pastebin.com/F8TpzSsc) is the source for this post. ___Note:___ _I have slightly modified the code shown here for simplicity and/or the tutorial&#39;s sake._ There is a main function in [that](http://pastebin.com/F8TpzSsc), but feel free to make your own, as long as it satisfies the adjacency matrix.
+
+----
+# Conclusion
+
+That&#39;s all for today. Next time, I&#39;ll be rolling out a (much) more optimized version of the algorithm that takes advantage of adjacency lists and more concise coding techniques I have omitted from this for clarity reasons.</description>
+    
+    <lastBuildDate>Wed, 25 May 2016 01:34:54 +0000</lastBuildDate>
+    <category>Algorithms</category>
+    <atom:link href="https://d.clarkee.co.uk/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Graph Algorithms (Part 1.1): Dijkstra&#39;s Shortest Path [Code v1]</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482/2</link>
+        <pubDate>Sun, 21 Jan 2018 00:37:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-482-2</guid>
+        <source url="https://d.clarkee.co.uk/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482.rss">Graph Algorithms (Part 1.1): Dijkstra&#39;s Shortest Path [Code v1]</source>
+      </item>
+      <item>
+        <title>Graph Algorithms (Part 1.1): Dijkstra&#39;s Shortest Path [Code v1]</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey 0x00sec people! Not long ago, I said I would put up some source code for Dijkstra’s Algorithm. Today, I’ll be showing you just <em>one</em> way to do it. We’ll be utilizing an <strong>Adjacency Matrix</strong>, which is simply a 2D Array. <em>As we progress, each implementation will be more efficient than the last.</em></p>
+<p>Taking a page from <a class="mention" href="https://d.clarkee.co.uk/u/dtm">@dtm</a>’s book, this post is best understood when the reader has:</p>
+<pre><code>Intermediate C++ Skills
+read the first article
+</code></pre>
+<h1><a name="p-2288-representation-of-a-graph-1" class="anchor" href="https://d.clarkee.co.uk#p-2288-representation-of-a-graph-1"></a>Representation of A Graph</h1>
+<p>The first step in implementing any algorithm is understanding how to represent relevant data in a computer. So, how would we represent a graph in memory?</p>
+<p>There are really just two ways:</p>
+<ol>
+<li>Adjacency Matrix</li>
+<li>Adjacency List</li>
+</ol>
+<p>Today, we’re going to use the first one. Take a look at the image below:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/446c623541ed9008901f76c1b05ff5526f4fcee0.png" alt="matrix and graph representation" width="" height=""></p>
+<p>On the left, what is shown is a graph much like the one from the <a href="https://0x00sec.org/t/graph-algorithms-part-1-0-dijkstras-shortest-path-concept/419" rel="noopener nofollow ugc">first part of this series</a>. To the right of that graph is its corresponding representation in an adjacency matrix.</p>
+<p>This particular adjacency matrix is a Boolean one: a <code>1</code> means that an edge connects the two nodes. A matrix’s values can also be used to keep track of distances.</p>
+<blockquote>
+<p>Note: A matrix is represented in computer as a 2D array. The outer array makes up the rows; the inner the columns. Generally:  <code>some_matrix[row][col]</code>.</p>
+</blockquote>
+<hr>
+<h1><a name="p-2288-lets-start-coding-2" class="anchor" href="https://d.clarkee.co.uk#p-2288-lets-start-coding-2"></a>Let’s Start Coding</h1>
+<pre data-code-wrap="java"><code class="lang-java">#include &lt;iostream&gt;
+#include &lt;vector&gt;
+#include &lt;algorithm&gt;
+#include &lt;limits&gt;
+
+int dijkstra(std::vector&lt; std::vector&lt;int&gt; &gt;&amp; matrix, int start, int end) {
+
+	std::vector&lt;int&gt; distances(matrix.size()), previous(matrix.size());
+	std::vector&lt;int&gt; nodes, path;
+
+        // ...
+</code></pre>
+<p>We include our headers and then declare the function <code>dijkstra</code>. This function takes, as parameters, an adjacency matrix represented by a 2D <code>std::vector</code>, a starting point, and an ending point. The start/end points are assumed to be from a zero-based index.</p>
+<p>Then, we declare a few more vectors.</p>
+<ul>
+<li><code>distances</code> will keep track of the distance between each node and the <code>start</code> node.</li>
+<li><code>previous</code> keeps track of the order of visitation of the nodes.</li>
+<li><code>nodes</code> is a <code>std::vector&lt;int&gt;</code> containing all of the nodes.</li>
+<li><code>path</code> is simply the path to take from <code>start</code> to <code>end</code>. It’s empty because we have yet to find the path.</li>
+</ul>
+<pre data-code-wrap="java"><code class="lang-java">       // ...
+
+        for (int i = 0, n = matrix[start].size(); i &lt; n; i++) {
+
+		if (i == start)
+			distances[i] = 0;
+		else
+			distances[i] = std::numeric_limits&lt;int&gt;::max();
+
+		nodes.push_back(i);
+	}
+
+        // ...
+</code></pre>
+<p>We now go through each node, and set the distance to “infinity,” represented by the maximum value of an integer (<code>numeric_limits&lt;int&gt;::max()</code>). <em>But</em>, if the <code>i</code>th node is our <code>start</code> node, we set the distance to <code>0</code>. We then <code>push_back</code> each node.</p>
+<pre data-code-wrap="java"><code class="lang-java">        // ...
+        auto comp = [&amp;](int l, int r) {return distances[l] &gt; distances[r];};
+	std::sort(nodes.begin(), nodes.end(), comp);
+
+        // ...
+</code></pre>
+<p>Okay, that first line there seems a little daunting. Basically, we create a custom comparator, so that we can sort <code>nodes</code> by the distance between each node and <code>start</code>, with the smallest distances at the end, or back, of <code>nodes</code>.</p>
+<pre data-code-wrap="java"><code class="lang-java">        // ...
+        while(!nodes.empty()) {
+		int smallest = nodes.back();
+		nodes.pop_back();
+
+		if (smallest == end) {
+
+			while(smallest != start) {
+
+				path.push_back(smallest);
+				smallest = previous[smallest];
+			}
+			
+			path.push_back(start);
+			std::reverse(path.begin(), path.end());
+			break;
+		}
+
+		if (distances[smallest] == std::numeric_limits&lt;int&gt;::max())
+			break;
+
+		for(int i = 0, n = matrix[smallest].size(); i &lt; n; i++) {
+			int tmp = distances[smallest] + matrix[smallest][i];
+			
+			if (tmp &lt; 0)
+				tmp = std::numeric_limits&lt;int&gt;::max();
+				// combat integer overflow!
+			
+			if (tmp &lt; distances[i]) {
+				distances[i] = tmp;
+				previous[i] = smallest;
+
+				std::sort(nodes.begin(), nodes.end(), comp);
+			}
+		}
+	}
+        // ...
+</code></pre>
+<p>Now we enter a <code>while</code> loop, which says, “while we still have nodes…” The first thing we’re going to do is take the smallest node in <code>nodes</code> and “visit” it by popping it off of <code>nodes</code> and storing it in <code>smallest</code>.</p>
+<p>Skip those first two <code>if</code>s and go to that <code>for</code> loop. This loop says, “for each node connected to <code>smallest</code>, do…”</p>
+<p>In the loop, we first make a variable <code>tmp</code> equal to the sum of <code>distances[smallest]</code> and <code>matrix[smallest][i]</code>. This means, <code>tmp</code> is equal to the distance from <code>start</code> to <code>smallest</code> plus the distance from <code>smallest</code> to node <code>i</code>. <code>tmp</code> is, therefore, a possible distance from <code>start</code> to node <code>i</code>. But, we only want to use this distance if it’s less than the one we <em>already</em> may have.</p>
+<p>First, let’s make sure we didn’t add <code>numeric_limits&lt;int&gt;::max()</code> to some number above zero and accidentally overflow <code>tmp</code> to the negatives. We correct <code>tmp</code> to <code>numeric_limits&lt;int&gt;::max()</code> if we <em>did</em> overflow it.</p>
+<p>Now we’re at the second <code>if</code> in the <code>for</code> loop. If <code>tmp</code> is smaller than <code>distances[i]</code>, it means that we have found a better route from <code>start</code> to <code>i</code>. So, we update the distance and record that the node we visit before <code>i</code> should be <code>smallest</code>. Since we have updated a distance, we also need to re<code>sort</code> <code>nodes</code>.</p>
+<p>Okay, let’s go back to the first <code>if</code> in the <code>while</code> loop. If/when we reach the end, the code inside this <code>if</code> runs. We build up the <code>path</code> by calling on previous, and then recursively defining <code>smallest</code> as the <code>smallest</code> that came before it. Then, we <code>push_back( start )</code> to complete the path. We have to <code>reverse</code> it first, though, since the first element in <code>path</code> is <code>end</code> and the last is <code>start</code>.</p>
+<p>The second <code>if</code> in the <code>while</code> loop handles the corner case of not being able to reach <code>end</code> from <code>start</code>. If the smallest distance is <code>numeric_limits&lt;int&gt;::max()</code>, our “infinity”, then <code>end</code> can never be reached.</p>
+<pre data-code-wrap="java"><code class="lang-java">        // ...
+        for(auto&amp; v : path) std::cout &lt;&lt; v &lt;&lt; " ";
+        	std::cout &lt;&lt; "\n";
+
+        	return distances[end];
+    } // end of dijkstra()
+</code></pre>
+<p>In this final snippet of <code>dijkstra</code>, we print out the <code>path</code> and then <code>return distances[end]</code>, the distance from <code>start</code> to <code>end</code>.</p>
+<p>I’ll leave the <code>main()</code> function up to you guys, but <a href="http://pastebin.com/F8TpzSsc" rel="noopener nofollow ugc">here</a> is the source for this post. <em><strong>Note:</strong></em> <em>I have slightly modified the code shown here for simplicity and/or the tutorial’s sake.</em> There is a main function in <a href="http://pastebin.com/F8TpzSsc" rel="noopener nofollow ugc">that</a>, but feel free to make your own, as long as it satisfies the adjacency matrix.</p>
+<hr>
+<h1><a name="p-2288-conclusion-3" class="anchor" href="https://d.clarkee.co.uk#p-2288-conclusion-3"></a>Conclusion</h1>
+<p>That’s all for today. Next time, I’ll be rolling out a (much) more optimized version of the algorithm that takes advantage of adjacency lists and more concise coding techniques I have omitted from this for clarity reasons.</p>
+          <p><a href="https://d.clarkee.co.uk/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482/1</link>
+        <pubDate>Wed, 25 May 2016 01:34:54 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-482-1</guid>
+        <source url="https://d.clarkee.co.uk/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482.rss">Graph Algorithms (Part 1.1): Dijkstra&#39;s Shortest Path [Code v1]</source>
+      </item>
+  </channel>
+</rss>

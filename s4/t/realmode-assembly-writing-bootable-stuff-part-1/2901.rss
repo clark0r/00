@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+    <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901</link>
+    <description># Realmode Assembly - Writing bootable stuff
+## Part 1: Theory and Concepts
+
+----------
+
+## What is this?
+This is going to be a walk-through in writing  Operation Systems in assembly which operate purely in Realmode.
+Goal will be writing different kernels from a simple &quot;Hello World&quot; over small terminal programs to
+graphically displayed games.
+
+I decided to split this walk-through into small parts so those few who are interested in this have
+enough time to read the necessary theory and references before getting code smashed in the face, 
+I hope this prevents the parts from getting unnecessary long or confusing and it also gives
+me the time to properly check the information and code I provide (although errors might sneak in
+which makes reading the sources for reliable information the recommended way if you are really interested in how this works)
+
+## Requirements
+* Being patient enough to read through this badly written text before jumping into action
+
+## Notes
+
+* This information is the result of my research and own programming, everything said here might be wrong, correct me if you spot mistakes though!
+* I will try to list my sources at the bottom but I can&#39;t guarantee that these are all of them.
+* I&#39;M NOT RESPONSIBLE IF YOU BREAK SOMETHING USING INFORMATION I PROVIDED HERE.
+
+## Content of this Article
+Before doing anything there is a bit of theory and things to be understood before starting.
+So no code here only simple explanations of concepts and what we will do in the next articles.
+
+---
+## What is Realmode?
+Real mode is the operation mode all x86 compatible CPUs start in. Originally CPUs were only able to use real mode, later CPUs switched to protected mode (which is the main operation modes for modern Intel processors and allows for example Virtual Memory allocation and instruction set restriction through privilege levels) but starting in real mode was kept in for legacy reasons.
+
+It doesn&#39;t supply fancy stuff like virtual addresses so all addresses used are actual physical addresses also we won&#39;t be able to access 64-bit instructions as they are only accessible in Long mode (the mode x86-64 mainly operate in).
+
+It provides unlimited direct access to memory, I/O and peripheral hardware which means we have control over almost everything. We will only have 1MiB of accessible memory (actually less) but that will be enough as we won&#39;t write too long code. The BIOS provides lots of handy interrupts to interact with I/O and peripherals. 
+
+It also provides drivers for devices so we don&#39;t need to worry about our mouse or keyboard not working (except you have some weird hardware). 
+Also important to know is that the default CPU operation length is 16bit so we rarely going to use 32bit registers or operations.
+
+```makefile
+|------------------------------------------------------------------------------------------------------|
+|                                     CPU Mode Flow Chart                                              |
+|                                                                                                      |
+|                                            |----------------|-----------------------|                |
+|                              ------------&gt; | [64-bit mode] &lt;-&gt; [Compatibility mode] | # Long mode    |
+|                              |             |----------------|-----------------------|                |
+|  |---------------------------|----------|                                  /\                        |
+|  | [Real Mode] ------&gt; [Protected Mode] | # Legacy mode                    Long Mode is for          |
+|  |--------------------------------------|                                  64bit CPUs to get         |
+|       /\                            /\                                     Access to 64bit           |
+|       The CPU start in this mode    This is the mode 32bit CPUs mainly     instructions              |
+|       We will stay here             use.                                                             |
+|                                                                                                      |
+|------------------------------------------------------------------------------------------------------|
+```
+
+## BIOS
+The BIOS(Basic Input/Output System) is the system that&#39;s responsible for initializing hardware on startup of the computer and responsible for providing generalized services for kernel and programs to easily interact with hardware (mouse, keyboard, display). It comes pre-installed on the motherboard and  is the first software run after power-on. All interrupts we will use will be directed to the BIOS so it will be a core component of our real mode assembly.
+
+## Bootloader/MBR
+The BIOS checks bootable devices for the boot signature in their first sector and writes this segment,
+if the boot signature was found, to the physical address 0x0000:0x7c00 (0st segment at address 0x7c00).
+This is the Master Boot Record, it&#39;s limited to 512 bytes and it&#39;s supposed to pick the hard drive and partition to boot from, write the bootloader of that partition into memory and jump to it so it can initialize the kernel loading.
+
+That won&#39;t be necessary for our small Operation Systems as we won&#39;t have partitions or a proper file system or anything in that matter so we will just use the MBR to load in the kernel into RAM and to give control to it.
+
+## Kernel
+The kernel is the main part of an operation system. 
+In the future code of this walk-through it will be responsible for everything, it will be the main place for our code. (I&#39;m actually not sure if that technically counts as a kernel)
+
+## So what&#39;s the plan?
+First we will write a Master Boot Record, that copies the kernel from the hard drive to memory.
+We will do that using BIOS Interrupt 0x13 which is responsible for reading and writing operations which involve drives.
+	
+After that we will load into out kernel and send our monitor a nice &quot;Hello World&quot; message using BIOS Interrupt 0x10 which will be our method of writing text and drawing pixels to the screen.
+
+```makefile
+|----------------------------------------------------------------------|
+|					1 MB Memory we have available                      |
+|--------|--------|-------------------------|--------------------------|
+| MBR    | Kernel | Free Space for us to use|  BIOS and Hardware Area  |
+| 0x7c00 | 0x8000 |  ~640KB for us to use   |         ~360KB           |
+|--------|--------|-------------------------|--------------------------| 
+```
+
+```makefile
+[BIOS] --Loads--&gt; [Master Boot Record / Bootloader] --Loads--&gt; [Kernel] --Prints--&gt; [Display]
+```
+
+(If you are interested in understanding more modern boot sequences (after floppy disks) you can check the last source&amp;reference link)
+
+## Conclusion
+This concludes the theory aspect, thank you for reading through this.
+I hope this is all the information you need to proceed.
+If I wrote something wrong just point it out and I will correct it also feedback is appreciated
+
+### [Next Part](https://0x00sec.org/t/realmode-assembly-writing-bootable-stuff-part-2/2992)
+----------
+## Sources and References
+* http://wiki.osdev.org/Real_Mode
+* http://wiki.osdev.org/Protected_Mode
+* https://en.wikipedia.org/wiki/Long_mode
+* https://en.wikipedia.org/wiki/BIOS
+* http://wiki.osdev.org/MBR_(x86)
+* http://wiki.osdev.org/Kernel
+* http://wiki.osdev.org/Boot_Sequence
+* http://stanislavs.org/helppc/int_13.html
+* https://en.wikipedia.org/wiki/INT_10H
+* http://duartes.org/gustavo/blog/post/how-computers-boot-up/
+* http://flint.cs.yale.edu/feng/cos/resources/BIOS/
+* http://gec.di.uminho.pt/discip/MaisAC/HCW/09R03.pdf
+* https://superuser.com/questions/660143/does-the-bios-have-some-sort-of-generic-drivers</description>
+    
+    <lastBuildDate>Sun, 12 Jul 2020 13:05:06 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+        <dc:creator><![CDATA[Leeky]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you for the sources you linked, they are quite good describing how booting up and the BIOS in general work.<br>
+The third source explains quite good why the BIOS is able to provide interrupts that work on all kinds of hardware!<br>
+The first and second source also mention the Shadowing RAM  and that the BIOS is saved on ROM (a chip in the motherboard) and then later copied to the RAM which is something I forgot to mention (I also like the illustrations of the second one, makes it easier to understand).</p>
+<p>Thank you for your comment, I added the resources to the “Sources and References” section! <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/10</link>
+        <pubDate>Sun, 30 Jul 2017 21:09:28 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2901-10</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss">Realmode Assembly - Writing bootable stuff - Part 1</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+        <dc:creator><![CDATA[Emparetiw_Aparajdm]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/leeky">@Leeky</a><br>
+Could you please take a look at those three resources and consider adding them to the “Sources and References” section?</p>
+<p><a href="http://flint.cs.yale.edu/feng/cos/resources/BIOS/" class="onebox" target="_blank" rel="nofollow noopener">http://flint.cs.yale.edu/feng/cos/resources/BIOS/</a><br>
+<a href="http://gec.di.uminho.pt/discip/MaisAC/HCW/09R03.pdf" class="onebox" target="_blank" rel="nofollow noopener">http://gec.di.uminho.pt/discip/MaisAC/HCW/09R03.pdf</a><br>
+<a>https://superuser.com/questions/660143/does-the-bios-have-some-sort-of-generic-drivers</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/9</link>
+        <pubDate>Sat, 29 Jul 2017 13:36:13 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2901-9</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss">Realmode Assembly - Writing bootable stuff - Part 1</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+        <dc:creator><![CDATA[Pwned08000202]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for this Part !<br>
+It’s well explained <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"><br>
+I hope that there are other part =)</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/8</link>
+        <pubDate>Fri, 28 Jul 2017 19:09:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2901-8</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss">Realmode Assembly - Writing bootable stuff - Part 1</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+        <dc:creator><![CDATA[nipru]]></dc:creator>
+        <description><![CDATA[
+            <p>need more <img src="https://0x00sec.org/images/emoji/twitter/thumbsup.png?v=9" title=":thumbsup:" class="emoji" alt=":thumbsup:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/7</link>
+        <pubDate>Sat, 15 Jul 2017 21:49:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2901-7</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss">Realmode Assembly - Writing bootable stuff - Part 1</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+        <dc:creator><![CDATA[ATGC]]></dc:creator>
+        <description><![CDATA[
+            <p>Great post! Keep 'em coming <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/6</link>
+        <pubDate>Sat, 15 Jul 2017 19:05:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2901-6</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss">Realmode Assembly - Writing bootable stuff - Part 1</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+        <dc:creator><![CDATA[BO41]]></dc:creator>
+        <description><![CDATA[
+            <p>Great write up. <img src="https://0x00sec.org/images/emoji/twitter/thumbsup.png?v=9" title=":thumbsup:" class="emoji" alt=":thumbsup:"><br>
+Very informative, could also be a standalone post on how PC’s start.</p>
+<p>I hope I am able to follow in part 2 as well</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/5</link>
+        <pubDate>Thu, 13 Jul 2017 07:45:13 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2901-5</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss">Realmode Assembly - Writing bootable stuff - Part 1</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+        <dc:creator><![CDATA[febri]]></dc:creator>
+        <description><![CDATA[
+            <p>nice stuff, can’t wait for part 2 <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/4</link>
+        <pubDate>Thu, 13 Jul 2017 05:29:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2901-4</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss">Realmode Assembly - Writing bootable stuff - Part 1</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+        <dc:creator><![CDATA[Leeky]]></dc:creator>
+        <description><![CDATA[
+            <p>Not the actuall BIOS is always on. Only the CMOS RAM,the memory BIOS settings (for example the boot sequence) are saved on, and the system clock are always powered by a small battery.<br>
+They are getting powered so the system clock can run while the PC has no power and to keep the data in the CMOS RAM as it is volatile memory (loses content without energy)</p>
+<p>Further Information:</p>
+<ul>
+<li><a href="https://en.wikipedia.org/wiki/Nonvolatile_BIOS_memory" rel="nofollow noopener">https://en.wikipedia.org/wiki/Nonvolatile_BIOS_memory</a></li>
+<li><a href="https://www.computerhope.com/issues/ch001360.htm" rel="nofollow noopener">https://www.computerhope.com/issues/ch001360.htm</a></li>
+</ul>
+<p>Thank you for your question!</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/3</link>
+        <pubDate>Wed, 12 Jul 2017 22:13:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2901-3</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss">Realmode Assembly - Writing bootable stuff - Part 1</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Isn’t the BIOS always on (via a little coin battery)?</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/2</link>
+        <pubDate>Wed, 12 Jul 2017 21:46:42 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2901-2</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss">Realmode Assembly - Writing bootable stuff - Part 1</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 1</title>
+        <dc:creator><![CDATA[Leeky]]></dc:creator>
+        <description><![CDATA[
+            <h1>Realmode Assembly - Writing bootable stuff</h1>
+<h2>Part 1: Theory and Concepts</h2>
+<hr>
+<h2>What is this?</h2>
+<p>This is going to be a walk-through in writing  Operation Systems in assembly which operate purely in Realmode.<br>
+Goal will be writing different kernels from a simple “Hello World” over small terminal programs to<br>
+graphically displayed games.</p>
+<p>I decided to split this walk-through into small parts so those few who are interested in this have<br>
+enough time to read the necessary theory and references before getting code smashed in the face,<br>
+I hope this prevents the parts from getting unnecessary long or confusing and it also gives<br>
+me the time to properly check the information and code I provide (although errors might sneak in<br>
+which makes reading the sources for reliable information the recommended way if you are really interested in how this works)</p>
+<h2>Requirements</h2>
+<ul>
+<li>Being patient enough to read through this badly written text before jumping into action</li>
+</ul>
+<h2>Notes</h2>
+<ul>
+<li>This information is the result of my research and own programming, everything said here might be wrong, correct me if you spot mistakes though!</li>
+<li>I will try to list my sources at the bottom but I can’t guarantee that these are all of them.</li>
+<li>I’M NOT RESPONSIBLE IF YOU BREAK SOMETHING USING INFORMATION I PROVIDED HERE.</li>
+</ul>
+<h2>Content of this Article</h2>
+<p>Before doing anything there is a bit of theory and things to be understood before starting.<br>
+So no code here only simple explanations of concepts and what we will do in the next articles.</p>
+<hr>
+<h2>What is Realmode?</h2>
+<p>Real mode is the operation mode all x86 compatible CPUs start in. Originally CPUs were only able to use real mode, later CPUs switched to protected mode (which is the main operation modes for modern Intel processors and allows for example Virtual Memory allocation and instruction set restriction through privilege levels) but starting in real mode was kept in for legacy reasons.</p>
+<p>It doesn’t supply fancy stuff like virtual addresses so all addresses used are actual physical addresses also we won’t be able to access 64-bit instructions as they are only accessible in Long mode (the mode x86-64 mainly operate in).</p>
+<p>It provides unlimited direct access to memory, I/O and peripheral hardware which means we have control over almost everything. We will only have 1MiB of accessible memory (actually less) but that will be enough as we won’t write too long code. The BIOS provides lots of handy interrupts to interact with I/O and peripherals.</p>
+<p>It also provides drivers for devices so we don’t need to worry about our mouse or keyboard not working (except you have some weird hardware).<br>
+Also important to know is that the default CPU operation length is 16bit so we rarely going to use 32bit registers or operations.</p>
+<pre><code class="lang-makefile">|------------------------------------------------------------------------------------------------------|
+|                                     CPU Mode Flow Chart                                              |
+|                                                                                                      |
+|                                            |----------------|-----------------------|                |
+|                              ------------&gt; | [64-bit mode] &lt;-&gt; [Compatibility mode] | # Long mode    |
+|                              |             |----------------|-----------------------|                |
+|  |---------------------------|----------|                                  /\                        |
+|  | [Real Mode] ------&gt; [Protected Mode] | # Legacy mode                    Long Mode is for          |
+|  |--------------------------------------|                                  64bit CPUs to get         |
+|       /\                            /\                                     Access to 64bit           |
+|       The CPU start in this mode    This is the mode 32bit CPUs mainly     instructions              |
+|       We will stay here             use.                                                             |
+|                                                                                                      |
+|------------------------------------------------------------------------------------------------------|
+</code></pre>
+<h2>BIOS</h2>
+<p>The BIOS(Basic Input/Output System) is the system that’s responsible for initializing hardware on startup of the computer and responsible for providing generalized services for kernel and programs to easily interact with hardware (mouse, keyboard, display). It comes pre-installed on the motherboard and  is the first software run after power-on. All interrupts we will use will be directed to the BIOS so it will be a core component of our real mode assembly.</p>
+<h2>Bootloader/MBR</h2>
+<p>The BIOS checks bootable devices for the boot signature in their first sector and writes this segment,<br>
+if the boot signature was found, to the physical address 0x0000:0x7c00 (0st segment at address 0x7c00).<br>
+This is the Master Boot Record, it’s limited to 512 bytes and it’s supposed to pick the hard drive and partition to boot from, write the bootloader of that partition into memory and jump to it so it can initialize the kernel loading.</p>
+<p>That won’t be necessary for our small Operation Systems as we won’t have partitions or a proper file system or anything in that matter so we will just use the MBR to load in the kernel into RAM and to give control to it.</p>
+<h2>Kernel</h2>
+<p>The kernel is the main part of an operation system.<br>
+In the future code of this walk-through it will be responsible for everything, it will be the main place for our code. (I’m actually not sure if that technically counts as a kernel)</p>
+<h2>So what’s the plan?</h2>
+<p>First we will write a Master Boot Record, that copies the kernel from the hard drive to memory.<br>
+We will do that using BIOS Interrupt 0x13 which is responsible for reading and writing operations which involve drives.</p>
+<p>After that we will load into out kernel and send our monitor a nice “Hello World” message using BIOS Interrupt 0x10 which will be our method of writing text and drawing pixels to the screen.</p>
+<pre><code class="lang-makefile">|----------------------------------------------------------------------|
+|					1 MB Memory we have available                      |
+|--------|--------|-------------------------|--------------------------|
+| MBR    | Kernel | Free Space for us to use|  BIOS and Hardware Area  |
+| 0x7c00 | 0x8000 |  ~640KB for us to use   |         ~360KB           |
+|--------|--------|-------------------------|--------------------------| 
+</code></pre>
+<pre><code class="lang-makefile">[BIOS] --Loads--&gt; [Master Boot Record / Bootloader] --Loads--&gt; [Kernel] --Prints--&gt; [Display]
+</code></pre>
+<p>(If you are interested in understanding more modern boot sequences (after floppy disks) you can check the last source&amp;reference link)</p>
+<h2>Conclusion</h2>
+<p>This concludes the theory aspect, thank you for reading through this.<br>
+I hope this is all the information you need to proceed.<br>
+If I wrote something wrong just point it out and I will correct it also feedback is appreciated</p>
+<h3><a href="https://0x00sec.org/t/realmode-assembly-writing-bootable-stuff-part-2/2992">Next Part</a></h3>
+<hr>
+<h2>Sources and References</h2>
+<ul>
+<li><a href="http://wiki.osdev.org/Real_Mode" rel="nofollow noopener">http://wiki.osdev.org/Real_Mode</a></li>
+<li><a href="http://wiki.osdev.org/Protected_Mode" rel="nofollow noopener">http://wiki.osdev.org/Protected_Mode</a></li>
+<li><a href="https://en.wikipedia.org/wiki/Long_mode" rel="nofollow noopener">https://en.wikipedia.org/wiki/Long_mode</a></li>
+<li><a href="https://en.wikipedia.org/wiki/BIOS" rel="nofollow noopener">https://en.wikipedia.org/wiki/BIOS</a></li>
+<li><a href="http://wiki.osdev.org/MBR_(x86)" rel="nofollow noopener">http://wiki.osdev.org/MBR_(x86)</a></li>
+<li><a href="http://wiki.osdev.org/Kernel" rel="nofollow noopener">http://wiki.osdev.org/Kernel</a></li>
+<li><a href="http://wiki.osdev.org/Boot_Sequence" rel="nofollow noopener">http://wiki.osdev.org/Boot_Sequence</a></li>
+<li><a href="http://stanislavs.org/helppc/int_13.html" rel="nofollow noopener">http://stanislavs.org/helppc/int_13.html</a></li>
+<li><a href="https://en.wikipedia.org/wiki/INT_10H" rel="nofollow noopener">https://en.wikipedia.org/wiki/INT_10H</a></li>
+<li><a href="http://duartes.org/gustavo/blog/post/how-computers-boot-up/" rel="nofollow noopener">http://duartes.org/gustavo/blog/post/how-computers-boot-up/</a></li>
+<li><a href="http://flint.cs.yale.edu/feng/cos/resources/BIOS/" rel="nofollow noopener">http://flint.cs.yale.edu/feng/cos/resources/BIOS/</a></li>
+<li><a href="http://gec.di.uminho.pt/discip/MaisAC/HCW/09R03.pdf" rel="nofollow noopener">http://gec.di.uminho.pt/discip/MaisAC/HCW/09R03.pdf</a></li>
+<li><a href="https://superuser.com/questions/660143/does-the-bios-have-some-sort-of-generic-drivers" rel="nofollow noopener">https://superuser.com/questions/660143/does-the-bios-have-some-sort-of-generic-drivers</a></li>
+</ul>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901/1</link>
+        <pubDate>Wed, 12 Jul 2017 21:05:42 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2901-1</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-1/2901.rss">Realmode Assembly - Writing bootable stuff - Part 1</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!-- Added by HTTrack --><meta http-equiv="content-type" content="text/html;charset=utf-8" /><!-- /Added by HTTrack -->
+<head>
+    <meta charset="utf-8">
+    <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C - Programming - 0x00sec - The Home of the Hacker</title>
+    <meta name="description" content="Hello! Welcome to my first tutorial about the ELF format, the ARM processor, and how to code a debugger for it. 
+Ever wondered how a debugger works? Ever wondered how a debugger works on an ARM processor? 
+In this series&amp;hellip;">
+    <meta name="generator" content="Discourse 3.6.0.beta2-latest - https://github.com/discourse/discourse version 3b1964f3ed8bdc2f181e2abccb1b116e4b814db5">
+<link rel="icon" type="image/png" href="../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.html">
+<link rel="apple-touch-icon" type="image/png" href="../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.html">
+<meta name="theme-color" media="all" content="#171616">
+
+<meta name="color-scheme" content="dark">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, viewport-fit=cover">
+<link rel="canonical" href="3157.html" />
+
+<link rel="search" type="application/opensearchdescription+xml" href="../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+
+    
+    <link href="../../stylesheets/color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4.css_%3b%20filename_%3dUTF-8%27%27color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" class="light-scheme" data-scheme-id="15"/>
+
+<link href="../../stylesheets/common_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27common_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common"  />
+
+  <link href="../../stylesheets/mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile"  />
+  <link href="../../stylesheets/desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop"  />
+
+
+
+    <link href="../../stylesheets/chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="chat"  />
+    <link href="../../stylesheets/checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="checklist"  />
+    <link href="../../stylesheets/discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-cakeday"  />
+    <link href="../../stylesheets/discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-details"  />
+    <link href="../../stylesheets/discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-lazy-videos"  />
+    <link href="../../stylesheets/discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-local-dates"  />
+    <link href="../../stylesheets/discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-narrative-bot"  />
+    <link href="../../stylesheets/discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-presence"  />
+    <link href="../../stylesheets/discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-solved"  />
+    <link href="../../stylesheets/discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-templates"  />
+    <link href="../../stylesheets/discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-topic-voting"  />
+    <link href="../../stylesheets/docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="docker_manager"  />
+    <link href="../../stylesheets/footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="footnote"  />
+    <link href="../../stylesheets/poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="poll"  />
+    <link href="../../stylesheets/spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="spoiler-alert"  />
+    <link href="../../stylesheets/chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="chat_mobile"  />
+    <link href="../../stylesheets/discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-solved_mobile"  />
+    <link href="../../stylesheets/discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-topic-voting_mobile"  />
+    <link href="../../stylesheets/chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="chat_desktop"  />
+    <link href="../../stylesheets/discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="discourse-topic-voting_desktop"  />
+    <link href="../../stylesheets/poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="poll_desktop"  />
+
+  <link href="../../stylesheets/common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960db.css_%3b%20filename_%3dUTF-8%27%27common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960dba97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common_theme" data-theme-id="57" data-theme-name="0x00sec-v2"/>
+    <link href="../../stylesheets/mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38.css_%3b%20filename_%3dUTF-8%27%27mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile_theme" data-theme-id="4" data-theme-name="mobile chrome"/>
+    <link href="../../stylesheets/desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96.css_%3b%20filename_%3dUTF-8%27%27desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2"/>
+
+    <link rel="stylesheet" href="../../../external.html?link=https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="../../../external.html?link=https://s3.amazonaws.com/0x00sec/highlight.pack.js" nonce="ziUmYoTX6vgcF7oDhMFlQGHfU"></script>
+<script defer="" src="../../theme-javascripts/05954ff525aceb8daa8b585f92d758d311ae7077.js_%3b%20filename_%3dUTF-8%27%2705954ff525aceb8daa8b585f92d758d311ae7077a97f.js?__ws=d.clarkee.co.uk" data-theme-id="40" nonce="ziUmYoTX6vgcF7oDhMFlQGHfU"></script>
+    
+        <link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C&#39;" href="3157.rss" />
+    <meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://d.clarkee.co.uk/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:image" content="https://d.clarkee.co.uk/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:url" content="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157" />
+<meta name="twitter:url" content="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157" />
+<meta property="og:title" content="(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C" />
+<meta name="twitter:title" content="(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C" />
+<meta property="og:description" content="Hello! Welcome to my first tutorial about the ELF format, the ARM processor, and how to code a debugger for it.  Ever wondered how a debugger works? Ever wondered how a debugger works on an ARM processor?  In this series of articles, I am going to go from start to finish on how to code a simple debugger for the ARM platform. There are many subtle, and some not-so-subtle, differences between x86 and ARM internals and the way they use the ptrace() syscall.  In this first article, I am going to cov..." />
+<meta name="twitter:description" content="Hello! Welcome to my first tutorial about the ELF format, the ARM processor, and how to code a debugger for it.  Ever wondered how a debugger works? Ever wondered how a debugger works on an ARM processor?  In this series of articles, I am going to go from start to finish on how to code a simple debugger for the ARM platform. There are many subtle, and some not-so-subtle, differences between x86 and ARM internals and the way they use the ptrace() syscall.  In this first article, I am going to cov..." />
+<meta property="og:article:section" content="Programming" />
+<meta property="og:article:section:color" content="92278F" />
+<meta property="og:article:tag" content="cprogramming" />
+<meta property="og:article:tag" content="elf" />
+<meta property="og:article:tag" content="asm" />
+<meta property="og:article:tag" content="linux" />
+<meta name="twitter:label1" value="Reading time" />
+<meta name="twitter:data1" value="3 mins 🕑" />
+<meta name="twitter:label2" value="Likes" />
+<meta name="twitter:data2" value="19 ❤" />
+<meta property="article:published_time" content="2017-08-03T01:44:39+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+
+
+    
+  </head>
+  <body class="crawler ">
+    <div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+  <!--<a href="https://git.0x00sec.org" class="dow-menu">GitLab</a>  
+  <a href="https://blog.0x00sec.org/irc" class="dow-menu">IRC</a>!-->
+  <a href="../../../external.html?link=https://init.0x00sec.org/" class="dow-menu">Init</a>
+  <a href="../../../external.html?link=https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+  <a href="../../../external.html?link=https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+    <header>
+  <a href="../../index.html">0x00sec - The Home of the Hacker</a>
+</header>
+
+    <div id="main-outlet" class="wrap" role="main">
+        <div id="topic-title">
+    <h1>
+      <a href="3157.html">(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</a>
+    </h1>
+
+      <div class="topic-category" itemscope itemtype="../../../external.html?link=http://schema.org/BreadcrumbList">
+          <span itemprop="itemListElement" itemscope itemtype="../../../external.html?link=http://schema.org/ListItem">
+            <a href="../../c/programming/61.html" class="badge-wrapper bullet" itemprop="item">
+              <span class='badge-category-bg' style='background-color: #92278F'></span>
+              <span class='badge-category clear-badge'>
+                <span class='category-name' itemprop='name'>Programming</span>
+              </span>
+            </a>
+            <meta itemprop="position" content="1" />
+          </span>
+      </div>
+
+      <div class="topic-category">
+        <div class='discourse-tags list-tags'>
+            <a href='../../tag/cprogramming.html' class='discourse-tag' rel="tag">cprogramming</a>, 
+            <a href='../../tag/elf.html' class='discourse-tag' rel="tag">elf</a>, 
+            <a href='../../tag/asm.html' class='discourse-tag' rel="tag">asm</a>, 
+            <a href='../../tag/linux.html' class='discourse-tag' rel="tag">linux</a>
+        </div>
+      </div>
+  </div>
+
+  
+
+    <div itemscope itemtype='../../../external.html?link=http://schema.org/DiscussionForumPosting'>
+      <meta itemprop='headline' content='(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C'>
+      <link itemprop='url' href='3157.html'>
+      <meta itemprop='datePublished' content='2017-08-03T01:44:39Z'>
+        <meta itemprop='articleSection' content='Programming'>
+      <meta itemprop='keywords' content='cprogramming, elf, asm, linux'>
+      <div itemprop='publisher' itemscope itemtype="../../../external.html?link=http://schema.org/Organization">
+        <meta itemprop='name' content='0x00sec - The Home of the Hacker'>
+          <div itemprop='logo' itemscope itemtype="../../../external.html?link=http://schema.org/ImageObject">
+            <meta itemprop='url' content='../../uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.html'>
+          </div>
+      </div>
+
+
+          <div id='post_1'  class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/Bowlslaw.html'><span itemprop='name'>Bowlslaw</span></a>
+                
+              </span>
+
+                <link itemprop="mainEntityOfPage" href="3157.html">
+
+
+              <span class="crawler-post-infos">
+                  <time  datetime='2017-08-03T01:44:39Z' class='post-time'>
+                    August 3, 2017,  1:44am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-08-03T01:44:39Z'>
+              <span itemprop='position'>1</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Hello! Welcome to my first tutorial about the ELF format, the ARM processor, and how to code a debugger for it.</p>
+<p>Ever wondered how a debugger works? Ever wondered how a debugger works on an ARM processor?</p>
+<p>In this series of articles, I am going to go from start to finish on how to code a simple debugger for the ARM platform. There are many subtle, and some not-so-subtle, differences between x86 and ARM internals and the way they use the ptrace() syscall.</p>
+<p>In this first article, I am going to cover how to access and print the ELF section and program headers so you can take a closer look at what goes on under the hood. However, this is not an ELF or C programming tutorial. I will briefly cover the most important parts, but you should be prepared to use the man pages if you are interested in a more detailed understanding.</p>
+<p><strong>Consider this an introduction to the techniques that will be used in the debugger.</strong></p>
+<h4>Community Assigned Level:</h4>
+<div class="poll" data-poll-status="open" data-poll-type="regular" data-poll-name="poll">
+<div>
+<div class="poll-container">
+<ul>
+<li data-poll-option-id="e1c1af66349ae633fa9ffd223d9e01f3">Newbie</li>
+<li data-poll-option-id="48cde21e0fcdef5aef447a332bb6dcc0">Wannabe</li>
+<li data-poll-option-id="f0d5a092a44bae0d9f0734127a07fe91">Hacker</li>
+<li data-poll-option-id="d0be935ef28646b5afecbf524d510b85">Wizard</li>
+<li data-poll-option-id="cc5e4d9a5dc2c4d9aa641ef7a2a97876">Guru</li>
+</ul>
+</div>
+<div class="poll-info">
+<p>
+<span class="info-number">0</span>
+<span class="info-label">voters</span>
+</p>
+</div>
+</div>
+</div>
+<h4>Required Skills</h4>
+<ul>
+<li>Linux</li>
+<li>Basics of the ELF format</li>
+<li>C programming</li>
+</ul>
+<h4>Disclaimer</h4>
+<p>This article heavily draws upon the book <a href="../../../external.html?link=https://www.amazon.com/Learning-Binary-Analysis-elfmaster-ONeill/dp/1782167102?tag=0x00sec03-20" rel="nofollow noopener">Learning Linux Binary Analysis</a> by Ryan “elfmaster” O’Neill. I highly recommend this book for anyone interested in the ELF format.</p>
+<hr>
+<h1>Meat</h1>
+<p>The ELF format is linux’s chosen executable file format. In fact, it stands for Executable and Linkable Format.<br>
+Within the ELF format are defined several structures which store program data.<br>
+The three structures we will be looking at are the Elf32_Ehdr, Elf32_Phdr, and Elf32_Shdr struct, which are the Elf Header, Program Header, and Section Headers structures, defined as:</p>
+<p>This is the ELF header. It essentially marks this file as the ELF type, its architecture, and the entry point address where execution begins.</p>
+<pre><code>#define EI_NIDENT 16
+   typedef struct {
+       unsigned char e_ident[EI_NIDENT];
+       uint16_t      e_type;
+       uint16_t      e_machine;
+       uint32_t      e_version;
+       ElfN_Addr     e_entry;
+       ElfN_Off      e_phoff;
+       ElfN_Off      e_shoff;
+       uint32_t      e_flags;
+       uint16_t      e_ehsize;
+       uint16_t      e_phentsize;
+       uint16_t      e_phnum;
+       uint16_t      e_shentsize;
+       uint16_t      e_shnum;
+       uint16_t      e_shstrndx;
+   } Elf32_Ehdr;
+</code></pre>
+<p>According to “Learning Linux Binary Analysis”:<br>
+<em>“ELF program headers are what describe segments within a binary and are necessary for program loading. Segments are understood by the kernel during load time and describe the memory layout of an executable on disk and how it should translate to memory. The program header table can be accessed by referencing the offset found in the initial ELF header member called e__phoff”</em></p>
+<pre><code>typedef struct {
+    uint32_t   p_type;       //segment type
+    Elf32_Off  p_offset;     //segment offset
+    Elf32_Addr p_vaddr;      //segment virtual address
+    Elf32_Addr p_paddr;      //segment physical address
+    uint32_t   p_filesz;     //size of segment in the file
+    uint32_t   p_memsz;      //size of segment in memory
+    uint32_t   p_flags;      //segment flags, I.E execute|read|read
+    uint32_t   p_align;      //segment alignment in memory
+  } Elf32_Phdr;
+</code></pre>
+<p>According to “Learning Linux Binary Analysis”<br>
+<em>“A section header table exists to reference the location and size of these sections and is primarily for linking and debugging purposes. Section headers are not necessary for program execution, and a program will execute just fine without having a section header table. This is because the section header table doesn’t describe the program memory layout. That is the responsibility of the program header table. The section headers are really just complimentary to the program headers. The readelf –l command will show which sections are mapped to which segments, which helps to visualize the relationship between sections and segments.”</em></p>
+<pre><code>typedef struct {
+uint32_t   sh_name;        // offset into shdr string table for shdr name
+    uint32_t   sh_type;    // shdr type I.E SHT_PROGBITS
+    uint32_t   sh_flags;   // shdr flags I.E SHT_WRITE|SHT_ALLOC
+    Elf32_Addr sh_addr;    // address of where section begins
+    Elf32_Off  sh_offset;  // offset of shdr from beginning of file
+    uint32_t   sh_size;    // size that section takes up on disk
+    uint32_t   sh_link;    // points to another section
+    uint32_t   sh_info;    // interpretation depends on section type
+uint32_t   sh_addralign;   // alignment for address of section
+uint32_t   sh_entsize;     // size of each certain entries that may be in section
+} Elf32_Shdr;
+</code></pre>
+<p>This is where our data is stored. Now, we can use some C code to access the members of these structures and print out their values. First, some setup is required:</p>
+<pre><code>#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;elf.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;sys/mman.h&gt;
+#include &lt;stdint.h&gt;
+#include &lt;sys/stat.h&gt;
+#include &lt;fcntl.h&gt;
+
+int main(int argc, char **argv) {
+   int fd, i;                      // File descriptor and index
+   uint8_t *mem;                   // Variable we will use to mmap our executable
+   struct stat st;                 // Our usual stat structure
+   char *StringTable, *interp;
+   
+   // This is where we defined our ELF, program, and section header variables
+   Elf32_Ehdr *ehdr;
+   Elf32_Phdr *phdr;
+   Elf32_Shdr *shdr;
+
+   if(argc &lt; 2) {
+      printf("Usage: %s &lt;executable&gt;\n", argv[0]);
+      exit(0);
+   }
+
+   if((fd = open(argv[1], O_RDONLY)) &lt; 0) {
+      perror("open");
+      exit(EXIT_FAILURE);
+   }
+   
+   if(fstat(fd, &amp;st) &lt; 0) {
+      perror("fstat");
+      exit(EXIT_FAILURE);
+   }
+</code></pre>
+<p>Now that we have our variables set up, we can map our executable into memory and begin to read and print our values.</p>
+<p>This is where we map our executable into memory:</p>
+<pre><code>   mem = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+   if(mem == MAP_FAILED) {
+      perror("mmap");
+      exit(EXIT_FAILURE);
+   }
+</code></pre>
+<p>The initial ELF Header starts at offset 0 of our mapped memory:</p>
+<pre><code>   ehdr = (Elf32_Ehdr *)mem;
+</code></pre>
+<p>The shdr table and phdr table offsets are given by e_shoff and e_phoff members of the Elf32_Ehdr.</p>
+<pre><code>   phdr = (Elf32_Phdr *)&amp;mem[ehdr-&gt;e_phoff];
+   shdr = (Elf32_Shdr *)&amp;mem[ehdr-&gt;e_shoff];
+</code></pre>
+<p>Check to see if the ELF magic (The first 4 bytes) match up as 0x7f E L F</p>
+<pre><code>   if(mem[0] != 0x7f &amp;&amp; strcmp(&amp;mem[1], "ELF")) {
+      fprintf(stderr, "%s is not an ELF file\n", argv[1]);
+      exit(EXIT_FAILURE);
+   }
+</code></pre>
+<p>We are only parsing executables with this code so ET_EXEC marks an executable.</p>
+<pre><code>   if(ehdr-&gt;e_type != ET_EXEC) {
+      fprintf(stderr, "%s is not an executable\n", argv[1]);
+      exit(EXIT_FAILURE);
+   }
+</code></pre>
+<p>Now that we have our program stored in mem, we can print its entry point address. Remember that the e_entry member holds the address of the entry point:</p>
+<pre><code>printf("Program Entry point: 0x%x\n", ehdr-&gt;e_entry);
+</code></pre>
+<p>Now, we have to find the string table for the section headers names. The e_shstrndx member holds this data:</p>
+<pre><code>StringTable = &amp;mem[shdr[ehdr-&gt;e_shstrndx].sh_offset];
+</code></pre>
+<p>Next, we print each section header name and address. Notice we get the index into the string table<br>
+that contains each section header name with the shdr.sh_name member</p>
+<pre><code>printf("Section header list:\n\n");
+for(i = 1; i &lt; ehdr-&gt;e_shnum; i++)
+  printf("%s: 0x%x\n", &amp;StringTable[shdr[i].sh_name], shdr[i].sh_addr);
+</code></pre>
+<p>Finally, we print out each segment name, and address. Except for PT_INTERP we print the path to the dynamic linker.</p>
+<pre><code>printf("\nProgram header list\n\n");
+for(i = 0; i &lt; ehdr-&gt;e_phnum; i++) {   
+  switch(phdr[i].p_type) {
+     case PT_LOAD:
+        /*
+         * We know that text segment starts
+         * at offset 0. And only one other
+         * possible loadable segment exists
+         * which is the data segment.
+         */
+        if(phdr[i].p_offset == 0)
+           printf("Text segment: 0x%x\n", phdr[i].p_vaddr);
+        else
+           printf("Data segment: 0x%x\n", phdr[i].p_vaddr);
+     break;
+     case PT_INTERP:
+        interp = strdup((char *)&amp;mem[phdr[i].p_offset]);
+        printf("Interpreter: %s\n", interp);
+        break;
+     case PT_NOTE:
+        printf("Note segment: 0x%x\n", phdr[i].p_vaddr);
+        break;
+     case PT_DYNAMIC:
+        printf("Dynamic segment: 0x%x\n", phdr[i].p_vaddr);
+        break;
+     case PT_PHDR:
+        printf("Phdr segment: 0x%x\n", phdr[i].p_vaddr);
+        break;
+  }
+</code></pre>
+<p>}</p>
+<p>Here is the entire program:</p>
+<pre><code>#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;elf.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;sys/mman.h&gt;
+#include &lt;stdint.h&gt;
+#include &lt;sys/stat.h&gt;
+#include &lt;fcntl.h&gt;
+
+int main(int argc, char **argv) {
+   int fd, i;
+   uint8_t *mem;
+   struct stat st;
+   char *StringTable, *interp;
+   
+   Elf32_Ehdr *ehdr;
+   Elf32_Phdr *phdr;
+   Elf32_Shdr *shdr;
+
+   if(argc &lt; 2) {
+      printf("Usage: %s &lt;executable&gt;\n", argv[0]);
+      exit(0);
+   }
+
+   if((fd = open(argv[1], O_RDONLY)) &lt; 0) {
+      perror("open");
+      exit(EXIT_FAILURE);
+   }
+   
+   if(fstat(fd, &amp;st) &lt; 0) {
+      perror("fstat");
+      exit(EXIT_FAILURE);
+   }
+   
+   mem = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+   if(mem == MAP_FAILED) {
+      perror("mmap");
+      exit(EXIT_FAILURE);
+   }
+   
+   ehdr = (Elf32_Ehdr *)mem;
+   phdr = (Elf32_Phdr *)&amp;mem[ehdr-&gt;e_phoff];
+   shdr = (Elf32_Shdr *)&amp;mem[ehdr-&gt;e_shoff];
+   
+   if(mem[0] != 0x7f &amp;&amp; strcmp(&amp;mem[1], "ELF")) {
+      fprintf(stderr, "%s is not an ELF file\n", argv[1]);
+      exit(EXIT_FAILURE);
+   }
+   
+   if(ehdr-&gt;e_type != ET_EXEC) {
+      fprintf(stderr, "%s is not an executable\n", argv[1]);
+      exit(EXIT_FAILURE);
+   }
+
+   printf("Program Entry point: 0x%x\n", ehdr-&gt;e_entry);
+   
+   StringTable = &amp;mem[shdr[ehdr-&gt;e_shstrndx].sh_offset];
+
+   printf("Section header list:\n\n");
+   for(i = 1; i &lt; ehdr-&gt;e_shnum; i++)
+      printf("%s: 0x%x\n", &amp;StringTable[shdr[i].sh_name], shdr[i].sh_addr);
+   
+   printf("\nProgram header list\n\n");
+   for(i = 0; i &lt; ehdr-&gt;e_phnum; i++) {   
+      switch(phdr[i].p_type) {
+         case PT_LOAD:
+            if (phdr[i].p_offset == 0)
+               printf("Text segment: 0x%x\n", phdr[i].p_vaddr);
+            else
+               printf("Data segment: 0x%x\n", phdr[i].p_vaddr);
+         break;
+         case PT_INTERP:
+            interp = strdup((char *)&amp;mem[phdr[i].p_offset]);
+            printf("Interpreter: %s\n", interp);
+            break;
+         case PT_NOTE:
+            printf("Note segment: 0x%x\n", phdr[i].p_vaddr);
+            break;
+         case PT_DYNAMIC:
+            printf("Dynamic segment: 0x%x\n", phdr[i].p_vaddr);
+            break;
+         case PT_PHDR:
+            printf("Phdr segment: 0x%x\n", phdr[i].p_vaddr);
+            break;
+      }
+   }
+
+   exit(0);
+}
+</code></pre>
+<h1>Conclusions</h1>
+<p>As you can see, being able to code an ELF parser gives us a lot of insight into the ELF format and how it is stored in memory. It doesn’t take that much C code to do it, either.</p>
+<p>In my next article, we will be using the ptrace syscall to print the ARM registers of a program we trace. Here is a small sample:</p>
+<pre><code>/* The parent forks a child process to be traced */
+if((pid = fork()) &lt; 0) {
+    perror("fork");
+    exit(EXIT_FAILURE);
+}
+/* Use ptrace to begin tracing the child process */
+if(pid == 0) {
+    if(ptrace(PTRACE_TRACEME, pid, NULL, NULL) &lt; 0) {
+        perror("PTRACE_TRACEME");
+        exit(EXIT_FAILURE);
+    }
+    execve(exec, args, envp);
+    exit(EXIT_FAILURE);
+}</code></pre>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="10" />
+              <span class='post-likes'>10 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_2' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/_py.html'><span itemprop='name'>_py</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-08-03T08:40:43Z' class='post-time'>
+                    August 3, 2017,  8:40am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-08-03T08:53:23Z'>
+              <span itemprop='position'>2</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Here’s some feedback:</p>
+<ol>
+<li>
+<p>ELF isn’t a format only for executable files. There are also shared libraries and object files.</p>
+</li>
+<li>
+<p>Quoting every section of the book regarding ELF shows me that either you don’t understand the material in depth, or you didn’t bother trying to simplify the terms. Some drawings on how sections and segments look like would be nice for the newbies since those two interject with each other and can be confusing.</p>
+</li>
+<li>
+<p>You referred to structs and didn’t elaborate on them, such as the string table section (though not a must).</p>
+</li>
+<li>
+<p>You mentioned that data is stored in sections. That’s partially true. What about segments? Which brings my point about the difference between sections vs segments.</p>
+</li>
+<li>
+<p>I’d highly recommend to write an entire article between what truly sections and segments are since they are the bread and butter of debuggers and the ELF’s format itself.</p>
+</li>
+</ol>
+<p>Consider the above points as tips in case you really want to go deep into the binary internals. If you just want to provide a high level view, you’re doing a great job.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="5" />
+              <span class='post-likes'>5 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_3' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/Bowlslaw.html'><span itemprop='name'>Bowlslaw</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-08-03T11:36:50Z' class='post-time'>
+                    August 3, 2017, 11:36am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-08-03T11:36:50Z'>
+              <span itemprop='position'>3</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Thanks a lot for the feedback. I will take it under consideration.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_4' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/oaktree.html'><span itemprop='name'>oaktree</span></a>
+                (oaktree)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-08-03T18:01:35Z' class='post-time'>
+                    August 3, 2017,  6:01pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-08-03T18:01:35Z'>
+              <span itemprop='position'>4</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Good writing.</p>
+<p>Also make note of <a class="mention" href="../../u/_py.html">@_py</a> 's comments…</p>
+<p>I look forward to the second instalment.</p>
+<hr>
+<p>I believe you’re missing a <code>free</code> in the <code>PT_INTERP</code> <code>case</code>.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_6' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/Bowlslaw.html'><span itemprop='name'>Bowlslaw</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-08-04T00:37:01Z' class='post-time'>
+                    August 4, 2017, 12:37am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-08-04T00:37:01Z'>
+              <span itemprop='position'>6</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <aside class="quote no-group" data-username="oaktree" data-post="4" data-topic="3157">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="../../user_avatar/d.clarkee.co.uk/oaktree/48/4077_2.png" class="avatar"> oaktree:</div>
+<blockquote>
+<p>I believe you’re missing a free in the PT_INTERP case.</p>
+</blockquote>
+</aside>
+<p>Is it true that the exit library function frees memory as part of its functionality?</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_7' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/neolex.html'><span itemprop='name'>neolex</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-08-04T01:43:37Z' class='post-time'>
+                    August 4, 2017,  1:43am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-08-04T01:43:37Z'>
+              <span itemprop='position'>7</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Thanks for your article, I learned a lot !</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_8' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/oaktree.html'><span itemprop='name'>oaktree</span></a>
+                (oaktree)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-08-04T01:45:50Z' class='post-time'>
+                    August 4, 2017,  1:45am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-08-04T01:45:50Z'>
+              <span itemprop='position'>8</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>It was my understanding that memory is “freed” on exit when the process is taken out of memory.</p>
+<p>The whole point of <code>free</code> is to be able to reuse memory… After all, memory is finite – scarce on Windows.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_9' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/dtm.html'><span itemprop='name'>dtm</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-08-04T02:16:58Z' class='post-time'>
+                    August 4, 2017,  2:16am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-08-04T02:16:58Z'>
+              <span itemprop='position'>9</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <aside class="quote no-group" data-username="oaktree" data-post="8" data-topic="3157">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="../../user_avatar/d.clarkee.co.uk/oaktree/48/4077_2.png" class="avatar"> oaktree:</div>
+<blockquote>
+<p>memory is finite – scarce on Windows</p>
+</blockquote>
+</aside>
+<p>Unused RAM is wasted RAM. <img src="../../images/emoji/twitter/wink8e5e.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="4" />
+              <span class='post-likes'>4 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_10' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/system.html'><span itemprop='name'>system</span></a>
+                (system)
+                  Closed 
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2018-01-21T00:30:08Z' class='post-time'>
+                    January 21, 2018, 12:30am
+                  </time>
+                  <meta itemprop='dateModified' content='2018-01-21T00:30:08Z'>
+              <span itemprop='position'>10</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+    </div>
+
+
+    
+
+
+
+
+    </div>
+    <footer class="container wrap">
+  <nav class='crawler-nav'>
+    <ul>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../index.html' itemprop="url">Home </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../categories.html' itemprop="url">Categories </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../guidelines.html' itemprop="url">Guidelines </a>
+        </span>
+      </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../tos.html' itemprop="url">Terms of Service </a>
+          </span>
+        </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../privacy.html' itemprop="url">Privacy Policy </a>
+          </span>
+        </li>
+    </ul>
+  </nav>
+  <p class='powered-by-link'>Powered by <a href="../../../external.html?link=https://www.discourse.org/">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+
+    
+    <script src="../../../external.html?link=http://instant.page/3.0.0" type="module" defer="" integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1" nonce="ziUmYoTX6vgcF7oDhMFlQGHfU"></script>
+  </body>
+  
+</html>

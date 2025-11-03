@@ -1,0 +1,485 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Programming Turing Machines - Part II</title>
+    <link>https://d.clarkee.co.uk/t/programming-turing-machines-part-ii/6908</link>
+    <description># Programming Turing Machines: Implementation
+To continue where we left off from the [previous topic](https://0x00sec.org/t/programming-turing-machines-part-i/6895), I will begin discussing my Python implementation of a Turing machine.  The fun part about implementation is that you don&#39;t always have to be as explicit as you do when defining a model mathematically.  This will give us some wiggle room later on to take advantage of inference.
+
+---
+## Definition analysis
+Recall our formal definition of a Turing machine from _[Introduction to the Theory of Computation](https://www.amazon.com/Introduction-Theory-Computation-Michael-Sipser/dp/113318779X)_ by Michael Sipser:
+&gt; A Turing machine is a 7-tuple, (_Q_, Σ, Γ, δ, _q&lt;sub&gt;0&lt;/sub&gt;_, _q&lt;sub&gt;A&lt;/sub&gt;_, _q&lt;sub&gt;R&lt;/sub&gt;_), where _Q_, Σ, Γ are all finite sets and:
+&gt; 1. _Q_ is the set of states,
+&gt; 2. Σ is the input alphabet, where &#39;\_&#39; ∉ Σ,
+&gt; 3. Γ is the tape alphabet, where &#39;\_&#39; ∈ Γ and Σ ⊆ Γ,
+&gt; 4. δ: _Q_ x Γ → _Q_ x Γ x {L,R} is the transition function,
+&gt; 5. _q&lt;sub&gt;0&lt;/sub&gt;_ ∈ _Q_ is the start state,
+&gt; 6. _q&lt;sub&gt;A&lt;/sub&gt;_ ∈ _Q_ is the accept state, and
+&gt; 7. _q&lt;sub&gt;R&lt;/sub&gt;_ ∈ _Q_ is the reject state, where _q&lt;sub&gt;R&lt;/sub&gt;_ ≠ _q&lt;sub&gt;A&lt;/sub&gt;_.
+
+Some of the components of the machine can be &quot;skipped&quot; as they will be left to the programmer to ensure.  For instance, we do not need an explicit _Q_ to be predefined: as long as our Turing machine has _some_ state(s) to transition into, they will be assumed to be in _Q_.  For a similar reason, Σ and Γ do not need to be explicitly predefined.  It is up to the programmer to create a Γ alphabet to meet their needs, but the definition itself is agnostic to the model.  As long as the programmer can hold &#39;\_&#39; ∈ Γ and Σ ⊆ Γ true, this can be left out.
+_q&lt;sub&gt;A&lt;/sub&gt;_ and _q&lt;sub&gt;R&lt;/sub&gt;_ can also be left out.  For our implementation, we want to machine to tell us more than just whether or not an input was accepted.  For this reason, we can &quot;ignore&quot; the accept state and program a default halting transition.  Any time a valid transition cannot be performed, the halting transition will run; this is what allows us to loosen the constraints on our input alphabet, as a symbol _a_ | _a_ ∉ Σ will simply cause the machine to halt when read.
+With the above in mind, the only two things that remain are δ and _q&lt;sub&gt;0&lt;/sub&gt;_.  δ will hold a similar definition to before, this time being a list of lists rather than tuples.  _q&lt;sub&gt;0&lt;/sub&gt;_ will not have an explicit definition, but will be implied: my implementation assumes all machines start on a state &quot;s1&quot;.
+We will need an additional structure to represent a tape; for this I used a list of characters combined with an integer that would store the index of the current symbol being read.
+
+---
+## Code implementation
+Putting all of the above together, we get the following:
+```Python
+class TuringMachine:
+    def __init__(self):
+        self.state = &#39;s1&#39;
+        self.instructions = []
+        self.tape = []
+        self.position = 0
+```
+The next thing we need to do is give our TuringMachine the ability to change states.  We have a list of transitions we can search, so let&#39;s make a function with the following signature:
+&gt; δ(_q_, _a_) = (_q&#39;_, _b_, _d_), where:
+&gt; 1. _q_, _q&#39;_ ∈ _Q_,
+&gt; 2. _a_, _b_ ∈ Σ, and
+&gt; 3. _d_ ∈ {L,R}.
+
+Translating that to pseudocode we something like this:
+```makefile
+transition(state, symbol) {
+    //
+    // search
+    //
+    return state, symbol, direction
+}
+```
+We know our transitions are represented by an ordered list, so we can match elements based on their position.  We also have a variable `self.state` that is used to store the current state; we can reuse this and throw out the need to pass a state into our function.  This function will also need to account for a default halting transition if a valid transition cannot be found.  Here is the resulting function I came up with, which returns a symbol, a direction, and a state, respectively:
+```Python
+class TuringMachine:
+    # ...
+    def transition(self, a):
+        t = [a, &#39;r&#39;, &#39;H&#39;]
+        for i in self.instructions:
+            if i[0] == self.state and i[1] == a:
+                t[0] = i[2]
+                t[1] = i[3]
+                t[2] = i[4]
+                break
+        return t[0],t[1],t[2]
+```
+Next, we should give our machine a way to read from the tape using variables we have created.  This function simply returns the element on the tape at the current index:
+```Python
+class TuringMachine:
+    # ...
+    def read(self):
+        return self.tape[self.position]
+```
+The next thing we need is a way to write.  This will be similar to `self.read()` in that we will be using `self.tape` and `self.position` to locate where to write, but we will need a character to pass to this function, as well as a way to overwrite _only_ the current cell.  Here&#39;s the one-liner I used:
+```Python
+class TuringMachine:
+    # ...
+    def write(self, a):
+        self.tape = self.tape[:self.position] + a + self.tape[self.position+1:]
+```
+Finally, we need to give our machine a way to move around the tape one cell at a time.  As the definition in the previous topic stated, if our machine is at the start of the tape and attempts to move left, stay in the current cell without halting.  If we move right and we are at the right-most end of the tape, we can simulate infinity by appending an empty cell before moving.  Moving left will decrement `self.position` whereas moving right will increment it:
+```Python
+class TuringMachine:
+    # ...
+    def move(self, d):
+        if d == &#39;l&#39;:
+            if self.position != 0:
+                self.position -= 1
+        elif d == &#39;r&#39;:
+            if self.position != len(self.tape)-1:
+                self.position += 1
+            else:
+                self.tape += &#39;_&#39;
+                self.position += 1
+```
+We now have all the pieces we need to run our Turing machine, now we just need to put them all together and have a way of showing every configuration while it runs.  Displaying the configuration is really easy:
+```Python
+class TuringMachine:
+    # ...
+    def show(self):
+        print self.tape + &#39; &#39; + self.state
+        print &#39; &#39;*self.position + &#39;^&#39;
+```
+Combining all of this into a single run function gets a bit trickier.  We need to loop until the program halts, reading, writing, moving, transitioning, and printing the configuration every time.  I used a while-loop where the condition checked `self.state != &#39;H&#39;`.
+```Python
+class TuringMachine:
+    # ...
+    def run(self):
+        self.show()
+        while self.state != &#39;H&#39;:
+            a,d,self.state = self.transition(self.read())
+            self.write(a)
+            self.move(d)
+            self.show()
+```
+The above will print the initial input before the loop, then it will begin getting transitions and moving around the tape.  I made mine a little bit more robust.  Sometimes, the output would extend beyond my scrollback buffer, so I added a variable, `s`, to act as a suppression flag.  I also added a conditional to the move instruction that will only allow it to execute if the machine has not transitioned into a halt state.  This makes our halting configuration a little cleaner:
+```Python
+class TuringMachine:
+    # ...
+    def run(self, s):
+        if s:
+            self.show()
+        while self.state != &#39;H&#39;:
+            a,d,self.state = self.transition(self.read())
+            self.write(a)
+            if self.state != &#39;H&#39;:
+                self.move(d)
+            if s:
+                self.show()
+        if not s:
+            self.show()
+```
+Putting it all together, our Turing machine is less than 50 lines.  Our final product is ready for testing:
+```Python
+class TuringMachine:
+    def __init__(self):
+        self.state = &#39;s1&#39;
+        self.instructions = []
+        self.tape = []
+        self.position = 0
+    def show(self):
+        print self.tape + &#39; &#39; + self.state
+        print &#39; &#39;*self.position + &#39;^&#39;
+    def move(self, d):
+        if d == &#39;l&#39;:
+            if self.position != 0:
+                self.position -= 1
+        elif d == &#39;r&#39;:
+            if self.position != len(self.tape)-1:
+                self.position += 1
+            else:
+                self.tape += &#39;_&#39;
+                self.position += 1
+        else:
+            print &quot;Error&quot;
+    def read(self):
+        return self.tape[self.position]
+    def write(self, a):
+        self.tape = self.tape[:self.position] + a + self.tape[self.position+1:]
+    def transition(self, a):
+        t = [a, &#39;r&#39;, &#39;H&#39;]
+        for i in self.instructions:
+            if i[0] == self.state and i[1] == a:
+                t[0] = i[2]
+                t[1] = i[3]
+                t[2] = i[4]
+                break
+        return t[0],t[1],t[2]
+    def run(self, s):
+        if s:
+            self.show()
+        while self.state != &#39;H&#39;:
+            a,d,self.state = self.transition(self.read())
+            self.write(a)
+            if self.state != &#39;H&#39;:
+                self.move(d)
+            if s:
+                self.show()
+        if not s:
+            self.show()
+```
+---
+## Programming a Turing machine
+The next thing I did was write a parser to make programming this easier.  I won&#39;t get into the guts of the parser, but it will turn a file like this:
+```makefile
+; change each value
+s1 &gt; &gt; r s1
+s1 0 1 r s1
+s1 1 0 r s1
+s1 _ l s2
+```
+into a list of transitions for our machine.  There are a couple things to note here.  First, I used &#39;;&#39; as my comment notation.  This is not hardcoded, however, and can be changed in a global variable in the parser.  The second is that weird 4-tuple transition at the end.  In order for me to clean up the tape, I needed to have a way of removing cells.  Originally, I was just leaving trailing &#39;\_&#39;s on the tape, but as the machine grew that became a road block.  Instead, I made two options for the parser:
+1. A 5-tuple transition of `state, read-symbol, write-symbol, direction, state`, and
+2. A 4-tuple transition of `state, read-symbol, direction, state`
+
+The second option gets formatted into a 5-tuple transition that will _remove_ a cell entirely.  This is because our `self.move()` will add a &#39;\_&#39; to the end; commonly I will use a `q _ l q&#39;` type transition to remove trailing &#39;\_&#39;s, though it can be used anywhere.
+Let&#39;s get into what that sample program actually does, though.  We start in s1 on a &#39;&gt;&#39;.  All of my programs will do this, and is an important assumption for chaining later on.  If we see a &#39;&gt;&#39;, we write a &#39;&gt;&#39;, move right, and transition to s1.  Since our state doesn&#39;t change, this transition is a loop.  In fact, only one transition changes the state; all but one will loop.  Hopefully it isn&#39;t too hard to see what this program will do: on a given binary input, this program will perform a bitwise NOT operation.
+What about something a bit longer, with more states?  Try this:
+```makefile
+; delete first number
+s1 &gt; &gt; r s1
+s1 0 r s2
+s1 1 r s2
+
+; move to end
+s2 0 0 r s2
+s2 1 1 r s2
+s2 _ 0 r s3
+
+; delete _
+s3 _ l s3
+```
+It may not be entirely obvious what is going on here, but the &quot;trick&quot; is happening in the last transition of the second block: `s2 _ 0 r s3`.  Since we immediately began by chopping off the first bit, understanding this instruction will make it obvious.  This instruction will append a 0 to the end of the tape: this whole program will shift a given binary input to the left by one bit!
+
+## Parting words
+This is the part that makes Turing machines so much fun!  If you enjoy writing Assembly programs, you will probably enjoy this because it is on a much lower level.  Once you begin writing your own Turing machine programs, you will notice that besides being extremely tedious, there are some things you can&#39;t easily do.  The next topic I cover will walk you through how I abstracted this Turing machine implementation into a higher level model, with some added features, to perform all kinds of tasks that I wouldn&#39;t want to write out solely in transitions.  In the meantime, however, I will leave this program:
+```makefile
+s1 &gt; &gt; r s1
+s1 0 1 r s1
+s1 1 0 r s1
+s1 _ _ l s2
+
+s2 0 1 l s3
+s2 1 0 l s2
+s2 &gt; &gt; r s3
+
+s3 0 0 l s3
+s3 1 1 l s3
+s3 &gt; &gt; r s4
+
+s4 0 0 r s4
+s4 1 1 r s4
+s4 _ l s5
+```
+I&#39;ve removed comments, but you should be able to figure out what it&#39;s doing.  Post your answer in the comments, but don&#39;t spoil it for others!
+[Part 3](https://0x00sec.org/t/programming-turing-machines-part-iii/6913) is done!</description>
+    
+    <lastBuildDate>Thu, 31 May 2018 00:03:47 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/programming-turing-machines-part-ii/6908.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Programming Turing Machines - Part II</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-turing-machines-part-ii/6908/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-turing-machines-part-ii/6908/2</link>
+        <pubDate>Fri, 29 Jun 2018 16:21:06 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-6908-2</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-turing-machines-part-ii/6908.rss">Programming Turing Machines - Part II</source>
+      </item>
+      <item>
+        <title>Programming Turing Machines - Part II</title>
+        <dc:creator><![CDATA[fi6uh]]></dc:creator>
+        <description><![CDATA[
+            <h1><a name="p-25185-programming-turing-machines-implementation-1" class="anchor" href="https://d.clarkee.co.uk#p-25185-programming-turing-machines-implementation-1"></a>Programming Turing Machines: Implementation</h1>
+<p>To continue where we left off from the <a href="https://0x00sec.org/t/programming-turing-machines-part-i/6895" rel="noopener nofollow ugc">previous topic</a>, I will begin discussing my Python implementation of a Turing machine.  The fun part about implementation is that you don’t always have to be as explicit as you do when defining a model mathematically.  This will give us some wiggle room later on to take advantage of inference.</p>
+<hr>
+<h2><a name="p-25185-definition-analysis-2" class="anchor" href="https://d.clarkee.co.uk#p-25185-definition-analysis-2"></a>Definition analysis</h2>
+<p>Recall our formal definition of a Turing machine from <em><a href="https://www.amazon.com/Introduction-Theory-Computation-Michael-Sipser/dp/113318779X?tag=0x00sec03-20" rel="noopener nofollow ugc">Introduction to the Theory of Computation</a></em> by Michael Sipser:</p>
+<blockquote>
+<p>A Turing machine is a 7-tuple, (<em>Q</em>, Σ, Γ, δ, <em>q<sub>0</sub></em>, <em>q<sub>A</sub></em>, <em>q<sub>R</sub></em>), where <em>Q</em>, Σ, Γ are all finite sets and:</p>
+<ol>
+<li><em>Q</em> is the set of states,</li>
+<li>Σ is the input alphabet, where ‘_’ ∉ Σ,</li>
+<li>Γ is the tape alphabet, where ‘_’ ∈ Γ and Σ ⊆ Γ,</li>
+<li>δ: <em>Q</em> x Γ → <em>Q</em> x Γ x {L,R} is the transition function,</li>
+<li><em>q<sub>0</sub></em> ∈ <em>Q</em> is the start state,</li>
+<li><em>q<sub>A</sub></em> ∈ <em>Q</em> is the accept state, and</li>
+<li><em>q<sub>R</sub></em> ∈ <em>Q</em> is the reject state, where <em>q<sub>R</sub></em> ≠ <em>q<sub>A</sub></em>.</li>
+</ol>
+</blockquote>
+<p>Some of the components of the machine can be “skipped” as they will be left to the programmer to ensure.  For instance, we do not need an explicit <em>Q</em> to be predefined: as long as our Turing machine has <em>some</em> state(s) to transition into, they will be assumed to be in <em>Q</em>.  For a similar reason, Σ and Γ do not need to be explicitly predefined.  It is up to the programmer to create a Γ alphabet to meet their needs, but the definition itself is agnostic to the model.  As long as the programmer can hold ‘_’ ∈ Γ and Σ ⊆ Γ true, this can be left out.<br>
+<em>q<sub>A</sub></em> and <em>q<sub>R</sub></em> can also be left out.  For our implementation, we want to machine to tell us more than just whether or not an input was accepted.  For this reason, we can “ignore” the accept state and program a default halting transition.  Any time a valid transition cannot be performed, the halting transition will run; this is what allows us to loosen the constraints on our input alphabet, as a symbol <em>a</em> | <em>a</em> ∉ Σ will simply cause the machine to halt when read.<br>
+With the above in mind, the only two things that remain are δ and <em>q<sub>0</sub></em>.  δ will hold a similar definition to before, this time being a list of lists rather than tuples.  <em>q<sub>0</sub></em> will not have an explicit definition, but will be implied: my implementation assumes all machines start on a state “s1”.<br>
+We will need an additional structure to represent a tape; for this I used a list of characters combined with an integer that would store the index of the current symbol being read.</p>
+<hr>
+<h2><a name="p-25185-code-implementation-3" class="anchor" href="https://d.clarkee.co.uk#p-25185-code-implementation-3"></a>Code implementation</h2>
+<p>Putting all of the above together, we get the following:</p>
+<pre data-code-wrap="Python"><code class="lang-Python">class TuringMachine:
+    def __init__(self):
+        self.state = 's1'
+        self.instructions = []
+        self.tape = []
+        self.position = 0
+</code></pre>
+<p>The next thing we need to do is give our TuringMachine the ability to change states.  We have a list of transitions we can search, so let’s make a function with the following signature:</p>
+<blockquote>
+<p>δ(<em>q</em>, <em>a</em>) = (<em>q’</em>, <em>b</em>, <em>d</em>), where:</p>
+<ol>
+<li><em>q</em>, <em>q’</em> ∈ <em>Q</em>,</li>
+<li><em>a</em>, <em>b</em> ∈ Σ, and</li>
+<li><em>d</em> ∈ {L,R}.</li>
+</ol>
+</blockquote>
+<p>Translating that to pseudocode we something like this:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">transition(state, symbol) {
+    //
+    // search
+    //
+    return state, symbol, direction
+}
+</code></pre>
+<p>We know our transitions are represented by an ordered list, so we can match elements based on their position.  We also have a variable <code>self.state</code> that is used to store the current state; we can reuse this and throw out the need to pass a state into our function.  This function will also need to account for a default halting transition if a valid transition cannot be found.  Here is the resulting function I came up with, which returns a symbol, a direction, and a state, respectively:</p>
+<pre data-code-wrap="Python"><code class="lang-Python">class TuringMachine:
+    # ...
+    def transition(self, a):
+        t = [a, 'r', 'H']
+        for i in self.instructions:
+            if i[0] == self.state and i[1] == a:
+                t[0] = i[2]
+                t[1] = i[3]
+                t[2] = i[4]
+                break
+        return t[0],t[1],t[2]
+</code></pre>
+<p>Next, we should give our machine a way to read from the tape using variables we have created.  This function simply returns the element on the tape at the current index:</p>
+<pre data-code-wrap="Python"><code class="lang-Python">class TuringMachine:
+    # ...
+    def read(self):
+        return self.tape[self.position]
+</code></pre>
+<p>The next thing we need is a way to write.  This will be similar to <code>self.read()</code> in that we will be using <code>self.tape</code> and <code>self.position</code> to locate where to write, but we will need a character to pass to this function, as well as a way to overwrite <em>only</em> the current cell.  Here’s the one-liner I used:</p>
+<pre data-code-wrap="Python"><code class="lang-Python">class TuringMachine:
+    # ...
+    def write(self, a):
+        self.tape = self.tape[:self.position] + a + self.tape[self.position+1:]
+</code></pre>
+<p>Finally, we need to give our machine a way to move around the tape one cell at a time.  As the definition in the previous topic stated, if our machine is at the start of the tape and attempts to move left, stay in the current cell without halting.  If we move right and we are at the right-most end of the tape, we can simulate infinity by appending an empty cell before moving.  Moving left will decrement <code>self.position</code> whereas moving right will increment it:</p>
+<pre data-code-wrap="Python"><code class="lang-Python">class TuringMachine:
+    # ...
+    def move(self, d):
+        if d == 'l':
+            if self.position != 0:
+                self.position -= 1
+        elif d == 'r':
+            if self.position != len(self.tape)-1:
+                self.position += 1
+            else:
+                self.tape += '_'
+                self.position += 1
+</code></pre>
+<p>We now have all the pieces we need to run our Turing machine, now we just need to put them all together and have a way of showing every configuration while it runs.  Displaying the configuration is really easy:</p>
+<pre data-code-wrap="Python"><code class="lang-Python">class TuringMachine:
+    # ...
+    def show(self):
+        print self.tape + ' ' + self.state
+        print ' '*self.position + '^'
+</code></pre>
+<p>Combining all of this into a single run function gets a bit trickier.  We need to loop until the program halts, reading, writing, moving, transitioning, and printing the configuration every time.  I used a while-loop where the condition checked <code>self.state != 'H'</code>.</p>
+<pre data-code-wrap="Python"><code class="lang-Python">class TuringMachine:
+    # ...
+    def run(self):
+        self.show()
+        while self.state != 'H':
+            a,d,self.state = self.transition(self.read())
+            self.write(a)
+            self.move(d)
+            self.show()
+</code></pre>
+<p>The above will print the initial input before the loop, then it will begin getting transitions and moving around the tape.  I made mine a little bit more robust.  Sometimes, the output would extend beyond my scrollback buffer, so I added a variable, <code>s</code>, to act as a suppression flag.  I also added a conditional to the move instruction that will only allow it to execute if the machine has not transitioned into a halt state.  This makes our halting configuration a little cleaner:</p>
+<pre data-code-wrap="Python"><code class="lang-Python">class TuringMachine:
+    # ...
+    def run(self, s):
+        if s:
+            self.show()
+        while self.state != 'H':
+            a,d,self.state = self.transition(self.read())
+            self.write(a)
+            if self.state != 'H':
+                self.move(d)
+            if s:
+                self.show()
+        if not s:
+            self.show()
+</code></pre>
+<p>Putting it all together, our Turing machine is less than 50 lines.  Our final product is ready for testing:</p>
+<pre data-code-wrap="Python"><code class="lang-Python">class TuringMachine:
+    def __init__(self):
+        self.state = 's1'
+        self.instructions = []
+        self.tape = []
+        self.position = 0
+    def show(self):
+        print self.tape + ' ' + self.state
+        print ' '*self.position + '^'
+    def move(self, d):
+        if d == 'l':
+            if self.position != 0:
+                self.position -= 1
+        elif d == 'r':
+            if self.position != len(self.tape)-1:
+                self.position += 1
+            else:
+                self.tape += '_'
+                self.position += 1
+        else:
+            print "Error"
+    def read(self):
+        return self.tape[self.position]
+    def write(self, a):
+        self.tape = self.tape[:self.position] + a + self.tape[self.position+1:]
+    def transition(self, a):
+        t = [a, 'r', 'H']
+        for i in self.instructions:
+            if i[0] == self.state and i[1] == a:
+                t[0] = i[2]
+                t[1] = i[3]
+                t[2] = i[4]
+                break
+        return t[0],t[1],t[2]
+    def run(self, s):
+        if s:
+            self.show()
+        while self.state != 'H':
+            a,d,self.state = self.transition(self.read())
+            self.write(a)
+            if self.state != 'H':
+                self.move(d)
+            if s:
+                self.show()
+        if not s:
+            self.show()
+</code></pre>
+<hr>
+<h2><a name="p-25185-programming-a-turing-machine-4" class="anchor" href="https://d.clarkee.co.uk#p-25185-programming-a-turing-machine-4"></a>Programming a Turing machine</h2>
+<p>The next thing I did was write a parser to make programming this easier.  I won’t get into the guts of the parser, but it will turn a file like this:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">; change each value
+s1 &gt; &gt; r s1
+s1 0 1 r s1
+s1 1 0 r s1
+s1 _ l s2
+</code></pre>
+<p>into a list of transitions for our machine.  There are a couple things to note here.  First, I used ‘;’ as my comment notation.  This is not hardcoded, however, and can be changed in a global variable in the parser.  The second is that weird 4-tuple transition at the end.  In order for me to clean up the tape, I needed to have a way of removing cells.  Originally, I was just leaving trailing '_'s on the tape, but as the machine grew that became a road block.  Instead, I made two options for the parser:</p>
+<ol>
+<li>A 5-tuple transition of <code>state, read-symbol, write-symbol, direction, state</code>, and</li>
+<li>A 4-tuple transition of <code>state, read-symbol, direction, state</code></li>
+</ol>
+<p>The second option gets formatted into a 5-tuple transition that will <em>remove</em> a cell entirely.  This is because our <code>self.move()</code> will add a ‘_’ to the end; commonly I will use a <code>q _ l q'</code> type transition to remove trailing '_'s, though it can be used anywhere.<br>
+Let’s get into what that sample program actually does, though.  We start in s1 on a ‘&gt;’.  All of my programs will do this, and is an important assumption for chaining later on.  If we see a ‘&gt;’, we write a ‘&gt;’, move right, and transition to s1.  Since our state doesn’t change, this transition is a loop.  In fact, only one transition changes the state; all but one will loop.  Hopefully it isn’t too hard to see what this program will do: on a given binary input, this program will perform a bitwise NOT operation.<br>
+What about something a bit longer, with more states?  Try this:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">; delete first number
+s1 &gt; &gt; r s1
+s1 0 r s2
+s1 1 r s2
+
+; move to end
+s2 0 0 r s2
+s2 1 1 r s2
+s2 _ 0 r s3
+
+; delete _
+s3 _ l s3
+</code></pre>
+<p>It may not be entirely obvious what is going on here, but the “trick” is happening in the last transition of the second block: <code>s2 _ 0 r s3</code>.  Since we immediately began by chopping off the first bit, understanding this instruction will make it obvious.  This instruction will append a 0 to the end of the tape: this whole program will shift a given binary input to the left by one bit!</p>
+<h2><a name="p-25185-parting-words-5" class="anchor" href="https://d.clarkee.co.uk#p-25185-parting-words-5"></a>Parting words</h2>
+<p>This is the part that makes Turing machines so much fun!  If you enjoy writing Assembly programs, you will probably enjoy this because it is on a much lower level.  Once you begin writing your own Turing machine programs, you will notice that besides being extremely tedious, there are some things you can’t easily do.  The next topic I cover will walk you through how I abstracted this Turing machine implementation into a higher level model, with some added features, to perform all kinds of tasks that I wouldn’t want to write out solely in transitions.  In the meantime, however, I will leave this program:</p>
+<pre data-code-wrap="makefile"><code class="lang-makefile">s1 &gt; &gt; r s1
+s1 0 1 r s1
+s1 1 0 r s1
+s1 _ _ l s2
+
+s2 0 1 l s3
+s2 1 0 l s2
+s2 &gt; &gt; r s3
+
+s3 0 0 l s3
+s3 1 1 l s3
+s3 &gt; &gt; r s4
+
+s4 0 0 r s4
+s4 1 1 r s4
+s4 _ l s5
+</code></pre>
+<p>I’ve removed comments, but you should be able to figure out what it’s doing.  Post your answer in the comments, but don’t spoil it for others!<br>
+<a href="https://0x00sec.org/t/programming-turing-machines-part-iii/6913" rel="noopener nofollow ugc">Part 3</a> is done!</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-turing-machines-part-ii/6908/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-turing-machines-part-ii/6908/1</link>
+        <pubDate>Wed, 30 May 2018 16:21:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-6908-1</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-turing-machines-part-ii/6908.rss">Programming Turing Machines - Part II</source>
+      </item>
+  </channel>
+</rss>

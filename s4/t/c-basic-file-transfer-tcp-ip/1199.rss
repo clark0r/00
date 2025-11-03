@@ -1,0 +1,884 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>C# basic File Transfer TCP/IP</title>
+    <link>https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199</link>
+    <description>hy all today i will show you how to make a basic File Transfer console app.
+this is just to show you how easy it is to receive and send files in c#.net.
+
+dlls
+```C#
+using System;
+using System.Net;
+using System.Net.Sockets;
+using System.IO;
+```
+
+First off we default settings
+```C#
+        //settings
+        bool mode;//mode [true send] [false receive]
+        string output_PATH = @&quot;Download\&quot;;//files gotten
+        int BytesPerRead = 1024;//bytes to read and then write
+```
+
+OK now for the entry point of the programm.
+```C#
+public void START()//ENTRYPOINT
+        {
+            Console.Clear();
+            Console.Title = &quot;File Transfer TCP/IP&quot;;
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+            Console.BackgroundColor = ConsoleColor.Black;
+
+            if (!Directory.Exists(output_PATH))
+                Directory.CreateDirectory(output_PATH);
+
+            SET_SETTING_MODE();
+            if (mode)
+            {
+                SendFile();
+            }
+            else
+            {
+                ReciveFile();
+            }
+        }
+```
+helpers help so here are mine
+```C#
+ int Get_port()
+        {
+            AGEN:
+            Console.Clear();
+            Console.WriteLine(&quot;&gt;Port?&quot;);
+            Console.Write(&quot;&lt;&quot;);
+            string input = Console.ReadLine();
+            try
+            {
+                int port = Int32.Parse(input);
+                if (port &lt;= 65534 &amp;&amp; port &gt; 1204)
+                {
+                    return port;
+                }
+                else goto AGEN;
+            }
+            catch
+            {
+                goto AGEN;
+            }
+        }//gets user input and validates it as a port
+
+        private string _getip()
+        {
+            IPHostEntry host;
+            string localIP = &quot;?&quot;;
+            host = Dns.GetHostEntry(Dns.GetHostName());
+            foreach (IPAddress ip in host.AddressList)
+            {
+                if (ip.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    localIP = ip.ToString();
+                }
+            }
+            return localIP;
+        }//gets this machine ip
+
+        private void SET_SETTING_MODE()
+        {
+        FIRST:
+            Console.Clear();
+            Console.WriteLine(&quot;&gt;Do you whant to recive or send files [r/s]&quot;);
+            Console.Write(&quot;&lt;&quot;);
+            string input = Console.ReadLine();
+            if (input.StartsWith(&quot;r&quot;))
+            {
+                mode = false;
+            }
+            else if (input.StartsWith(&quot;s&quot;))
+            {
+                mode = true;
+            }
+            else
+                goto FIRST;
+        }
+```
+
+
+sending files easy just messy
+
+```C#
+void SendFile()
+        {
+        top:
+            Console.Clear();
+            Console.WriteLine(&quot;&gt;FILE to upload?&quot;);
+            Console.Write(&quot;&lt;&quot;);
+            string file = Console.ReadLine();
+            if (File.Exists(file))
+            {
+            AGEN:
+                Console.Clear();
+                Console.WriteLine(&quot;&gt;IP to send to&quot;);
+                Console.Write(&quot;&lt;&quot;);
+                string ip = Console.ReadLine();
+                try
+                {
+                    IPAddress.Parse(ip);
+                }
+                catch
+                {
+                    goto AGEN;
+                }
+                int port = Get_port();
+
+                //sending file
+                Console.Clear();
+                Console.WriteLine(&quot;&gt;Connecting&quot;);
+                TcpClient soc = new TcpClient(ip, port);
+                Console.WriteLine(&quot;&gt;Connected&quot;);
+                Console.WriteLine(&quot;&gt;Sending File&quot;);
+                Console.WriteLine(&quot;&gt;&quot; + file);
+                Console.WriteLine(&quot;&gt;To ip:&quot; + ip + &quot;   port:&quot; + port);
+                soc.Client.SendFile(file);
+                Console.WriteLine(&quot;&gt;Done&quot;);
+                Console.WriteLine(&quot;&gt;Closeing port&quot;);
+                soc.Close();
+                Console.WriteLine(&quot;&gt;Done&quot;);
+
+
+            }
+            else
+                goto top;
+        }//send file to ip (tcp/ip)
+```
+
+now still easy but a bit harder receiving files there isn&#39;t an easy way there in no function / method to do this for you but the concept is simple the {SOCKET.SendFile(Filename)} straight up sends the file data it reads the file and sends the bytes to the endpoint (other pc) so we just have to take those bytes and write them to a file but we don&#39;t get a file name so well just put them in (Data) with no file type so the user can just rename the file and add the right file type chat aside lets do this.
+```C#
+void ReciveFile()
+        {
+
+            int port = Get_port();
+            Console.WriteLine(&quot;&gt;Getting ip&quot;);
+            string ip = _getip();
+            Console.WriteLine(&quot;&gt;Opening port:&quot; + port);
+            TcpListener listener = new TcpListener(IPAddress.Any,100);//bypass Compiler
+            try
+            {
+                listener = new TcpListener(IPAddress.Parse(ip), port);
+            }
+            catch
+            {
+                Console.WriteLine(&quot;&gt;ERRROR failed to open port&quot;);
+                Console.ReadLine();
+                Environment.Exit(0);
+            }
+            Console.WriteLine(&quot;&gt;Port open&quot;);
+            Console.WriteLine(&quot;&gt;Waiting for connection on&quot;);
+            Console.WriteLine(&quot;&gt;ip  :&quot; + ip);
+            Console.WriteLine(&quot;&gt;port:&quot; + port);
+
+            //wait for sender
+            listener.Start();
+            while (true)
+            {
+
+                if (listener.Pending())
+                {
+                    break;
+                }
+            }
+
+            here you receive the file
+            using (var client = listener.AcceptTcpClient())
+            using (var stream = client.GetStream())
+            using (var output = File.Create(output_PATH + @&quot;\Data&quot;))
+            {
+
+                Console.WriteLine(&quot;&gt;connected :&quot; + client.Client.LocalEndPoint.ToString());
+                Console.WriteLine(&quot;&gt;reciving Data&quot;);
+
+                // read the file in chunks of 1KB (as default)
+                var buffer = new byte[BytesPerRead];
+                int bytesRead;
+                while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) &gt; 0)
+                {
+                    output.Write(buffer, 0, bytesRead);
+                }
+            }
+
+
+            Console.WriteLine(&quot;&gt;File recived&quot;);
+            Console.WriteLine(&quot;&gt;Closeing port&quot;);
+            listener.Stop();
+            Console.WriteLine(&quot;&gt;Data at&quot;);
+            Console.WriteLine(&quot;&gt;&quot; + output_PATH + @&quot;\Data&quot;);
+            Console.ReadLine();
+        }//reciver file from (SendFile) (tcp/ip)
+```
+
+and now the full class (i will make a dll to help with file transfer in c# later on tho)
+```C#
+class FILE_TRANSFER
+    {
+        //settings
+        bool mode;//mode [true send] [fasle recive]
+        string output_PATH = @&quot;Download\&quot;;//files goten
+        int BytesPerRead = 1024;//bytes to read and then write
+
+        public void START()//ENTRYPOINT
+        {
+            Console.Clear();
+            Console.Title = &quot;File Transfer TCP/IP&quot;;
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+            Console.BackgroundColor = ConsoleColor.Black;
+
+            if (!Directory.Exists(output_PATH))
+                Directory.CreateDirectory(output_PATH);
+
+            SET_SETTING_MODE();
+            if (mode)
+            {
+                SendFile();
+            }
+            else
+            {
+                ReciveFile();
+            }
+        }
+        
+        //file crap
+        void ReciveFile()
+        {
+
+            int port = Get_port();
+            Console.WriteLine(&quot;&gt;Getting ip&quot;);
+            string ip = _getip();
+            Console.WriteLine(&quot;&gt;Opening port:&quot; + port);
+            TcpListener listener = new TcpListener(IPAddress.Any,100);//bypass Compiler
+            try
+            {
+                listener = new TcpListener(IPAddress.Parse(ip), port);
+            }
+            catch
+            {
+                Console.WriteLine(&quot;&gt;ERRROR failed to open port&quot;);
+                Console.ReadLine();
+                Environment.Exit(0);
+            }
+            Console.WriteLine(&quot;&gt;Port open&quot;);
+            Console.WriteLine(&quot;&gt;Waiting for connection on&quot;);
+            Console.WriteLine(&quot;&gt;ip  :&quot; + ip);
+            Console.WriteLine(&quot;&gt;port:&quot; + port);
+
+            listener.Start();
+            while (true)
+            {
+
+                if (listener.Pending())
+                {
+                    break;
+                }
+            }
+
+
+            using (var client = listener.AcceptTcpClient())
+            using (var stream = client.GetStream())
+            using (var output = File.Create(output_PATH + @&quot;\Data&quot;))
+            {
+
+                Console.WriteLine(&quot;&gt;connected :&quot; + client.Client.LocalEndPoint.ToString());
+                Console.WriteLine(&quot;&gt;reciving Data&quot;);
+
+                // read the file in chunks of 1KB
+                var buffer = new byte[BytesPerRead];
+                int bytesRead;
+                while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) &gt; 0)
+                {
+                    output.Write(buffer, 0, bytesRead);
+                }
+            }
+
+
+            Console.WriteLine(&quot;&gt;File recived&quot;);
+            Console.WriteLine(&quot;&gt;Closeing port&quot;);
+            listener.Stop();
+            Console.WriteLine(&quot;&gt;Data at&quot;);
+            Console.WriteLine(&quot;&gt;&quot; + output_PATH + @&quot;\Data&quot;);
+            Console.ReadLine();
+        }//reciver file from (SendFile) (tcp/ip)
+        void SendFile()
+        {
+        top:
+            Console.Clear();
+            Console.WriteLine(&quot;&gt;FILE to upload?&quot;);
+            Console.Write(&quot;&lt;&quot;);
+            string file = Console.ReadLine();
+            if (File.Exists(file))
+            {
+            AGEN:
+                Console.Clear();
+                Console.WriteLine(&quot;&gt;IP to send to&quot;);
+                Console.Write(&quot;&lt;&quot;);
+                string ip = Console.ReadLine();
+                try
+                {
+                    IPAddress.Parse(ip);
+                }
+                catch
+                {
+                    goto AGEN;
+                }
+                int port = Get_port();
+
+                //sending file
+                Console.Clear();
+                Console.WriteLine(&quot;&gt;Connecting&quot;);
+                TcpClient soc = new TcpClient(ip, port);
+                Console.WriteLine(&quot;&gt;Connected&quot;);
+                Console.WriteLine(&quot;&gt;Sending File&quot;);
+                Console.WriteLine(&quot;&gt;&quot; + file);
+                Console.WriteLine(&quot;&gt;To ip:&quot; + ip + &quot;   port:&quot; + port);
+                soc.Client.SendFile(file);
+                Console.WriteLine(&quot;&gt;Done&quot;);
+                Console.WriteLine(&quot;&gt;Closeing port&quot;);
+                soc.Close();
+                Console.WriteLine(&quot;&gt;Done&quot;);
+
+
+            }
+            else
+                goto top;
+        }//send file to ip (tcp/ip)
+
+        int Get_port()
+        {
+            AGEN:
+            Console.Clear();
+            Console.WriteLine(&quot;&gt;Port?&quot;);
+            Console.Write(&quot;&lt;&quot;);
+            string input = Console.ReadLine();
+            try
+            {
+                int port = Int32.Parse(input);
+                if (port &lt;= 65534 &amp;&amp; port &gt; 0)
+                {
+                    return port;
+                }
+                else goto AGEN;
+            }
+            catch
+            {
+                goto AGEN;
+            }
+        }//gets user input and validates it as a port
+        private string _getip()
+        {
+            IPHostEntry host;
+            string localIP = &quot;?&quot;;
+            host = Dns.GetHostEntry(Dns.GetHostName());
+            foreach (IPAddress ip in host.AddressList)
+            {
+                if (ip.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    localIP = ip.ToString();
+                }
+            }
+            return localIP;
+        }
+        private void SET_SETTING_MODE()
+        {
+        FIRST:
+            Console.Clear();
+            Console.WriteLine(&quot;&gt;Do you whant to recive or send files [r/s]&quot;);
+            Console.Write(&quot;&lt;&quot;);
+            string input = Console.ReadLine();
+            if (input.StartsWith(&quot;r&quot;))
+            {
+                mode = false;
+            }
+            else if (input.StartsWith(&quot;s&quot;))
+            {
+                mode = true;
+            }
+            else
+                goto FIRST;
+        }
+    }
+```
+
+thats all for to day.
+i hope you learnt how to send and receive files via tcp/ip</description>
+    
+    <lastBuildDate>Mon, 29 May 2017 12:30:37 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>C# basic File Transfer TCP/IP</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199/6</link>
+        <pubDate>Mon, 29 May 2017 13:07:54 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1199-6</guid>
+        <source url="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199.rss">C# basic File Transfer TCP/IP</source>
+      </item>
+      <item>
+        <title>C# basic File Transfer TCP/IP</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Do what you want but I would really rather you not give off the wrong idea to those lesser knowledgeable readers like what you’ve done in the following:</p>
+<aside class="quote no-group" data-username="dedady157" data-post="1" data-topic="1199">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/d/f04885/48.png" class="avatar"> dedady157:</div>
+<blockquote>
+<p>dlls</p>
+<p>using System;<br>
+using <a href="http://System.Net">System.Net</a>;<br>
+using System.Net.Sockets;<br>
+using <a href="http://System.IO">System.IO</a>;</p>
+</blockquote>
+</aside>
+<p>These are <em>not</em> DLLs.</p>
+<p>I don’t care if you don’t care but I care about the accuracy of the content that are provided to the readers. It’d be even better if the quality of at least the basics (consistent code styling, avoiding <code>goto</code> statements in high level languages, etc.) is also maintained.</p>
+<p>The suggestions I provided were for your self-improvement. If you don’t want to read up and educate yourself then that’s your problem.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199/4</link>
+        <pubDate>Thu, 13 Oct 2016 11:44:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1199-4</guid>
+        <source url="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199.rss">C# basic File Transfer TCP/IP</source>
+      </item>
+      <item>
+        <title>C# basic File Transfer TCP/IP</title>
+        <dc:creator><![CDATA[dedady157]]></dc:creator>
+        <description><![CDATA[
+            <p>i made the programm just because i wanted to show how you can receive and send files in c#.net<br>
+the programm was a quick thing i made, So people can copy and compile the code, To understand how it works better, I don’t care if the whole programm is bad i made it in under 30 min, Its quick and tacky.</p>
+<p>ps: never use 65535 as a port it triggers some anti viruses</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199/3</link>
+        <pubDate>Thu, 13 Oct 2016 10:45:05 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1199-3</guid>
+        <source url="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199.rss">C# basic File Transfer TCP/IP</source>
+      </item>
+      <item>
+        <title>C# basic File Transfer TCP/IP</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Just a suggestion, you should probably look over some material before publishing your code for others to read. Highly recommend you research further into what DLLs and classes are, <a href="https://msdn.microsoft.com/en-us/library/ff926074.aspx">C# code styling</a>, OOP, high level languages and <code>goto</code> statements and networking programming (the maximum port number is 65535 and you really should not use anything below port 1025).</p>
+<p>To be honest, I don’t even know why the <code>goodcode</code> tag is a thing.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199/2</link>
+        <pubDate>Thu, 13 Oct 2016 03:11:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1199-2</guid>
+        <source url="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199.rss">C# basic File Transfer TCP/IP</source>
+      </item>
+      <item>
+        <title>C# basic File Transfer TCP/IP</title>
+        <dc:creator><![CDATA[dedady157]]></dc:creator>
+        <description><![CDATA[
+            <p>hy all today i will show you how to make a basic File Transfer console app.<br>
+this is just to show you how easy it is to receive and send files in c#.net.</p>
+<p>dlls</p>
+<pre><code class="lang-auto">using System;
+using System.Net;
+using System.Net.Sockets;
+using System.IO;
+</code></pre>
+<p>First off we default settings</p>
+<pre><code class="lang-auto">        //settings
+        bool mode;//mode [true send] [false receive]
+        string output_PATH = @"Download\";//files gotten
+        int BytesPerRead = 1024;//bytes to read and then write
+</code></pre>
+<p>OK now for the entry point of the programm.</p>
+<pre><code class="lang-auto">public void START()//ENTRYPOINT
+        {
+            Console.Clear();
+            Console.Title = "File Transfer TCP/IP";
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+            Console.BackgroundColor = ConsoleColor.Black;
+
+            if (!Directory.Exists(output_PATH))
+                Directory.CreateDirectory(output_PATH);
+
+            SET_SETTING_MODE();
+            if (mode)
+            {
+                SendFile();
+            }
+            else
+            {
+                ReciveFile();
+            }
+        }
+</code></pre>
+<p>helpers help so here are mine</p>
+<pre><code class="lang-auto"> int Get_port()
+        {
+            AGEN:
+            Console.Clear();
+            Console.WriteLine("&gt;Port?");
+            Console.Write("&lt;");
+            string input = Console.ReadLine();
+            try
+            {
+                int port = Int32.Parse(input);
+                if (port &lt;= 65534 &amp;&amp; port &gt; 1204)
+                {
+                    return port;
+                }
+                else goto AGEN;
+            }
+            catch
+            {
+                goto AGEN;
+            }
+        }//gets user input and validates it as a port
+
+        private string _getip()
+        {
+            IPHostEntry host;
+            string localIP = "?";
+            host = Dns.GetHostEntry(Dns.GetHostName());
+            foreach (IPAddress ip in host.AddressList)
+            {
+                if (ip.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    localIP = ip.ToString();
+                }
+            }
+            return localIP;
+        }//gets this machine ip
+
+        private void SET_SETTING_MODE()
+        {
+        FIRST:
+            Console.Clear();
+            Console.WriteLine("&gt;Do you whant to recive or send files [r/s]");
+            Console.Write("&lt;");
+            string input = Console.ReadLine();
+            if (input.StartsWith("r"))
+            {
+                mode = false;
+            }
+            else if (input.StartsWith("s"))
+            {
+                mode = true;
+            }
+            else
+                goto FIRST;
+        }
+</code></pre>
+<p>sending files easy just messy</p>
+<pre><code class="lang-auto">void SendFile()
+        {
+        top:
+            Console.Clear();
+            Console.WriteLine("&gt;FILE to upload?");
+            Console.Write("&lt;");
+            string file = Console.ReadLine();
+            if (File.Exists(file))
+            {
+            AGEN:
+                Console.Clear();
+                Console.WriteLine("&gt;IP to send to");
+                Console.Write("&lt;");
+                string ip = Console.ReadLine();
+                try
+                {
+                    IPAddress.Parse(ip);
+                }
+                catch
+                {
+                    goto AGEN;
+                }
+                int port = Get_port();
+
+                //sending file
+                Console.Clear();
+                Console.WriteLine("&gt;Connecting");
+                TcpClient soc = new TcpClient(ip, port);
+                Console.WriteLine("&gt;Connected");
+                Console.WriteLine("&gt;Sending File");
+                Console.WriteLine("&gt;" + file);
+                Console.WriteLine("&gt;To ip:" + ip + "   port:" + port);
+                soc.Client.SendFile(file);
+                Console.WriteLine("&gt;Done");
+                Console.WriteLine("&gt;Closeing port");
+                soc.Close();
+                Console.WriteLine("&gt;Done");
+
+
+            }
+            else
+                goto top;
+        }//send file to ip (tcp/ip)
+</code></pre>
+<p>now still easy but a bit harder receiving files there isn’t an easy way there in no function / method to do this for you but the concept is simple the {SOCKET.SendFile(Filename)} straight up sends the file data it reads the file and sends the bytes to the endpoint (other pc) so we just have to take those bytes and write them to a file but we don’t get a file name so well just put them in (Data) with no file type so the user can just rename the file and add the right file type chat aside lets do this.</p>
+<pre><code class="lang-auto">void ReciveFile()
+        {
+
+            int port = Get_port();
+            Console.WriteLine("&gt;Getting ip");
+            string ip = _getip();
+            Console.WriteLine("&gt;Opening port:" + port);
+            TcpListener listener = new TcpListener(IPAddress.Any,100);//bypass Compiler
+            try
+            {
+                listener = new TcpListener(IPAddress.Parse(ip), port);
+            }
+            catch
+            {
+                Console.WriteLine("&gt;ERRROR failed to open port");
+                Console.ReadLine();
+                Environment.Exit(0);
+            }
+            Console.WriteLine("&gt;Port open");
+            Console.WriteLine("&gt;Waiting for connection on");
+            Console.WriteLine("&gt;ip  :" + ip);
+            Console.WriteLine("&gt;port:" + port);
+
+            //wait for sender
+            listener.Start();
+            while (true)
+            {
+
+                if (listener.Pending())
+                {
+                    break;
+                }
+            }
+
+            here you receive the file
+            using (var client = listener.AcceptTcpClient())
+            using (var stream = client.GetStream())
+            using (var output = File.Create(output_PATH + @"\Data"))
+            {
+
+                Console.WriteLine("&gt;connected :" + client.Client.LocalEndPoint.ToString());
+                Console.WriteLine("&gt;reciving Data");
+
+                // read the file in chunks of 1KB (as default)
+                var buffer = new byte[BytesPerRead];
+                int bytesRead;
+                while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) &gt; 0)
+                {
+                    output.Write(buffer, 0, bytesRead);
+                }
+            }
+
+
+            Console.WriteLine("&gt;File recived");
+            Console.WriteLine("&gt;Closeing port");
+            listener.Stop();
+            Console.WriteLine("&gt;Data at");
+            Console.WriteLine("&gt;" + output_PATH + @"\Data");
+            Console.ReadLine();
+        }//reciver file from (SendFile) (tcp/ip)
+</code></pre>
+<p>and now the full class (i will make a dll to help with file transfer in c# later on tho)</p>
+<pre><code class="lang-auto">class FILE_TRANSFER
+    {
+        //settings
+        bool mode;//mode [true send] [fasle recive]
+        string output_PATH = @"Download\";//files goten
+        int BytesPerRead = 1024;//bytes to read and then write
+
+        public void START()//ENTRYPOINT
+        {
+            Console.Clear();
+            Console.Title = "File Transfer TCP/IP";
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+            Console.BackgroundColor = ConsoleColor.Black;
+
+            if (!Directory.Exists(output_PATH))
+                Directory.CreateDirectory(output_PATH);
+
+            SET_SETTING_MODE();
+            if (mode)
+            {
+                SendFile();
+            }
+            else
+            {
+                ReciveFile();
+            }
+        }
+        
+        //file crap
+        void ReciveFile()
+        {
+
+            int port = Get_port();
+            Console.WriteLine("&gt;Getting ip");
+            string ip = _getip();
+            Console.WriteLine("&gt;Opening port:" + port);
+            TcpListener listener = new TcpListener(IPAddress.Any,100);//bypass Compiler
+            try
+            {
+                listener = new TcpListener(IPAddress.Parse(ip), port);
+            }
+            catch
+            {
+                Console.WriteLine("&gt;ERRROR failed to open port");
+                Console.ReadLine();
+                Environment.Exit(0);
+            }
+            Console.WriteLine("&gt;Port open");
+            Console.WriteLine("&gt;Waiting for connection on");
+            Console.WriteLine("&gt;ip  :" + ip);
+            Console.WriteLine("&gt;port:" + port);
+
+            listener.Start();
+            while (true)
+            {
+
+                if (listener.Pending())
+                {
+                    break;
+                }
+            }
+
+
+            using (var client = listener.AcceptTcpClient())
+            using (var stream = client.GetStream())
+            using (var output = File.Create(output_PATH + @"\Data"))
+            {
+
+                Console.WriteLine("&gt;connected :" + client.Client.LocalEndPoint.ToString());
+                Console.WriteLine("&gt;reciving Data");
+
+                // read the file in chunks of 1KB
+                var buffer = new byte[BytesPerRead];
+                int bytesRead;
+                while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) &gt; 0)
+                {
+                    output.Write(buffer, 0, bytesRead);
+                }
+            }
+
+
+            Console.WriteLine("&gt;File recived");
+            Console.WriteLine("&gt;Closeing port");
+            listener.Stop();
+            Console.WriteLine("&gt;Data at");
+            Console.WriteLine("&gt;" + output_PATH + @"\Data");
+            Console.ReadLine();
+        }//reciver file from (SendFile) (tcp/ip)
+        void SendFile()
+        {
+        top:
+            Console.Clear();
+            Console.WriteLine("&gt;FILE to upload?");
+            Console.Write("&lt;");
+            string file = Console.ReadLine();
+            if (File.Exists(file))
+            {
+            AGEN:
+                Console.Clear();
+                Console.WriteLine("&gt;IP to send to");
+                Console.Write("&lt;");
+                string ip = Console.ReadLine();
+                try
+                {
+                    IPAddress.Parse(ip);
+                }
+                catch
+                {
+                    goto AGEN;
+                }
+                int port = Get_port();
+
+                //sending file
+                Console.Clear();
+                Console.WriteLine("&gt;Connecting");
+                TcpClient soc = new TcpClient(ip, port);
+                Console.WriteLine("&gt;Connected");
+                Console.WriteLine("&gt;Sending File");
+                Console.WriteLine("&gt;" + file);
+                Console.WriteLine("&gt;To ip:" + ip + "   port:" + port);
+                soc.Client.SendFile(file);
+                Console.WriteLine("&gt;Done");
+                Console.WriteLine("&gt;Closeing port");
+                soc.Close();
+                Console.WriteLine("&gt;Done");
+
+
+            }
+            else
+                goto top;
+        }//send file to ip (tcp/ip)
+
+        int Get_port()
+        {
+            AGEN:
+            Console.Clear();
+            Console.WriteLine("&gt;Port?");
+            Console.Write("&lt;");
+            string input = Console.ReadLine();
+            try
+            {
+                int port = Int32.Parse(input);
+                if (port &lt;= 65534 &amp;&amp; port &gt; 0)
+                {
+                    return port;
+                }
+                else goto AGEN;
+            }
+            catch
+            {
+                goto AGEN;
+            }
+        }//gets user input and validates it as a port
+        private string _getip()
+        {
+            IPHostEntry host;
+            string localIP = "?";
+            host = Dns.GetHostEntry(Dns.GetHostName());
+            foreach (IPAddress ip in host.AddressList)
+            {
+                if (ip.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    localIP = ip.ToString();
+                }
+            }
+            return localIP;
+        }
+        private void SET_SETTING_MODE()
+        {
+        FIRST:
+            Console.Clear();
+            Console.WriteLine("&gt;Do you whant to recive or send files [r/s]");
+            Console.Write("&lt;");
+            string input = Console.ReadLine();
+            if (input.StartsWith("r"))
+            {
+                mode = false;
+            }
+            else if (input.StartsWith("s"))
+            {
+                mode = true;
+            }
+            else
+                goto FIRST;
+        }
+    }
+</code></pre>
+<p>thats all for to day.<br>
+i hope you learnt how to send and receive files via tcp/ip</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199/1</link>
+        <pubDate>Thu, 13 Oct 2016 02:28:22 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1199-1</guid>
+        <source url="https://d.clarkee.co.uk/t/c-basic-file-transfer-tcp-ip/1199.rss">C# basic File Transfer TCP/IP</source>
+      </item>
+  </channel>
+</rss>
