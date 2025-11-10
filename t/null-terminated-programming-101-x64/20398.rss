@@ -1,0 +1,861 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Null Terminated Programming 101 - x64</title>
+    <link>https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398</link>
+    <description>
+
+
+# Null Terminated Programming 101 - x64
+**![|602x339](upload://wHq8XLq2WAXGREaOjSSi5gBi7b0.png)**
+
+
+
+
+
+
+## Preface
+
+Everyone, class is in session! please take your seat as we are about to start.
+
+Today we&#39;re going to dive deep into a magnificent assembly language - x64.
+
+I chose this excellent language for this class because of its extreme use in personal computers and because it’s known by most researchers. 
+
+When speaking a language, we often use synonyms while speaking about a subject, this makes the conversation more intelligent and exciting for everyone involved.
+
+Even now we just saw the use of them in the way I described x64 as magnifect and excellent. Two different words which mean the same thing.
+
+When writing shellcode, we sometimes need to perform something similar, this is mainly because in some  cases, the way we input our shellcode using our exploit will have a limitation of sort.
+
+Some examples: 
+
+1.No null bytes in case of strcpy, which stops copying after it encounters a null byte 
+
+2.Size limit of on how much shellcode we can put 
+
+3.Only alphanumeric characters are copied  
+
+These conditions cause us to develop different methods to write our shellcode in a way that it will implement the same logic but still be able to bypass the limitations imposed by the program  
+
+Today we will attempt to solve case #1 by learning about techniques that we can use to tackle this issue,
+these techniques are often called Null Terminated Programming, as they allow us to compile assembly code that will not contain any null bytes in the final shellcode.
+
+ 
+
+Please note that some of the techniques described here will probably be relevant for different assembly languages as well so i&#39;ll leave it as an exercise for the reader to check these techniques on a different language.
+
+**Recommended Prerequisites:**
+
+
+
+*   x64/x86 assembly  knowledge
+*   Basic knowledge on building shellcodes 
+
+
+## Setup
+
+For our setup, i’m using a [script](https://github.com/x24whoamix24/make_shellcode_linux) i wrote for compiling shellcode for x86/x64 
+
+which we can also use to compile our shellcode.
+
+next, we can use this [repository](https://github.com/mads256h/shellrun) in order to debug and run our shellcode nicely 
+
+
+## Quick Refreshment on x64 syscalls
+
+In x64 linux systems, Each syscall has a special number that represents it, when we want to perform a call to a certain syscall we first need to store the correct syscall number in RAX, then we pass the arguments 1-6 to the syscall using the registries RDI, RSI, RDX, RCX, R8, R9 accordingly.
+
+Finally, we use the instruction syscall which performs the syscall itself and stores the return value in RAX.
+
+The full x64 syscall map table can be found [here](https://filippo.io/linux-syscall-table/)  
+
+Let’s have a look at this simple assembly code i wrote named printf_file.asm:
+
+``` 
+
+SYS_READ equ 0
+
+SYS_WRITE equ 1
+
+SYS_OPEN equ 2 
+
+SYS_EXIT equ 60
+
+AMOUNT_TO_READ equ 16 
+
+global _start
+
+section .text
+
+_start:
+
+  jmp get_file_path 
+
+  continue:
+
+  
+
+  ; syscall to open the file
+
+  mov eax, SYS_OPEN
+
+  pop rdi ; pop address of string to rdi
+
+  mov rsi, 0 ; set O_RDONLY flag
+
+  syscall
+
+    
+
+  ; syscall to read file
+
+  sub sp, 0xff
+
+  lea rsi, [rsp]
+
+  
+
+  ; syscall to write file contents to stdout  
+
+  mov rdi, rax ; use the returned fd
+
+  mov rdx, AMOUNT_TO_READ; amount to read
+
+  mov rax, SYS_READ
+
+  syscall
+
+  
+
+  ; syscall write to stdout
+
+  mov rdi,1 ; set stdout fd = 1
+
+  mov rdx, rax ; write to stdout the amount of bytes read
+
+  mov rax, SYS_WRITE
+
+  syscall
+
+  mov rax, SYS_EXIT
+
+  syscall ; finish execution
+
+; jump here in order to get the address of the string
+
+get_file_path:
+
+call continue 
+
+file_path: db &quot;/tmp/my_file&quot;, 0
+
+```
+
+This code performs a simple task, it reads 16 bytes from the file located in 
+/tmp/my_file and outputs those bytes to stdout.
+
+Notice the cool trick we implemented in order to obtain the string that contains the path to the file.
+to get that address, we perform a call to a label near that string called get_file_path,
+afterwards we immediately perform a second call to the continue label that brings us  back to the rest of our shellcode.
+
+Because the second call was invoked, the address to return to after the second call now points to the string, because that is the first “instruction” after the call instruction. we then pop that address to RDI so that  RDI (the first param in x64 syscall conventions) can point to the string of the file we wish to open 
+
+You can compile it the above assembly code by running 
+
+```
+
+path_to_make_shellcode_ /make_shellcode_linux/make_shellcode.sh/ ./printf_file.asm 64
+
+```
+
+and run it using 
+
+```
+
+path_to_shellrun/shellrun ./print_file.bin
+
+```
+
+Let’s check if the shellcode works properly
+
+```
+
+echo “this_is_my_data” &gt; /tmp/my_file
+
+```
+
+
+**![|672x35](upload://yxHNvMgE8MnJeWgMH29LCH37cSZ.png)**
+
+So far so good. 
+
+But under the surface, hids a horrible secret…
+
+It’s full of null bytes!!!
+
+
+**![|602x101](upload://4dYyZJBXQNqb3wxlfEAj5RIz8FJ.png)**
+
+
+ 
+
+Hexdump just showed us that this shellcode is riddled with null bytes, 
+
+Let’s begin our work at curing this code by going over the correct ways to bypass situations where instructions generate null bytes 
+
+I will show the opcodes of the instruction  on the left side 
+and the instruction itself on the right side
+
+Note:I’ll be using [this website](https://defuse.ca/online-x86-assembler.htm)  in order to show the bytes generated from the instructions were about to show. I recommend to you all to test your instruction combinations there.  
+
+
+
+## Method 1: Math is awesome 
+
+I’ll start of by saying that the mov instruction is many times obsolete when you have the power of math at your side 
+
+
+### Loading 0 to a register
+
+
+#### Bad way:
+
+Lets look at the following instruction: 
+
+```
+48 c7 c0 00 00 00 00   mov rax, 0 
+
+```
+
+it is 7 bytes long and more importantly, contains 4 null bytes!
+
+we can easily use the following instructions instead 
+
+
+#### **Good way:**
+
+```
+48 31 c0    xor rax, rax
+
+```
+```
+48 c7 c0 ff ff ff ff    mov    rax,0xffffffffffffffff
+48 ff c0                inc    rax
+```
+
+
+in case the value of rbx is 0, we can execute this instruction.
+(this can also be done with any other register with a 0 value)
+
+```
+
+48 f7 e3    mul rbx 
+
+```
+
+The mul instruction will multiply rax with the contents of rbx and store it in rax
+
+because rbx is 0 in this case then 0 will also be stored in rax
+
+
+### **Loading large values to registries **
+
+What about putting large values in registries? For example, if i wanted to read a big file with my shellcode.
+
+
+#### Bad way 
+
+```
+
+48 c7 c2 00 00 01 00    mov    rdx,0x10000
+
+```
+
+
+
+#### Good way
+
+You can use the shift operations in order to load large numbers 
+
+```
+48 31 d2               xor    rdx,rdx
+48 83 c2 02            add    rdx,0x2
+48 c1 e2 0f            shl    rdx,0xf
+
+```
+
+
+This will result in rdx having the value 0x10000 at the end of the shift operation.
+
+
+## Method 2: Using your lower parts
+
+Before you start thinking dirty, different parts of each register in x64 can be accessed as an operand.
+
+These parts are mapped in the following way: 
+
+**![|602x391](upload://c9QhuhPRmtb0tmrTgosixKFviJ2.png)**
+
+
+
+
+
+This allows us to use the al operand for example instead of the rax operand when we want to perform reading and writing actions on the lower 8 bits of the rax register.
+
+When we do so, the instruction that is executed is much smaller and can also aid us when trying to avoid null bytes.
+
+
+#### **Bad way:
+
+
+```
+48 c7 c0 02 00 00 00    mov    rax,0x2
+48 c7 c3 ff 0f 00 00    mov    rbx,0xfff
+
+```
+
+
+
+#### Good way
+
+```
+48 31 db              xor    rbx,rbx
+48 31 c0              xor    rax,rax
+b0 02                 mov    al,0x2
+66 bbff 0f            mov    bx,0xfff
+
+```
+
+
+## Field Test
+
+After we learned these two new methods, let’s implement and modify the assembly code we saw at the beginning of the article 
+
+```
+
+SYS_READ equ 0
+
+SYS_WRITE equ 1
+
+SYS_OPEN equ 2
+
+SYS_EXIT equ 60
+
+AMOUNT_TO_READ equ 16
+
+global _start
+
+section .text
+
+_start:
+
+  jmp get_file_path 
+
+  continue:
+
+  
+
+  ; syscall to open the file
+
+  xor rax, rax
+
+  add al, SYS_OPEN
+
+  pop rdi ; pop address of string to rdi
+
+  xor rsi, rsi ; set O_RDONLY flag
+
+  syscall
+
+    
+
+  ; syscall read file
+
+  sub sp, 0xfff
+
+  lea rsi, [rsp]
+
+  mov rdi, rax
+
+  xor rdx, rdx
+
+  add dl, AMOUNT_TO_READ; amount to read
+
+  xor rax, rax
+
+  syscall
+
+    
+
+  ; syscall write to stdout
+
+  xor rdi, rdi
+
+  add dl, 1 ; set fd to point to stdout
+
+  mov rdx, rax
+
+  xor rax, rax
+
+  add al, SYS_WRITE
+
+  syscall
+
+  
+
+  mov al, SYS_EXIT
+
+  syscall ; finish execution
+
+; jump here in order to get the address of the string  
+
+get_file_path:
+
+call continue
+
+flag: db &quot;/tmp/my_file&quot;, 0
+
+```
+
+After we compile this code, we can run it and see that it works exactly the same as the previous code:
+
+
+**![|651x33](upload://euFqMCb8VDTxOfbiEyiLZRPYZNe.png)**
+
+
+
+let’s see if hexdumps finds any null bytes… 
+
+**![|641x101](upload://24VXKqKsKHyojfJqeNmzK90LLs5.png)**
+
+
+Awesome! 
+
+Note: Don’t be confused by the one null byte that hexdump found, that null byte belongs to the string in our shellcode and it’s placed at the end of the shellcode.
+It doesn’t seem like it is in the end because memory is saved in [little endian](https://www.youtube.com/watch?v=seZLUbgbB7Y).
+
+
+## Conclusions
+
+Today we learned about how we can compile our shellcode to be free of null bytes. We learned along the way about different ways we can perform the same resulting actions using different and sometimes shorter instructions(opcode wise) in x64. 
+
+Finally, we used this knowledge to transform shellcode that was riddled with null bytes into one that is ready to tackle any strcpy in it’s path. 
+
+I hope you all enjoyed this article and learned more about the x64 instruction set along the way, there are many more methods and techniques yet to learn and I urge you all to keep learning what you don’t know and teach what you do know.
+
+Spread the good word,
+
+x24whoamix24 
+
+
+## **Sources**
+
+https://filippo.io/linux-syscall-table/
+
+https://defuse.ca/online-x86-assembler.htm#disassembly
+
+&lt;!-- Docs to Markdown version 1.0β21 --&gt;</description>
+    
+    <lastBuildDate>Sun, 03 May 2020 10:04:57 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Null Terminated Programming 101 - x64</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398/5</link>
+        <pubDate>Sun, 09 Aug 2020 10:45:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-20398-5</guid>
+        <source url="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398.rss">Null Terminated Programming 101 - x64</source>
+      </item>
+      <item>
+        <title>Null Terminated Programming 101 - x64</title>
+        <dc:creator><![CDATA[n00bi3s]]></dc:creator>
+        <description><![CDATA[
+            <p>Easy and informative! Well written <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398/4</link>
+        <pubDate>Sun, 03 May 2020 10:04:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-20398-4</guid>
+        <source url="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398.rss">Null Terminated Programming 101 - x64</source>
+      </item>
+      <item>
+        <title>Null Terminated Programming 101 - x64</title>
+        <dc:creator><![CDATA[x24whoami24]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks rick <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"><br>
+Nothing more beautiful than code making kids of it’s own</p>
+          <p><a href="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398/3</link>
+        <pubDate>Thu, 09 Apr 2020 19:04:04 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-20398-3</guid>
+        <source url="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398.rss">Null Terminated Programming 101 - x64</source>
+      </item>
+      <item>
+        <title>Null Terminated Programming 101 - x64</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>Good stuff! Playing around with ASM instructions like that to effectively eliminate NULL bytes while keeping the functionality teaches you to think outside the box.</p>
+<p>Also finding different solutions for the same problem is the first step to write a polymorphic code generator <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398/2</link>
+        <pubDate>Thu, 09 Apr 2020 19:00:35 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-20398-2</guid>
+        <source url="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398.rss">Null Terminated Programming 101 - x64</source>
+      </item>
+      <item>
+        <title>Null Terminated Programming 101 - x64</title>
+        <dc:creator><![CDATA[x24whoami24]]></dc:creator>
+        <description><![CDATA[
+            <h1>Null Terminated Programming 101 - x64</h1>
+<p><strong></strong></p><div class="lightbox-wrapper"><strong><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/e/e52e1dc9cf922b754575f507d0c9794ed51f47c6.png" data-download-href="/uploads/short-url/wHq8XLq2WAXGREaOjSSi5gBi7b0.png?dl=1" title=""><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/e/e52e1dc9cf922b754575f507d0c9794ed51f47c6_2_602x339.png" alt="" data-base62-sha1="wHq8XLq2WAXGREaOjSSi5gBi7b0" width="602" height="339" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/e/e52e1dc9cf922b754575f507d0c9794ed51f47c6_2_602x339.png, /uploads/default/original/2X/e/e52e1dc9cf922b754575f507d0c9794ed51f47c6.png 1.5x, /uploads/default/original/2X/e/e52e1dc9cf922b754575f507d0c9794ed51f47c6.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/e/e52e1dc9cf922b754575f507d0c9794ed51f47c6_2_10x10.png"></a></strong></div><p></p>
+<h2>Preface</h2>
+<p>Everyone, class is in session! please take your seat as we are about to start.</p>
+<p>Today we’re going to dive deep into a magnificent assembly language - x64.</p>
+<p>I chose this excellent language for this class because of its extreme use in personal computers and because it’s known by most researchers.</p>
+<p>When speaking a language, we often use synonyms while speaking about a subject, this makes the conversation more intelligent and exciting for everyone involved.</p>
+<p>Even now we just saw the use of them in the way I described x64 as magnifect and excellent. Two different words which mean the same thing.</p>
+<p>When writing shellcode, we sometimes need to perform something similar, this is mainly because in some  cases, the way we input our shellcode using our exploit will have a limitation of sort.</p>
+<p>Some examples:</p>
+<p>1.No null bytes in case of strcpy, which stops copying after it encounters a null byte</p>
+<p>2.Size limit of on how much shellcode we can put</p>
+<p>3.Only alphanumeric characters are copied</p>
+<p>These conditions cause us to develop different methods to write our shellcode in a way that it will implement the same logic but still be able to bypass the limitations imposed by the program</p>
+<p>Today we will attempt to solve case <span class="hashtag">#1</span> by learning about techniques that we can use to tackle this issue,<br>
+these techniques are often called Null Terminated Programming, as they allow us to compile assembly code that will not contain any null bytes in the final shellcode.</p>
+<p>Please note that some of the techniques described here will probably be relevant for different assembly languages as well so i’ll leave it as an exercise for the reader to check these techniques on a different language.</p>
+<p><strong>Recommended Prerequisites:</strong></p>
+<ul>
+<li>x64/x86 assembly  knowledge</li>
+<li>Basic knowledge on building shellcodes</li>
+</ul>
+<h2>Setup</h2>
+<p>For our setup, i’m using a <a href="https://github.com/x24whoamix24/make_shellcode_linux" rel="noopener nofollow ugc">script</a> i wrote for compiling shellcode for x86/x64</p>
+<p>which we can also use to compile our shellcode.</p>
+<p>next, we can use this <a href="https://github.com/mads256h/shellrun" rel="noopener nofollow ugc">repository</a> in order to debug and run our shellcode nicely</p>
+<h2>Quick Refreshment on x64 syscalls</h2>
+<p>In x64 linux systems, Each syscall has a special number that represents it, when we want to perform a call to a certain syscall we first need to store the correct syscall number in RAX, then we pass the arguments 1-6 to the syscall using the registries RDI, RSI, RDX, RCX, R8, R9 accordingly.</p>
+<p>Finally, we use the instruction syscall which performs the syscall itself and stores the return value in RAX.</p>
+<p>The full x64 syscall map table can be found <a href="https://filippo.io/linux-syscall-table/" rel="noopener nofollow ugc">here</a></p>
+<p>Let’s have a look at this simple assembly code i wrote named printf_file.asm:</p>
+<pre><code class="lang-auto">
+SYS_READ equ 0
+
+SYS_WRITE equ 1
+
+SYS_OPEN equ 2 
+
+SYS_EXIT equ 60
+
+AMOUNT_TO_READ equ 16 
+
+global _start
+
+section .text
+
+_start:
+
+  jmp get_file_path 
+
+  continue:
+
+  
+
+  ; syscall to open the file
+
+  mov eax, SYS_OPEN
+
+  pop rdi ; pop address of string to rdi
+
+  mov rsi, 0 ; set O_RDONLY flag
+
+  syscall
+
+    
+
+  ; syscall to read file
+
+  sub sp, 0xff
+
+  lea rsi, [rsp]
+
+  
+
+  ; syscall to write file contents to stdout  
+
+  mov rdi, rax ; use the returned fd
+
+  mov rdx, AMOUNT_TO_READ; amount to read
+
+  mov rax, SYS_READ
+
+  syscall
+
+  
+
+  ; syscall write to stdout
+
+  mov rdi,1 ; set stdout fd = 1
+
+  mov rdx, rax ; write to stdout the amount of bytes read
+
+  mov rax, SYS_WRITE
+
+  syscall
+
+  mov rax, SYS_EXIT
+
+  syscall ; finish execution
+
+; jump here in order to get the address of the string
+
+get_file_path:
+
+call continue 
+
+file_path: db "/tmp/my_file", 0
+
+</code></pre>
+<p>This code performs a simple task, it reads 16 bytes from the file located in<br>
+/tmp/my_file and outputs those bytes to stdout.</p>
+<p>Notice the cool trick we implemented in order to obtain the string that contains the path to the file.<br>
+to get that address, we perform a call to a label near that string called get_file_path,<br>
+afterwards we immediately perform a second call to the continue label that brings us  back to the rest of our shellcode.</p>
+<p>Because the second call was invoked, the address to return to after the second call now points to the string, because that is the first “instruction” after the call instruction. we then pop that address to RDI so that  RDI (the first param in x64 syscall conventions) can point to the string of the file we wish to open</p>
+<p>You can compile it the above assembly code by running</p>
+<pre><code class="lang-auto">
+path_to_make_shellcode_ /make_shellcode_linux/make_shellcode.sh/ ./printf_file.asm 64
+
+</code></pre>
+<p>and run it using</p>
+<pre><code class="lang-auto">
+path_to_shellrun/shellrun ./print_file.bin
+
+</code></pre>
+<p>Let’s check if the shellcode works properly</p>
+<pre><code class="lang-auto">
+echo “this_is_my_data” &gt; /tmp/my_file
+
+</code></pre>
+<p><strong></strong></p><div class="lightbox-wrapper"><strong><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/f/f2195243f4d3cedad398795120a279ba6b85c819.png" data-download-href="/uploads/short-url/yxHNvMgE8MnJeWgMH29LCH37cSZ.png?dl=1" title=""><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/f/f2195243f4d3cedad398795120a279ba6b85c819_2_672x35.png" alt="" data-base62-sha1="yxHNvMgE8MnJeWgMH29LCH37cSZ" width="672" height="35" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/f/f2195243f4d3cedad398795120a279ba6b85c819_2_672x35.png, /uploads/default/original/2X/f/f2195243f4d3cedad398795120a279ba6b85c819.png 1.5x, /uploads/default/original/2X/f/f2195243f4d3cedad398795120a279ba6b85c819.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/f/f2195243f4d3cedad398795120a279ba6b85c819_2_10x10.png"></a></strong></div><p></p>
+<p>So far so good.</p>
+<p>But under the surface, hids a horrible secret…</p>
+<p>It’s full of null bytes!!!</p>
+<p><strong></strong></p><div class="lightbox-wrapper"><strong><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/1/1d9d2971ddb9588af953bec1666b89fc0a729a03.png" data-download-href="/uploads/short-url/4dYyZJBXQNqb3wxlfEAj5RIz8FJ.png?dl=1" title=""><img src="/uploads/default/original/2X/1/1d9d2971ddb9588af953bec1666b89fc0a729a03.png" alt="" data-base62-sha1="4dYyZJBXQNqb3wxlfEAj5RIz8FJ" width="602" height="101" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/1/1d9d2971ddb9588af953bec1666b89fc0a729a03_2_10x10.png"></a></strong></div><p></p>
+<p>Hexdump just showed us that this shellcode is riddled with null bytes,</p>
+<p>Let’s begin our work at curing this code by going over the correct ways to bypass situations where instructions generate null bytes</p>
+<p>I will show the opcodes of the instruction  on the left side<br>
+and the instruction itself on the right side</p>
+<p>Note:I’ll be using <a href="https://defuse.ca/online-x86-assembler.htm" rel="noopener nofollow ugc">this website</a>  in order to show the bytes generated from the instructions were about to show. I recommend to you all to test your instruction combinations there.</p>
+<h2>Method 1: Math is awesome</h2>
+<p>I’ll start of by saying that the mov instruction is many times obsolete when you have the power of math at your side</p>
+<h3>Loading 0 to a register</h3>
+<h4>Bad way:</h4>
+<p>Lets look at the following instruction:</p>
+<pre><code class="lang-auto">48 c7 c0 00 00 00 00   mov rax, 0 
+
+</code></pre>
+<p>it is 7 bytes long and more importantly, contains 4 null bytes!</p>
+<p>we can easily use the following instructions instead</p>
+<h4><strong>Good way:</strong></h4>
+<pre><code class="lang-auto">48 31 c0    xor rax, rax
+
+</code></pre>
+<pre><code class="lang-auto">48 c7 c0 ff ff ff ff    mov    rax,0xffffffffffffffff
+48 ff c0                inc    rax
+</code></pre>
+<p>in case the value of rbx is 0, we can execute this instruction.<br>
+(this can also be done with any other register with a 0 value)</p>
+<pre><code class="lang-auto">
+48 f7 e3    mul rbx 
+
+</code></pre>
+<p>The mul instruction will multiply rax with the contents of rbx and store it in rax</p>
+<p>because rbx is 0 in this case then 0 will also be stored in rax</p>
+<h3>**Loading large values to registries **</h3>
+<p>What about putting large values in registries? For example, if i wanted to read a big file with my shellcode.</p>
+<h4>Bad way</h4>
+<pre><code class="lang-auto">
+48 c7 c2 00 00 01 00    mov    rdx,0x10000
+
+</code></pre>
+<h4>Good way</h4>
+<p>You can use the shift operations in order to load large numbers</p>
+<pre><code class="lang-auto">48 31 d2               xor    rdx,rdx
+48 83 c2 02            add    rdx,0x2
+48 c1 e2 0f            shl    rdx,0xf
+
+</code></pre>
+<p>This will result in rdx having the value 0x10000 at the end of the shift operation.</p>
+<h2>Method 2: Using your lower parts</h2>
+<p>Before you start thinking dirty, different parts of each register in x64 can be accessed as an operand.</p>
+<p>These parts are mapped in the following way:</p>
+<p><strong></strong></p><div class="lightbox-wrapper"><strong><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/5/5536ef497f7c6038025eb58e01735580bf44f548.png" data-download-href="/uploads/short-url/c9QhuhPRmtb0tmrTgosixKFviJ2.png?dl=1" title=""><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/5/5536ef497f7c6038025eb58e01735580bf44f548_2_602x391.png" alt="" data-base62-sha1="c9QhuhPRmtb0tmrTgosixKFviJ2" width="602" height="391" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/5/5536ef497f7c6038025eb58e01735580bf44f548_2_602x391.png, https://0x00sec.s3.amazonaws.com/optimized/2X/5/5536ef497f7c6038025eb58e01735580bf44f548_2_903x586.png 1.5x, /uploads/default/original/2X/5/5536ef497f7c6038025eb58e01735580bf44f548.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/5/5536ef497f7c6038025eb58e01735580bf44f548_2_10x10.png"></a></strong></div><p></p>
+<p>This allows us to use the al operand for example instead of the rax operand when we want to perform reading and writing actions on the lower 8 bits of the rax register.</p>
+<p>When we do so, the instruction that is executed is much smaller and can also aid us when trying to avoid null bytes.</p>
+<h4>**Bad way:</h4>
+<pre><code class="lang-auto">48 c7 c0 02 00 00 00    mov    rax,0x2
+48 c7 c3 ff 0f 00 00    mov    rbx,0xfff
+
+</code></pre>
+<h4>Good way</h4>
+<pre><code class="lang-auto">48 31 db              xor    rbx,rbx
+48 31 c0              xor    rax,rax
+b0 02                 mov    al,0x2
+66 bbff 0f            mov    bx,0xfff
+
+</code></pre>
+<h2>Field Test</h2>
+<p>After we learned these two new methods, let’s implement and modify the assembly code we saw at the beginning of the article</p>
+<pre><code class="lang-auto">
+SYS_READ equ 0
+
+SYS_WRITE equ 1
+
+SYS_OPEN equ 2
+
+SYS_EXIT equ 60
+
+AMOUNT_TO_READ equ 16
+
+global _start
+
+section .text
+
+_start:
+
+  jmp get_file_path 
+
+  continue:
+
+  
+
+  ; syscall to open the file
+
+  xor rax, rax
+
+  add al, SYS_OPEN
+
+  pop rdi ; pop address of string to rdi
+
+  xor rsi, rsi ; set O_RDONLY flag
+
+  syscall
+
+    
+
+  ; syscall read file
+
+  sub sp, 0xfff
+
+  lea rsi, [rsp]
+
+  mov rdi, rax
+
+  xor rdx, rdx
+
+  add dl, AMOUNT_TO_READ; amount to read
+
+  xor rax, rax
+
+  syscall
+
+    
+
+  ; syscall write to stdout
+
+  xor rdi, rdi
+
+  add dl, 1 ; set fd to point to stdout
+
+  mov rdx, rax
+
+  xor rax, rax
+
+  add al, SYS_WRITE
+
+  syscall
+
+  
+
+  mov al, SYS_EXIT
+
+  syscall ; finish execution
+
+; jump here in order to get the address of the string  
+
+get_file_path:
+
+call continue
+
+flag: db "/tmp/my_file", 0
+
+</code></pre>
+<p>After we compile this code, we can run it and see that it works exactly the same as the previous code:</p>
+<p><strong></strong></p><div class="lightbox-wrapper"><strong><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/6/6595ec29524e6471d72c9cb1d0fad77677ee2050.png" data-download-href="/uploads/short-url/euFqMCb8VDTxOfbiEyiLZRPYZNe.png?dl=1" title=""><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/6/6595ec29524e6471d72c9cb1d0fad77677ee2050_2_651x33.png" alt="" data-base62-sha1="euFqMCb8VDTxOfbiEyiLZRPYZNe" width="651" height="33" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/6/6595ec29524e6471d72c9cb1d0fad77677ee2050_2_651x33.png, /uploads/default/original/2X/6/6595ec29524e6471d72c9cb1d0fad77677ee2050.png 1.5x, /uploads/default/original/2X/6/6595ec29524e6471d72c9cb1d0fad77677ee2050.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/6/6595ec29524e6471d72c9cb1d0fad77677ee2050_2_10x10.png"></a></strong></div><p></p>
+<p>let’s see if hexdumps finds any null bytes…</p>
+<p><strong></strong></p><div class="lightbox-wrapper"><strong><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/0/0e9327cbd0bbe0fafc95c009c7f9982a772d1cf1.png" data-download-href="/uploads/short-url/24VXKqKsKHyojfJqeNmzK90LLs5.png?dl=1" title=""><img src="/uploads/default/original/2X/0/0e9327cbd0bbe0fafc95c009c7f9982a772d1cf1.png" alt="" data-base62-sha1="24VXKqKsKHyojfJqeNmzK90LLs5" width="641" height="101" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/0/0e9327cbd0bbe0fafc95c009c7f9982a772d1cf1_2_10x10.png"></a></strong></div><p></p>
+<p>Awesome!</p>
+<p>Note: Don’t be confused by the one null byte that hexdump found, that null byte belongs to the string in our shellcode and it’s placed at the end of the shellcode.<br>
+It doesn’t seem like it is in the end because memory is saved in <a href="https://www.youtube.com/watch?v=seZLUbgbB7Y" rel="noopener nofollow ugc">little endian</a>.</p>
+<h2>Conclusions</h2>
+<p>Today we learned about how we can compile our shellcode to be free of null bytes. We learned along the way about different ways we can perform the same resulting actions using different and sometimes shorter instructions(opcode wise) in x64.</p>
+<p>Finally, we used this knowledge to transform shellcode that was riddled with null bytes into one that is ready to tackle any strcpy in it’s path.</p>
+<p>I hope you all enjoyed this article and learned more about the x64 instruction set along the way, there are many more methods and techniques yet to learn and I urge you all to keep learning what you don’t know and teach what you do know.</p>
+<p>Spread the good word,</p>
+<p>x24whoamix24</p>
+<h2><strong>Sources</strong></h2>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <a href="https://filippo.io/linux-syscall-table/" target="_blank" rel="noopener nofollow ugc">filippo.io</a>
+  </header>
+  <article class="onebox-body">
+    <img src="" class="thumbnail" width="" height="">
+
+<h3><a href="https://filippo.io/linux-syscall-table/" target="_blank" rel="noopener nofollow ugc">Searchable Linux Syscall Table for x86 and x86_64 | PyTux</a></h3>
+
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <a href="https://defuse.ca/online-x86-assembler.htm#disassembly" target="_blank" rel="noopener nofollow ugc">defuse.ca</a>
+  </header>
+  <article class="onebox-body">
+    <img src="" class="thumbnail" width="" height="">
+
+<h3><a href="https://defuse.ca/online-x86-assembler.htm#disassembly" target="_blank" rel="noopener nofollow ugc">Online x86 and x64 Intel Instruction Assembler</a></h3>
+
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+          <p><a href="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398/1</link>
+        <pubDate>Thu, 09 Apr 2020 18:45:09 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-20398-1</guid>
+        <source url="https://d.clarkee.co.uk/t/null-terminated-programming-101-x64/20398.rss">Null Terminated Programming 101 - x64</source>
+      </item>
+  </channel>
+</rss>

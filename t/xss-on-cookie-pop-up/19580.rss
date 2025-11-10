@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>XSS on Cookie Pop-up</title>
+    <link>https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580</link>
+    <description>&gt; Never trust pop-ups
+
+While doing some bug hunting (actually, in this case it was just a responsible disclosure) on a website, I entered a XSS payload as a subdirectory in the URL, in order to see if and how it was reflected on the source code. It&#39;s one of the first things I do when I manual test a site for XSS. For this I always use a payload with common characters used in XSS payloads that are filtered under the fear of inserting js code. After entering the
+
+``https://website.com/&quot;&gt;&lt;/&gt;{}()vict0ni``
+
+I got a custom 404 response page. Looking at the source code, the URL was reflected in 3 places. In the two of them the payload was sanitized, but on the third one everything were getting reflected as they were. The source code for the third reflection looked something like this:
+
+```
+&lt;input type=&quot;hidden&quot; name=&quot;DismissCookieNotice&quot; value=&quot;true&quot; /&gt;
+&lt;input type=&quot;hidden&quot; name=&quot;redirected&quot; value=&quot;https://www.website.com/&quot;&gt;&lt;/&gt;{}()vict0ni&quot; /&gt;
+&lt;input type=&quot;hidden&quot; name=&quot;csrf&quot; value=[something] /&gt;
+```
+So by entering the payload 
+
+```https://website.com/&quot;/&gt;&lt;svg onload=alert(document.cookie)&gt;``` 
+
+an XSS was triggered.
+
+Everything was really simple. I browsed the website a little bit just to see how it was structured and then I went back to retest the XSS, just to be sure. Only this time... it didn&#39;t work.
+
+I tried to think of what could have changed between now and the time I triggered the XSS. I was changing parameters, payloads, user agents, basically everything. Still nothing.
+Then, after some tries, I thought of re-entering the URL on a private session. That&#39;s where the XSS got triggered again!
+
+![wut](upload://qDMQLf0OSLAc6InHq3ZLO2qEKKc.gif)
+
+This happened because on the private session I didn&#39;t click the &quot;Accept Cookies&quot; option on the pop-up that now every website is forced to provide. But I did it while browsing the website **after** finding the XSS. To be honest, I could have probably noticed that earlier in the **DismissCookieNotice** name in the source code.
+
+*To recall:*
+```
+...
+&lt;input type=&quot;hidden&quot; name=&quot;DismissCookieNotice&quot; value=&quot;true&quot; /&gt;
+...
+```
+
+The vulnerability was inside the code for the pop-up (after accepting the cookies, the page refreshed and the pop-up source code was missing from the new page). So the XSS could be reproduced only by ignoring the Cookie pop-up (not dismissing it, just by ignoring it). 
+The logic behind this pop-up was that after accepting the cookies, the website would redirect the user to the URL he already was. That&#39;s why the URL was reflected in the &quot;redirected&quot; hidden input. But they forgot to filter the user input.
+
+Next time you test for a reflected XSS, make sure to test it **before** you accept the cookies. You never know!</description>
+    
+    <lastBuildDate>Tue, 15 Sep 2020 09:17:55 +0000</lastBuildDate>
+    <category>Bug Bounty</category>
+    <atom:link href="https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>XSS on Cookie Pop-up</title>
+        <dc:creator><![CDATA[vict0ni]]></dc:creator>
+        <description><![CDATA[
+            <p>It’s based on the way the application is displaying the pop-up and how it handles the agreement. After this I always check for XSS without dismissing the pop-up</p>
+          <p><a href="https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580/3</link>
+        <pubDate>Tue, 15 Sep 2020 09:17:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-19580-3</guid>
+        <source url="https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580.rss">XSS on Cookie Pop-up</source>
+      </item>
+      <item>
+        <title>XSS on Cookie Pop-up</title>
+        <dc:creator><![CDATA[aits]]></dc:creator>
+        <description><![CDATA[
+            <p>Ow… That’s a great idea for xss .</p>
+          <p><a href="https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580/2</link>
+        <pubDate>Mon, 14 Sep 2020 20:31:47 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-19580-2</guid>
+        <source url="https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580.rss">XSS on Cookie Pop-up</source>
+      </item>
+      <item>
+        <title>XSS on Cookie Pop-up</title>
+        <dc:creator><![CDATA[vict0ni]]></dc:creator>
+        <description><![CDATA[
+            <blockquote>
+<p>Never trust pop-ups</p>
+</blockquote>
+<p>While doing some bug hunting (actually, in this case it was just a responsible disclosure) on a website, I entered a XSS payload as a subdirectory in the URL, in order to see if and how it was reflected on the source code. It’s one of the first things I do when I manual test a site for XSS. For this I always use a payload with common characters used in XSS payloads that are filtered under the fear of inserting js code. After entering the</p>
+<p><code>https://website.com/"&gt;&lt;/&gt;{}()vict0ni</code></p>
+<p>I got a custom 404 response page. Looking at the source code, the URL was reflected in 3 places. In the two of them the payload was sanitized, but on the third one everything were getting reflected as they were. The source code for the third reflection looked something like this:</p>
+<pre><code class="lang-auto">&lt;input type="hidden" name="DismissCookieNotice" value="true" /&gt;
+&lt;input type="hidden" name="redirected" value="https://www.website.com/"&gt;&lt;/&gt;{}()vict0ni" /&gt;
+&lt;input type="hidden" name="csrf" value=[something] /&gt;
+</code></pre>
+<p>So by entering the payload</p>
+<p><code>https://website.com/"/&gt;&lt;svg onload=alert(document.cookie)&gt;</code></p>
+<p>an XSS was triggered.</p>
+<p>Everything was really simple. I browsed the website a little bit just to see how it was structured and then I went back to retest the XSS, just to be sure. Only this time… it didn’t work.</p>
+<p>I tried to think of what could have changed between now and the time I triggered the XSS. I was changing parameters, payloads, user agents, basically everything. Still nothing.<br>
+Then, after some tries, I thought of re-entering the URL on a private session. That’s where the XSS got triggered again!</p>
+<p><img src="/uploads/default/original/2X/b/bab7eae36842a2d016e878744dcfa30619b12a08.gif" alt="wut" data-base62-sha1="qDMQLf0OSLAc6InHq3ZLO2qEKKc" width="300" height="185" class="animated"></p>
+<p>This happened because on the private session I didn’t click the “Accept Cookies” option on the pop-up that now every website is forced to provide. But I did it while browsing the website <strong>after</strong> finding the XSS. To be honest, I could have probably noticed that earlier in the <strong>DismissCookieNotice</strong> name in the source code.</p>
+<p><em>To recall:</em></p>
+<pre><code class="lang-auto">...
+&lt;input type="hidden" name="DismissCookieNotice" value="true" /&gt;
+...
+</code></pre>
+<p>The vulnerability was inside the code for the pop-up (after accepting the cookies, the page refreshed and the pop-up source code was missing from the new page). So the XSS could be reproduced only by ignoring the Cookie pop-up (not dismissing it, just by ignoring it).<br>
+The logic behind this pop-up was that after accepting the cookies, the website would redirect the user to the URL he already was. That’s why the URL was reflected in the “redirected” hidden input. But they forgot to filter the user input.</p>
+<p>Next time you test for a reflected XSS, make sure to test it <strong>before</strong> you accept the cookies. You never know!</p>
+          <p><a href="https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580/1</link>
+        <pubDate>Mon, 02 Mar 2020 21:33:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-19580-1</guid>
+        <source url="https://d.clarkee.co.uk/t/xss-on-cookie-pop-up/19580.rss">XSS on Cookie Pop-up</source>
+      </item>
+  </channel>
+</rss>

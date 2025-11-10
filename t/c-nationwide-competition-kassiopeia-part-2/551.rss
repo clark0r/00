@@ -1,0 +1,481 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>[C#] Nationwide Competition - Kassiopeia [Part 2]</title>
+    <link>https://d.clarkee.co.uk/t/c-nationwide-competition-kassiopeia-part-2/551</link>
+    <description>Hey Mates,
+it&#39;s weekend and I&#39;ve got some time, so here is my second part. 
+*Little Note: It&#39;s damn hot :sunglasses:, but I hope my text is understandable*
+
+---
+## Description
+Kassiopeia can only walk about white fields on the board. The exercise is to calculate whether she can reach all fields or not. A board looks like this:
+http://www.bundeswettbewerb-informatik.de/uploads/media/kassiopeia2.txt
+The &quot;#&quot;s are black fields, so Kassiopeia can&#39;t walk about them and the spaces are white fields. The &quot;K&quot; shows where Kassiopeia starts. She can only walk north, east, south or west per step. Diagonal is not allowed!
+In this example Kassiopeia can reach all fields. 
+
+### Example boards
+You can get a folder with all examples [here](https://mega.nz/#!qhgUmCbR!Wndf9uwLnoSbb-5yunylqaPK8sdJzkPE6nFUeq9QEiQ).
+**Can Kassiopeia reach all fields?**
+0) Yes
+1) No
+2) Yes
+3) Yes
+4) Yes
+5) Yes
+6) Yes
+7) Yes
+
+---
+## My Solution
+[Spoiler]My solution is to find Kassiopeias position as starting point and then use a recursive algorithm to append all fields, that can be reached by her, to a list. After that I compare the length of this to the count of all white fields.[/Spoiler]
+
+The source:
+```
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+using System.IO;
+
+//You want to know what recursion is? Have a look at line 190!
+
+namespace Kassiopeia
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            int rows = 0;
+            int columns = 0;
+
+            while (true)
+            {
+                //Get file
+                String file = input(&quot;\nText File: &quot;);
+
+                //Read file / Fill board
+                StreamReader f = new StreamReader(file);
+                Char[,] board = null;
+                String line;
+                int counter = 0;
+                while((line = f.ReadLine()) != null)
+                {
+                    //First line -&gt; Read rows and columns / Create board
+                    if (counter == 0)
+                    {
+                        rows = int.Parse(line.Split(&#39; &#39;)[0]);
+                        columns = int.Parse(line.Split(&#39; &#39;)[1]);
+
+                        board = new Char[rows, columns];
+                    }
+
+                    //Else -&gt; Fill board
+                    else
+                    {
+                        for (int i = 0; i &lt; columns; i++)
+                        {
+                            board[counter - 1, i] = line[i];
+                        }
+                    }
+
+                    counter += 1;
+                }
+
+                // Test if every field is connected
+                if (testBoard(board, rows, columns))
+                {
+                    Console.WriteLine(&quot;[*] Kassiopeia can reach all fields!&quot;);
+                }
+
+                else
+                {
+                    Console.WriteLine(&quot;[!] Kassiopeia can&#39;t reach all fields!&quot;);
+                }
+            }
+        }
+
+        static bool testBoard(Char[,] board, int rows, int cols)
+        {
+            //Find Kassiopeias position as starting point / Run recursive test to find all connected fields
+            int lenConnected = 0;
+            for (int row = 0; row &lt; rows; row++)
+            {
+                for (int col = 0; col &lt; cols; col++)
+                {
+                    if (board[row, col] == &#39;K&#39;)
+                    {
+                        List&lt;String&gt; connected = new List&lt;String&gt;();
+                        lenConnected = recursiveTestOfDoom(board, connected, row, col, rows, cols).Count;
+                    }
+                }
+            }
+
+            //Count all white fields
+            int lenAll = 0;
+            for (int row = 0; row &lt; rows; row++)
+            {
+                for (int col = 0; col &lt; cols; col++)
+                {
+                    if (board[row, col] == &#39; &#39;)
+                    {
+                        lenAll += 1;
+                    }
+                }
+            }
+
+            //Test if all can be reached
+            if (lenConnected &lt; lenAll)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        /// &lt;summary&gt;
+        /// A recursive test of Doooooooom
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;board&quot;&gt;&lt;/param&gt;
+        /// &lt;param name=&quot;connected&quot;&gt;&lt;/param&gt;
+        /// &lt;param name=&quot;row&quot;&gt;&lt;/param&gt;
+        /// &lt;param name=&quot;col&quot;&gt;&lt;/param&gt;
+        /// &lt;param name=&quot;rows&quot;&gt;&lt;/param&gt;
+        /// &lt;param name=&quot;cols&quot;&gt;&lt;/param&gt;
+        /// &lt;returns&gt;&lt;/returns&gt;
+        static List&lt;String&gt; recursiveTestOfDoom(Char[,] board, List&lt;String&gt; connected, int row, int col, int rows, int cols)
+        {
+            //Test above field
+            if (row != 0)
+            {
+                if (board[row - 1, col] == &#39; &#39;)
+                {
+                    if (!connected.Contains(toXyString(row - 1, col)))
+                    {
+                        connected.Add(toXyString(row - 1, col));
+                        connected = recursiveTestOfDoom(board, connected, row - 1, col, rows, cols);
+                    }
+                }
+            }
+
+            //Test right field
+            if (col != cols - 1)
+            {
+                if (board[row, col + 1] == &#39; &#39;)
+                {
+                    if (!connected.Contains(toXyString(row, col + 1)))
+                    {
+                        connected.Add(toXyString(row, col + 1));
+                        connected = recursiveTestOfDoom(board, connected, row, col + 1, rows, cols);
+                    }
+                }
+            }
+
+            //Test below field
+            if (row != rows - 1)
+            {
+                if (board[row + 1, col] == &#39; &#39;)
+                {
+                    if (!connected.Contains(toXyString(row + 1, col)))
+                    {
+                        connected.Add(toXyString(row + 1, col));
+                        connected = recursiveTestOfDoom(board, connected, row + 1, col, rows, cols);
+                    }
+                }
+            }
+
+            //Test left field
+            if (col != 0)
+            {
+                if (board[row, col - 1] == &#39; &#39;)
+                {
+                    if (!connected.Contains(toXyString(row, col - 1)))
+                    {
+                        connected.Add(toXyString(row, col - 1));
+                        connected = recursiveTestOfDoom(board, connected, row, col - 1, rows, cols);
+                    }
+                }
+            }
+
+            return connected;
+        }
+
+        /// &lt;summary&gt;
+        /// Builds a little String out of the x and y coordinate
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;row&quot;&gt;&lt;/param&gt;
+        /// &lt;param name=&quot;col&quot;&gt;&lt;/param&gt;
+        /// &lt;returns&gt;&lt;/returns&gt;
+        static String toXyString(int row, int col)
+        {
+            return row.ToString() + col.ToString();
+        }
+
+        static String input(String text)
+        {
+            Console.Write(text);
+            return Console.ReadLine();
+        }
+    }
+}
+
+//You want to know what recursion is? Have a look at line 9!
+```
+
+---
+## Conclusion
+This is a very good challenge for learning some fundamentals like reading text files, twodimensional arrays and maybe recursion (Depends on your solution). Have fun while learning! (*Yes that sounds like a lame slogan from a latin teacher :grin:*)
+
+|-TheDoctor-|</description>
+    
+    <lastBuildDate>Sun, 05 Jun 2016 16:08:55 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/c-nationwide-competition-kassiopeia-part-2/551.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>[C#] Nationwide Competition - Kassiopeia [Part 2]</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-nationwide-competition-kassiopeia-part-2/551/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-nationwide-competition-kassiopeia-part-2/551/2</link>
+        <pubDate>Sun, 21 Jan 2018 00:31:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-551-2</guid>
+        <source url="https://d.clarkee.co.uk/t/c-nationwide-competition-kassiopeia-part-2/551.rss">[C#] Nationwide Competition - Kassiopeia [Part 2]</source>
+      </item>
+      <item>
+        <title>[C#] Nationwide Competition - Kassiopeia [Part 2]</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey Mates,<br>
+it’s weekend and I’ve got some time, so here is my second part.<br>
+<em>Little Note: It’s damn hot <img src="https://0x00sec.org/images/emoji/twitter/sunglasses.png?v=9" title=":sunglasses:" class="emoji" alt=":sunglasses:">, but I hope my text is understandable</em></p>
+<hr>
+<h2>Description</h2>
+<p>Kassiopeia can only walk about white fields on the board. The exercise is to calculate whether she can reach all fields or not. A board looks like this:<br>
+<a href="http://www.bundeswettbewerb-informatik.de/uploads/media/kassiopeia2.txt" class="onebox" target="_blank" rel="nofollow noopener">http://www.bundeswettbewerb-informatik.de/uploads/media/kassiopeia2.txt</a><br>
+The "#"s are black fields, so Kassiopeia can’t walk about them and the spaces are white fields. The “K” shows where Kassiopeia starts. She can only walk north, east, south or west per step. Diagonal is not allowed!<br>
+In this example Kassiopeia can reach all fields.</p>
+<h3>Example boards</h3>
+<p>You can get a folder with all examples <a href="https://mega.nz/#!qhgUmCbR!Wndf9uwLnoSbb-5yunylqaPK8sdJzkPE6nFUeq9QEiQ" rel="nofollow noopener">here</a>.<br>
+<strong>Can Kassiopeia reach all fields?</strong><br>
+0) Yes</p>
+<ol>
+<li>No</li>
+<li>Yes</li>
+<li>Yes</li>
+<li>Yes</li>
+<li>Yes</li>
+<li>Yes</li>
+<li>Yes</li>
+</ol>
+<hr>
+<h2>My Solution</h2>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/c-nationwide-competition-kassiopeia-part-2/551/1">spoiler</a></div>
+<p>The source:</p>
+<pre><code class="lang-auto">using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+using System.IO;
+
+//You want to know what recursion is? Have a look at line 190!
+
+namespace Kassiopeia
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            int rows = 0;
+            int columns = 0;
+
+            while (true)
+            {
+                //Get file
+                String file = input("\nText File: ");
+
+                //Read file / Fill board
+                StreamReader f = new StreamReader(file);
+                Char[,] board = null;
+                String line;
+                int counter = 0;
+                while((line = f.ReadLine()) != null)
+                {
+                    //First line -&gt; Read rows and columns / Create board
+                    if (counter == 0)
+                    {
+                        rows = int.Parse(line.Split(' ')[0]);
+                        columns = int.Parse(line.Split(' ')[1]);
+
+                        board = new Char[rows, columns];
+                    }
+
+                    //Else -&gt; Fill board
+                    else
+                    {
+                        for (int i = 0; i &lt; columns; i++)
+                        {
+                            board[counter - 1, i] = line[i];
+                        }
+                    }
+
+                    counter += 1;
+                }
+
+                // Test if every field is connected
+                if (testBoard(board, rows, columns))
+                {
+                    Console.WriteLine("[*] Kassiopeia can reach all fields!");
+                }
+
+                else
+                {
+                    Console.WriteLine("[!] Kassiopeia can't reach all fields!");
+                }
+            }
+        }
+
+        static bool testBoard(Char[,] board, int rows, int cols)
+        {
+            //Find Kassiopeias position as starting point / Run recursive test to find all connected fields
+            int lenConnected = 0;
+            for (int row = 0; row &lt; rows; row++)
+            {
+                for (int col = 0; col &lt; cols; col++)
+                {
+                    if (board[row, col] == 'K')
+                    {
+                        List&lt;String&gt; connected = new List&lt;String&gt;();
+                        lenConnected = recursiveTestOfDoom(board, connected, row, col, rows, cols).Count;
+                    }
+                }
+            }
+
+            //Count all white fields
+            int lenAll = 0;
+            for (int row = 0; row &lt; rows; row++)
+            {
+                for (int col = 0; col &lt; cols; col++)
+                {
+                    if (board[row, col] == ' ')
+                    {
+                        lenAll += 1;
+                    }
+                }
+            }
+
+            //Test if all can be reached
+            if (lenConnected &lt; lenAll)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        /// &lt;summary&gt;
+        /// A recursive test of Doooooooom
+        /// &lt;/summary&gt;
+        /// &lt;param name="board"&gt;&lt;/param&gt;
+        /// &lt;param name="connected"&gt;&lt;/param&gt;
+        /// &lt;param name="row"&gt;&lt;/param&gt;
+        /// &lt;param name="col"&gt;&lt;/param&gt;
+        /// &lt;param name="rows"&gt;&lt;/param&gt;
+        /// &lt;param name="cols"&gt;&lt;/param&gt;
+        /// &lt;returns&gt;&lt;/returns&gt;
+        static List&lt;String&gt; recursiveTestOfDoom(Char[,] board, List&lt;String&gt; connected, int row, int col, int rows, int cols)
+        {
+            //Test above field
+            if (row != 0)
+            {
+                if (board[row - 1, col] == ' ')
+                {
+                    if (!connected.Contains(toXyString(row - 1, col)))
+                    {
+                        connected.Add(toXyString(row - 1, col));
+                        connected = recursiveTestOfDoom(board, connected, row - 1, col, rows, cols);
+                    }
+                }
+            }
+
+            //Test right field
+            if (col != cols - 1)
+            {
+                if (board[row, col + 1] == ' ')
+                {
+                    if (!connected.Contains(toXyString(row, col + 1)))
+                    {
+                        connected.Add(toXyString(row, col + 1));
+                        connected = recursiveTestOfDoom(board, connected, row, col + 1, rows, cols);
+                    }
+                }
+            }
+
+            //Test below field
+            if (row != rows - 1)
+            {
+                if (board[row + 1, col] == ' ')
+                {
+                    if (!connected.Contains(toXyString(row + 1, col)))
+                    {
+                        connected.Add(toXyString(row + 1, col));
+                        connected = recursiveTestOfDoom(board, connected, row + 1, col, rows, cols);
+                    }
+                }
+            }
+
+            //Test left field
+            if (col != 0)
+            {
+                if (board[row, col - 1] == ' ')
+                {
+                    if (!connected.Contains(toXyString(row, col - 1)))
+                    {
+                        connected.Add(toXyString(row, col - 1));
+                        connected = recursiveTestOfDoom(board, connected, row, col - 1, rows, cols);
+                    }
+                }
+            }
+
+            return connected;
+        }
+
+        /// &lt;summary&gt;
+        /// Builds a little String out of the x and y coordinate
+        /// &lt;/summary&gt;
+        /// &lt;param name="row"&gt;&lt;/param&gt;
+        /// &lt;param name="col"&gt;&lt;/param&gt;
+        /// &lt;returns&gt;&lt;/returns&gt;
+        static String toXyString(int row, int col)
+        {
+            return row.ToString() + col.ToString();
+        }
+
+        static String input(String text)
+        {
+            Console.Write(text);
+            return Console.ReadLine();
+        }
+    }
+}
+
+//You want to know what recursion is? Have a look at line 9!
+</code></pre>
+<hr>
+<h2>Conclusion</h2>
+<p>This is a very good challenge for learning some fundamentals like reading text files, twodimensional arrays and maybe recursion (Depends on your solution). Have fun while learning! (<em>Yes that sounds like a lame slogan from a latin teacher <img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"></em>)</p>
+<p>|-TheDoctor-|</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-nationwide-competition-kassiopeia-part-2/551/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-nationwide-competition-kassiopeia-part-2/551/1</link>
+        <pubDate>Sat, 04 Jun 2016 11:30:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-551-1</guid>
+        <source url="https://d.clarkee.co.uk/t/c-nationwide-competition-kassiopeia-part-2/551.rss">[C#] Nationwide Competition - Kassiopeia [Part 2]</source>
+      </item>
+  </channel>
+</rss>

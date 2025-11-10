@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Why glibc unlink is a macro and not an inline function</title>
+    <link>https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106</link>
+    <description>Hello all, 
+
+This my first post here, and yes I made sure this question is not discussed yet.
+
+So mainly i have been learning more about heap exploitation, especially glibc malloc. 
+
+My question is why do [unlink](https://sourceware.org/git/?p=glibc.git;a=blob;f=malloc/malloc.c;h=96149549758dd424f5c08bed3b7ed1259d5d5664;hb=HEAD#l1404) function is a macro and not an inline function? 
+
+being a macro is making the code somehow unreadable for new comers, but I believe that the same performance gains can be achieved by using an inline function.</description>
+    
+    <lastBuildDate>Fri, 15 Jun 2018 21:22:43 +0000</lastBuildDate>
+    <category>Questions</category>
+    <atom:link href="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Why glibc unlink is a macro and not an inline function</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106/5</link>
+        <pubDate>Fri, 13 Jul 2018 22:33:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7106-5</guid>
+        <source url="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106.rss">Why glibc unlink is a macro and not an inline function</source>
+      </item>
+      <item>
+        <title>Why glibc unlink is a macro and not an inline function</title>
+        <dc:creator><![CDATA[panic_monster]]></dc:creator>
+        <description><![CDATA[
+            <p>Surely you can force inline a function but that doesn’t always generate efficient code. Macro substitution happens in the preprocessing phase whereas inline substitution takes place in the compilation phase. This often makes a difference.</p>
+<h2>Case 1: Inline function</h2>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+
+inline int __attribute__((always_inline)) SUM(int a, int b)
+{
+    return (a + b);
+}
+
+
+int main(void)
+{
+    printf("%d", SUM(10, 20));        
+    return 0;
+}
+</code></pre>
+<p>This compiles to the following assembly. Tested on <a href="https://godbolt.org/" rel="nofollow noopener">https://godbolt.org/</a> using ARM gcc 5.4.</p>
+<pre><code class="lang-auto">.LC0:
+        .ascii  "%d\000"
+main:
+        stmfd   sp!, {fp, lr}
+        add     fp, sp, #4
+        sub     sp, sp, #8
+        mov     r3, #10
+        str     r3, [fp, #-8]
+        mov     r3, #20
+        str     r3, [fp, #-12]
+        ldr     r2, [fp, #-8]
+        ldr     r3, [fp, #-12]
+        add     r3, r2, r3
+        ldr     r0, .L2
+        mov     r1, r3
+        bl      printf
+        mov     r3, #0
+        mov     r0, r3
+        sub     sp, fp, #4
+        ldmfd   sp!, {fp, pc}
+.L2:
+        .word   .LC0
+</code></pre>
+<p>The <code>SUM</code> function has indeed been inlined but notice the actual addition operation does takes place in assembly <code>add     r3, r2, r3</code>. In contrast consider the following code which uses a macro</p>
+<h2>Case 2: Macro</h2>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+
+#define SUM(a,b) ((a) + (b))
+
+int main(void)
+{
+    printf("%d", SUM(10, 20));        
+    return 0;
+}
+</code></pre>
+<p>This assembles to</p>
+<pre><code class="lang-auto">.LC0:
+        .ascii  "%d\000"
+main:
+        stmfd   sp!, {fp, lr}
+        add     fp, sp, #4
+        ldr     r0, .L2
+        mov     r1, #30
+        bl      printf
+        mov     r3, #0
+        mov     r0, r3
+        ldmfd   sp!, {fp, pc}
+.L2:
+        .word   .LC0
+</code></pre>
+<p>There’s no addition operation in the assembly, the compiler was intelligent enough to replace it with 30.</p>
+<p>Now you may argue that if we compiled the first example with full optimizations <code>-O2</code> we would have got similar results, but that’s not the point of the discussion.</p>
+<p>The key idea is an inline function is still a function. If the inline function had local variables we would see space being reserved for them on the stack in the function from where it was called.</p>
+<p>If we use macros instead the compiler doesn’t see the two separate functions. The preprocessor performs the substitution and all the compiler sees is a single block of code and can better optimize it.</p>
+          <p><a href="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106/4</link>
+        <pubDate>Fri, 15 Jun 2018 21:22:43 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7106-4</guid>
+        <source url="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106.rss">Why glibc unlink is a macro and not an inline function</source>
+      </item>
+      <item>
+        <title>Why glibc unlink is a macro and not an inline function</title>
+        <dc:creator><![CDATA[quantum_bracket]]></dc:creator>
+        <description><![CDATA[
+            <p>But you could do ‘inline __attribute__((always_inline))’ in gcc and it will always inline the function.</p>
+          <p><a href="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106/3</link>
+        <pubDate>Thu, 14 Jun 2018 15:06:52 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7106-3</guid>
+        <source url="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106.rss">Why glibc unlink is a macro and not an inline function</source>
+      </item>
+      <item>
+        <title>Why glibc unlink is a macro and not an inline function</title>
+        <dc:creator><![CDATA[panic_monster]]></dc:creator>
+        <description><![CDATA[
+            <p>inline is just a hint to the compiler. The compiler may or may not inline the function marked as such.<br>
+Using a macro guarantees the code will be inline.</p>
+          <p><a href="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106/2</link>
+        <pubDate>Thu, 14 Jun 2018 09:43:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7106-2</guid>
+        <source url="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106.rss">Why glibc unlink is a macro and not an inline function</source>
+      </item>
+      <item>
+        <title>Why glibc unlink is a macro and not an inline function</title>
+        <dc:creator><![CDATA[Segflow]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello all,</p>
+<p>This my first post here, and yes I made sure this question is not discussed yet.</p>
+<p>So mainly i have been learning more about heap exploitation, especially glibc malloc.</p>
+<p>My question is why do <a href="https://sourceware.org/git/?p=glibc.git;a=blob;f=malloc/malloc.c;h=96149549758dd424f5c08bed3b7ed1259d5d5664;hb=HEAD#l1404" rel="nofollow noopener">unlink</a> function is a macro and not an inline function?</p>
+<p>being a macro is making the code somehow unreadable for new comers, but I believe that the same performance gains can be achieved by using an inline function.</p>
+          <p><a href="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106/1</link>
+        <pubDate>Wed, 13 Jun 2018 22:33:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7106-1</guid>
+        <source url="https://d.clarkee.co.uk/t/why-glibc-unlink-is-a-macro-and-not-an-inline-function/7106.rss">Why glibc unlink is a macro and not an inline function</source>
+      </item>
+  </channel>
+</rss>

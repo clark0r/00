@@ -1,0 +1,374 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Routing Protocols ~ OSPF</title>
+    <link>https://d.clarkee.co.uk/t/routing-protocols-ospf/647</link>
+    <description>Long time no see, homies and homettes (probably none). Anyway, today I will do my best to explain to you one of the most widely known and used protocols for internet routing, known as __OSPF__. This post is not beginner friendly, and is kind of long, so hang in there. The article consists of theory and hands-on material -- the latter being my favorite.
+
+***WARNING: This is not going to be a programming-style article. You will get bombarded with a lot of theory first and then we will get our hands dirty a little bit. Unfortunately, this is how networking is; if you don&#39;t know the big picture/theory you can&#39;t really make things happen. Feel free to click away if you don&#39;t want to learn too much theory.***
+
+Let&#39;s start with an opinionated rant. Hacking or &quot;breaking&quot;, or however you want to call it, isn&#39;t about using tools that automate certain processes in order to steal some credentials or do some recon or whatever you please. The _real_ deal is knowing why these tools work and how. The people who make these tools know exactly what they are doing and that&#39;s why they will always be ahead of everyone who just uses the tools. So get it through your head: adding some flags on `nmap` or just firing up `metasploit` and selecting some modules means absolutely nothing. Again, **this is my opinion**. I&#39;m not saying I&#39;m an expert or that I know my shit. I consider myself quite a newbie, but since this is a community, I wanted to express my opinion since I&#39;m going to connect this little rant to the purpose of this article. 
+
+So, now that I have your attention, let&#39;s get back to our topic. You want to hack a company&#39;s network or intercept their traffic, huh? Well, in order to do that, you have to actually get inside their network; and, in order to do _that_, you need to know _how_ their network works.
+
+Forget about `nmap` and scanning and all this crap. Let&#39;s take the hard route. And by _route_, I mean the OSPF way. Routers are the first line of defense. If you know how they operate, you can make things happen, if you know what I mean... Routers use routing tables in order to get you to where you want to go. A routing table is an information table used by every router in order to find the appropriate path for your request.
+
+---
+# Theory Time
+
+___NOTE:___ _Every routing protocol has an algorithm running behind it. In our case, OSPF is using Dijkstra&#39;s algorithm. If you are interested in it, be sure to check out [this article](https://0x00sec.org/t/graph-algorithms-part-1-0-dijkstras-shortest-path-concept/419) made by @oaktree. It&#39;s worth the time._
+
+Most networks nowadays use either [OSPF](https://en.wikipedia.org/wiki/Open_Shortest_Path_First) or [BGP](https://en.wikipedia.org/wiki/Border_Gateway_Protocol) as the main routing protocol. Some may use static routing as well. But hey, I&#39;ve been talking about routing protocols without even telling you what they really do. Well, I bet most of you have guessed it already but this is my short definition:
+
+**Routing Protocol - Tell your neighbors what you know.**
+
+I&#39;m not going to get into more detail. If you are curious about it, I invite you to do some research. Anyway, let&#39;s have a look at the picture below.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/d583060c8a34af9ff64f18246c592ae7587e882b.png&quot; width=&quot;583&quot; height=&quot;240&quot;&gt;
+
+This picture is a virtual networking environment I set up in GNS3. GNS3 (Graphical Network Simulator) is one of my all-time favorite programs. Its name describes precisely what it does. I would highly recommend looking it up. I&#39;ve also assigned IPs to the routers (depicted above) and I have made note of them for clarity&#39;s sake.
+
+Before we dive into OSPF and how to get OSPF working, let&#39;s take a step back: Back in the old days, when people were turning on their routers for the first time, the routers did not know all the possible routes to every website on the Internet out of the box. People actually had to configure them.
+
+Dammit, I spoiled the surprise. Routers knew only about the networks they were plugged into.
+
+Now, what does OSPF do? It lets our routers have a discussion about what they think is most interesting. R1 is going to tell R2 everything it knows (and it knows about networks that it&#39;s plugged into, such as the 10.0.0 and 10.0.1 networks). Why? Because I, as an administrator, configured it to that network. Don&#39;t worry about the configuration part, it will make sense soon. Focus!
+
+So R1 is going to say to R2 &quot;hey mate, I know about the 10.0.0 and 10.0.1 network!&quot; and R2 is going to reply back &quot;fantastic! I knew about 10.0.1 but god damn I didn&#39;t know about 10.0.0 at all. I&#39;m going to add it into my routing table and I&#39;m going to use you as my next hop to get there because you told me about it.&quot;
+
+Okay that&#39;s interesting and all, but that&#39;s how every routing protocol works, from a high-level perspective. What really differentiates OSPF from other routing protocols? Well, OSPF uses a &quot;hello&quot; packet. This packet includes all kinds of cool information, such as:
+
+* Timers
+* Area
+* Authentication
+* Subnet Mask
+
+The very first packet R1 will send is a &quot;hello&quot; packet. Let&#39;s talk about the &quot;Timers&quot; first. R1 is going to send this packet, which will have a message in it saying, &quot;hey, I say hello every 5 seconds and I have a dead timer of 30 seconds.&quot; What does that mean to R2, though? R2 will think &quot;well, I can expect a &#39;hey man&#39; by R1 every 5 seconds to show me that he is online and available. Finally, if I don&#39;t hear about R1 in 30 seconds, I will consider him dead and I will mark his networks unreachable.&quot; That&#39;s how R1 thinks about R2 as well. The reason why this hello and the dead timer are big deals is because OSPF is quite picky its neighbor relationship establishment. If the timers in the hello packets between R1 and R2 don&#39;t match, let&#39;s say R2 says hello every 1 second, they are not going to form a neighbor relationship. Timers MUST match. FYI: you can adjust the timer settings, but let&#39;s not focus on that now...
+
+Second, the &quot;Area&quot; _must_ match. What&#39;s an Area though? Let me give you the high level view and we will discuss more about Areas in a different article.
+
+OSPF allows you to break the network up into groups of networks. All networks in a company start kinda small and expand with time: they add more offices and they get to the point where they have 10,20,30,60 offices all around the world and it starts feeling a bit chaotic. They have all these routers connected together and the routing tables are getting bigger and bigger and bigger. Here&#39;s a fact: _The bigger the routing table, the slower the router._ Makes sense, right? So our goal as network administrators is to keep our routing tables small. Areas is what will help us accomplish that. As the offices grow, we split this huge group of routers into an Area, named Area 0.
+
+Now this Area 0 happens to be really special: it&#39;s the very first area created by OSPF. In fact, you can&#39;t run OSPF without designating an area. For what we are going to talk about, everything will be in Area 0.
+
+How big can that area be? As big as you want it to be -- 50, 100, 1000 routers? Sure, why not. Yet, as the area grows bigger, you will need more areas because the routers will start running out of memory. So, after a certain amount of offices, we, as admins, will start dividing the network into more areas. 
+
+HUGE concept incoming...
+
+**Areas show a point of summarization.**
+
+It&#39;s like a point where you are able to summarize entries in your routing table to simplify a large network. Area must match, meaning that, if R2 and R1 do not belong to the same area, they won&#39;t form neighbor relationship. Areas are a massive concept, so I will analyze them with you in a different post. Right now, let&#39;s just focus on the high-level stuff because it&#39;s more important.
+
+Furthermore, there has to be matched authentication. For example, there can be a passcode &quot;l337&quot; in the packet, which would mean that two routers can only become neighbors if they both have the same passcode.
+
+Lastly, they have to have the same Subnet Mask, meaning both routers have to belong to a /24 or /16 network, and so on. If all of these aspects match up, then the &quot;hello&quot; is accepted by both routers and they will start exchanging routes.
+
+---
+# Hands-on Time
+
+Alright, now that we are done with the theory (there is actually a lot more, but itt doesn&#39;t belong in this article), it&#39;s time to get OSPF working. I&#39;m going to add the same picture as the 1st one so you won&#39;t have to scroll up. Keep in mind that my goal is to show you what is going on under the hood. You don&#39;t have to know the configuration commands. I just want to show you how a network engineer may have configured your router&#39;s protocols.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/6840c5bf88b444c6497e1f2f6a4ef1f3b0e85cc2.png&quot; width=&quot;583&quot; height=&quot;240&quot;&gt;
+
+So let&#39;s imagine this is a network. R1 can communicate with R2 and R3, but R2 and R3 can only communicate with R1. You might think that because R1 is plugged into both networks, R2 or R3 would know about each other, yet that&#39;s not true and I&#39;m going to prove it to you.
+
+Remember when I said some paragraphs ago about &quot;configuring&quot;? Well, I did configure those routers using the Cisco IOS, which is integrated in GNS3. In other words, those routers are Cisco devices and I can configure them because their software is running inside GNS3. So I&#39;m going to use the commands Cisco uses to configure their routers.
+
+Now, you may be thinking, &quot;how is this helpful? I don&#39;t even own a Cisco router.&quot; Well, that&#39;s why GNS3 exists. My goal is to teach you how it works for now and not how to do it. You may also be saying &quot;well, not all routers are Cisco, thus, the configuration will be different.&quot; True, the commands will be different, but the OSPF procedure stays the same. In the end, I don&#39;t know everything, man!
+
+___Note:___ _This is not a GNS3 tutorial so I won&#39;t explain how I set it up. I can make a post on how to install it, though, if anyone is interested, or you can google._
+
+Let&#39;s get back to the proof I was talking about. I&#39;m going to open a console connection for R2 inside GNS3. All I have configured so far is just the addresses on the interfaces which you can see in the picture above. 
+
+___Note:___ _I&#39;m not going to get into how I assigned those IP addresses with the Cisco IOS. If you are interested in learning how to configure a Cisco device, I can make a separate series dedicated to switch/router configuration._
+
+Anyway, I tried pinging R3 from R2 and here is the result:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/b095a0f9dcf25cbeb8837e1180c0d1c9f4a92fca.png&quot; width=&quot;530&quot; height=&quot;98&quot;&gt;
+
+As you can see: zero success, because, as I told you, R2 knows only about the network its plugged into. We would get the same response if I pinged R2 from R3. But if I ping R1 from R2, we _will_ get a response back:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/8a8c37d1bc42c57112a6fc254ce2b4c84d9d8a17.png&quot; width=&quot;580&quot; height=&quot;98&quot;&gt;
+
+I&#39;m not lying; they are on the same network -- therefore, success.
+
+Since we want all the routers to be able to communicate, I think it&#39;s time we turn OSPF on. Before I get into the configuration, I will write down the steps in order to get it working.
+
+* Turn on OSPF
+* Command it what interfaces to use
+* Enjoy
+
+Let&#39;s start with step 1. In order to do that, the command is: router + protocol + PID. 
+
+### STEP 1
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/3c62cda5a4af6a6cd75fa86c04c47706e6edae32.png&quot; width=&quot;213&quot; height=&quot;21&quot;&gt;
+
+The PID(process ID) just identifies the OSPF process to the router. I would recommend using a simple number so you can remember it. I picked 1. The PID of OSPF doesn&#39;t have to be the same on every router.
+
+### STEP 2
+
+Step 2 requires a command that is pretty confusing, in my opinion. I mean, it took me hours to understand it so I will try to use my own words in order to describe it. The command is: `network`. Yes, `network`. It has its arguments, of course, but before I get into this, let me first tell you what it actually does.
+
+When I type &quot;network&quot;, our router will do 2 things:
+
+* Identify which interface(s) to use to send hello packets. Let me show you what I mean:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/28b4d05356737553a5856d9e78a3480ad670af48.png&quot; width=&quot;277&quot; height=&quot;23&quot;&gt;
+
+What R1 will do is to start sending hello packets on the 10.0.1 interface. Why? Because it wants to find friends to exchange routes.
+
+* Identify which network(s) to advertise.
+
+So, when I type `network 10.0.1.2`, R1 will form a neighbor relationship with R2 and will simultaneously tell other routers about the 10.0.1 network. That&#39;s how R3 will get to know about R2; R1 will advertise it.
+
+Now, if you have understood everything so far you would notice that the last command is not going to change anything between R1 and R2 since the network command will just advertise the network 10.0.1 to R2 and R2 already knows about it. So what do we have to type?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/3ba40f25aa632aa0dbc6d4a1e312194f77f014ee.png&quot; width=&quot;281&quot; height=&quot;17&quot;&gt;
+
+So now R1 advertises the 10.0.0 and the 10.0.1 network to both R2 and R3. I hope it starts to make sense now. The command is incomplete, though. It still needs some arguments to let the router know what it should advertise. The full command is this. Don&#39;t freak out, I will explain it to you argument by argument.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/c3194c720bb2e29b3ccf5ec8211616db5fd6b32a.png&quot; width=&quot;417&quot; height=&quot;17&quot;&gt;
+
+You see that &quot;0.0.0.255&quot;? This is called the wild card bits. It&#39;s looking wild, right? Think of the wild card bits as identifiers.It&#39;s a way of showing what the router should really care about. First of all, wild card bits are completely opposite of the subnet mask. Let&#39;s have a loot at this example. 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/013fb7938ae003ed60fccfc173c05ef40facf894.png&quot; width=&quot;419&quot; height=&quot;89&quot;&gt;
+
+No comments about my drawing skills, please. If you know any better way to do this, don&#39;t embarrass me, just keep it to yourself.
+
+Anyway, do you see those arrows pointing from the `0`s to the IP octets? Think of these as someone is yelling &quot;look at that!&quot;. This &quot;look at that&quot; happens 3 times since there are 3 `0`s. In other words, those `0`s tell the router which octets to pay attention to. Thus, the 192.168.1 part. Meaning, the router will advertise the 192.168.1 network and not the just the IP. Isn&#39;t that much more convenient and more generic? Who would want to advertise the whole IP. The .255 part is saying, &quot;don&#39;t look at that, it&#39;s pointless.&quot;
+
+So this is telling the router to turn on OSPF on interfaces that start with 192.168.1. The .255 means, “I don’t care what is in that last octet”.
+
+When I type this command, the router is going to look at its interfaces for 192.168.1. Once it finds it, it’s going to turn OSPF on. That’s how the wild card mask works. But what if I want to turn OSPF on on both R1’s interfaces or on every single interface of R1 for the future as well. Think of it. What would the wild card mask be? I’ll leave that to you.
+
+You may be thinking that’s easy to do, but at the same it’s not secure. Why? Well, imagine sending hello packets on every single interface. What if there was a malicious user in a specific network doing some MiTM magic? You would be screwed. The least dangerous scenario would be that a user is messing up your routing table by acting as an OSPF router. Yes, that’s possible and you definitely don’t want that.
+
+The last part of this command is the `area 0` argument. As mentioned before, we are going to focus on Area 0 for now. Remember, in order for routers to communicate, their areas must match.
+
+Here is the result of the previous command, and I do it again for the 10.0.0 network so R1 can advertise it to R2.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/4470b27ffbe0b87653c7cf8685dece6fd04f51bf.png&quot; width=&quot;690&quot; height=&quot;96&quot;&gt;
+
+I think you can understand what just happened. All we have to do now is to turn on OSPF for R2 as well so the routers can start exchanging routes with R1, such as the 10.0.0 network.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/ad5d8328b7024bb63d08b6fadba2320645ef4543.png&quot; width=&quot;690&quot; height=&quot;70&quot;&gt;
+
+Both R2 and R1 have officially turned OSPF on and they just exchanged routes. How do I know that? I will prove it to you. Remember before when I tried pinging R3 from R2 but we weren&#39;t getting any response back. Well, check out this command first:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/221c049511337ab8edb13cd556f7134e14b5b404.png&quot; width=&quot;634&quot; height=&quot;224&quot;&gt;
+
+Look at that! The &quot;show ip route&quot; command will show us all the routes R2 knows and as you can tell, it finally knows about the 10.0.0. OSPF did its magic! The &quot;[110/20]&quot; part is the administrative distance and the metric/cost respectively. Let&#39;s not get into those for now, but there is a formula in order to calculate those, which you can Google it if you want to. The time has come to ping R3 from R2 and see it happening.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/7c6232110308a32734429fd4925c0b13665884b0.png&quot; width=&quot;582&quot; height=&quot;100&quot;&gt;
+
+Ayyy, success!
+
+### STEP 3
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/6949a245cda1308c2eebbf0400c3f37f5353904c.jpg&quot; width=&quot;430&quot; height=&quot;305&quot;&gt;
+
+That was probably one of my longest posts and the toughest to explain. I know that it might be kinda boring, but hopefully you gained some knowledge from this article. OSPF is hard to grasp at first, so give it time. If you are reading this sentence, you are a true champ. I hope this article has been informative and I thank you for taking the time to read it. Feel free to ask any questions.
+
+Later...</description>
+    
+    <lastBuildDate>Thu, 23 Jun 2016 20:40:25 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://d.clarkee.co.uk/t/routing-protocols-ospf/647.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Routing Protocols ~ OSPF</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf/647/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf/647/8</link>
+        <pubDate>Tue, 09 Jan 2018 11:27:43 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-647-8</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf/647.rss">Routing Protocols ~ OSPF</source>
+      </item>
+      <item>
+        <title>Routing Protocols ~ OSPF</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Just awesome. The read was worth it!</p>
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf/647/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf/647/7</link>
+        <pubDate>Thu, 23 Jun 2016 20:40:25 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-647-7</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf/647.rss">Routing Protocols ~ OSPF</source>
+      </item>
+      <item>
+        <title>Routing Protocols ~ OSPF</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Yes, I will try to uncover OSPF fully in the upcoming articles.</p>
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf/647/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf/647/6</link>
+        <pubDate>Thu, 23 Jun 2016 20:26:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-647-6</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf/647.rss">Routing Protocols ~ OSPF</source>
+      </item>
+      <item>
+        <title>Routing Protocols ~ OSPF</title>
+        <dc:creator><![CDATA[Defalt]]></dc:creator>
+        <description><![CDATA[
+            <p>Will you be covering the election process in future articles? It’s important to understand that. It’s also important to understand how routers forward OSPF.</p>
+<p>Just a suggestion.</p>
+<p>Great explanation by the way!</p>
+<p>-Defalt</p>
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf/647/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf/647/5</link>
+        <pubDate>Thu, 23 Jun 2016 19:49:32 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-647-5</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf/647.rss">Routing Protocols ~ OSPF</source>
+      </item>
+      <item>
+        <title>Routing Protocols ~ OSPF</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>It doesn’t matter if is long when it is interesting!. Congrats again!</p>
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf/647/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf/647/4</link>
+        <pubDate>Thu, 23 Jun 2016 17:30:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-647-4</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf/647.rss">Routing Protocols ~ OSPF</source>
+      </item>
+      <item>
+        <title>Routing Protocols ~ OSPF</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you <a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>! It means a ton coming from you. I hope it wasn’t too much of a read xD</p>
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf/647/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf/647/3</link>
+        <pubDate>Thu, 23 Jun 2016 17:26:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-647-3</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf/647.rss">Routing Protocols ~ OSPF</source>
+      </item>
+      <item>
+        <title>Routing Protocols ~ OSPF</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>We were missing you, but the wait was worth it.</p>
+<p>Brilliant post!</p>
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf/647/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf/647/2</link>
+        <pubDate>Thu, 23 Jun 2016 17:21:00 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-647-2</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf/647.rss">Routing Protocols ~ OSPF</source>
+      </item>
+      <item>
+        <title>Routing Protocols ~ OSPF</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Long time no see, homies and homettes (probably none). Anyway, today I will do my best to explain to you one of the most widely known and used protocols for internet routing, known as <strong>OSPF</strong>. This post is not beginner friendly, and is kind of long, so hang in there. The article consists of theory and hands-on material – the latter being my favorite.</p>
+<p><em><strong>WARNING: This is not going to be a programming-style article. You will get bombarded with a lot of theory first and then we will get our hands dirty a little bit. Unfortunately, this is how networking is; if you don’t know the big picture/theory you can’t really make things happen. Feel free to click away if you don’t want to learn too much theory.</strong></em></p>
+<p>Let’s start with an opinionated rant. Hacking or “breaking”, or however you want to call it, isn’t about using tools that automate certain processes in order to steal some credentials or do some recon or whatever you please. The <em>real</em> deal is knowing why these tools work and how. The people who make these tools know exactly what they are doing and that’s why they will always be ahead of everyone who just uses the tools. So get it through your head: adding some flags on <code>nmap</code> or just firing up <code>metasploit</code> and selecting some modules means absolutely nothing. Again, <strong>this is my opinion</strong>. I’m not saying I’m an expert or that I know my shit. I consider myself quite a newbie, but since this is a community, I wanted to express my opinion since I’m going to connect this little rant to the purpose of this article.</p>
+<p>So, now that I have your attention, let’s get back to our topic. You want to hack a company’s network or intercept their traffic, huh? Well, in order to do that, you have to actually get inside their network; and, in order to do <em>that</em>, you need to know <em>how</em> their network works.</p>
+<p>Forget about <code>nmap</code> and scanning and all this crap. Let’s take the hard route. And by <em>route</em>, I mean the OSPF way. Routers are the first line of defense. If you know how they operate, you can make things happen, if you know what I mean… Routers use routing tables in order to get you to where you want to go. A routing table is an information table used by every router in order to find the appropriate path for your request.</p>
+<hr>
+<h1>Theory Time</h1>
+<p><em><strong>NOTE:</strong></em> <em>Every routing protocol has an algorithm running behind it. In our case, OSPF is using Dijkstra’s algorithm. If you are interested in it, be sure to check out <a href="https://0x00sec.org/t/graph-algorithms-part-1-0-dijkstras-shortest-path-concept/419">this article</a> made by <a class="mention" href="https://d.clarkee.co.uk/u/oaktree">@oaktree</a>. It’s worth the time.</em></p>
+<p>Most networks nowadays use either <a href="https://en.wikipedia.org/wiki/Open_Shortest_Path_First" rel="noopener nofollow ugc">OSPF</a> or <a href="https://en.wikipedia.org/wiki/Border_Gateway_Protocol" rel="noopener nofollow ugc">BGP</a> as the main routing protocol. Some may use static routing as well. But hey, I’ve been talking about routing protocols without even telling you what they really do. Well, I bet most of you have guessed it already but this is my short definition:</p>
+<p><strong>Routing Protocol - Tell your neighbors what you know.</strong></p>
+<p>I’m not going to get into more detail. If you are curious about it, I invite you to do some research. Anyway, let’s have a look at the picture below.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/d583060c8a34af9ff64f18246c592ae7587e882b.png" width="583" height="240"></p>
+<p>This picture is a virtual networking environment I set up in GNS3. GNS3 (Graphical Network Simulator) is one of my all-time favorite programs. Its name describes precisely what it does. I would highly recommend looking it up. I’ve also assigned IPs to the routers (depicted above) and I have made note of them for clarity’s sake.</p>
+<p>Before we dive into OSPF and how to get OSPF working, let’s take a step back: Back in the old days, when people were turning on their routers for the first time, the routers did not know all the possible routes to every website on the Internet out of the box. People actually had to configure them.</p>
+<p>Dammit, I spoiled the surprise. Routers knew only about the networks they were plugged into.</p>
+<p>Now, what does OSPF do? It lets our routers have a discussion about what they think is most interesting. R1 is going to tell R2 everything it knows (and it knows about networks that it’s plugged into, such as the 10.0.0 and 10.0.1 networks). Why? Because I, as an administrator, configured it to that network. Don’t worry about the configuration part, it will make sense soon. Focus!</p>
+<p>So R1 is going to say to R2 “hey mate, I know about the 10.0.0 and 10.0.1 network!” and R2 is going to reply back “fantastic! I knew about 10.0.1 but god damn I didn’t know about 10.0.0 at all. I’m going to add it into my routing table and I’m going to use you as my next hop to get there because you told me about it.”</p>
+<p>Okay that’s interesting and all, but that’s how every routing protocol works, from a high-level perspective. What really differentiates OSPF from other routing protocols? Well, OSPF uses a “hello” packet. This packet includes all kinds of cool information, such as:</p>
+<ul>
+<li>Timers</li>
+<li>Area</li>
+<li>Authentication</li>
+<li>Subnet Mask</li>
+</ul>
+<p>The very first packet R1 will send is a “hello” packet. Let’s talk about the “Timers” first. R1 is going to send this packet, which will have a message in it saying, “hey, I say hello every 5 seconds and I have a dead timer of 30 seconds.” What does that mean to R2, though? R2 will think “well, I can expect a ‘hey man’ by R1 every 5 seconds to show me that he is online and available. Finally, if I don’t hear about R1 in 30 seconds, I will consider him dead and I will mark his networks unreachable.” That’s how R1 thinks about R2 as well. The reason why this hello and the dead timer are big deals is because OSPF is quite picky its neighbor relationship establishment. If the timers in the hello packets between R1 and R2 don’t match, let’s say R2 says hello every 1 second, they are not going to form a neighbor relationship. Timers MUST match. FYI: you can adjust the timer settings, but let’s not focus on that now…</p>
+<p>Second, the “Area” <em>must</em> match. What’s an Area though? Let me give you the high level view and we will discuss more about Areas in a different article.</p>
+<p>OSPF allows you to break the network up into groups of networks. All networks in a company start kinda small and expand with time: they add more offices and they get to the point where they have 10,20,30,60 offices all around the world and it starts feeling a bit chaotic. They have all these routers connected together and the routing tables are getting bigger and bigger and bigger. Here’s a fact: <em>The bigger the routing table, the slower the router.</em> Makes sense, right? So our goal as network administrators is to keep our routing tables small. Areas is what will help us accomplish that. As the offices grow, we split this huge group of routers into an Area, named Area 0.</p>
+<p>Now this Area 0 happens to be really special: it’s the very first area created by OSPF. In fact, you can’t run OSPF without designating an area. For what we are going to talk about, everything will be in Area 0.</p>
+<p>How big can that area be? As big as you want it to be – 50, 100, 1000 routers? Sure, why not. Yet, as the area grows bigger, you will need more areas because the routers will start running out of memory. So, after a certain amount of offices, we, as admins, will start dividing the network into more areas.</p>
+<p>HUGE concept incoming…</p>
+<p><strong>Areas show a point of summarization.</strong></p>
+<p>It’s like a point where you are able to summarize entries in your routing table to simplify a large network. Area must match, meaning that, if R2 and R1 do not belong to the same area, they won’t form neighbor relationship. Areas are a massive concept, so I will analyze them with you in a different post. Right now, let’s just focus on the high-level stuff because it’s more important.</p>
+<p>Furthermore, there has to be matched authentication. For example, there can be a passcode “l337” in the packet, which would mean that two routers can only become neighbors if they both have the same passcode.</p>
+<p>Lastly, they have to have the same Subnet Mask, meaning both routers have to belong to a /24 or /16 network, and so on. If all of these aspects match up, then the “hello” is accepted by both routers and they will start exchanging routes.</p>
+<hr>
+<h1>Hands-on Time</h1>
+<p>Alright, now that we are done with the theory (there is actually a lot more, but itt doesn’t belong in this article), it’s time to get OSPF working. I’m going to add the same picture as the 1st one so you won’t have to scroll up. Keep in mind that my goal is to show you what is going on under the hood. You don’t have to know the configuration commands. I just want to show you how a network engineer may have configured your router’s protocols.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/6840c5bf88b444c6497e1f2f6a4ef1f3b0e85cc2.png" width="583" height="240"></p>
+<p>So let’s imagine this is a network. R1 can communicate with R2 and R3, but R2 and R3 can only communicate with R1. You might think that because R1 is plugged into both networks, R2 or R3 would know about each other, yet that’s not true and I’m going to prove it to you.</p>
+<p>Remember when I said some paragraphs ago about “configuring”? Well, I did configure those routers using the Cisco IOS, which is integrated in GNS3. In other words, those routers are Cisco devices and I can configure them because their software is running inside GNS3. So I’m going to use the commands Cisco uses to configure their routers.</p>
+<p>Now, you may be thinking, “how is this helpful? I don’t even own a Cisco router.” Well, that’s why GNS3 exists. My goal is to teach you how it works for now and not how to do it. You may also be saying “well, not all routers are Cisco, thus, the configuration will be different.” True, the commands will be different, but the OSPF procedure stays the same. In the end, I don’t know everything, man!</p>
+<p><em><strong>Note:</strong></em> <em>This is not a GNS3 tutorial so I won’t explain how I set it up. I can make a post on how to install it, though, if anyone is interested, or you can google.</em></p>
+<p>Let’s get back to the proof I was talking about. I’m going to open a console connection for R2 inside GNS3. All I have configured so far is just the addresses on the interfaces which you can see in the picture above.</p>
+<p><em><strong>Note:</strong></em> <em>I’m not going to get into how I assigned those IP addresses with the Cisco IOS. If you are interested in learning how to configure a Cisco device, I can make a separate series dedicated to switch/router configuration.</em></p>
+<p>Anyway, I tried pinging R3 from R2 and here is the result:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/b095a0f9dcf25cbeb8837e1180c0d1c9f4a92fca.png" width="530" height="98"></p>
+<p>As you can see: zero success, because, as I told you, R2 knows only about the network its plugged into. We would get the same response if I pinged R2 from R3. But if I ping R1 from R2, we <em>will</em> get a response back:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/8a8c37d1bc42c57112a6fc254ce2b4c84d9d8a17.png" width="580" height="98"></p>
+<p>I’m not lying; they are on the same network – therefore, success.</p>
+<p>Since we want all the routers to be able to communicate, I think it’s time we turn OSPF on. Before I get into the configuration, I will write down the steps in order to get it working.</p>
+<ul>
+<li>Turn on OSPF</li>
+<li>Command it what interfaces to use</li>
+<li>Enjoy</li>
+</ul>
+<p>Let’s start with step 1. In order to do that, the command is: router + protocol + PID.</p>
+<h3>STEP 1</h3>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/3c62cda5a4af6a6cd75fa86c04c47706e6edae32.png" width="213" height="21"></p>
+<p>The PID(process ID) just identifies the OSPF process to the router. I would recommend using a simple number so you can remember it. I picked 1. The PID of OSPF doesn’t have to be the same on every router.</p>
+<h3>STEP 2</h3>
+<p>Step 2 requires a command that is pretty confusing, in my opinion. I mean, it took me hours to understand it so I will try to use my own words in order to describe it. The command is: <code>network</code>. Yes, <code>network</code>. It has its arguments, of course, but before I get into this, let me first tell you what it actually does.</p>
+<p>When I type “network”, our router will do 2 things:</p>
+<ul>
+<li>Identify which interface(s) to use to send hello packets. Let me show you what I mean:</li>
+</ul>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/28b4d05356737553a5856d9e78a3480ad670af48.png" width="277" height="23"></p>
+<p>What R1 will do is to start sending hello packets on the 10.0.1 interface. Why? Because it wants to find friends to exchange routes.</p>
+<ul>
+<li>Identify which network(s) to advertise.</li>
+</ul>
+<p>So, when I type <code>network 10.0.1.2</code>, R1 will form a neighbor relationship with R2 and will simultaneously tell other routers about the 10.0.1 network. That’s how R3 will get to know about R2; R1 will advertise it.</p>
+<p>Now, if you have understood everything so far you would notice that the last command is not going to change anything between R1 and R2 since the network command will just advertise the network 10.0.1 to R2 and R2 already knows about it. So what do we have to type?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/3ba40f25aa632aa0dbc6d4a1e312194f77f014ee.png" width="281" height="17"></p>
+<p>So now R1 advertises the 10.0.0 and the 10.0.1 network to both R2 and R3. I hope it starts to make sense now. The command is incomplete, though. It still needs some arguments to let the router know what it should advertise. The full command is this. Don’t freak out, I will explain it to you argument by argument.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/c3194c720bb2e29b3ccf5ec8211616db5fd6b32a.png" width="417" height="17"></p>
+<p>You see that “0.0.0.255”? This is called the wild card bits. It’s looking wild, right? Think of the wild card bits as identifiers.It’s a way of showing what the router should really care about. First of all, wild card bits are completely opposite of the subnet mask. Let’s have a loot at this example.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/013fb7938ae003ed60fccfc173c05ef40facf894.png" width="419" height="89"></p>
+<p>No comments about my drawing skills, please. If you know any better way to do this, don’t embarrass me, just keep it to yourself.</p>
+<p>Anyway, do you see those arrows pointing from the <code>0</code>s to the IP octets? Think of these as someone is yelling “look at that!”. This “look at that” happens 3 times since there are 3 <code>0</code>s. In other words, those <code>0</code>s tell the router which octets to pay attention to. Thus, the 192.168.1 part. Meaning, the router will advertise the 192.168.1 network and not the just the IP. Isn’t that much more convenient and more generic? Who would want to advertise the whole IP. The .255 part is saying, “don’t look at that, it’s pointless.”</p>
+<p>So this is telling the router to turn on OSPF on interfaces that start with 192.168.1. The .255 means, “I don’t care what is in that last octet”.</p>
+<p>When I type this command, the router is going to look at its interfaces for 192.168.1. Once it finds it, it’s going to turn OSPF on. That’s how the wild card mask works. But what if I want to turn OSPF on on both R1’s interfaces or on every single interface of R1 for the future as well. Think of it. What would the wild card mask be? I’ll leave that to you.</p>
+<p>You may be thinking that’s easy to do, but at the same it’s not secure. Why? Well, imagine sending hello packets on every single interface. What if there was a malicious user in a specific network doing some MiTM magic? You would be screwed. The least dangerous scenario would be that a user is messing up your routing table by acting as an OSPF router. Yes, that’s possible and you definitely don’t want that.</p>
+<p>The last part of this command is the <code>area 0</code> argument. As mentioned before, we are going to focus on Area 0 for now. Remember, in order for routers to communicate, their areas must match.</p>
+<p>Here is the result of the previous command, and I do it again for the 10.0.0 network so R1 can advertise it to R2.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/4470b27ffbe0b87653c7cf8685dece6fd04f51bf.png" width="690" height="96"></p>
+<p>I think you can understand what just happened. All we have to do now is to turn on OSPF for R2 as well so the routers can start exchanging routes with R1, such as the 10.0.0 network.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/ad5d8328b7024bb63d08b6fadba2320645ef4543.png" width="690" height="70"></p>
+<p>Both R2 and R1 have officially turned OSPF on and they just exchanged routes. How do I know that? I will prove it to you. Remember before when I tried pinging R3 from R2 but we weren’t getting any response back. Well, check out this command first:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/221c049511337ab8edb13cd556f7134e14b5b404.png" width="634" height="224"></p>
+<p>Look at that! The “show ip route” command will show us all the routes R2 knows and as you can tell, it finally knows about the 10.0.0. OSPF did its magic! The “[110/20]” part is the administrative distance and the metric/cost respectively. Let’s not get into those for now, but there is a formula in order to calculate those, which you can Google it if you want to. The time has come to ping R3 from R2 and see it happening.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/7c6232110308a32734429fd4925c0b13665884b0.png" width="582" height="100"></p>
+<p>Ayyy, success!</p>
+<h3>STEP 3</h3>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/6949a245cda1308c2eebbf0400c3f37f5353904c.jpg" width="430" height="305"></p>
+<p>That was probably one of my longest posts and the toughest to explain. I know that it might be kinda boring, but hopefully you gained some knowledge from this article. OSPF is hard to grasp at first, so give it time. If you are reading this sentence, you are a true champ. I hope this article has been informative and I thank you for taking the time to read it. Feel free to ask any questions.</p>
+<p>Later…</p>
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf/647/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf/647/1</link>
+        <pubDate>Thu, 23 Jun 2016 15:43:32 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-647-1</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf/647.rss">Routing Protocols ~ OSPF</source>
+      </item>
+  </channel>
+</rss>

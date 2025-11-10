@@ -1,0 +1,336 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Pranks. Keep calm and do not move your mouse</title>
+    <link>https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853</link>
+    <description>Let&#39;s put away the serious stuff for a while and let&#39;s have some fun. What about some hacking pranks!. Let&#39;s start with something simple, the so called nervous mouse.
+
+Note: The code is a modification of some example from internet. I cannot recall where I got it, but it is, let&#39;s say, the default example you will find when searching for uinput tutorials.
+
+# Nervous Mouse
+Nervous Mouse is a simple program that abuses the `uinput` device to inject fake mouse events in a linux box and move the mouse randomly every five seconds. It is a pretty stupid prank program but a funny way to get introduced to this useful device.
+
+The `uinput` device is pretty straightforward to use. 
+
+* Configure the events we want to generate
+* Create a device for that configuration
+* Write events to the device
+
+Let&#39;s see how to write your own
+
+# Opening and Configuring the Device
+
+This part of the program is quite standard, we open the `/dev/uinput` device, execute a bunch of `ioctl` syscalls to configure it and we are good to go.
+
+Something like this:
+
+```
+   
+    if ((fd = open (&quot;/dev/uinput&quot;, O_WRONLY | O_NONBLOCK)) &lt; 0) die (&quot;error: open&quot;);
+
+    /* And we also want to produce mouse events */
+    if (ioctl (fd, UI_SET_EVBIT,  EV_REL) &lt; 0)    die (&quot;error: ioctl&quot;);
+    if (ioctl (fd, UI_SET_RELBIT, REL_X) &lt; 0)     die (&quot;error: ioctl&quot;);
+    if (ioctl (fd, UI_SET_RELBIT, REL_Y) &lt; 0)     die (&quot;error: ioctl&quot;);
+
+    /* Time to register our virtual device */
+    memset (&amp;uidev, 0, sizeof(uidev));
+    snprintf (uidev.name, UINPUT_MAX_NAME_SIZE, &quot;uinput-sample&quot;);
+
+    uidev.id.bustype = BUS_USB;
+    uidev.id.vendor  = 0x1;
+    uidev.id.product = 0x1;
+    uidev.id.version = 1;
+
+    if (write (fd, &amp;uidev, sizeof(uidev)) &lt; 0) die (&quot;error: write&quot;);
+    if (ioctl (fd, UI_DEV_CREATE) &lt; 0) die (&quot;error: ioctl&quot;);
+
+```
+
+The first part of the program opens the `uinput` device and then configures the events we want to inject. In this case we are using  `EV_REL` to inject mouse movement events.
+
+After that we have to create the device. We are kind of defining a USB mouse and as for any USB device we have to provide vendor and user ides as well as a version number. Basically just enter the values in the code to get it running. Honestly I haven&#39;t when deep enough on this to be able to tell you the importance of these values.
+
+The we write the struct into our `uinput` device and call `UI_DEV_CREATE` ioctrl to create our virtual input device.
+
+Now we just have to inject our events
+
+# Moving the Mouse
+In order to move the mouse, the main function of Nervous Mouse, we have to inject `EV_REL` events. This events represent a relative movement of a pointing device. So, let&#39;s write a function to move our mouse:
+
+```
+int
+move_mouse (int fd, int dx, int dy)
+{
+  struct input_event     ev;
+
+  memset (&amp;ev, 0, sizeof(struct input_event));
+  ev.type = EV_REL;
+  ev.code = REL_X;
+  ev.value = dx;
+  if (write (fd, &amp;ev, sizeof(struct input_event)) &lt; 0)  die (&quot;error: write&quot;);
+
+  memset (&amp;ev, 0, sizeof(struct input_event));
+  ev.type = EV_REL;
+  ev.code = REL_Y;
+  ev.value = dy;
+  if (write (fd, &amp;ev, sizeof(struct input_event)) &lt; 0) die(&quot;error: write&quot;);
+  
+  memset (&amp;ev, 0, sizeof(struct input_event));
+  ev.type = EV_SYN;
+  ev.code = 0;
+  ev.value = 0;
+  if(write(fd, &amp;ev, sizeof(struct input_event)) &lt; 0)     die(&quot;error: write&quot;);
+  
+  usleep(15000);
+  
+  return 0;
+}
+```
+I think you can figure out how does this work, just looking to the code, but in case you don&#39;t.
+
+Well, events are sent to the system writing into our `uinput` device an event structure. The event structure has the following fields:
+
+* `type`. Indicates the type of event. EV_REL (relative movement), EV_KEY (key press including mouse buttons), EV_SYN (the synchronization event),...
+* `code`. Each kind of event supports multiple codes. For instance, for the `EV_REL` event (that we are using) we have a code to move the mouse on the X coordinate (`REL_X`) and another event to move it in the Y coordinate `REL_Y`.
+* `value`. Some codes, requires a value. For our `EV_REL` event, the value will indicate the numbers of pixels to move in the direction indicated by the `code` field
+
+So, the function above, takes two values `dx` and `dy` and use them to move the mouse cursor `dx` pixel in the X coordinate and `dy` pixels in the Y coordinate. Some events, to be interpreted correctly, requires us to send an extra event of type `EV_SYNC`.
+
+# Nervous Mouse
+By now, you should already be able to figure out how to make your mouse look nervous... I guess so. But otherwise, this is a way of doing it.
+
+
+```
+    while (1)
+      {
+        for (i = 0; i &lt; 100; i++)
+	  {
+	    move_mouse (fd, rand() % 10 -5 , rand()%10 - 5);
+	  }
+	sleep (5);
+      }
+
+```
+Sure, every 5 seconds the mouse moves a maximum of 5 pixels away from its last position in each direction 100 hundred times. 
+
+# Not just a Prank
+Now, seriously. I have used this technique in the past to easily interface special devices to standard applications in an easy way. An example was a small keyboard composed of two buttons, connected to two RPi GPIOs, used to interact with some kiosk application.
+
+A small program in the Rpi read the GPIO pins, and produced `uinput` events. The main application just have to read the keyboard. This technique will allow us to control standard programs using special devices in a very easy way...
+
+You can get the whole code from my github, as usual. The code in github also includes a click after the mouse movement so you may get windows or menus activated in unexpected ways.
+
+The program has to be executed as root, by the way.
+
+https://github.com/0x00pf/0x00sec_code/tree/master/pranks
+
+Hack fun!</description>
+    
+    <lastBuildDate>Fri, 29 Jul 2016 22:40:38 +0000</lastBuildDate>
+    <category>Linux</category>
+    <atom:link href="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Pranks. Keep calm and do not move your mouse</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/6</link>
+        <pubDate>Sun, 21 Jan 2018 00:36:45 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-853-6</guid>
+        <source url="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853.rss">Pranks. Keep calm and do not move your mouse</source>
+      </item>
+      <item>
+        <title>Pranks. Keep calm and do not move your mouse</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Seems like it might be my solution to my computer sleeping when watching films xD</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/abeec7bd515eb05a8c6e9d186f355b0d90b53abd.png" alt="" width="" height=""></p>
+          <p><a href="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/5</link>
+        <pubDate>Fri, 29 Jul 2016 22:40:38 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-853-5</guid>
+        <source url="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853.rss">Pranks. Keep calm and do not move your mouse</source>
+      </item>
+      <item>
+        <title>Pranks. Keep calm and do not move your mouse</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="afiskon" data-post="3" data-topic="853">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/afiskon/40/877_2.png" class="avatar"> afiskon:</div>
+<blockquote>
+<p>ou can “press buttons” on a keyboard as well?</p>
+</blockquote>
+</aside>
+<p>Hey <a class="mention" href="https://0x00sec.org/u/afiskon">@afiskon</a> sure you can. You have to issue event <code>EV_KEY</code> and provide the proper <code>code</code>. The <code>value</code> field, as far as I remember is used to press/release the key.</p>
+<p>You have to register all the keys you want to use though. One for each key, using <code>ioctrl</code> with the <code>UI_SET_KEYBIT</code> request .</p>
+<p><a class="mention" href="https://0x00sec.org/u/cromical">@Cromical</a> Thanks mate. Glad you liked it</p>
+          <p><a href="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/4</link>
+        <pubDate>Fri, 29 Jul 2016 19:52:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-853-4</guid>
+        <source url="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853.rss">Pranks. Keep calm and do not move your mouse</source>
+      </item>
+      <item>
+        <title>Pranks. Keep calm and do not move your mouse</title>
+        <dc:creator><![CDATA[afiskon]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a> Wow! Very interesting, thanks a lot! I’m guessing using similar technique you can “press buttons” on a keyboard as well?</p>
+          <p><a href="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/3</link>
+        <pubDate>Fri, 29 Jul 2016 19:40:11 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-853-3</guid>
+        <source url="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853.rss">Pranks. Keep calm and do not move your mouse</source>
+      </item>
+      <item>
+        <title>Pranks. Keep calm and do not move your mouse</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Bloody hell, I’m gonna have fun with this one <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">. Nice job mate thanks for sharing!</p>
+          <p><a href="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/2</link>
+        <pubDate>Fri, 29 Jul 2016 19:07:57 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-853-2</guid>
+        <source url="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853.rss">Pranks. Keep calm and do not move your mouse</source>
+      </item>
+      <item>
+        <title>Pranks. Keep calm and do not move your mouse</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Let’s put away the serious stuff for a while and let’s have some fun. What about some hacking pranks!. Let’s start with something simple, the so called nervous mouse.</p>
+<p>Note: The code is a modification of some example from internet. I cannot recall where I got it, but it is, let’s say, the default example you will find when searching for uinput tutorials.</p>
+<h1>Nervous Mouse</h1>
+<p>Nervous Mouse is a simple program that abuses the <code>uinput</code> device to inject fake mouse events in a linux box and move the mouse randomly every five seconds. It is a pretty stupid prank program but a funny way to get introduced to this useful device.</p>
+<p>The <code>uinput</code> device is pretty straightforward to use.</p>
+<ul>
+<li>Configure the events we want to generate</li>
+<li>Create a device for that configuration</li>
+<li>Write events to the device</li>
+</ul>
+<p>Let’s see how to write your own</p>
+<h1>Opening and Configuring the Device</h1>
+<p>This part of the program is quite standard, we open the <code>/dev/uinput</code> device, execute a bunch of <code>ioctl</code> syscalls to configure it and we are good to go.</p>
+<p>Something like this:</p>
+<pre><code class="lang-auto">   
+    if ((fd = open ("/dev/uinput", O_WRONLY | O_NONBLOCK)) &lt; 0) die ("error: open");
+
+    /* And we also want to produce mouse events */
+    if (ioctl (fd, UI_SET_EVBIT,  EV_REL) &lt; 0)    die ("error: ioctl");
+    if (ioctl (fd, UI_SET_RELBIT, REL_X) &lt; 0)     die ("error: ioctl");
+    if (ioctl (fd, UI_SET_RELBIT, REL_Y) &lt; 0)     die ("error: ioctl");
+
+    /* Time to register our virtual device */
+    memset (&amp;uidev, 0, sizeof(uidev));
+    snprintf (uidev.name, UINPUT_MAX_NAME_SIZE, "uinput-sample");
+
+    uidev.id.bustype = BUS_USB;
+    uidev.id.vendor  = 0x1;
+    uidev.id.product = 0x1;
+    uidev.id.version = 1;
+
+    if (write (fd, &amp;uidev, sizeof(uidev)) &lt; 0) die ("error: write");
+    if (ioctl (fd, UI_DEV_CREATE) &lt; 0) die ("error: ioctl");
+
+</code></pre>
+<p>The first part of the program opens the <code>uinput</code> device and then configures the events we want to inject. In this case we are using  <code>EV_REL</code> to inject mouse movement events.</p>
+<p>After that we have to create the device. We are kind of defining a USB mouse and as for any USB device we have to provide vendor and user ides as well as a version number. Basically just enter the values in the code to get it running. Honestly I haven’t when deep enough on this to be able to tell you the importance of these values.</p>
+<p>The we write the struct into our <code>uinput</code> device and call <code>UI_DEV_CREATE</code> ioctrl to create our virtual input device.</p>
+<p>Now we just have to inject our events</p>
+<h1>Moving the Mouse</h1>
+<p>In order to move the mouse, the main function of Nervous Mouse, we have to inject <code>EV_REL</code> events. This events represent a relative movement of a pointing device. So, let’s write a function to move our mouse:</p>
+<pre><code class="lang-auto">int
+move_mouse (int fd, int dx, int dy)
+{
+  struct input_event     ev;
+
+  memset (&amp;ev, 0, sizeof(struct input_event));
+  ev.type = EV_REL;
+  ev.code = REL_X;
+  ev.value = dx;
+  if (write (fd, &amp;ev, sizeof(struct input_event)) &lt; 0)  die ("error: write");
+
+  memset (&amp;ev, 0, sizeof(struct input_event));
+  ev.type = EV_REL;
+  ev.code = REL_Y;
+  ev.value = dy;
+  if (write (fd, &amp;ev, sizeof(struct input_event)) &lt; 0) die("error: write");
+  
+  memset (&amp;ev, 0, sizeof(struct input_event));
+  ev.type = EV_SYN;
+  ev.code = 0;
+  ev.value = 0;
+  if(write(fd, &amp;ev, sizeof(struct input_event)) &lt; 0)     die("error: write");
+  
+  usleep(15000);
+  
+  return 0;
+}
+</code></pre>
+<p>I think you can figure out how does this work, just looking to the code, but in case you don’t.</p>
+<p>Well, events are sent to the system writing into our <code>uinput</code> device an event structure. The event structure has the following fields:</p>
+<ul>
+<li>
+<code>type</code>. Indicates the type of event. EV_REL (relative movement), EV_KEY (key press including mouse buttons), EV_SYN (the synchronization event),…</li>
+<li>
+<code>code</code>. Each kind of event supports multiple codes. For instance, for the <code>EV_REL</code> event (that we are using) we have a code to move the mouse on the X coordinate (<code>REL_X</code>) and another event to move it in the Y coordinate <code>REL_Y</code>.</li>
+<li>
+<code>value</code>. Some codes, requires a value. For our <code>EV_REL</code> event, the value will indicate the numbers of pixels to move in the direction indicated by the <code>code</code> field</li>
+</ul>
+<p>So, the function above, takes two values <code>dx</code> and <code>dy</code> and use them to move the mouse cursor <code>dx</code> pixel in the X coordinate and <code>dy</code> pixels in the Y coordinate. Some events, to be interpreted correctly, requires us to send an extra event of type <code>EV_SYNC</code>.</p>
+<h1>Nervous Mouse</h1>
+<p>By now, you should already be able to figure out how to make your mouse look nervous… I guess so. But otherwise, this is a way of doing it.</p>
+<pre><code class="lang-auto">    while (1)
+      {
+        for (i = 0; i &lt; 100; i++)
+	  {
+	    move_mouse (fd, rand() % 10 -5 , rand()%10 - 5);
+	  }
+	sleep (5);
+      }
+
+</code></pre>
+<p>Sure, every 5 seconds the mouse moves a maximum of 5 pixels away from its last position in each direction 100 hundred times.</p>
+<h1>Not just a Prank</h1>
+<p>Now, seriously. I have used this technique in the past to easily interface special devices to standard applications in an easy way. An example was a small keyboard composed of two buttons, connected to two RPi GPIOs, used to interact with some kiosk application.</p>
+<p>A small program in the Rpi read the GPIO pins, and produced <code>uinput</code> events. The main application just have to read the keyboard. This technique will allow us to control standard programs using special devices in a very easy way…</p>
+<p>You can get the whole code from my github, as usual. The code in github also includes a click after the mouse movement so you may get windows or menus activated in unexpected ways.</p>
+<p>The program has to be executed as root, by the way.</p>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" width="32" height="32">
+      <a href="https://github.com/0x00pf/0x00sec_code/tree/master/pranks" target="_blank" rel="noopener nofollow ugc">GitHub</a>
+  </header>
+  <article class="onebox-body">
+    <img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a35c2bf9477f702a5322cfd1c8f54353d79c1d16.png" class="thumbnail" width="" height="">
+
+<h3><a href="https://github.com/0x00pf/0x00sec_code/tree/master/pranks" target="_blank" rel="noopener nofollow ugc">0x00pf/0x00sec_code</a></h3>
+
+<p>Code for my 0x00sec.org posts. Contribute to 0x00pf/0x00sec_code development by creating an account on GitHub.</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p>Hack fun!</p>
+          <p><a href="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853/1</link>
+        <pubDate>Fri, 29 Jul 2016 16:00:20 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-853-1</guid>
+        <source url="https://0x00sec.org/t/pranks-keep-calm-and-do-not-move-your-mouse/853.rss">Pranks. Keep calm and do not move your mouse</source>
+      </item>
+  </channel>
+</rss>

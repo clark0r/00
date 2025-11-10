@@ -1,0 +1,385 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>[Pwnable] Stacky Jumpy</title>
+    <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302</link>
+    <description>That&#39;s what you get for making a binary so user-dependent. 
+
+---
+
+###_Diffuclty_
+
+4/10
+
+---
+
+###_Objective_
+
+Get a shell.
+
+---
+
+###_Rules_
+
+* ASLR on.
+
+* No libc this time, it&#39;s statically linked, thus its size.
+
+* Full exploit + demo (i.e asciinema) are accepted as valid solutions. Just a screenshot of the shell doesn&#39;t mean anything.
+
+* It&#39;s pretty likely you might come up with a different exploit variation than mine, but the _trick_ should be the same.
+
+---
+
+###_Hint(s)_
+
+[spoiler] Stack Pivot [/spoiler]
+
+---
+
+###_Binary_
+
+[Pwn me if you can](https://transfer.sh/13reaE/jumpy)
+
+---
+
+~ gl &amp; hf
+
+
+###_Solution Explanation_
+
+[spoiler]
+The purpose of the challenge was to teach you the concept of stack pivoting. Unfortunately no one (so far) solved it the intended way, so they practically learnt nothing new. As for my PoC now (which was the intended way):
+
+The binary has an out-of-bound read (both positive and negative indices) and a partial out-of-bound-write (negative indices). At offset -9 from the integer array (meaning - 9*4 bytes since we are on a 32-bit arch) is the return address of any function you call inside main(). What do I mean by that? Let&#39;s say store() is being called.
+
+```makefile
+                           Stack
+                     +----------------+
+ Stack grows         |       ...      |  &lt;--- main&#39;s frame
+ towards low         |   uint* array  |
+ addresses           +----------------+
+                     |       ...      |  &lt;---- store&#39;s frame
+                     +----------------+
+```
+
+Store() receives a **stack pointer** as an argument, the integer array to be precise. It&#39;s really important to note the stack pointer part. Why? Well, since we have an OOB read and a partial OOB write, we can affect stack values below and above the integer array. And as we all know, what&#39;s definitely stored on the stack? The return address!
+
+The way to find the exact offset where the return address of store() is can be done either by trial and error (kinda skid-ish) or by looking at the assembly.
+
+Main:
+```asm
+0804904b  lea     eax, [esp+0x20] /* uint array[] */
+0804904f  mov     dword [esp], eax
+08049052  call    store_value
+```
+
+So the array is at offset +0x20 (32 in decimal) from the stack pointer. Here&#39;s the stack view right when store() is called:
+
+```makefile
+                     +--------------+
+                     |      ...     |
+   esp + 0x20 ---&gt;   |  uint* array |  
+                     |      ...     |
+                     +--------------+  
+     old  esp ---&gt;   |  uint* array |   &lt;--- mov dword [esp], eax
+                     +--------------+
+                     |   ret addr   |   &lt;--- call store_value
+     new  esp ---&gt;   +--------------+
+
+
+```
+
+I think it&#39;s crystal clear now as to what&#39;s going on with the stack and why at offset -36 you can overwrite the return address. 
+
+As for the stack pivot trick now, I overwrote the return address with the gadget **add esp, 0x2c** (could have used a different gadget for pivot ofc) which means the stack pointer will point 0x2c (44 decimal) above (higher address) from where it was pointing to. 
+
+Keep in mind, once store() is about to return, esp is pointing to where _old esp_ was pointing to on the above ascii-art. Which means, the array buffer and esp will have 0x20 bytes difference. In other words, at offset **esp + 0x20** we can reach the **1st** array value (0th index). But, since we are adding 0x2c to esp (0x20 + 12) we can reach the **4th** array value (3rd index). That&#39;s why I stored the gadgets from the 3rd index and up.
+
+I hope it makes more sense now.
+
+[/spoiler]</description>
+    
+    <lastBuildDate>Tue, 22 Aug 2017 07:59:36 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/16</link>
+        <pubDate>Tue, 09 Jan 2018 11:25:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-16</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[neolex]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi !<br>
+I finally made the challenge to try this myself.</p>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/15">spoiler</a></div>
+<p>Thanks for the challenge <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/15</link>
+        <pubDate>Tue, 22 Aug 2017 07:59:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-15</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[neolex]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you both for your explanation !<br>
+I learn a lot from you guys !<br>
+I’ll re-read it later to make sure i get it <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>Thank’s again !</p>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/14</link>
+        <pubDate>Tue, 15 Aug 2017 11:24:29 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-14</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[exploit]]></dc:creator>
+        <description><![CDATA[
+            <ul>
+<li>
+<a class="mention" href="https://d.clarkee.co.uk/u/neolex">@neolex</a> Regarding my exploit, here’s an explanation of the whole chain! <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:">
+</li>
+</ul>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/13">spoiler</a></div>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/13</link>
+        <pubDate>Tue, 15 Aug 2017 11:11:21 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-13</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi <a class="mention" href="https://d.clarkee.co.uk/u/neolex">@neolex</a>,  so:</p>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/12">spoiler</a></div>
+<p>As for the /bin/sh string, just read my explanation above a couple of times and the comments in my exploit.</p>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/12</link>
+        <pubDate>Tue, 15 Aug 2017 09:12:40 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-12</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[neolex]]></dc:creator>
+        <description><![CDATA[
+            <p>I really tried this challenge but I didn’t manage to send the string to execve to spawn a shell <img src="https://0x00sec.org/images/emoji/twitter/confused.png?v=9" title=":confused:" class="emoji" alt=":confused:"><br>
+And I don’t really understand your POCs …</p>
+<p><span class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/11">spoiler</a></span></p>
+<p><span class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/11">spoiler</a></span></p>
+<p>Sorry <img src="https://0x00sec.org/images/emoji/twitter/confounded.png?v=9" title=":confounded:" class="emoji" alt=":confounded:"><br>
+Thanks for the challenge <a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a> !</p>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/11</link>
+        <pubDate>Tue, 15 Aug 2017 02:28:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-11</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[exploit]]></dc:creator>
+        <description><![CDATA[
+            <p>[spoiler]- Oh my god, i didn’t use the outofbound read <img src="https://0x00sec.org/images/emoji/twitter/frowning.png?v=9" title=":frowning:" class="emoji" alt=":frowning:">!</p>
+<ul>
+<li>Sorry, that was a big mistake, it was the problem ; -;…</li>
+<li>I builded the whole chain to find and calculate name address :’([/spoiler]</li>
+</ul>
+<p>That was a fail… xddd</p>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/10</link>
+        <pubDate>Sun, 13 Aug 2017 20:34:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-10</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>I was expecting a much simpler solution from you <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"> <span class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/9">spoiler</a></span></p>
+<p>Here’s my(intended) PoC:</p>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/9">spoiler</a></div>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/9">spoiler</a></div>
+<p>Congrats either way! <img src="https://0x00sec.org/images/emoji/twitter/muscle.png?v=9" title=":muscle:" class="emoji" alt=":muscle:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/9</link>
+        <pubDate>Sun, 13 Aug 2017 20:29:48 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-9</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>From top to bottom (my opinion):</p>
+<ul>
+<li>Computer Architecture</li>
+<li>C</li>
+<li>Memory Organization</li>
+<li>Assembly</li>
+<li>Reverse Engineering</li>
+<li>Binary Exploitation</li>
+</ul>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/8</link>
+        <pubDate>Sun, 13 Aug 2017 20:25:18 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-8</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[exploit]]></dc:creator>
+        <description><![CDATA[
+            <ul>
+<li>Uhm, as we all know, this task, require a bit of ROP knowledge, so you basically can build a good rop-chain; i’ve already written a simple article, so you can start learning ROP stuff…<br>
+<a href="https://0x00sec.org/t/64-bit-rop-you-rule-em-all/1937">ROP article</a><br>
+Hope it helps a bit! <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">
+</li>
+</ul>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/7</link>
+        <pubDate>Sun, 13 Aug 2017 20:02:18 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-7</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[Retr1]]></dc:creator>
+        <description><![CDATA[
+            <p>I don’t want to be that guy that asks where you learned all this, but I’m gonna do it anyway because i am that guy who asks you where you learned all this… So where do I start with this? Obviously learn assembly, but after that?</p>
+<p>Sorry to be a bother <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/6</link>
+        <pubDate>Sun, 13 Aug 2017 19:55:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-6</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[exploit]]></dc:creator>
+        <description><![CDATA[
+            <ul>
+<li>The way i did it is more complicated but guaranteed… <img src="https://0x00sec.org/images/emoji/twitter/confused.png?v=9" title=":confused:" class="emoji" alt=":confused:">
+</li>
+<li>I also did it in another classic way, which is passing the register values to a pointer and incrementing… But i prefered this one, cause it’s more creative <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">
+</li>
+</ul>
+<p>I’ll share it then:</p>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/5">spoiler</a></div>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/5</link>
+        <pubDate>Sun, 13 Aug 2017 19:47:32 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-5</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>The exploit is a bit rusty/lucky, try making it more hybrid/reliable. This pwnable teaches a new concept.</p>
+<p>Here are some pointers:</p>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/4">spoiler</a></div>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/4</link>
+        <pubDate>Sun, 13 Aug 2017 16:46:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-4</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[mkhdznfq]]></dc:creator>
+        <description><![CDATA[
+            <p>great challenge again. i managed to get shell but somehow my solution aren’t always reliable. sometimes it will SIGSEGV. perhaps someone could give me some pointers <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=9" title=":sweat_smile:" class="emoji" alt=":sweat_smile:"> anyway here’s my poc</p>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/3">spoiler</a></div>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/3</link>
+        <pubDate>Sun, 13 Aug 2017 16:35:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-3</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[exploit]]></dc:creator>
+        <description><![CDATA[
+            <ul>
+<li>I’ll check it out a bit <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:">
+</li>
+</ul>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/2</link>
+        <pubDate>Sun, 13 Aug 2017 16:06:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-2</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+      <item>
+        <title>[Pwnable] Stacky Jumpy</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s what you get for making a binary so user-dependent.</p>
+<hr>
+<p>###<em>Diffuclty</em></p>
+<p>4/10</p>
+<hr>
+<p>###<em>Objective</em></p>
+<p>Get a shell.</p>
+<hr>
+<p>###<em>Rules</em></p>
+<ul>
+<li>
+<p>ASLR on.</p>
+</li>
+<li>
+<p>No libc this time, it’s statically linked, thus its size.</p>
+</li>
+<li>
+<p>Full exploit + demo (i.e asciinema) are accepted as valid solutions. Just a screenshot of the shell doesn’t mean anything.</p>
+</li>
+<li>
+<p>It’s pretty likely you might come up with a different exploit variation than mine, but the <em>trick</em> should be the same.</p>
+</li>
+</ul>
+<hr>
+<p>###<em>Hint(s)</em></p>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/1">spoiler</a></div>
+<hr>
+<p>###<em>Binary</em></p>
+<p><a href="https://transfer.sh/13reaE/jumpy" rel="nofollow noopener">Pwn me if you can</a></p>
+<hr>
+<p>~ gl &amp; hf</p>
+<p>###<em>Solution Explanation</em></p>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/1">spoiler</a></div>
+          <p><a href="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302/1</link>
+        <pubDate>Sun, 13 Aug 2017 11:21:21 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3302-1</guid>
+        <source url="https://d.clarkee.co.uk/t/pwnable-stacky-jumpy/3302.rss">[Pwnable] Stacky Jumpy</source>
+      </item>
+  </channel>
+</rss>

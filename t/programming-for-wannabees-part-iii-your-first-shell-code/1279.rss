@@ -1,0 +1,703 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Programming for Wannabees. Part III. Your first Shell Code</title>
+    <link>https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279</link>
+    <description>Let&#39;s go on with our special ASM/C programming course. At this point, we roughly know how a computer works, its main components, what is machine code, what is assembly code and how to compile simple programs for a few architectures.
+
+In this part we are going to write our first shellcode. Yes, we are that advanced. But, before we get there, we will be exploring a few more new concepts. Let&#39;s start.
+
+# Processor Native Word Size
+In this part we will start dealing with stuff bigger than 1 byte, and to understand what is going on, we need to introduce the _Processor Native Word Size_. In a sense, you already know what it means. Whenever you talk about 32bits and 64bits processors/programs... well, that is the processor native word size.
+
+However, beyond being the type of Linux distribution you choose to install, this value has some low level implications:
+
+* This value is the native size of the processor registers. Do you remember the registers within the processor?. Sure you do. So, a 32 bits processor have 32bits registers and a 64bits processor have 64bits registers. This is not completely accurate but, for now, just consider this size as the one the processor is comfortable with.
+* This value is usually also the width of the data bus.
+* And, it is usually also the width of the address bus... 
+
+Overall, and without going into the electronics within the processor, what you need to know is that each processor is optimised to work with its native word size. This way, a 32bits processor will perform arithmetic operations or access memory faster when it deals with a 32bits long value that when it deals with a 16bits long value. I know, this is a bit contra-intuitive and a bit of an act of faith but it will be very long and tedious to go through the details to understand this. Actually I&#39;m not sure I could successfully guide you through that path.
+
+To further illustrate this, below is a fragment of the &quot;Intel&#39;s  80396 Programmers&#39;s Reference Manual&quot; from 1986 (http://microsym.com/editor/assets/386intel.pdf). You can find it in section 2.2 &quot;Data Types&quot; page 24.
+
+
+&gt; Note that words need not be aligned at even-numbered addresses and
+&gt; doublewords need not be aligned at addresses evenly divisible by four. This
+&gt; allows maximum flexibility in data structures (e.g., records containing
+&gt; mixed byte, word, and doubleword items) and efficiency in memory
+&gt; utilization. When used in a configuration with a 32-bit bus, actual
+&gt; transfers of data between processor and memory take place in units of
+&gt; doublewords beginning at addresses evenly divisible by four; however, the
+&gt; processor converts requests for misaligned words or doublewords into the
+&gt; appropriate sequences of requests acceptable to the memory interface. Such
+&gt; misaligned data transfers reduce performance by requiring extra memory
+&gt; cycles. For maximum performance, data structures (including stacks) should
+&gt; be designed in such a way that, whenever possible, word operands are aligned
+&gt; at even addresses and doubleword operands are aligned at addresses evenly
+&gt; divisible by four. Due to instruction prefetching and queuing within the
+&gt; CPU, there is no requirement for instructions to be aligned on word or
+&gt; doubleword boundaries. (However, a slight increase in speed results if the
+&gt; target addresses of control transfers are evenly divisible by four.)
+
+
+
+Summing up, try to program your processor using its native word size. It may look that you are wasting some space, but that is the right way to do it. 
+
+I will just give a small hint on this topic before going on.
+
+
+# An Example: Processor Word Size and Memory.
+We have just said in the previous section that a 32bits processor will operate faster on a 32bit value and will also access faster a 32bits value in memory than a 16 bits one.
+
+The first thing you can infer from that sentence is that, even if the smaller addressable value in memory is 8 bits (do you remember the size of our memory drawers from Part I?), a 32bits processor can read 32bits from memory at once.
+
+This simple sentence has quite some concepts behind it. Let&#39;s go one by one
+
+## Simplified Memory Hardware Model
+The memory system in a PC can be quite elaborated and it is beyond the scope of this course to go into those details, however, discussing a simplified model of the system memory will be beneficial for us.
+
+In its simplest way, a memory chip provides the following pins... 
+
+- `AX` pins usually known as Address pins (with X=0...WordSize)
+- `DX` pins usually known as Data pins    (with X=0...WordSize)
+- `Cx` pins usually know as Control pins. (depends on the processor)
+
+The CPU also have similar `AX` and `DX` pins that are connected to the memory. This connection is not direct (we really need a bus between them), but for this simplified model we can consider that they are directly connected.
+
+The control pins allows the _Processor_ to command the memory. In this group you will usually find: 
+
+- `OE/CS` (Output Enable, Chip Select). These pins will, in a sense, _ACTIVATE_ the memory chip (either the input or the output). 
+- `WR/RD` (Wrtite, Read). These ones are used to tell the memory if we want write into the memory or to read values from it.
+
+So, whenever the CPU wants to read a value from the memory, it puts the value of the address to access in its address pins (`AX`) which are connected to the memory `AX` pines, usually by a bus. Then, the right control signal are exercised in the memory chip, and it will put in its `DX` pins the value in the memory address indicated by `AX`.
+
+OK, let&#39;s put some numbers to better understand this:
+
+    ----+                          +-----------
+        +- A0 ---------------  A0 -+
+        +- ... -------------- ... -+
+    CPU +- A31--------------- A31 -+  Memory 
+        +- ...                     |
+        +- D0 ---------------- D0 -+
+        +- ... -------------- ... -+
+        +- D31 -------------- D31 -+
+    ----+                          +------------
+
+Imagine that the `RIP` register (do you remember the Instruction Pointer?), is pointing to address 4, so, the instruction on address 4 is the next one to execute. The CPU has to read from memory that instruction, so it puts in the address bus the value
+
+    1098765432109876543210
+    33222222222211111111119876543210
+    --------------------------------
+    00000000000000000000000000000100
+
+Only pin `A2`  will be set. That actually means address 4. So, these pins are also connected to the memory. Whenever the `RD` control signal is activated in the memory, the chip will access address 4 and put in `D0` to `D31` the value stored at that position.... Remember this is a simplified model... a lot more things goes on when accessing memory.
+
+Then, the memory will put the value of address 4 in `D0-D7`. As each memory position is 8 bits, we only need 8 physical pins to send the value to the CPU. What happens is that is a huge waste. In general, the memory, will not put only 1 byte in the `Dx` lines, it will put as much as it can... in this example it means that it will output 4 bytes, starting from address 4, using the 32 `Dx` signals in the bus.
+
+_Again, this is a simple example. Some times, your memory only has a data bus 8 bits long and multiple memory chips are used to access 16, 32 or 64 bits words... in those cases, there is a real physical constraint with regards to memory aligned accesses. This little things are the ones that makes a difference between two systems._
+
+
+## CPU Native Word Size
+As you can imagine by now, there is a relation between the processor and the rest of the computer with regards to this native word size. A 32bits processor will interface to a _32bits memory system_ (is not that straightforward, but roughly that is what happens and, when it says _system_ it may actually be saying several chips). 
+
+Now, imagine that you want to just read a byte. You put your address in the `Ax` lines and ask the memory chip to spit the content of that address. The memory chip will put in the `Dx` the content of that address you request plus the 3 next addresses. The CPU will then read those 4 bytes from the bus and... just get the lower 8 bits from that value. In a sense, that requires something extra to do than just reading the whole 32bits value into our 32bits register. You see what I mean? (in this case it is just discarding 3 out of the 4 bytes)
+
+This becomes a bit more tricky if instead of a 32 bits memory chip you use four 8 bits memory chips. For instance, check Intel processors datasheet. From the 80386 and on you will see that the lower bits of the data bus are nor directly mapped to these `AX` pins. You have to look for `BE#X` pins or `REQ#X` depending on the processor version.
+
+As you can see, what I had described is just a very simplified example to illustrate how a processor works in a more efficient way when it only has to deal with its native internal word size. The reality is more complex and unless you need to design your own computer (the motherboard at least), it does not really matter (specially with the large cache memory nowadays). 
+
+
+## Little/Big Endian
+So, now, we&#39;ll always try to read data from memory using the native word size of our processor (not really but the compiler will do that for us). Let&#39;s assume the native word size is 4 bytes (32bits processor). The question now is: How are those bytes mapped between the memory and our registers?.
+
+Let&#39;s assume the following memory layout:
+
+
+    |  ...   | Drawer ...
+    +--------+
+    |  0x44  | p +  3
+    +--------+
+    |  0x33  | p + 2
+    +--------+
+    |  0x22  | p +  1
+    +--------+
+    |  0x11  | p
+    +--------+
+
+Let&#39;s assume too, that we want to read the content of address `p`, in register `eax`. Which value do you think you will get in the `eax` register?
+
+`0x44332211` or `0x11223344`
+
+The answer is: it depends. It depends on your processor. If your processor is `Little Endian` you will get the first value. Otherwise, if your processor if `Big Endian` you will get the second value. We have met the `Endianness`.
+
+In general, you do not care about your processor Endianness. You just write and read your values to/from memory and the processor will do the right thing. Endianness becomes important when you have to interchange data with computers that may have a different endianness. This happens very often in network programming when using Open protocols that have to work with any kind of machine. 
+
+Enough introduction. Let&#39;s see how all this concepts can be of any practical use.
+
+# Pointers
+LoL. You may be thinking: _OMG!, this guy is gonna kill me. Everybody says that pointers are the most tricky part of C programming and he is just starting with this. Really, man, I give up_.
+
+OK guys. Do not give up. You will see, in a sec that this is a lot simpler that you think. Furthermore, if you are doing assembly programming... well, you cannot do much without using pointers.... Just repeat to yourself:  I have to go through this to finally understand those shellcodes everybody talks about... Repeated again... again... are you ready now?
+
+So, what is a pointer again?. A pointer is just a position of memory that contains the address of another position of memory. :dizzy_face:
+
+The first thing you may figure out from that cryptic recursive definition is that, a pointer have to have a size equal to the number of `Ax` pines in the processor. In other words, it has to have the size of the address bus of the processor.
+
+In plain words. A 32bits processor with a 32bits address bus (i.e a intel 386) will require 32bits to store any potential memory address any program can ever reference. The same for a 64bits processor with a 64bits address bus, a pointer will need 8 bytes to reference any possible memory address. In this last case, for a 64bits processor, we need 8 bytes to cover possible value the processor can output in the address bus (the so-called addressing space) and therefore a pointer is stored in 8 consecutive address positions. (Again, this can become a bit more complicated in reality, but this concept is enough for now).
+
+Let&#39;s see this with an example. Imagine the following memory layout:
+
+
+    |  ...   | p + 4 = 0x400004
+    +--------+
+    |  0x40  | p + 3 = 0x400003
+    +--------+
+    |  0x00  | p + 2 = 0x400002
+    +--------+
+    |  0x00  | p + 1 = 0x400001
+    +--------+
+    |  0x04  | p     = 0x400000
+    +--------+
+
+The example above show a 32bits pointer at address (0x400000) pointing to address 0x400004 on a 32bits little endian machine. A memory address storing a memory address.
+
+# Hello World
+_&quot;Fine, all that stuff is really confusing. Give me an example to understand what you are talking about...&quot;_ Sure, there you go, the _Hello World_ program.
+
+I&#39;m pretty sure you know the &quot;Hello World&quot; program, but in case you don&#39;t, this is a very simple program that shows the message &quot;Hello World&quot; in the console. 
+
+The way to do this on Linux is to write to the **standard output** (the console). The standard output is known by the system as the file descriptor `1` for any process... We will go in detail on file descriptors later in the course, for now, you just need to know that if you pass `1` as first parameter to the system call `write` you will be writing to the console.
+
+So, knowing that the `write` system call is known by Linux as 1 (on a x86_64 arch), and applying everything we have already learn, this is how our little program will look like:
+
+```
+	global _start
+_start: mov rax, 1    ; SYS_write = 1
+	mov rdi, 1    ; fd = 1
+	mov rsi, msg  ; buf = msg 
+	mov rdx, 13   ; count = 13 (the number of bytes to write)
+	syscall  ; (SYS_write = rax(1), fd = rdi (1), buf = rsi (msg), count = rdx (13))  
+
+	;;  Exit program
+	mov rax, 0x3c  ; SYS_exit = 0x3c
+	mov rdi, 0     ; status = 0
+	syscall ; (SYS_exit = rax (0x3c), status = rdi (0))
+	
+msg:	db &#39;Hello World!&#39;,0x0a
+```
+
+I hope you can identify the two system calls in there. The first one to write the message, and the second one to exit the program with status 0.  If you do not know how to compile the program, you need to go back and check Part I of this course.
+
+# Labels and Assembler commands
+There are two new elements in our tiny program. The first one is a label. A label is a name we can use to reference a part of our program (actually a memory position). In this case, the label `msg` is used to reference some data in memory, our &quot;Hello World&quot; message. In general, we do not know where in memory our program will be loaded, so using symbolic names let us write our programs without caring about that. Even if we use offsets to reference memory positions independently of our actual location in memory, labels will let us ask the compiler to calculate those offsets for us.
+
+Actually, we&#39;ve already seen this in the past.... can you spot the label we have been using so far? ... Anybody `_start`?
+
+The second thing is that `db` instruction on the program. That is not a processor opcode, but an assembler instruction. Assembler instructions are only understood by the assembler, and does not directly translate into opcodes in the program. We already know one of those assembler instructions... Yes `global`.
+
+The `db` assembler instruction probably stands for `Data Byte` (TBH I do not know for sure). It allows us to set some memory area with a sequence of bytes. In this case we can see two parts in the `db` instruction. The first part is a string. The assembler will output one byte per char starting at position `msg`. Then we can see an extra byte, separated by a comma, and expressed in hexadecimal. Sure, you can just put the decimal value (`10`) there and everything will stay the same. You can also write your string as a list of the ASCII values for each character separated by commas... but that is not very practical.
+
+So, in this little program, where is our pointer?. We said that a pointer is a memory address that contains a memory address. In this case, the memory address is actually a register, specifically the register `rsi`. Do you remember that we said registers are just very fast memory within the processor that are referenced by a name?... well, if you are more comfortable changing the definition above to specifically also talk about registers that&#39;s fine. Anyway, I hope you have seen the point... er! ;)
+
+# A C version
+Let&#39;s now try to write the C version for this program. It would look like this:
+
+```
+#include &lt;unistd.h&gt;
+
+int main ()
+{
+        register void *p = &quot;Hello World!\n&quot;;
+        write (1, p, 13);
+        _exit (0);
+}
+
+```
+
+Again, we can easily identify the two system calls in the program ( `write` and `_exit`). We already know that the second parameter to write has to be a pointer, a memory address containing the address, in memory, to the string to print. Let&#39;s take a look to the assembly generated by `gcc`:
+
+
+    $ objdump -d -M intel hello
+    (...)
+    0000000000400544 &lt;main&gt;:
+      400544:	55                   	push   rbp
+      400545:	48 89 e5             	mov    rbp,rsp
+      400548:	53                   	push   rbx
+      400549:	48 83 ec 08          	sub    rsp,0x8
+      40054d:	bb 5c 06 40 00       	mov    ebx,0x40065c
+      400552:	ba 0d 00 00 00       	mov    edx,0xd
+      400557:	48 89 de             	mov    rsi,rbx
+      40055a:	bf 01 00 00 00       	mov    edi,0x1
+      40055f:	e8 dc fe ff ff       	call   400440 &lt;write@plt&gt;
+      400564:	bf 00 00 00 00       	mov    edi,0x0
+      400569:	e8 c2 fe ff ff       	call   400430 &lt;_exit@plt&gt;
+    (....)
+
+
+Let&#39;s skip the first 4 instructions (that&#39;s the stack stuff that we haven&#39;t discussed yet), and let&#39;s try to find our pointer... Have you spot it?
+
+Sure, you see how do we copy `rbx` into `rsi` after setting `ebx` (the 32bits part of `rbx`)  to `0x40065c`... and what is in there?... Let&#39;s check it
+
+    $ gdb ./hello
+    (gdb) x/s 0x40065c
+    0x40065c:	 &quot;Hello World!\n&quot;
+
+_Note: You have to run all commands above. You may get different addresses in your system_
+
+# C pointers
+I guess you have already figure out how to declare a pointer in C. Sure, you have to use the `*`. However, in C we need to specify types. In this specific example it does not really makes a difference, but in the general case the pointer type is important and useful.
+
+A C pointer is, therefore, declared this way:
+
+```
+type *pointer;
+```
+
+This declares a pointer to a memory address containing a value of a certain type. So... which types does C knows. This is the list:
+
+    char     Byte                 Minimal addressable element (not necessarily 8 bits)
+    int      Integer              Default integer type
+    short    Integer              Usually half of the default integer or equivalent to int
+    long     Integer              Usually double of the default integer or equivalent to int
+    float    Floating Point       Single Precision Floating Point   
+    double   Floating Point       Double Precision Floating Point
+    void     Nothing              Nothing or Anything
+
+C also supports compound types, but we will not talk about those right now.
+
+Confused again?. This is a simple program to figure out the size of each type in your system and better understand the difference between all those types:
+
+```
+#include &lt;stdio.h&gt;
+int main ()
+{
+	printf (&quot;Size of void*  : %ld\n&quot;, sizeof(void*));
+	printf (&quot;Size of short  : %ld\n&quot;, sizeof(short));
+	printf (&quot;Size of int    : %ld\n&quot;, sizeof(int));
+	printf (&quot;Size of long   : %ld\n&quot;, sizeof(long));
+	printf (&quot;Size of float  : %ld\n&quot;, sizeof(float));
+	printf (&quot;Size of double : %ld\n&quot;, sizeof(double));
+	return 0;
+}
+```
+
+The `stdio.h` at the beginning is required to use the function `printf`. The function `printf` (PRINT Formatted) lets us print messages using format strings to compose complex outputs. In this case, we are using the `%ld` format string to print the long value returned by `sizeof`. This basically tells `printf`, I have a number here that I want you to convert into a string... please do it.
+
+We can add many of those `%` in the format string and provide additional parameters to the function to fill them. Check the `printf` man page for details about the format strings you can use with `printf`.
+
+Finally, as you can imagine, `sizeof` returns the size, in bytes, of a given type or variable. 
+
+In our test program we used a `void*` variable. This is a pointer to `void` what, for a pointer, means a raw pointer or a pointer to anything. This is actually the C equivalent to the assembly pointer we used in our ASM code.
+
+We will come back to the C pointers later to fully understand the implications of pointer&#39;s type. But I think this is enough for now
+
+# Your First Shellcode
+So, believe it or no, you have already learn all the bits and pieces to write a very basic shellcode.  A shellcode, in its simplest form, is a piece of code that starts a shell. It is usually feed into a vulnerable program using a exploit, effectively enabling the attacker to acquire a shell with the same privileges of the vulnerable program. In general an attacker will be targeting processes running as `root` to get full access to the machine.
+
+In Linux, you can execute a process using the `exec` system call. This system call has 3 parameters, but for your first shellcode you can set to 0 the last two. The only parameter we need is the first one... a pointer to the name of the program to run.... that in this case would be `/bin/sh&#39;.
+
+```
+section .text
+        global _start
+
+_start:
+        mov rax, 0x3b           ; SYS_exec
+        mov rdx, 0              ; No Env
+        mov rsi, 0              ; No argv
+        mov rdi, cmd            ; char *cmd
+        syscall
+
+cmd:    db &#39;/bin/sh&#39;,0
+
+```
+
+Wow!... it is roughly the same program that the `Hello World` we wrote before!!!!. Are you missing the `exit` system call?... take a look to the exec man page (`man 2 exec`) to know why we do not need it any more.
+
+## `/bin/sh`
+You may be wondering: why `/bin/sh`?. I always use `bash`, or `dash`, or `zsh`, or `ksh`,...  Sure, you can run many different shells (command interpreters) but in almost any Unix out there, independently of the actual shell you usually use, you always will have `/bin/sh`. In general, it is a soft link to a real shell.
+
+The reason for this, at least one of them, is that the system runs a lot of shell scripts for doing different things. You have shell scripts executed during the boot process, whenever you start or stop a service, when you launch some applications,... Imagine that whenever a user wants to change its default shell, the system will have to update all those scripts... what about the ones you wrote on your own, those the system knows nothing about... they will just break.
+
+Therefore, as a convention, all Unix system have a binary at `/bin/sh` that runs a shell and all shell scripts rely on the existence of that file... Well... not all Unix system. Keep reading.
+
+
+# ARM Shell code
+So, we should be able to port our x86_64 asm shell code to ARM very easily. In case you are feeling lazy, this is how it may look like.
+
+```
+.text
+.globl _start
+
+_start:	mov r7, #11
+	mov r1, #0
+	mov r2, #0
+	ldr r0,=msg
+	swi #0
+
+
+.data
+msg:
+	.asciz &quot;/system/bin/sh&quot;
+```
+
+have you seen it?... sure, this code is for Android. Android had mesh up the standard Linux disk tree, and the default shell is no longer at `/bin/sh` but at `/system/bin/sh`. If you are going to test the code in another ARM platform as a BeagleBone Black, a BananaPi or an Olinuxino running a standard Linux distro (usually Debian), just change the string to the well-known location `/bin/sh`. The rest of the code should just work.
+
+We can compile it like this:
+
+    $ arm-linux-gnueabi-as -o sh-arm.o sh-arm.s
+    $ arm-linux-gnueabi-ld -o sh-arm sh-arm.o
+
+Let&#39;s take a closer look to the code. Did you notice it?. Yes, there are some differences when compared to our Intel code. This is for two reasons. The first one is that `NASM` only produces code for intel processors, so we cannot use it for ARM. You should had noted this before... I&#39;m amaze nobody had asked about this from the previous parts. Anyways, the syntax of the GNU assembler (`as`) is slightly different. This one is known as AT&amp;T assembly whereas the one used by `NASM` is known as Intel assembly... As a wannabe hacker you should learn both :P
+
+So, the GNU assembler uses the assembler instruction `.asciz` to add a zero-terminated ASCII string to the memory. It is the same thing that the `nasm` `db`, but automatically adding the 0 at the end. The second comment is that we have to use `ldr` to load our pointer in our `r0` register.
+
+Well, `ldr` is an ARM __pseudo-instruction__. The bottom line is that you cannot directly load 32bits values into a register in an ARM processor. I will not go into the details (you can google it), but roughly, ARM produces a very compact machine code, and tries to encode a lot of information on each 32bits machine code word, including the mnemonic parameters. This limits the size of the values that can be directly loaded into a register. The `ldr` pseudo instruction is expanded by the assembler in the right sequence of instruction to load a 32bits value in a register. There are more pseudo-instructions for ARM and we will go through them as needed.
+
+The conclusion of all this is that, for ARM you have to use the syntax above to load a 32 bits constant or address (which in practical terms are the same thing) into a register.
+
+# MIPS
+OK guys. My MIPS setup is so crappy that it is a pain to keep including it in this course. If any of you wants to contribute this section, just let me know. Until I get this development environment sorted out I will skip the MIPS sections from now on.
+
+
+# Conclusions
+In this part we have had our first encounter with pointers at the lowest level and we have learn how to use them together with a system call. Using these two simple concepts we manage to create a shell code. This shell code is not usable in the wild, but you will learn how to update it for practical purposes later in this course. If you cannot wait, check the @unh0lys0da   article here https://0x00sec.org/t/linux-shellcoding-part-1-0/289 or the read classical &quot;Smashing the Stack for Fun and Profit&quot; from Aleph one!</description>
+    
+    <lastBuildDate>Sun, 04 Jun 2017 16:37:45 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Programming for Wannabees. Part III. Your first Shell Code</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/6</link>
+        <pubDate>Sun, 21 Jan 2018 00:30:06 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1279-6</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279.rss">Programming for Wannabees. Part III. Your first Shell Code</source>
+      </item>
+      <item>
+        <title>Programming for Wannabees. Part III. Your first Shell Code</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks <a class="mention" href="https://d.clarkee.co.uk/u/captainlettuce">@captainlettuce</a>.</p>
+<p>To be honest I wrote part IV long ago, but I was not happy with the result. It was very theoretical and I didn’t manage to get some practical examples in. I’d try to continue it but it may take a while until I get the time and also a nice idea to continue the course following the spirit of the first instalments.</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/5</link>
+        <pubDate>Sun, 04 Jun 2017 16:37:45 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1279-5</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279.rss">Programming for Wannabees. Part III. Your first Shell Code</source>
+      </item>
+      <item>
+        <title>Programming for Wannabees. Part III. Your first Shell Code</title>
+        <dc:creator><![CDATA[captainlettuce]]></dc:creator>
+        <description><![CDATA[
+            <p>Saw now that this post is quite old, will you continue doing this? Really appreciated it so far!</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/4</link>
+        <pubDate>Sun, 04 Jun 2017 14:35:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1279-4</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279.rss">Programming for Wannabees. Part III. Your first Shell Code</source>
+      </item>
+      <item>
+        <title>Programming for Wannabees. Part III. Your first Shell Code</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks mate! I’m glad to contribute to this nice community!</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/3</link>
+        <pubDate>Tue, 15 Nov 2016 06:38:45 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1279-3</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279.rss">Programming for Wannabees. Part III. Your first Shell Code</source>
+      </item>
+      <item>
+        <title>Programming for Wannabees. Part III. Your first Shell Code</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Mann! The minute I saw this I just had to scroll down and like this first.</p>
+<p>I must say; you put so much effort into these articles, and it’s really nice. You’re such a good contributor pico; I would love to say a big thank you from me, and I’m sure the whole community would also agree.</p>
+<p>You should write a book! I’d buy it <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/2</link>
+        <pubDate>Tue, 15 Nov 2016 01:06:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1279-2</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279.rss">Programming for Wannabees. Part III. Your first Shell Code</source>
+      </item>
+      <item>
+        <title>Programming for Wannabees. Part III. Your first Shell Code</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Let’s go on with our special ASM/C programming course. At this point, we roughly know how a computer works, its main components, what is machine code, what is assembly code and how to compile simple programs for a few architectures.</p>
+<p>In this part we are going to write our first shellcode. Yes, we are that advanced. But, before we get there, we will be exploring a few more new concepts. Let’s start.</p>
+<h1><a name="p-6098-processor-native-word-size-1" class="anchor" href="https://d.clarkee.co.uk#p-6098-processor-native-word-size-1"></a>Processor Native Word Size</h1>
+<p>In this part we will start dealing with stuff bigger than 1 byte, and to understand what is going on, we need to introduce the <em>Processor Native Word Size</em>. In a sense, you already know what it means. Whenever you talk about 32bits and 64bits processors/programs… well, that is the processor native word size.</p>
+<p>However, beyond being the type of Linux distribution you choose to install, this value has some low level implications:</p>
+<ul>
+<li>This value is the native size of the processor registers. Do you remember the registers within the processor?. Sure you do. So, a 32 bits processor have 32bits registers and a 64bits processor have 64bits registers. This is not completely accurate but, for now, just consider this size as the one the processor is comfortable with.</li>
+<li>This value is usually also the width of the data bus.</li>
+<li>And, it is usually also the width of the address bus…</li>
+</ul>
+<p>Overall, and without going into the electronics within the processor, what you need to know is that each processor is optimised to work with its native word size. This way, a 32bits processor will perform arithmetic operations or access memory faster when it deals with a 32bits long value that when it deals with a 16bits long value. I know, this is a bit contra-intuitive and a bit of an act of faith but it will be very long and tedious to go through the details to understand this. Actually I’m not sure I could successfully guide you through that path.</p>
+<p>To further illustrate this, below is a fragment of the “Intel’s  80396 Programmers’s Reference Manual” from 1986 (<a href="http://microsym.com/editor/assets/386intel.pdf" rel="noopener nofollow ugc">http://microsym.com/editor/assets/386intel.pdf</a>). You can find it in section 2.2 “Data Types” page 24.</p>
+<blockquote>
+<p>Note that words need not be aligned at even-numbered addresses and<br>
+doublewords need not be aligned at addresses evenly divisible by four. This<br>
+allows maximum flexibility in data structures (e.g., records containing<br>
+mixed byte, word, and doubleword items) and efficiency in memory<br>
+utilization. When used in a configuration with a 32-bit bus, actual<br>
+transfers of data between processor and memory take place in units of<br>
+doublewords beginning at addresses evenly divisible by four; however, the<br>
+processor converts requests for misaligned words or doublewords into the<br>
+appropriate sequences of requests acceptable to the memory interface. Such<br>
+misaligned data transfers reduce performance by requiring extra memory<br>
+cycles. For maximum performance, data structures (including stacks) should<br>
+be designed in such a way that, whenever possible, word operands are aligned<br>
+at even addresses and doubleword operands are aligned at addresses evenly<br>
+divisible by four. Due to instruction prefetching and queuing within the<br>
+CPU, there is no requirement for instructions to be aligned on word or<br>
+doubleword boundaries. (However, a slight increase in speed results if the<br>
+target addresses of control transfers are evenly divisible by four.)</p>
+</blockquote>
+<p>Summing up, try to program your processor using its native word size. It may look that you are wasting some space, but that is the right way to do it.</p>
+<p>I will just give a small hint on this topic before going on.</p>
+<h1><a name="p-6098-an-example-processor-word-size-and-memory-2" class="anchor" href="https://d.clarkee.co.uk#p-6098-an-example-processor-word-size-and-memory-2"></a>An Example: Processor Word Size and Memory.</h1>
+<p>We have just said in the previous section that a 32bits processor will operate faster on a 32bit value and will also access faster a 32bits value in memory than a 16 bits one.</p>
+<p>The first thing you can infer from that sentence is that, even if the smaller addressable value in memory is 8 bits (do you remember the size of our memory drawers from Part I?), a 32bits processor can read 32bits from memory at once.</p>
+<p>This simple sentence has quite some concepts behind it. Let’s go one by one</p>
+<h2><a name="p-6098-simplified-memory-hardware-model-3" class="anchor" href="https://d.clarkee.co.uk#p-6098-simplified-memory-hardware-model-3"></a>Simplified Memory Hardware Model</h2>
+<p>The memory system in a PC can be quite elaborated and it is beyond the scope of this course to go into those details, however, discussing a simplified model of the system memory will be beneficial for us.</p>
+<p>In its simplest way, a memory chip provides the following pins…</p>
+<ul>
+<li><code>AX</code> pins usually known as Address pins (with X=0…WordSize)</li>
+<li><code>DX</code> pins usually known as Data pins    (with X=0…WordSize)</li>
+<li><code>Cx</code> pins usually know as Control pins. (depends on the processor)</li>
+</ul>
+<p>The CPU also have similar <code>AX</code> and <code>DX</code> pins that are connected to the memory. This connection is not direct (we really need a bus between them), but for this simplified model we can consider that they are directly connected.</p>
+<p>The control pins allows the <em>Processor</em> to command the memory. In this group you will usually find:</p>
+<ul>
+<li><code>OE/CS</code> (Output Enable, Chip Select). These pins will, in a sense, <em>ACTIVATE</em> the memory chip (either the input or the output).</li>
+<li><code>WR/RD</code> (Wrtite, Read). These ones are used to tell the memory if we want write into the memory or to read values from it.</li>
+</ul>
+<p>So, whenever the CPU wants to read a value from the memory, it puts the value of the address to access in its address pins (<code>AX</code>) which are connected to the memory <code>AX</code> pines, usually by a bus. Then, the right control signal are exercised in the memory chip, and it will put in its <code>DX</code> pins the value in the memory address indicated by <code>AX</code>.</p>
+<p>OK, let’s put some numbers to better understand this:</p>
+<pre><code>----+                          +-----------
+    +- A0 ---------------  A0 -+
+    +- ... -------------- ... -+
+CPU +- A31--------------- A31 -+  Memory 
+    +- ...                     |
+    +- D0 ---------------- D0 -+
+    +- ... -------------- ... -+
+    +- D31 -------------- D31 -+
+----+                          +------------
+</code></pre>
+<p>Imagine that the <code>RIP</code> register (do you remember the Instruction Pointer?), is pointing to address 4, so, the instruction on address 4 is the next one to execute. The CPU has to read from memory that instruction, so it puts in the address bus the value</p>
+<pre><code>1098765432109876543210
+33222222222211111111119876543210
+--------------------------------
+00000000000000000000000000000100
+</code></pre>
+<p>Only pin <code>A2</code>  will be set. That actually means address 4. So, these pins are also connected to the memory. Whenever the <code>RD</code> control signal is activated in the memory, the chip will access address 4 and put in <code>D0</code> to <code>D31</code> the value stored at that position… Remember this is a simplified model… a lot more things goes on when accessing memory.</p>
+<p>Then, the memory will put the value of address 4 in <code>D0-D7</code>. As each memory position is 8 bits, we only need 8 physical pins to send the value to the CPU. What happens is that is a huge waste. In general, the memory, will not put only 1 byte in the <code>Dx</code> lines, it will put as much as it can… in this example it means that it will output 4 bytes, starting from address 4, using the 32 <code>Dx</code> signals in the bus.</p>
+<p><em>Again, this is a simple example. Some times, your memory only has a data bus 8 bits long and multiple memory chips are used to access 16, 32 or 64 bits words… in those cases, there is a real physical constraint with regards to memory aligned accesses. This little things are the ones that makes a difference between two systems.</em></p>
+<h2><a name="p-6098-cpu-native-word-size-4" class="anchor" href="https://d.clarkee.co.uk#p-6098-cpu-native-word-size-4"></a>CPU Native Word Size</h2>
+<p>As you can imagine by now, there is a relation between the processor and the rest of the computer with regards to this native word size. A 32bits processor will interface to a <em>32bits memory system</em> (is not that straightforward, but roughly that is what happens and, when it says <em>system</em> it may actually be saying several chips).</p>
+<p>Now, imagine that you want to just read a byte. You put your address in the <code>Ax</code> lines and ask the memory chip to spit the content of that address. The memory chip will put in the <code>Dx</code> the content of that address you request plus the 3 next addresses. The CPU will then read those 4 bytes from the bus and… just get the lower 8 bits from that value. In a sense, that requires something extra to do than just reading the whole 32bits value into our 32bits register. You see what I mean? (in this case it is just discarding 3 out of the 4 bytes)</p>
+<p>This becomes a bit more tricky if instead of a 32 bits memory chip you use four 8 bits memory chips. For instance, check Intel processors datasheet. From the 80386 and on you will see that the lower bits of the data bus are nor directly mapped to these <code>AX</code> pins. You have to look for <code>BE#X</code> pins or <code>REQ#X</code> depending on the processor version.</p>
+<p>As you can see, what I had described is just a very simplified example to illustrate how a processor works in a more efficient way when it only has to deal with its native internal word size. The reality is more complex and unless you need to design your own computer (the motherboard at least), it does not really matter (specially with the large cache memory nowadays).</p>
+<h2><a name="p-6098-littlebig-endian-5" class="anchor" href="https://d.clarkee.co.uk#p-6098-littlebig-endian-5"></a>Little/Big Endian</h2>
+<p>So, now, we’ll always try to read data from memory using the native word size of our processor (not really but the compiler will do that for us). Let’s assume the native word size is 4 bytes (32bits processor). The question now is: How are those bytes mapped between the memory and our registers?.</p>
+<p>Let’s assume the following memory layout:</p>
+<pre><code>|  ...   | Drawer ...
++--------+
+|  0x44  | p +  3
++--------+
+|  0x33  | p + 2
++--------+
+|  0x22  | p +  1
++--------+
+|  0x11  | p
++--------+
+</code></pre>
+<p>Let’s assume too, that we want to read the content of address <code>p</code>, in register <code>eax</code>. Which value do you think you will get in the <code>eax</code> register?</p>
+<p><code>0x44332211</code> or <code>0x11223344</code></p>
+<p>The answer is: it depends. It depends on your processor. If your processor is <code>Little Endian</code> you will get the first value. Otherwise, if your processor if <code>Big Endian</code> you will get the second value. We have met the <code>Endianness</code>.</p>
+<p>In general, you do not care about your processor Endianness. You just write and read your values to/from memory and the processor will do the right thing. Endianness becomes important when you have to interchange data with computers that may have a different endianness. This happens very often in network programming when using Open protocols that have to work with any kind of machine.</p>
+<p>Enough introduction. Let’s see how all this concepts can be of any practical use.</p>
+<h1><a name="p-6098-pointers-6" class="anchor" href="https://d.clarkee.co.uk#p-6098-pointers-6"></a>Pointers</h1>
+<p>LoL. You may be thinking: <em>OMG!, this guy is gonna kill me. Everybody says that pointers are the most tricky part of C programming and he is just starting with this. Really, man, I give up</em>.</p>
+<p>OK guys. Do not give up. You will see, in a sec that this is a lot simpler that you think. Furthermore, if you are doing assembly programming… well, you cannot do much without using pointers… Just repeat to yourself:  I have to go through this to finally understand those shellcodes everybody talks about… Repeated again… again… are you ready now?</p>
+<p>So, what is a pointer again?. A pointer is just a position of memory that contains the address of another position of memory. <img src="https://d.clarkee.co.uk/images/emoji/twitter/dizzy_face.png?v=15" title=":dizzy_face:" class="emoji" alt=":dizzy_face:" loading="lazy" width="20" height="20"></p>
+<p>The first thing you may figure out from that cryptic recursive definition is that, a pointer have to have a size equal to the number of <code>Ax</code> pines in the processor. In other words, it has to have the size of the address bus of the processor.</p>
+<p>In plain words. A 32bits processor with a 32bits address bus (i.e a intel 386) will require 32bits to store any potential memory address any program can ever reference. The same for a 64bits processor with a 64bits address bus, a pointer will need 8 bytes to reference any possible memory address. In this last case, for a 64bits processor, we need 8 bytes to cover possible value the processor can output in the address bus (the so-called addressing space) and therefore a pointer is stored in 8 consecutive address positions. (Again, this can become a bit more complicated in reality, but this concept is enough for now).</p>
+<p>Let’s see this with an example. Imagine the following memory layout:</p>
+<pre><code>|  ...   | p + 4 = 0x400004
++--------+
+|  0x40  | p + 3 = 0x400003
++--------+
+|  0x00  | p + 2 = 0x400002
++--------+
+|  0x00  | p + 1 = 0x400001
++--------+
+|  0x04  | p     = 0x400000
++--------+
+</code></pre>
+<p>The example above show a 32bits pointer at address (0x400000) pointing to address 0x400004 on a 32bits little endian machine. A memory address storing a memory address.</p>
+<h1><a name="p-6098-hello-world-7" class="anchor" href="https://d.clarkee.co.uk#p-6098-hello-world-7"></a>Hello World</h1>
+<p><em>“Fine, all that stuff is really confusing. Give me an example to understand what you are talking about…”</em> Sure, there you go, the <em>Hello World</em> program.</p>
+<p>I’m pretty sure you know the “Hello World” program, but in case you don’t, this is a very simple program that shows the message “Hello World” in the console.</p>
+<p>The way to do this on Linux is to write to the <strong>standard output</strong> (the console). The standard output is known by the system as the file descriptor <code>1</code> for any process… We will go in detail on file descriptors later in the course, for now, you just need to know that if you pass <code>1</code> as first parameter to the system call <code>write</code> you will be writing to the console.</p>
+<p>So, knowing that the <code>write</code> system call is known by Linux as 1 (on a x86_64 arch), and applying everything we have already learn, this is how our little program will look like:</p>
+<pre><code class="lang-auto">	global _start
+_start: mov rax, 1    ; SYS_write = 1
+	mov rdi, 1    ; fd = 1
+	mov rsi, msg  ; buf = msg 
+	mov rdx, 13   ; count = 13 (the number of bytes to write)
+	syscall  ; (SYS_write = rax(1), fd = rdi (1), buf = rsi (msg), count = rdx (13))  
+
+	;;  Exit program
+	mov rax, 0x3c  ; SYS_exit = 0x3c
+	mov rdi, 0     ; status = 0
+	syscall ; (SYS_exit = rax (0x3c), status = rdi (0))
+	
+msg:	db 'Hello World!',0x0a
+</code></pre>
+<p>I hope you can identify the two system calls in there. The first one to write the message, and the second one to exit the program with status 0.  If you do not know how to compile the program, you need to go back and check Part I of this course.</p>
+<h1><a name="p-6098-labels-and-assembler-commands-8" class="anchor" href="https://d.clarkee.co.uk#p-6098-labels-and-assembler-commands-8"></a>Labels and Assembler commands</h1>
+<p>There are two new elements in our tiny program. The first one is a label. A label is a name we can use to reference a part of our program (actually a memory position). In this case, the label <code>msg</code> is used to reference some data in memory, our “Hello World” message. In general, we do not know where in memory our program will be loaded, so using symbolic names let us write our programs without caring about that. Even if we use offsets to reference memory positions independently of our actual location in memory, labels will let us ask the compiler to calculate those offsets for us.</p>
+<p>Actually, we’ve already seen this in the past… can you spot the label we have been using so far? … Anybody <code>_start</code>?</p>
+<p>The second thing is that <code>db</code> instruction on the program. That is not a processor opcode, but an assembler instruction. Assembler instructions are only understood by the assembler, and does not directly translate into opcodes in the program. We already know one of those assembler instructions… Yes <code>global</code>.</p>
+<p>The <code>db</code> assembler instruction probably stands for <code>Data Byte</code> (TBH I do not know for sure). It allows us to set some memory area with a sequence of bytes. In this case we can see two parts in the <code>db</code> instruction. The first part is a string. The assembler will output one byte per char starting at position <code>msg</code>. Then we can see an extra byte, separated by a comma, and expressed in hexadecimal. Sure, you can just put the decimal value (<code>10</code>) there and everything will stay the same. You can also write your string as a list of the ASCII values for each character separated by commas… but that is not very practical.</p>
+<p>So, in this little program, where is our pointer?. We said that a pointer is a memory address that contains a memory address. In this case, the memory address is actually a register, specifically the register <code>rsi</code>. Do you remember that we said registers are just very fast memory within the processor that are referenced by a name?.. well, if you are more comfortable changing the definition above to specifically also talk about registers that’s fine. Anyway, I hope you have seen the point… er! <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+<h1><a name="p-6098-a-c-version-9" class="anchor" href="https://d.clarkee.co.uk#p-6098-a-c-version-9"></a>A C version</h1>
+<p>Let’s now try to write the C version for this program. It would look like this:</p>
+<pre><code class="lang-auto">#include &lt;unistd.h&gt;
+
+int main ()
+{
+        register void *p = "Hello World!\n";
+        write (1, p, 13);
+        _exit (0);
+}
+
+</code></pre>
+<p>Again, we can easily identify the two system calls in the program ( <code>write</code> and <code>_exit</code>). We already know that the second parameter to write has to be a pointer, a memory address containing the address, in memory, to the string to print. Let’s take a look to the assembly generated by <code>gcc</code>:</p>
+<pre><code>$ objdump -d -M intel hello
+(...)
+0000000000400544 &lt;main&gt;:
+  400544:	55                   	push   rbp
+  400545:	48 89 e5             	mov    rbp,rsp
+  400548:	53                   	push   rbx
+  400549:	48 83 ec 08          	sub    rsp,0x8
+  40054d:	bb 5c 06 40 00       	mov    ebx,0x40065c
+  400552:	ba 0d 00 00 00       	mov    edx,0xd
+  400557:	48 89 de             	mov    rsi,rbx
+  40055a:	bf 01 00 00 00       	mov    edi,0x1
+  40055f:	e8 dc fe ff ff       	call   400440 &lt;write@plt&gt;
+  400564:	bf 00 00 00 00       	mov    edi,0x0
+  400569:	e8 c2 fe ff ff       	call   400430 &lt;_exit@plt&gt;
+(....)
+</code></pre>
+<p>Let’s skip the first 4 instructions (that’s the stack stuff that we haven’t discussed yet), and let’s try to find our pointer… Have you spot it?</p>
+<p>Sure, you see how do we copy <code>rbx</code> into <code>rsi</code> after setting <code>ebx</code> (the 32bits part of <code>rbx</code>)  to <code>0x40065c</code>… and what is in there?.. Let’s check it</p>
+<pre><code>$ gdb ./hello
+(gdb) x/s 0x40065c
+0x40065c:	 "Hello World!\n"
+</code></pre>
+<p><em>Note: You have to run all commands above. You may get different addresses in your system</em></p>
+<h1><a name="p-6098-c-pointers-10" class="anchor" href="https://d.clarkee.co.uk#p-6098-c-pointers-10"></a>C pointers</h1>
+<p>I guess you have already figure out how to declare a pointer in C. Sure, you have to use the <code>*</code>. However, in C we need to specify types. In this specific example it does not really makes a difference, but in the general case the pointer type is important and useful.</p>
+<p>A C pointer is, therefore, declared this way:</p>
+<pre><code class="lang-auto">type *pointer;
+</code></pre>
+<p>This declares a pointer to a memory address containing a value of a certain type. So… which types does C knows. This is the list:</p>
+<pre><code>char     Byte                 Minimal addressable element (not necessarily 8 bits)
+int      Integer              Default integer type
+short    Integer              Usually half of the default integer or equivalent to int
+long     Integer              Usually double of the default integer or equivalent to int
+float    Floating Point       Single Precision Floating Point   
+double   Floating Point       Double Precision Floating Point
+void     Nothing              Nothing or Anything
+</code></pre>
+<p>C also supports compound types, but we will not talk about those right now.</p>
+<p>Confused again?. This is a simple program to figure out the size of each type in your system and better understand the difference between all those types:</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+int main ()
+{
+	printf ("Size of void*  : %ld\n", sizeof(void*));
+	printf ("Size of short  : %ld\n", sizeof(short));
+	printf ("Size of int    : %ld\n", sizeof(int));
+	printf ("Size of long   : %ld\n", sizeof(long));
+	printf ("Size of float  : %ld\n", sizeof(float));
+	printf ("Size of double : %ld\n", sizeof(double));
+	return 0;
+}
+</code></pre>
+<p>The <code>stdio.h</code> at the beginning is required to use the function <code>printf</code>. The function <code>printf</code> (PRINT Formatted) lets us print messages using format strings to compose complex outputs. In this case, we are using the <code>%ld</code> format string to print the long value returned by <code>sizeof</code>. This basically tells <code>printf</code>, I have a number here that I want you to convert into a string… please do it.</p>
+<p>We can add many of those <code>%</code> in the format string and provide additional parameters to the function to fill them. Check the <code>printf</code> man page for details about the format strings you can use with <code>printf</code>.</p>
+<p>Finally, as you can imagine, <code>sizeof</code> returns the size, in bytes, of a given type or variable.</p>
+<p>In our test program we used a <code>void*</code> variable. This is a pointer to <code>void</code> what, for a pointer, means a raw pointer or a pointer to anything. This is actually the C equivalent to the assembly pointer we used in our ASM code.</p>
+<p>We will come back to the C pointers later to fully understand the implications of pointer’s type. But I think this is enough for now</p>
+<h1><a name="p-6098-your-first-shellcode-11" class="anchor" href="https://d.clarkee.co.uk#p-6098-your-first-shellcode-11"></a>Your First Shellcode</h1>
+<p>So, believe it or no, you have already learn all the bits and pieces to write a very basic shellcode.  A shellcode, in its simplest form, is a piece of code that starts a shell. It is usually feed into a vulnerable program using a exploit, effectively enabling the attacker to acquire a shell with the same privileges of the vulnerable program. In general an attacker will be targeting processes running as <code>root</code> to get full access to the machine.</p>
+<p>In Linux, you can execute a process using the <code>exec</code> system call. This system call has 3 parameters, but for your first shellcode you can set to 0 the last two. The only parameter we need is the first one… a pointer to the name of the program to run… that in this case would be `/bin/sh’.</p>
+<pre><code class="lang-auto">section .text
+        global _start
+
+_start:
+        mov rax, 0x3b           ; SYS_exec
+        mov rdx, 0              ; No Env
+        mov rsi, 0              ; No argv
+        mov rdi, cmd            ; char *cmd
+        syscall
+
+cmd:    db '/bin/sh',0
+
+</code></pre>
+<p>Wow!.. it is roughly the same program that the <code>Hello World</code> we wrote before!!!. Are you missing the <code>exit</code> system call?.. take a look to the exec man page (<code>man 2 exec</code>) to know why we do not need it any more.</p>
+<h2><a name="p-6098-binsh-12" class="anchor" href="https://d.clarkee.co.uk#p-6098-binsh-12"></a><code>/bin/sh</code></h2>
+<p>You may be wondering: why <code>/bin/sh</code>?. I always use <code>bash</code>, or <code>dash</code>, or <code>zsh</code>, or <code>ksh</code>,…  Sure, you can run many different shells (command interpreters) but in almost any Unix out there, independently of the actual shell you usually use, you always will have <code>/bin/sh</code>. In general, it is a soft link to a real shell.</p>
+<p>The reason for this, at least one of them, is that the system runs a lot of shell scripts for doing different things. You have shell scripts executed during the boot process, whenever you start or stop a service, when you launch some applications,… Imagine that whenever a user wants to change its default shell, the system will have to update all those scripts… what about the ones you wrote on your own, those the system knows nothing about… they will just break.</p>
+<p>Therefore, as a convention, all Unix system have a binary at <code>/bin/sh</code> that runs a shell and all shell scripts rely on the existence of that file… Well… not all Unix system. Keep reading.</p>
+<h1><a name="p-6098-arm-shell-code-13" class="anchor" href="https://d.clarkee.co.uk#p-6098-arm-shell-code-13"></a>ARM Shell code</h1>
+<p>So, we should be able to port our x86_64 asm shell code to ARM very easily. In case you are feeling lazy, this is how it may look like.</p>
+<pre><code class="lang-auto">.text
+.globl _start
+
+_start:	mov r7, #11
+	mov r1, #0
+	mov r2, #0
+	ldr r0,=msg
+	swi #0
+
+
+.data
+msg:
+	.asciz "/system/bin/sh"
+</code></pre>
+<p>have you seen it?.. sure, this code is for Android. Android had mesh up the standard Linux disk tree, and the default shell is no longer at <code>/bin/sh</code> but at <code>/system/bin/sh</code>. If you are going to test the code in another ARM platform as a BeagleBone Black, a BananaPi or an Olinuxino running a standard Linux distro (usually Debian), just change the string to the well-known location <code>/bin/sh</code>. The rest of the code should just work.</p>
+<p>We can compile it like this:</p>
+<pre><code>$ arm-linux-gnueabi-as -o sh-arm.o sh-arm.s
+$ arm-linux-gnueabi-ld -o sh-arm sh-arm.o
+</code></pre>
+<p>Let’s take a closer look to the code. Did you notice it?. Yes, there are some differences when compared to our Intel code. This is for two reasons. The first one is that <code>NASM</code> only produces code for intel processors, so we cannot use it for ARM. You should had noted this before… I’m amaze nobody had asked about this from the previous parts. Anyways, the syntax of the GNU assembler (<code>as</code>) is slightly different. This one is known as AT&amp;T assembly whereas the one used by <code>NASM</code> is known as Intel assembly… As a wannabe hacker you should learn both <img src="https://d.clarkee.co.uk/images/emoji/twitter/stuck_out_tongue.png?v=15" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:" loading="lazy" width="20" height="20"></p>
+<p>So, the GNU assembler uses the assembler instruction <code>.asciz</code> to add a zero-terminated ASCII string to the memory. It is the same thing that the <code>nasm</code> <code>db</code>, but automatically adding the 0 at the end. The second comment is that we have to use <code>ldr</code> to load our pointer in our <code>r0</code> register.</p>
+<p>Well, <code>ldr</code> is an ARM <strong>pseudo-instruction</strong>. The bottom line is that you cannot directly load 32bits values into a register in an ARM processor. I will not go into the details (you can google it), but roughly, ARM produces a very compact machine code, and tries to encode a lot of information on each 32bits machine code word, including the mnemonic parameters. This limits the size of the values that can be directly loaded into a register. The <code>ldr</code> pseudo instruction is expanded by the assembler in the right sequence of instruction to load a 32bits value in a register. There are more pseudo-instructions for ARM and we will go through them as needed.</p>
+<p>The conclusion of all this is that, for ARM you have to use the syntax above to load a 32 bits constant or address (which in practical terms are the same thing) into a register.</p>
+<h1><a name="p-6098-mips-14" class="anchor" href="https://d.clarkee.co.uk#p-6098-mips-14"></a>MIPS</h1>
+<p>OK guys. My MIPS setup is so crappy that it is a pain to keep including it in this course. If any of you wants to contribute this section, just let me know. Until I get this development environment sorted out I will skip the MIPS sections from now on.</p>
+<h1><a name="p-6098-conclusions-15" class="anchor" href="https://d.clarkee.co.uk#p-6098-conclusions-15"></a>Conclusions</h1>
+<p>In this part we have had our first encounter with pointers at the lowest level and we have learn how to use them together with a system call. Using these two simple concepts we manage to create a shell code. This shell code is not usable in the wild, but you will learn how to update it for practical purposes later in this course. If you cannot wait, check the <span class="mention">@unh0lys0da</span>   article here <a href="https://0x00sec.org/t/linux-shellcoding-part-1-0/289" rel="noopener nofollow ugc">https://0x00sec.org/t/linux-shellcoding-part-1-0/289</a> or the read classical “Smashing the Stack for Fun and Profit” from Aleph one!</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279/1</link>
+        <pubDate>Mon, 14 Nov 2016 22:56:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1279-1</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-for-wannabees-part-iii-your-first-shell-code/1279.rss">Programming for Wannabees. Part III. Your first Shell Code</source>
+      </item>
+  </channel>
+</rss>

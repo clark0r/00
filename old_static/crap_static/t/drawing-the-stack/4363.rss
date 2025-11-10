@@ -1,0 +1,1186 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Drawing the Stack</title>
+    <link>https://0x00sec.org/t/drawing-the-stack/4363</link>
+    <description># Intro
+
+I&#39;m new to everything demonstrated below, so be forewarned of potential errors.  This technique of drawing the stack was something a professor hammered into the class this year.  Let&#39;s dive in!
+
+#### Author Assigned Level: Newbie
+#### Community Assigned Level:
+[poll type=regular]
+* Newbie
+* Wannabe
+* Hacker
+* Wizard
+* Guru
+[/poll]
+
+#### Required Skills
+Since C and Assembly are used, C and Assembly would be useful to know before reading.  The examples, however, should be simple enough for any beginner to read and understand from context.
+
+# C
+
+Nothing fancy here:
+```
+#include &lt;stdio.h&gt;
+
+int callMe(int num1, int num2);
+
+int main() {
+	int a = 0;
+	int b = 2;
+	int c = callMe(a, b);
+	printf(&quot;%d\n&quot;, c);
+	return 0;
+}
+
+int callMe(int num1, int num2) {
+	int ans = num1+num2;
+	return ans;
+}
+
+```
+
+# Assembly
+
+```
+   ; main()
+   &lt;+0&gt;:	push   rbp
+   &lt;+1&gt;:	mov    rbp,rsp
+   &lt;+4&gt;:	sub    rsp,0x10
+   &lt;+8&gt;:	mov    DWORD PTR [rbp-0xc],0x0
+   &lt;+15&gt;:	mov    DWORD PTR [rbp-0x8],0x2
+   &lt;+22&gt;:	mov    edx,DWORD PTR [rbp-0x8]
+   &lt;+25&gt;:	mov    eax,DWORD PTR [rbp-0xc]
+   &lt;+28&gt;:	mov    esi,edx
+   &lt;+30&gt;:	mov    edi,eax
+   &lt;+32&gt;:	call   0x68f &lt;callMe&gt;
+   &lt;+37&gt;:	mov    DWORD PTR [rbp-0x4],eax
+   &lt;+40&gt;:	mov    eax,DWORD PTR [rbp-0x4]
+   &lt;+43&gt;:	mov    esi,eax
+   &lt;+45&gt;:	lea    rdi,[rip+0xb6]        # 0x734
+   &lt;+52&gt;:	mov    eax,0x0
+   &lt;+57&gt;:	call   0x530 &lt;printf@plt&gt;
+   &lt;+62&gt;:	mov    eax,0x0
+   &lt;+67&gt;:	leave  
+   &lt;+68&gt;:	ret    
+
+   ; callMe()
+   &lt;+0&gt;:	push   rbp
+   &lt;+1&gt;:	mov    rbp,rsp
+   &lt;+4&gt;:	mov    DWORD PTR [rbp-0x14],edi
+   &lt;+7&gt;:	mov    DWORD PTR [rbp-0x18],esi
+   &lt;+10&gt;:	mov    edx,DWORD PTR [rbp-0x14]
+   &lt;+13&gt;:	mov    eax,DWORD PTR [rbp-0x18]
+   &lt;+16&gt;:	add    eax,edx
+   &lt;+18&gt;:	mov    DWORD PTR [rbp-0x4],eax
+   &lt;+21&gt;:	mov    eax,DWORD PTR [rbp-0x4]
+   &lt;+24&gt;:	pop    rbp
+   &lt;+25&gt;:	ret
+```
+In short, `main()` passes `a` and `b` to `callMe()` through `edi` and `esi`, which returns `a + b` in `eax`.
+
+---
+
+# The stack
+Now that we can see the assembly, we can draw out exactly how the stack looks and have a better understanding of what our code is doing.  A practical use for drawing the stack is for debugging, but it&#39;s also a fun exercise (which is what spawned this topic)!
+
+The stack grows from high addresses to low addresses, top to bottom.  Typically, we reason about the stack such that the low addresses are on top; in this sense, we will be using an &quot;inverted stack&quot; in our depictions.
+
+#### `main()`: lines `&lt;+0&gt;` and `&lt;+1&gt;`
+```
+   &lt;+0&gt;:	push   rbp
+   &lt;+1&gt;:	mov    rbp,rsp
+```
+
+The very first stack modification is `push rbp`, from `main()`.  `rbp` is a 64 bit register, so it takes up 4 rows on the stack (each row is word-sized, which is 2 bytes):
+
+    &lt; high addresses &gt;
+    |      |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RBP and RSP (main)
+    |------|
+    |      |
+    &lt; low addresses &gt;
+
+`rbp` is used as a helper register for performing stack functions.  It is used as a &quot;base&quot; when traversing up or down through the stack.  Using `rbp` in this manner is also a way to setup and use local variables, which we will talk about later on.
+
+A common analogy for this technique is &quot;dropping an anchor&quot;.  `rsp` changes constantly, as the stack grows and shrinks; copying its current value to `rbp` &quot;anchors&quot; it for however you want to use it, while still allowing you to push and pop.
+
+Moving on!
+
+---
+
+#### `main()`: line `&lt;+4&gt;`
+```
+   &lt;+4&gt;:	sub    rsp,0x10
+```
+This instruction makes space on the stack to store local variables, in our case `int a` and `int b`, both 32-bits.  Now I know I said we shouldn&#39;t mess with `rsp`, but moving the stack pointer is how you can create local variables.
+
+Since `a` and `b` are both integers, we need to allocate a minimum of 64 bits on the stack.  On this line, we can see that 16 bytes have been allocated, by subtracting `0x10` from `rsp`&#39;s current value.  Here is what our stack looks like after this instruction:
+
+    |      |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RBP (main)
+    |------|
+    |      | -0x2
+    |------|
+    |      | -0x4
+    |------|
+    |      | -0x6
+    |------|
+    |      | -0x8
+    |------|
+    |      | -0xa
+    |------|
+    |      | -0xc
+    |------|
+    |      | -0xe
+    |------|
+    |      | &lt;-- RSP (main)
+    |------|
+    |      |
+Now that we have this space allocated, `rsp` is once again &quot;fixed&quot; to it&#39;s current location; we can use `rbp` to access the spaces allocated by `rsp`.  
+
+As we will see, this is done by subtracting some number of bytes, 0xn, such that `[rsp-0xn]` points to the last byte.  How far up to _read_ is determined by another factor, which we will see below.
+
+----
+#### `main()`: lines `&lt;+8&gt;` - `&lt;+25&gt;`
+```
+   &lt;+8&gt;:	mov    DWORD PTR [rbp-0xc],0x0
+   &lt;+15&gt;:	mov    DWORD PTR [rbp-0x8],0x2
+   &lt;+22&gt;:	mov    edx,DWORD PTR [rbp-0x8]
+   &lt;+25&gt;:	mov    eax,DWORD PTR [rbp-0xc]
+```
+Within the first two lines, we are initializing our local variables, `a` and `b`, to `0` and `2`, respectively.  
+
+When accessing the stack, the assembler cannot infer the size of the object we want to retrieve (or set); so we have to specify it ourselves.  `DWORD PTR [rbp-0xc]` tells the assembler &quot;hey, we want you to look at the value at `[rbp-0xc]` and read 4 bytes (2 words, specified by `DWORD`)&quot;.
+
+When we are accessing the stack, I mentioned that `[rsp-0xn]`, for some hex `n`, points to the &quot;last byte&quot;: this is specifically the last byte of the size you specify.  So for `DWORD PTR [rbp-0xc]`, the assembler goes to `[rbp-0xc]` on the stack, and then reads &quot;up&quot; 4 bytes.
+
+With that said, here&#39;s how our stack looks now that some values have been initialized:
+
+    |      |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RBP (main)
+    |------|
+    |      | -0x2
+    |------|
+    |      | -0x4
+    |------|
+    | 0000 | -0x6  \
+    |------|        | int b = 2;
+    | 0002 | -0x8  /
+    |------|
+    | 0000 | -0xa  \
+    |------|        | int a = 0;
+    | 0000 | -0xc  /
+    |------|
+    |      | -0xe
+    |------|
+    |      | &lt;-- RSP (main)
+    |------|
+    |      |
+* _Note_: for the purposes of this tutorial, we will not take into account endianness
+
+As you can clearly see, we have initialized some local variables on the stack _without_ modifying `rsp` or `rbp`.
+
+The other two lines do not modify the stack, but simply retrieve values from it.  This notation is of the same manner that adding things _to_ the stack is, except the memory operand is the 2nd operand of the instruction (and not the 1st).
+
+The important thing to note is that we have copied `a` into `eax` and `b` into `edx`.
+
+Onward!
+
+---
+#### `main()`: lines `&lt;+28&gt;` - `&lt;+30&gt;`
+```
+   &lt;+28&gt;:	mov    esi,edx
+   &lt;+30&gt;:	mov    edi,eax
+   &lt;+32&gt;:	call   0x68f &lt;callMe&gt;
+```
+These first two lines are nothing special: we are moving `a` into `edi` and `b` into `esi`.  These two registers are used to pass the arguments to the `callMe()` function, which is what happens next.
+
+When the `call` instruction is executed, it pushes the address of the next instruction onto the stack (`rip`); it then copies the address of the called procedure into `rip`.  This modifies our stack:
+
+    |      |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RBP (main)
+    |------|
+    |      | -0x2
+    |------|
+    |      | -0x4
+    |------|
+    | 0000 | -0x6  \
+    |------|        | int b = 2;
+    | 0002 | -0x8  /
+    |------|
+    | **** |          * int a was overwritten,
+    |------|            as it is never used again
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RIP (main)
+    |------|
+    |      |
+At this point, we are now in `callMe()`.
+
+---
+#### `callMe()`: lines `&lt;+0&gt;` and `&lt;+1&gt;`
+```
+   &lt;+0&gt;:	push   rbp
+   &lt;+1&gt;:	mov    rbp,rsp
+```
+This should look familiar...
+
+We are once again dropping an anchor, this time saving &quot;old&quot; `rbp`&#39;s value (since we use it again after this function returns).  Here&#39;s how  our stack looks now:
+
+    |      |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    |      | 
+    |------|
+    |      | 
+    |------|
+    | 0000 | 
+    |------|        
+    | 0002 | 
+    |------|
+    | **** |         
+    |------|  
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RIP (main)
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RBP (callMe)
+    |------|
+    |      |
+One important thing to notice here is that we didn&#39;t modify `rsp`.  This is because we want the stack to &quot;look the same&quot; when we enter and leave a function.  This will be covered in a bit more detail later on.
+
+---
+#### `callMe()`: lines `&lt;+4&gt;` - `&lt;+13&gt;`
+```
+   &lt;+4&gt;:	mov    DWORD PTR [rbp-0x14],edi
+   &lt;+7&gt;:	mov    DWORD PTR [rbp-0x18],esi
+   &lt;+10&gt;:	mov    edx,DWORD PTR [rbp-0x14]
+   &lt;+13&gt;:	mov    eax,DWORD PTR [rbp-0x18]
+```
+These instructions should _also_ look familiar, as they were executed earlier almost verbatim.  The important difference is that in the first two lines here, we are initializing `int num1` and `int num2` with the values inside `edi` and `esi`, respectively.
+
+Here is how our stack looks after these instructions:
+
+    |      |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    |      | 
+    |------|
+    |      | 
+    |------|
+    | 0000 | 
+    |------|        
+    | 0002 | 
+    |------|
+    | **** |         
+    |------|  
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RIP (main)
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RBP, RSP (callMe)
+    |------|
+    |      | -0x2
+    |------|
+    |      | -0x4
+    |------|
+    |      | -0x6     
+    |------|
+    |      | -0x8
+    |------|
+    |      | -0xA     
+    |------|
+    |      | -0xC
+    |------|
+    |      | -0xE     
+    |------|
+    |      | -0x10
+    |------|
+    | 0000 | -0x12    
+    |------|
+    | 0000 | -0x14
+    |------|
+    | 0000 | -0x16    
+    |------|
+    | 0002 | -0x18
+    |------|
+    |      |
+You will notice that assembly provided us with _way_ more stack space than necessary; I am not sure why that much padding is there, but the best answer I can find is [here](https://stackoverflow.com/questions/9862017/stack-allocation-why-the-extra-space).  Please join in on the discussion in the comments if you can explain this further.
+
+Now to the guts of this function!
+
+-----
+#### `callMe()`: lines `&lt;+16&gt;` - `&lt;+21&gt;`
+```
+   &lt;+16&gt;:	add    eax,edx
+   &lt;+18&gt;:	mov    DWORD PTR [rbp-0x4],eax
+   &lt;+21&gt;:	mov    eax,DWORD PTR [rbp-0x4]
+```
+These instructions are pretty straight forward: add `b` and `a` and store that value on the stack:
+
+    |      |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    |      | 
+    |------|
+    |      | 
+    |------|
+    | 0000 | 
+    |------|        
+    | 0002 | 
+    |------|
+    | **** |         
+    |------|  
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RIP (main)
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RBP, RSP (callMe)
+    |------|
+    | 0000 | -0x2
+    |------|
+    | 0002 | -0x4
+    |------|
+    |      | -0x6     
+    |------|
+    |      | -0x8
+    |------|
+    |      | -0xA     
+    |------|
+    |      | -0xC
+    |------|
+    |      | -0xE     
+    |------|
+    |      | -0x10
+    |------|
+    | 0000 | -0x12    
+    |------|
+    | 0000 | -0x14
+    |------|
+    | 0000 | -0x16    
+    |------|
+    | 0002 | -0x18
+    |------|
+    |      |
+We then pull that value back into `eax` and move on.
+
+----
+#### `callMe()`: lines `&lt;+24&gt;` and `&lt;+25&gt;`
+```
+   &lt;+24&gt;:	pop    rbp
+   &lt;+25&gt;:	ret
+```
+This first line is what I mentioned earlier: we want the stack to look the same when we _leave_ a function as it did when we entered.  Because we never modified `rsp` within `callMe()`, it is still pointing to `rbp`&#39;s old value from when we used it in `main()`.
+
+The other &quot;cool&quot; thing about not shifting `rsp` on this go around has to do with `ret`.  When `ret` is executed, it pops the top of the stack into `rip`.  After popping `rbp`, `rsp` points to `main()`&#39;s return address.  This means that those variables we just stored on the stack within `callMe()` will get &quot;wiped out&quot;.
+
+Now I put &quot;wiped out&quot; in quotes because what&#39;s actually happening is that `rsp` changes and we lose access to those locals.  They don&#39;t get erased though (until `rsp` overwrites them), which raises some fun vulnerabilities outside the scope of this tutorial.
+
+As you can see, popping `rbp` and `ret`urning significantly changes our stack:
+
+    |      |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RBP (main)
+    |------|
+    |      | 
+    |------|
+    |      | 
+    |------|
+    | 0000 | 
+    |------|        
+    | 0002 | &lt;-- RSP (main)
+    |------|
+    |      |
+`rbp` has been restored to its original (to `main()`) value, and `rsp` is pointing to the first byte preceding `rip` (before it was popped).
+
+Onto the final instructions!
+
+---
+#### `main()`: line `&lt;+37&gt;`
+```
+   &lt;+37&gt;:	mov    DWORD PTR [rbp-0x4],eax
+```
+`callMe()` passed our answer (`2`) back to `main()` inside `eax`; this instruction simply stores that value on the stack:
+
+    |      |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** |
+    |------|
+    | **** | &lt;-- RBP (main)
+    |------|
+    | 0000 | -0x2
+    |------|
+    | 0002 | -0x4
+    |------|
+    | 0000 | 
+    |------|        
+    | 0002 | &lt;-- RSP (main)
+    |------|
+    |      |
+BOOM!
+
+At this point, we have saved `a+b` on the stack and, for the purposes of this tutorial, we are finished.  The next set of instructions is setting up to `printf()` our calculated value, but we have covered all the fun stuff now.
+
+---
+# Conclusions
+Drawing the stack can help you debug, explore vulnerabilities, or kill some time; it assists in giving you an empirical understanding of exactly what a program is doing.
+
+This example was simple (yet still required a long-winded post), but you can do this for anything you want.
+
+Carry on!</description>
+    
+    <lastBuildDate>Thu, 16 Nov 2017 17:45:45 +0000</lastBuildDate>
+    <category>Reverse Engineering</category>
+    <atom:link href="https://0x00sec.org/t/drawing-the-stack/4363.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/12</link>
+        <pubDate>Sat, 16 Dec 2017 04:09:28 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-12</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="Noswis" data-post="7" data-topic="4363">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/letter_avatar_proxy/v4/letter/n/ba8739/40.png" class="avatar"> Noswis:</div>
+<blockquote>
+<p>I meant that the stack starts off from high memory addresses and grows towards lower memory</p>
+</blockquote>
+</aside>
+<p>That is not always the case, but it is true that is the most common case. This is actually platform/processor dependant.</p>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/11</link>
+        <pubDate>Thu, 16 Nov 2017 17:45:45 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-11</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m just messin’ with ya guys haha. But just a heads up for anyone who doesn’t follow your convention.</p>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/10</link>
+        <pubDate>Thu, 16 Nov 2017 11:04:42 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-10</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[fi6uh]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="Noswis" data-post="7" data-topic="4363">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/letter_avatar_proxy/v4/letter/n/ba8739/40.png" class="avatar"> Noswis:</div>
+<blockquote>
+<p>the stack starts off from high memory addresses and grows towards lower memory addresses</p>
+</blockquote>
+</aside>
+<p>This is the way I was taught to reason about the stack in school, so it is just the way that I do it.  I can make more clear in the beginning the direction of high to low addressing.</p>
+<p>Hopefully this clears any possible confusion for <a class="mention" href="https://0x00sec.org/u/dtm">@dtm</a> and others</p>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/9</link>
+        <pubDate>Thu, 16 Nov 2017 10:18:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-9</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[fi6uh]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="_py" data-post="3" data-topic="4363">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/_py/40/4275_2.png" class="avatar"> _py:</div>
+<blockquote>
+<p>[1] rbp/ebp is vital for main()’s and any other function’s well being.</p>
+</blockquote>
+</aside>
+<p>Poor choice of words on my part.   Obviously we care what it is, because we push it; I was trying to convey that we don’t care about the literal value for drawing the stack</p>
+<aside class="quote no-group" data-username="_py" data-post="3" data-topic="4363">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/_py/40/4275_2.png" class="avatar"> _py:</div>
+<blockquote>
+<p>[2] There are many cases where rsp/esp is used to refer to local variables.</p>
+</blockquote>
+</aside>
+<p>I thought the later section(s) covered this, but I can make it more clear early on.</p>
+<p>Thanks!</p>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/8</link>
+        <pubDate>Thu, 16 Nov 2017 10:16:20 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-8</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[Noswis]]></dc:creator>
+        <description><![CDATA[
+            <p>Well, I meant that the stack starts off from high memory addresses and grows towards lower memory addresses, so it would be intuitive to follow the direction of the stack growth imo. But yeah, people should view it the way that works best for them. <img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"></p>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/7</link>
+        <pubDate>Thu, 16 Nov 2017 09:53:30 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-7</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="Noswis" data-post="5" data-topic="4363">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/letter_avatar_proxy/v4/letter/n/ba8739/40.png" class="avatar"> Noswis:</div>
+<blockquote>
+<p>Addresses go from high to low, so it makes sense that subtracting would mean going down</p>
+</blockquote>
+</aside>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/21d85f025391619e0cc13ad9cf6e30e4c4c13d9e.png" width="445" height="500"></p>
+<p>Your downwards is a very strange direction. Or maybe it’s because I live in the southern hemisphere? <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<div class="spoiler"><a href="https://0x00sec.org/t/drawing-the-stack/4363/6">spoiler</a></div>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/6</link>
+        <pubDate>Thu, 16 Nov 2017 09:41:06 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-6</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[Noswis]]></dc:creator>
+        <description><![CDATA[
+            <p>I find it more intuitive to use the notation used here. Addresses go from high to low, so it makes sense that subtracting would mean going down on the stack instead of the other way around. Yes, an inverted stack would make no sense in real life but I think it’s easier to grasp the concept of the stack in this context when it is presented in this way.</p>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/5</link>
+        <pubDate>Thu, 16 Nov 2017 09:20:10 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-5</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group quote-modified" data-username="fi6uh" data-post="1" data-topic="4363">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/fi6uh/40/4690_2.png" class="avatar"> fi6uh:</div>
+<blockquote>
+<p>We don’t really care what is in rbp, but we push it for a couple reasons:</p>
+<p>For main(), rbp doesn’t contain anything necessary, but it could; therefore, we push it.<br>
+We don’t want to mess around with rsp unless necessary.  So instead, we push rbp and then copy rsp’s current value into rbp.  Then we can manipulate the stack without modifying rsp.</p>
+</blockquote>
+</aside>
+<p>[1] rbp/ebp is vital for main()’s and any other function’s well being. It works as a boundary between the local variables and the arguments of a function (mostly on 32-bit but function arguments are also pushed on the stack after a certain number of arguments on 64-bit). Actually its usage is so important that tampering with its value is an exploitation technique called stack pivoting (google is your friend <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> ).</p>
+<p>[2] There are many cases where rsp/esp is used to refer to local variables.</p>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/3</link>
+        <pubDate>Thu, 16 Nov 2017 06:08:53 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-3</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Stacks go up, not down. The lower addresses are towards the top, not the bottom, so subtracting means going up. <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<p>Also, I would not put the <code>rip</code> label on the stack view because it might be confusing to people as it is constantly changing values whereas <code>rsp</code> and <code>rbp</code> may stay the same.</p>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/2</link>
+        <pubDate>Thu, 16 Nov 2017 05:18:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-2</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+      <item>
+        <title>Drawing the Stack</title>
+        <dc:creator><![CDATA[fi6uh]]></dc:creator>
+        <description><![CDATA[
+            <h1>Intro</h1>
+<p>I’m new to everything demonstrated below, so be forewarned of potential errors.  This technique of drawing the stack was something a professor hammered into the class this year.  Let’s dive in!</p>
+<h4>Author Assigned Level: Newbie</h4>
+<h4>Community Assigned Level:</h4>
+<p><a href="https://0x00sec.org/t/drawing-the-stack/4363/1">Click to view the poll.</a></p>
+<h4>Required Skills</h4>
+<p>Since C and Assembly are used, C and Assembly would be useful to know before reading.  The examples, however, should be simple enough for any beginner to read and understand from context.</p>
+<h1>C</h1>
+<p>Nothing fancy here:</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+
+int callMe(int num1, int num2);
+
+int main() {
+	int a = 0;
+	int b = 2;
+	int c = callMe(a, b);
+	printf("%d\n", c);
+	return 0;
+}
+
+int callMe(int num1, int num2) {
+	int ans = num1+num2;
+	return ans;
+}
+
+</code></pre>
+<h1>Assembly</h1>
+<pre><code class="lang-auto">   ; main()
+   &lt;+0&gt;:	push   rbp
+   &lt;+1&gt;:	mov    rbp,rsp
+   &lt;+4&gt;:	sub    rsp,0x10
+   &lt;+8&gt;:	mov    DWORD PTR [rbp-0xc],0x0
+   &lt;+15&gt;:	mov    DWORD PTR [rbp-0x8],0x2
+   &lt;+22&gt;:	mov    edx,DWORD PTR [rbp-0x8]
+   &lt;+25&gt;:	mov    eax,DWORD PTR [rbp-0xc]
+   &lt;+28&gt;:	mov    esi,edx
+   &lt;+30&gt;:	mov    edi,eax
+   &lt;+32&gt;:	call   0x68f &lt;callMe&gt;
+   &lt;+37&gt;:	mov    DWORD PTR [rbp-0x4],eax
+   &lt;+40&gt;:	mov    eax,DWORD PTR [rbp-0x4]
+   &lt;+43&gt;:	mov    esi,eax
+   &lt;+45&gt;:	lea    rdi,[rip+0xb6]        # 0x734
+   &lt;+52&gt;:	mov    eax,0x0
+   &lt;+57&gt;:	call   0x530 &lt;printf@plt&gt;
+   &lt;+62&gt;:	mov    eax,0x0
+   &lt;+67&gt;:	leave  
+   &lt;+68&gt;:	ret    
+
+   ; callMe()
+   &lt;+0&gt;:	push   rbp
+   &lt;+1&gt;:	mov    rbp,rsp
+   &lt;+4&gt;:	mov    DWORD PTR [rbp-0x14],edi
+   &lt;+7&gt;:	mov    DWORD PTR [rbp-0x18],esi
+   &lt;+10&gt;:	mov    edx,DWORD PTR [rbp-0x14]
+   &lt;+13&gt;:	mov    eax,DWORD PTR [rbp-0x18]
+   &lt;+16&gt;:	add    eax,edx
+   &lt;+18&gt;:	mov    DWORD PTR [rbp-0x4],eax
+   &lt;+21&gt;:	mov    eax,DWORD PTR [rbp-0x4]
+   &lt;+24&gt;:	pop    rbp
+   &lt;+25&gt;:	ret
+</code></pre>
+<p>In short, <code>main()</code> passes <code>a</code> and <code>b</code> to <code>callMe()</code> through <code>edi</code> and <code>esi</code>, which returns <code>a + b</code> in <code>eax</code>.</p>
+<hr>
+<h1>The stack</h1>
+<p>Now that we can see the assembly, we can draw out exactly how the stack looks and have a better understanding of what our code is doing.  A practical use for drawing the stack is for debugging, but it’s also a fun exercise (which is what spawned this topic)!</p>
+<p>The stack grows from high addresses to low addresses, top to bottom.  Typically, we reason about the stack such that the low addresses are on top; in this sense, we will be using an “inverted stack” in our depictions.</p>
+<h4>
+<code>main()</code>: lines <code>&lt;+0&gt;</code> and <code>&lt;+1&gt;</code>
+</h4>
+<pre><code class="lang-auto">   &lt;+0&gt;:	push   rbp
+   &lt;+1&gt;:	mov    rbp,rsp
+</code></pre>
+<p>The very first stack modification is <code>push rbp</code>, from <code>main()</code>.  <code>rbp</code> is a 64 bit register, so it takes up 4 rows on the stack (each row is word-sized, which is 2 bytes):</p>
+<pre><code>&lt; high addresses &gt;
+|      |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RBP and RSP (main)
+|------|
+|      |
+&lt; low addresses &gt;
+</code></pre>
+<p><code>rbp</code> is used as a helper register for performing stack functions.  It is used as a “base” when traversing up or down through the stack.  Using <code>rbp</code> in this manner is also a way to setup and use local variables, which we will talk about later on.</p>
+<p>A common analogy for this technique is “dropping an anchor”.  <code>rsp</code> changes constantly, as the stack grows and shrinks; copying its current value to <code>rbp</code> “anchors” it for however you want to use it, while still allowing you to push and pop.</p>
+<p>Moving on!</p>
+<hr>
+<h4>
+<code>main()</code>: line <code>&lt;+4&gt;</code>
+</h4>
+<pre><code class="lang-auto">   &lt;+4&gt;:	sub    rsp,0x10
+</code></pre>
+<p>This instruction makes space on the stack to store local variables, in our case <code>int a</code> and <code>int b</code>, both 32-bits.  Now I know I said we shouldn’t mess with <code>rsp</code>, but moving the stack pointer is how you can create local variables.</p>
+<p>Since <code>a</code> and <code>b</code> are both integers, we need to allocate a minimum of 64 bits on the stack.  On this line, we can see that 16 bytes have been allocated, by subtracting <code>0x10</code> from <code>rsp</code>'s current value.  Here is what our stack looks like after this instruction:</p>
+<pre><code>|      |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RBP (main)
+|------|
+|      | -0x2
+|------|
+|      | -0x4
+|------|
+|      | -0x6
+|------|
+|      | -0x8
+|------|
+|      | -0xa
+|------|
+|      | -0xc
+|------|
+|      | -0xe
+|------|
+|      | &lt;-- RSP (main)
+|------|
+|      |
+</code></pre>
+<p>Now that we have this space allocated, <code>rsp</code> is once again “fixed” to it’s current location; we can use <code>rbp</code> to access the spaces allocated by <code>rsp</code>.</p>
+<p>As we will see, this is done by subtracting some number of bytes, 0xn, such that <code>[rsp-0xn]</code> points to the last byte.  How far up to <em>read</em> is determined by another factor, which we will see below.</p>
+<hr>
+<h4>
+<code>main()</code>: lines <code>&lt;+8&gt;</code> - <code>&lt;+25&gt;</code>
+</h4>
+<pre><code class="lang-auto">   &lt;+8&gt;:	mov    DWORD PTR [rbp-0xc],0x0
+   &lt;+15&gt;:	mov    DWORD PTR [rbp-0x8],0x2
+   &lt;+22&gt;:	mov    edx,DWORD PTR [rbp-0x8]
+   &lt;+25&gt;:	mov    eax,DWORD PTR [rbp-0xc]
+</code></pre>
+<p>Within the first two lines, we are initializing our local variables, <code>a</code> and <code>b</code>, to <code>0</code> and <code>2</code>, respectively.</p>
+<p>When accessing the stack, the assembler cannot infer the size of the object we want to retrieve (or set); so we have to specify it ourselves.  <code>DWORD PTR [rbp-0xc]</code> tells the assembler “hey, we want you to look at the value at <code>[rbp-0xc]</code> and read 4 bytes (2 words, specified by <code>DWORD</code>)”.</p>
+<p>When we are accessing the stack, I mentioned that <code>[rsp-0xn]</code>, for some hex <code>n</code>, points to the “last byte”: this is specifically the last byte of the size you specify.  So for <code>DWORD PTR [rbp-0xc]</code>, the assembler goes to <code>[rbp-0xc]</code> on the stack, and then reads “up” 4 bytes.</p>
+<p>With that said, here’s how our stack looks now that some values have been initialized:</p>
+<pre><code>|      |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RBP (main)
+|------|
+|      | -0x2
+|------|
+|      | -0x4
+|------|
+| 0000 | -0x6  \
+|------|        | int b = 2;
+| 0002 | -0x8  /
+|------|
+| 0000 | -0xa  \
+|------|        | int a = 0;
+| 0000 | -0xc  /
+|------|
+|      | -0xe
+|------|
+|      | &lt;-- RSP (main)
+|------|
+|      |
+</code></pre>
+<ul>
+<li>
+<em>Note</em>: for the purposes of this tutorial, we will not take into account endianness</li>
+</ul>
+<p>As you can clearly see, we have initialized some local variables on the stack <em>without</em> modifying <code>rsp</code> or <code>rbp</code>.</p>
+<p>The other two lines do not modify the stack, but simply retrieve values from it.  This notation is of the same manner that adding things <em>to</em> the stack is, except the memory operand is the 2nd operand of the instruction (and not the 1st).</p>
+<p>The important thing to note is that we have copied <code>a</code> into <code>eax</code> and <code>b</code> into <code>edx</code>.</p>
+<p>Onward!</p>
+<hr>
+<h4>
+<code>main()</code>: lines <code>&lt;+28&gt;</code> - <code>&lt;+30&gt;</code>
+</h4>
+<pre><code class="lang-auto">   &lt;+28&gt;:	mov    esi,edx
+   &lt;+30&gt;:	mov    edi,eax
+   &lt;+32&gt;:	call   0x68f &lt;callMe&gt;
+</code></pre>
+<p>These first two lines are nothing special: we are moving <code>a</code> into <code>edi</code> and <code>b</code> into <code>esi</code>.  These two registers are used to pass the arguments to the <code>callMe()</code> function, which is what happens next.</p>
+<p>When the <code>call</code> instruction is executed, it pushes the address of the next instruction onto the stack (<code>rip</code>); it then copies the address of the called procedure into <code>rip</code>.  This modifies our stack:</p>
+<pre><code>|      |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RBP (main)
+|------|
+|      | -0x2
+|------|
+|      | -0x4
+|------|
+| 0000 | -0x6  \
+|------|        | int b = 2;
+| 0002 | -0x8  /
+|------|
+| **** |          * int a was overwritten,
+|------|            as it is never used again
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RIP (main)
+|------|
+|      |
+</code></pre>
+<p>At this point, we are now in <code>callMe()</code>.</p>
+<hr>
+<h4>
+<code>callMe()</code>: lines <code>&lt;+0&gt;</code> and <code>&lt;+1&gt;</code>
+</h4>
+<pre><code class="lang-auto">   &lt;+0&gt;:	push   rbp
+   &lt;+1&gt;:	mov    rbp,rsp
+</code></pre>
+<p>This should look familiar…</p>
+<p>We are once again dropping an anchor, this time saving “old” <code>rbp</code>'s value (since we use it again after this function returns).  Here’s how  our stack looks now:</p>
+<pre><code>|      |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+|      | 
+|------|
+|      | 
+|------|
+| 0000 | 
+|------|        
+| 0002 | 
+|------|
+| **** |         
+|------|  
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RIP (main)
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RBP (callMe)
+|------|
+|      |
+</code></pre>
+<p>One important thing to notice here is that we didn’t modify <code>rsp</code>.  This is because we want the stack to “look the same” when we enter and leave a function.  This will be covered in a bit more detail later on.</p>
+<hr>
+<h4>
+<code>callMe()</code>: lines <code>&lt;+4&gt;</code> - <code>&lt;+13&gt;</code>
+</h4>
+<pre><code class="lang-auto">   &lt;+4&gt;:	mov    DWORD PTR [rbp-0x14],edi
+   &lt;+7&gt;:	mov    DWORD PTR [rbp-0x18],esi
+   &lt;+10&gt;:	mov    edx,DWORD PTR [rbp-0x14]
+   &lt;+13&gt;:	mov    eax,DWORD PTR [rbp-0x18]
+</code></pre>
+<p>These instructions should <em>also</em> look familiar, as they were executed earlier almost verbatim.  The important difference is that in the first two lines here, we are initializing <code>int num1</code> and <code>int num2</code> with the values inside <code>edi</code> and <code>esi</code>, respectively.</p>
+<p>Here is how our stack looks after these instructions:</p>
+<pre><code>|      |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+|      | 
+|------|
+|      | 
+|------|
+| 0000 | 
+|------|        
+| 0002 | 
+|------|
+| **** |         
+|------|  
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RIP (main)
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RBP, RSP (callMe)
+|------|
+|      | -0x2
+|------|
+|      | -0x4
+|------|
+|      | -0x6     
+|------|
+|      | -0x8
+|------|
+|      | -0xA     
+|------|
+|      | -0xC
+|------|
+|      | -0xE     
+|------|
+|      | -0x10
+|------|
+| 0000 | -0x12    
+|------|
+| 0000 | -0x14
+|------|
+| 0000 | -0x16    
+|------|
+| 0002 | -0x18
+|------|
+|      |
+</code></pre>
+<p>You will notice that assembly provided us with <em>way</em> more stack space than necessary; I am not sure why that much padding is there, but the best answer I can find is <a href="https://stackoverflow.com/questions/9862017/stack-allocation-why-the-extra-space" rel="nofollow noopener">here</a>.  Please join in on the discussion in the comments if you can explain this further.</p>
+<p>Now to the guts of this function!</p>
+<hr>
+<h4>
+<code>callMe()</code>: lines <code>&lt;+16&gt;</code> - <code>&lt;+21&gt;</code>
+</h4>
+<pre><code class="lang-auto">   &lt;+16&gt;:	add    eax,edx
+   &lt;+18&gt;:	mov    DWORD PTR [rbp-0x4],eax
+   &lt;+21&gt;:	mov    eax,DWORD PTR [rbp-0x4]
+</code></pre>
+<p>These instructions are pretty straight forward: add <code>b</code> and <code>a</code> and store that value on the stack:</p>
+<pre><code>|      |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+|      | 
+|------|
+|      | 
+|------|
+| 0000 | 
+|------|        
+| 0002 | 
+|------|
+| **** |         
+|------|  
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RIP (main)
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RBP, RSP (callMe)
+|------|
+| 0000 | -0x2
+|------|
+| 0002 | -0x4
+|------|
+|      | -0x6     
+|------|
+|      | -0x8
+|------|
+|      | -0xA     
+|------|
+|      | -0xC
+|------|
+|      | -0xE     
+|------|
+|      | -0x10
+|------|
+| 0000 | -0x12    
+|------|
+| 0000 | -0x14
+|------|
+| 0000 | -0x16    
+|------|
+| 0002 | -0x18
+|------|
+|      |
+</code></pre>
+<p>We then pull that value back into <code>eax</code> and move on.</p>
+<hr>
+<h4>
+<code>callMe()</code>: lines <code>&lt;+24&gt;</code> and <code>&lt;+25&gt;</code>
+</h4>
+<pre><code class="lang-auto">   &lt;+24&gt;:	pop    rbp
+   &lt;+25&gt;:	ret
+</code></pre>
+<p>This first line is what I mentioned earlier: we want the stack to look the same when we <em>leave</em> a function as it did when we entered.  Because we never modified <code>rsp</code> within <code>callMe()</code>, it is still pointing to <code>rbp</code>'s old value from when we used it in <code>main()</code>.</p>
+<p>The other “cool” thing about not shifting <code>rsp</code> on this go around has to do with <code>ret</code>.  When <code>ret</code> is executed, it pops the top of the stack into <code>rip</code>.  After popping <code>rbp</code>, <code>rsp</code> points to <code>main()</code>'s return address.  This means that those variables we just stored on the stack within <code>callMe()</code> will get “wiped out”.</p>
+<p>Now I put “wiped out” in quotes because what’s actually happening is that <code>rsp</code> changes and we lose access to those locals.  They don’t get erased though (until <code>rsp</code> overwrites them), which raises some fun vulnerabilities outside the scope of this tutorial.</p>
+<p>As you can see, popping <code>rbp</code> and <code>ret</code>urning significantly changes our stack:</p>
+<pre><code>|      |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RBP (main)
+|------|
+|      | 
+|------|
+|      | 
+|------|
+| 0000 | 
+|------|        
+| 0002 | &lt;-- RSP (main)
+|------|
+|      |
+</code></pre>
+<p><code>rbp</code> has been restored to its original (to <code>main()</code>) value, and <code>rsp</code> is pointing to the first byte preceding <code>rip</code> (before it was popped).</p>
+<p>Onto the final instructions!</p>
+<hr>
+<h4>
+<code>main()</code>: line <code>&lt;+37&gt;</code>
+</h4>
+<pre><code class="lang-auto">   &lt;+37&gt;:	mov    DWORD PTR [rbp-0x4],eax
+</code></pre>
+<p><code>callMe()</code> passed our answer (<code>2</code>) back to <code>main()</code> inside <code>eax</code>; this instruction simply stores that value on the stack:</p>
+<pre><code>|      |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** |
+|------|
+| **** | &lt;-- RBP (main)
+|------|
+| 0000 | -0x2
+|------|
+| 0002 | -0x4
+|------|
+| 0000 | 
+|------|        
+| 0002 | &lt;-- RSP (main)
+|------|
+|      |
+</code></pre>
+<p>BOOM!</p>
+<p>At this point, we have saved <code>a+b</code> on the stack and, for the purposes of this tutorial, we are finished.  The next set of instructions is setting up to <code>printf()</code> our calculated value, but we have covered all the fun stuff now.</p>
+<hr>
+<h1>Conclusions</h1>
+<p>Drawing the stack can help you debug, explore vulnerabilities, or kill some time; it assists in giving you an empirical understanding of exactly what a program is doing.</p>
+<p>This example was simple (yet still required a long-winded post), but you can do this for anything you want.</p>
+<p>Carry on!</p>
+          <p><a href="https://0x00sec.org/t/drawing-the-stack/4363/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/drawing-the-stack/4363/1</link>
+        <pubDate>Thu, 16 Nov 2017 03:31:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-4363-1</guid>
+        <source url="https://0x00sec.org/t/drawing-the-stack/4363.rss">Drawing the Stack</source>
+      </item>
+  </channel>
+</rss>

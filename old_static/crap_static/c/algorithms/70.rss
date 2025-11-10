@@ -1,0 +1,2651 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:discourse="http://www.discourse.org/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Algorithms - 0x00sec - The Home of the Hacker</title>
+    <link>https://0x00sec.org/c/algorithms/70</link>
+    <description>Topics in the &#39;Algorithms&#39; category </description>
+    
+      <lastBuildDate>Sun, 13 Nov 2022 22:00:14 +0000</lastBuildDate>
+      <atom:link href="https://0x00sec.org/c/algorithms/70.rss" rel="self" type="application/rss+xml" />
+        <item>
+          <title>Compression for P2P Networks</title>
+          <dc:creator><![CDATA[prometheus]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>I know there are algorithms like gzip to compress files, but I am wondering if there are alternatives to compressing files for my use case. I have created a P2P browser network that stores data in LocalStorage (which has a limit of 5mb of storage). Here is the process:</p>
+<ul>
+<li>Turn file into an ArrayBuffer</li>
+<li>Split bytes into chunks of 50kb</li>
+<li>Upload chunks to the network (peers get the data and store it in their LocalStorage)</li>
+</ul>
+<p>The problem is that I had to increase the quota/limit for LocalStorage for file uploads to even work.</p>
+<p>Currently I am thinking of an algorithm that looks at the byte array and then examines the array by chunks. Assume the array is of length N, the algo would start off by examining chunks with length N, then N-1, then N-2 and so on. If there was a large chunk of 0s of length L, for example, it would store this chunk as 0xL instead of the L number of 0s. If there was a chunk of 1s of length 43, for example, it would do the same, making it 1x43. Putting these compressed chunks in order would allow for lots of compression with varied chunk sizes. I don’t know how well this would work though since bytes tend to have different values and patterns may repeat themselves with more complexity than just repeating the same value over and over.</p>
+<p>Any pointers to simple compression algorithms would be great! I would also like to discuss ways a new algorithm could be invented (because it’s fun!).</p>
+            <p><small>11 posts - 5 participants</small></p>
+            <p><a href="https://0x00sec.org/t/compression-for-p2p-networks/32119">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/compression-for-p2p-networks/32119</link>
+          <pubDate>Sun, 13 Nov 2022 22:00:14 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-32119</guid>
+          <source url="https://0x00sec.org/t/compression-for-p2p-networks/32119.rss">Compression for P2P Networks</source>
+        </item>
+        <item>
+          <title>Scalable reversing</title>
+          <dc:creator><![CDATA[fi6uh]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <h1>Intro</h1>
+<p>Second write-up here; this is something I just happened upon today while (super) bored at work.  I’m not a math/algorithm nerd by any means, but I did find this pretty fascinating.  This will walk you through what I found and how I moved forward with it.</p>
+<p>If anyone knows of an official name for this algorithm, I’d be interested in knowing what it is.  I highly doubt I discovered anything new or mind-blowing, but it was a personal discovery I felt was worth sharing.</p>
+<p>Let’s begin!</p>
+<h2>Boredom [part 0]</h2>
+<p>I remember reading a Quora post (if I find it again, I’ll add it as a link) where a person asked “what does the graph of XOR look like?” and only got one reply, which shot the question down as being misinterpretive of what XOR does as a function.  That answer bothered me, so today I decided to explore it on my own.</p>
+<hr>
+<h2>Boredom [part 1]:</h2>
+<h3>The beginning</h3>
+<p>To start from the very beginning, for any newcomers unaware of how logical XOR works, here is the truth table for the function:</p>
+<pre><code class="lang-makefile">P | Q | P^Q
+--+---+----
+0 | 0 |  0
+0 | 1 |  1
+1 | 0 |  1
+1 | 1 |  0
+</code></pre>
+<p>To put it in words, given two propositional variables, P and Q, the expression P XOR Q is true for either P OR Q but not P AND Q.</p>
+<p>That’s all well and good, but what if we replace variables in the propositional expression with natural numbers?  Just convert the number to binary, and run the function:</p>
+<pre><code class="lang-makefile">2 ^ 3 = ?
+
+2 = 0b10
+3 = 0b11
+--------
+^ = 0b01
+
+2 ^ 3 = 1
+</code></pre>
+<h3>The table</h3>
+<p>So that’s it; XORing two natural numbers will output a natural number.  I wanted more, though.  I thought back to my days of elementary school and how we were taught multiplication using times tables.  Let’s make an “XORs table” with natural numbers (I stop at 15 to keep this down to using 4 bits):</p>
+<pre><code class="lang-makefile">   | 0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+---+------------------------------------------------
+ 0 | 0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+ 1 | 1  0  3  2  5  4  7  6  9  8  B  A  D  C  F  E
+ 2 | 2  3  0  1  6  7  4  5  A  B  8  9  E  F  C  D
+ 3 | 3  2  1  0  7  6  5  4  B  A  9  8  F  E  D  C
+ 4 | 4  5  6  7  0  1  2  3  C  D  E  F  8  9  A  B
+ 5 | 5  4  7  6  1  0  3  2  D  C  F  E  9  8  B  A
+ 6 | 6  7  4  5  2  3  0  1  E  F  C  D  A  B  8  9
+ 7 | 7  6  5  4  3  2  1  0  F  E  D  C  B  A  9  8
+ 8 | 8  9  A  B  C  D  E  F  0  1  2  3  4  5  6  7
+ 9 | 9  8  B  A  D  C  F  E  1  0  3  2  5  4  7  6
+ A | A  B  8  9  E  F  C  D  2  3  0  1  6  7  4  5
+ B | B  A  9  8  F  E  D  C  3  2  1  0  7  6  5  4
+ C | C  D  E  F  8  9  A  B  4  5  6  7  0  1  2  3
+ D | D  C  F  E  9  8  B  A  5  4  7  6  1  0  3  2
+ E | E  F  C  D  A  B  8  9  6  7  4  5  2  3  0  1
+ F | F  E  D  C  B  A  9  8  7  6  5  4  3  2  1  0
+</code></pre>
+<p>When I first looked at this, I was once again bored.  I kept staring at it though and realized it was symmetric.  Not only that, but this table is symmetric over the line <code>f(x) = x</code>.</p>
+<hr>
+<h2>Boredom [part 2]:</h2>
+<h3>Patterns and permutations and bears, oh my!</h3>
+<p>In case staring at a 16x16 table of characters doesn’t make the symmetry immediately obvious, let’s take another look:</p>
+<pre><code class="lang-makefile">   | 0  1   2  3   4  5  6  7   8  9  A  B  C  D  E  F
+---+------+------+------------+------------------------
+ 0 | 0  1 | 2  3 | 4  5  6  7 | 8  9  A  B  C  D  E  F
+ 1 | 1  0 | 3  2 | 5  4  7  6 | 9  8  B  A  D  C  F  E
+   +------+      |            |
+ 2 | 2  3   0  1 | 6  7  4  5 | A  B  8  9  E  F  C  D
+ 3 | 3  2   1  0 | 7  6  5  4 | B  A  9  8  F  E  D  C
+   +-------------+            |
+ 4 | 4  5   6  7   0  1  2  3 | C  D  E  F  8  9  A  B
+ 5 | 5  4   7  6   1  0  3  2 | D  C  F  E  9  8  B  A
+ 6 | 6  7   4  5   2  3  0  1 | E  F  C  D  A  B  8  9
+ 7 | 7  6   5  4   3  2  1  0 | F  E  D  C  B  A  9  8
+   +--------------------------+------------------------
+ 8 | 8  9   A  B   C  D  E  F   0  1  2  3  4  5  6  7
+ 9 | 9  8   B  A   D  C  F  E   1  0  3  2  5  4  7  6
+ A | A  B   8  9   E  F  C  D   2  3  0  1  6  7  4  5
+ B | B  A   9  8   F  E  D  C   3  2  1  0  7  6  5  4
+ C | C  D   E  F   8  9  A  B   4  5  6  7  0  1  2  3
+ D | D  C   F  E   9  8  B  A   5  4  7  6  1  0  3  2
+ E | E  F   C  D   A  B  8  9   6  7  4  5  2  3  0  1
+ F | F  E   D  C   B  A  9  8   7  6  5  4  3  2  1  0
+</code></pre>
+<p>Awesome!  The numbers did … something!  What does this mean?  We start by looking at the 2x2 box in the top left corner.  Think of that box as taking the two numbers on top as input, and producing the two numbers on bottom as output.  In this case, you give it <code>[0,1]</code> and it outputs <code>[1,0]</code>.</p>
+<p>This is where things start to get interesting.  Let’s make our scope bigger and jump out to a 4x4 box.  Now the top of the box takes in two 2x2 boxes as its input, and then swaps the entire box.  We can keep growing our scope and the block-swapping will perform the same operation, albeit on a larger input, every time.  If you notice, the output of the final block-swap is an exact reverseal of the first input string.</p>
+<hr>
+<h2>Boredom [part 3]:</h2>
+<h3>Application for string literals</h3>
+<p>“Gee, <a class="mention" href="https://0x00sec.org/u/fi6uh">@fi6uh</a>, this is hella boring,” you might say.  No!  This is where the lightbulb went off over my head.  When given a string (adhering to some constraints we’ll get to in a minute), you can reverse it in a fixed number of steps.</p>
+<h3>The catch</h3>
+<p>Since XOR is a bitwise operator, its properties permeate through the this algorithm.  One caveat to this algorithm is that the string must be of length <code> 2^n</code> (<code>^</code> here is “raised to”, not XOR).  This is easy enough to get around though, just pad the rest of the string up to the next power of 2.  Let’s do an example; my username is only 5 characters, so I will pad it with 3 <code>_</code>'s in order to make it a power of 2:</p>
+<pre><code class="lang-makefile"> input:           fi6uh___
+ 1st permutation: ifu6_h__
+ 2nd permutation: u6if___h
+ 3rd permutation: ___hu6if
+</code></pre>
+<h3>The math</h3>
+<p>So the trick here is that for any string (padded to the next power of 2 if necessary) of length <code>n</code>, where <code>n</code> is 2 raised to some <code>p</code> in the natural numbers, it can be reversed in <code>p</code> permutations.  Let’s demonstrate this with a longer string, of 16 characters.  <code>log2(16) = 4</code>, so I should be able to reverse this string in 4 steps:</p>
+<pre><code class="lang-makefile"> input:           abcdefghijklmnop
+ 1st permutation: badcfehgjilknmpo
+ 2nd permutation: dcbahgfelkjiponm
+ 3rd permutation: hgfedcbaponmlkji
+ 4th permutation: ponmlkjihgfedcba
+</code></pre>
+<p>And we did it!  Pretty cool.  But can this be applied to a different structure?  Definitely!</p>
+<hr>
+<h2>Boredom [part 4]:</h2>
+<h3>The matrix</h3>
+<p>Ok so we’ve seen how this algorithm can reverse a string linearly, but it can be applied to a two dimensional “string” (er, matrix) as well.  When applying this to a string, you can think of “pushing” the operations down.  When we add a second dimension into the mix, you do the same thing, but “push” the operations right as well.  Let’s demonstrate with an easy one:</p>
+<pre><code class="lang-makefile">                          a b
+ input:                   c d
+
+                          b a
+ 1st permutation (down):  d c
+
+                          d c
+ 2nd permutation (right): b a
+</code></pre>
+<p>To explain this a bit more, when we push the operation down, we select an element and its neighbor to the right, in this case <code>a</code> and <code>b</code>, and swap them horizontally.  Then, when we push the operation right, we select an element and its neighbor immediately below it, in this case <code>b</code> and <code>d</code>, and swap them vertically.  With a 2x2 matrix, that’s all it takes!</p>
+<h3>A larger matrix</h3>
+<p>There’s a trick to this applying this algorithm in two directions, however.  You have to keep track of how many permutations you have done for each direction before you can grow your scope.  Notice for a 2x2, we did 2 permutations and selected 2 elements <em>in the same scope</em> for both permutations.  This may be a little more obvious with a larger matrix, so let’s bump it up a notch:</p>
+<pre><code class="lang-makefile">                           a b c d
+                           e f g h
+                           i j k l
+ input:                    m n o p
+
+                           b a d c
+                           f e h g
+                           j i l k
+ 1st permutation (down):   n m p o
+
+                           f e h g
+                           b a d c
+                           n m p o
+ 2nd permutation (right):  j i l k
+
+                           h g f e
+                           d c b a
+                           p o n m
+ 3rd permutation (down):   l k j i
+
+                           p o n m
+                           l k j i
+                           h g f e
+ 4th permutation (right):  d c b a
+</code></pre>
+<p>You can see more clearly here that with 2 dimensions, you do 2 permutations for each direction before growing your scope.  After following the algorithm, the matrix will be reflected over the bottom right corner (the “origin”, for the sake of this writing).  For a string, which only reads left to right, you only need to do 1 permutation to grow your scope.</p>
+<hr>
+<h2>Conclusion:</h2>
+<p>LOL you thought you were done, but in the wise words of Leo:</p>
+<p>          <a href="https://laurenandmaxlikefood.files.wordpress.com/2012/01/we-need-to-go-deeper.jpg" target="_blank" rel="noopener nofollow ugc" class="onebox">
+            <img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5e8b04658d0ad6a2f8289536ac793cc1d6211005.jpeg" width="400" height="226">
+          </a>
+</p>
+<hr>
+<h2>Boredom [part n]:</h2>
+<h3>The multiverse</h3>
+<p>The title for this topic uses the word “scalable” for a reason!  We’ve seen a 1 dimensional permutation (string), we’ve seen a 2 dimensional permutation (matrix), what about 3 dimensions?  Great question!  The answer is: apply the 1 dimensional algorithm for every added dimension, then grow your scope and repeat.  This means it <em>should</em> work for n-dimensional structures, but I don’t know how to draw permutations of things in those realms.  That said, I also don’t know how to easily display permutations of a cube in ASCII, so instead I will draw a picture.  Note: not an artist.<br>
+Here goes:</p>
+<p><a href="https://0x0.st/s1az.jpg" class="onebox" target="_blank" rel="noopener nofollow ugc">https://0x0.st/s1az.jpg</a></p>
+<p>As you can see, simply following the algorithm for every direction results in a cube whose verteces have been reflected over the vertex 6 (in this case).</p>
+<hr>
+<h2>Conclusion:</h2>
+<p>Hopefully this journey through permutations, time, and space has been entertaining and not boring.  I found that this personal discovery got me through lunch and made the rest of my work day exciting.  If any of you are more familiar with these topics (or have a name for what I just described), please comment and share with the group.</p>
+<p>As always, if you notice any errors please let me know so I can address them.</p>
+<p>/end math</p>
+<hr>
+<h2>Addendum:</h2>
+<p>A detail was brought to my attention that I felt should be addressed:</p>
+<aside class="quote no-group" data-username="fi6uh">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/fi6uh/40/4690_2.png" class="avatar"> fi6uh:</div>
+<blockquote>
+<p>When given a string (adhering to some constraints we’ll get to in a minute), you can reverse it in a fixed number of steps.</p>
+</blockquote>
+</aside>
+<p>If defining “fixed” as a constant for every input, this statement is incorrect.  This algorithm has a <a href="https://en.wikipedia.org/wiki/Time_complexity#Logarithmic_time" rel="noopener nofollow ugc">logarithmic time complexity</a> rather than a constant one.</p>
+<p>It was also noted that this algorithm is <em>similar in function</em> to both the <a href="https://en.wikipedia.org/wiki/XOR_swap_algorithm" rel="noopener nofollow ugc">XOR swap</a> algorithm and the <a href="https://en.wikipedia.org/wiki/Feistel_cipher" rel="noopener nofollow ugc">Feistel cipher</a> (though the name of the algorithm demonstrated here is still unknown to me).  Both of which have been implemented numerous times, though I’m not sure if they “move” into higher dimensions.</p>
+            <p><small>4 posts - 3 participants</small></p>
+            <p><a href="https://0x00sec.org/t/scalable-reversing/6523">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/scalable-reversing/6523</link>
+          <pubDate>Wed, 02 May 2018 02:05:43 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-6523</guid>
+          <source url="https://0x00sec.org/t/scalable-reversing/6523.rss">Scalable reversing</source>
+        </item>
+        <item>
+          <title>Help: Inferring outcomes based on previous data</title>
+          <dc:creator><![CDATA[besa]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>I have a rather simple problem that’s somewhat out of my field of expertise, any help would be appreciated. <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>I have a data set similar to this:</p>
+<pre><code>+-----------+-----+-----+-----+-----+-----+-----+
+|   TIME    | BV  | C1  | C2  | C3  | C4  | ... |
++-----------+-----+-----+-----+-----+-----+-----+
+|           |     |     |     |     |     |     |
+| timestamp |     | 2   | 6   | 10  | 9   | ..  |
+|           |     |     |     |     |     |     |
+| timestamp |     | -6  | -10 | -17 | -4  | ... |
+|           |     |     |     |     |     |     |
+| timestamp |     | -7  | -15 | -14 | -12 | ... |
+|           |     |     |     |     |     |     |
+| timestamp |     | 11  | 16  | 12  | 9   | ... |
+|           |     |     |     |     |     |     |
+| ...       | ... | ... | ... | ... | ... | ... |
++-----------+-----+-----+-----+-----+-----+-----+
+</code></pre>
+<p>Basically these datasets go on for 10s of millions of rows. There are approx 200 more columns though often 90%+ of them are NULL (meaning no data was collected).</p>
+<p>BV == base value, and the CN cols are the percentage difference the other collectors reported compared to the main value.</p>
+<p>What I want to do is given 3 rows of data predict, based off the whole dataset, the likely next N rows of data we’ll collect. I plan to start predicting just the next 1 row but perhaps extending out to 3 or 4 would be good.</p>
+<p>It seems to me that using bayesian inference to model probable outcomes would be ideal, but am looking for others thoughts before I set off on this project.</p>
+<p>Thanks for reading, looking forward to any other approaches anyone may have.</p>
+            <p><small>1 post - 1 participant</small></p>
+            <p><a href="https://0x00sec.org/t/help-inferring-outcomes-based-on-previous-data/2309">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/help-inferring-outcomes-based-on-previous-data/2309</link>
+          <pubDate>Tue, 13 Jun 2017 01:45:13 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>No</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-2309</guid>
+          <source url="https://0x00sec.org/t/help-inferring-outcomes-based-on-previous-data/2309.rss">Help: Inferring outcomes based on previous data</source>
+        </item>
+        <item>
+          <title>About the Algorithms category</title>
+          <dc:creator><![CDATA[pry0cc]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>(Replace this first paragraph with a brief description of your new category. This guidance will appear in the category selection area, so try to keep it below 200 characters. <strong>Until you edit this description or create topics, this category won’t appear on the categories page.</strong>)</p>
+<p>Use the following paragraphs for a longer description, or to establish category guidelines or rules:</p>
+<ul>
+<li>
+<p>Why should people use this category? What is it for?</p>
+</li>
+<li>
+<p>How exactly is this different than the other categories we already have?</p>
+</li>
+<li>
+<p>What should topics in this category generally contain?</p>
+</li>
+<li>
+<p>Do we need this category? Can we merge with another category, or subcategory?</p>
+</li>
+</ul>
+            <p><small>1 post - 1 participant</small></p>
+            <p><a href="https://0x00sec.org/t/about-the-algorithms-category/1019">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/about-the-algorithms-category/1019</link>
+          <pubDate>Wed, 31 Aug 2016 16:58:40 +0000</pubDate>
+          <discourse:topicPinned>Yes</discourse:topicPinned>
+          <discourse:topicClosed>No</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-1019</guid>
+          <source url="https://0x00sec.org/t/about-the-algorithms-category/1019.rss">About the Algorithms category</source>
+        </item>
+        <item>
+          <title>[C#] Dynamic Crypto</title>
+          <dc:creator><![CDATA[dedady157]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>ok today im going to show you how to make a dynamic crypto</p>
+<p>a dynamic crypto in a nutshell<br>
+if my message is: hi how are you?<br>
+i have 2xh and 2xo<br>
+my encrypted text: ij,jpx.bsf:zqv!<br>
+its with the cizer cipher just dynamic<br>
+if i just decoded it id get  hi iow are ypu?<br>
+its simple but were gonna make it a bit better<br>
+were gonna add 1 to the offset for each next letter<br>
+we will just be using</p>
+<pre><code class="lang-auto">using System;//just for a the exeptions
+</code></pre>
+<p>now we will make to encryption class<br>
+we will set up the offsets and the alphabet</p>
+<pre><code class="lang-auto">        private int e_offset = 1;
+        private int d_offset = 1;
+        public Char[] alphabet = new Char[]
+        { 'q', 'w', 'e', 'r', 't', 'z', 'u', 'i', 'o', 'p', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'y', 'x', 'c', 'v', 'b',
+            'n', 'm', 'Q', 'W', 'E', 'R', 'T', 'Z', 'U', 'I', 'O', 'P', 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'Y', 'X', 'C',
+            'V', 'B', 'N', 'M', ' '}/;/german qwertz keyboard
+</code></pre>
+<p>for the encryption we will turn the string into a char array<br>
+then we will find where the char is in our alphabet and add the offset<br>
+and add the result to a string and repeat for the rest<br>
+iv made it easier for you to add your own alphabet</p>
+<pre><code class="lang-auto">        public string encrypt(string text)
+        {
+            string end = "";
+            char[] char_text = text.ToCharArray();
+            for (int y = 0; y &lt; text.Length; y++)
+            {
+                int num_of_char = 0;
+                for (int x = 0; x &lt; alphabet.Length; x++)
+                {
+                    if (char_text[y] == alphabet[x])
+                    {
+                        num_of_char = x + e_offset;
+                        e_offset++;
+                        break;
+                    }
+                    else if (x == alphabet.Length)
+                    {
+                        throw new Exception("un-supported character");
+                    }
+                }
+                if (num_of_char &gt; alphabet.Length)
+                {
+                    
+                    int temp = num_of_char % alphabet.Length;
+                    num_of_char = 0;
+                    for (int x = 0; x &lt; alphabet.Length; x++)
+                    {
+                        if (temp != 0)
+                        {
+                            num_of_char++;
+                            temp++;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
+                end += alphabet[num_of_char].ToString();
+            }
+            return end;
+        }
+</code></pre>
+<p>for the decryption it gets a bit harder we have to do the same thing just in revers so instead of + its -<br>
+and if we go under the 0 it we have carry on from alphabet.Length</p>
+<pre><code class="lang-auto">        public string decrypt(string text)
+        {
+            string end = "";
+            char[] char_text = text.ToCharArray();//turns string to char 
+            for (int y = 0; y &lt; text.Length; y++)
+            {
+                int num_of_char = 0;
+                for (int x = 0; x &lt; alphabet.Length; x++)
+                {
+                    if (char_text[y] == alphabet[x])//gets to location of the same char
+                    {
+                        num_of_char = x;
+                        
+                        break;
+                    }
+                    else if (x == alphabet.Length)
+                    {
+                        throw new Exception("un-supported character");
+                    }
+                }
+            int res = 0;// % will allwas return as a int less than 0
+            int temp = num_of_char - d_offset % alphabet.Length;//so we dont go over
+            for (int x = 0; x &lt; alphabet.Length; x++ )//so we dont go under
+            {
+                if (temp &gt;= 0)
+                {
+                    temp++;
+                    res++;//flips int e.g: -9 will turn into 9
+                }
+                else
+                {
+                    break;
+                }
+            }
+                end += alphabet[res].ToString();//gets the char pos and gose back as far as the off set is
+                d_offset++;
+            }
+            return end;
+
+        }
+    }
+    
+</code></pre>
+<p>i encrypted (hhhhh) and got (jklyx)<br>
+thats all to it have fun<br>
+-dedady-</p>
+            <p><small>6 posts - 5 participants</small></p>
+            <p><a href="https://0x00sec.org/t/c-dynamic-crypto/815">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/c-dynamic-crypto/815</link>
+          <pubDate>Mon, 25 Jul 2016 20:45:41 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-815</guid>
+          <source url="https://0x00sec.org/t/c-dynamic-crypto/815.rss">[C#] Dynamic Crypto</source>
+        </item>
+        <item>
+          <title>Crypto Algs (Part 3.0): XOR</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hello again. I know <a href="https://0x00sec.org/t/xor-encryption-using-c/799">Fust3rCluck</a> covered this, but I had something different in mind…</p>
+<p>XOR, or Exclusive XOR, is a <a href="https://en.wikipedia.org/wiki/Logic_gate" rel="noopener nofollow ugc">Boolean Logic Gate</a>. Like most of the other logic gates, XOR takes two parameters. Thus, it is a binary logic gate.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/3878737716456c9c306fdee73192e7d8d4cd6d5d.png" alt="XOR truth table"></p>
+<p>XOR is a computationally easy form of encryption. However, it certainly is breakable. What follows is my take on it.</p>
+<hr>
+<h1>Proof</h1>
+<pre><code>Given: n XOR n = 0
+  and: n XOR 0 = n
+Plaintext: p
+Ciphertext: p XOR n = c
+Decrypted: c XOR n = p
+
+p XOR n = c
+c XOR n = p
+
+(p XOR n) XOR n = p
+p XOR (n XOR n) = p
+n XOR n = 0
+p XOR (0) = p
+p = p
+</code></pre>
+<hr>
+<h1>Implementation</h1>
+<p><strong>encrypt.cpp</strong></p>
+<pre><code class="lang-auto">#include &lt;iostream&gt;
+#include &lt;string&gt;
+#include &lt;vector&gt;
+#include &lt;algorithm&gt;
+
+namespace XOR {
+    std::vector&lt;unsigned char&gt;
+    encrypt(const std::vector&lt;unsigned char&gt; str, const std::string&amp; key)
+    {
+        std::vector&lt;unsigned char&gt; res(str.begin(), str.end());
+
+        for (int i = 0, n = str.size(), m = key.length(); i &lt; n; i++) {
+            res[i] ^= key[i % m];
+        }
+
+        return res;
+    }
+
+    std::vector&lt;unsigned char&gt;
+    decrypt(const std::vector&lt;unsigned char&gt;&amp; str, const std::string&amp; key)
+    {
+        return encrypt(str,key);
+    }
+};
+</code></pre>
+<p>The above code is pretty straightforward. I am using the <code>std::vector</code> container in place of <code>std::string</code> to avoid any awkward null-terminators, which could be present when copying an encrypted message into a new <code>std::string</code>. Essentially, a <code>std::vector&lt;unsigned char&gt;</code> is a string.</p>
+<p>Notice that the <code>decrypt(...)</code> function simply calls the above <code>encrypt(...)</code> function. Unlike in the <a href="https://0x00sec.org/t/crypto-algs-part-2-0-vigenere/780">Vigenere Cipher</a> code, there is no need to complement the key before decryption. This is because of the above proof.</p>
+<pre><code class="lang-auto">#include "./encrypt.cpp"
+#include &lt;iomanip&gt;
+
+void hex_print(const std::vector&lt;unsigned char&gt;&amp; s) {
+    std::cout &lt;&lt; std::hex;
+    for (auto&amp; c : s) {
+        std::cout &lt;&lt; int(c) &lt;&lt; " ";
+    }
+    std::cout &lt;&lt; std::hex &lt;&lt; std::endl;
+}
+
+int main() {
+    std::string s,k;
+    std::getline(std::cin, s);
+    std::getline(std::cin, k);
+
+    std::vector&lt;unsigned char&gt; v(s.begin(),s.end());
+    v = XOR::encrypt(v,k);
+
+    hex_print(v);
+
+    v = XOR::decrypt(v, k);
+
+    for(auto&amp; c : v) {
+        std::cout &lt;&lt; c;
+    }
+    std::cout &lt;&lt; std::endl;
+
+    return 0;   
+}
+</code></pre>
+<p>The above code interfaces with that mini library I wrote (<strong>encrypt.cpp</strong>). We <code>hex_print(...)</code> the ciphertext because some of the characters could be unreadable ASCII characters. We don’t have to worry about this when we decrypt the ciphertext – as long as our encryption scheme is implemented correctly, that is…</p>
+<hr>
+<h1>Conclusion</h1>
+<p>You may see a few similarities between the Vigenere program I wrote and the above code. The program outlined here allows for a variable-length key, rather than a one-byte key or a statically defined key. This is both convenient and more secure.</p>
+<p>Feel free to play around with the code. It’s all there.</p>
+<p>Later…<br>
+<a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a></p>
+            <p><small>3 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/crypto-algs-part-3-0-xor/808">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/crypto-algs-part-3-0-xor/808</link>
+          <pubDate>Sun, 24 Jul 2016 19:45:29 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-808</guid>
+          <source url="https://0x00sec.org/t/crypto-algs-part-3-0-xor/808.rss">Crypto Algs (Part 3.0): XOR</source>
+        </item>
+        <item>
+          <title>Crypto Algs (Part 2.0): Vigenere</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Alas! It’s time for the next iteration of my <em>Crypto Algs</em> series. Now, a lot of what’s to be seen this time around is founded upon what I’ve said in past articles. In order to be best prepared for this article’s teachings, you should start from the <a href="https://0x00sec.org/t/crypto-algs-part-1-0-the-caesar-cipher/733">beginning</a>.</p>
+<p>The <a href="https://en.wikipedia.org/wiki/Vigen%C3%A8re_cipher" rel="nofollow noopener">Vigenere Cipher</a> is often referred to as the next step up from the Caesar Cipher. While this algorithm is certainly more robust and secure, it is still <em>definitely</em> possible to break. That said, please don’t secure your mom’s secret <a href="https://www.google.com/search?q=meatloaf&amp;biw=1920&amp;bih=936&amp;source=lnms&amp;sa=X&amp;ved=0ahUKEwiM2__GtoXOAhVBVWMKHbM1A_MQ_AUIBygA&amp;dpr=1" rel="nofollow noopener">meatloaf</a> recipe with the Vigenere Cipher. Your dang neighbor, Fred, may be able to decrypt it. After all, if your mom’s meatloaf is as good as Fred has heard, he’d be willing to take the time to break your Vigenere Cipher.</p>
+<p>Okay. Enough about meatloaf! Let’s get onto the concept.</p>
+<hr>
+<h1>Concept</h1>
+<p>The Vigenere Cipher is two parts. Like all encryption schemes, it takes in a plaintext and outputs a ciphertext. The Vigenere Cipher also expects a key. Unlike the Caesar Cipher, whose key was limited to a number between 0 and 25 (inclusive), this cipher takes in a key <em>phrase</em>. For example, <code>meatloaf</code> could be your encryption key. A stronger key would be <code>MyMomMakesGreatMeatloaf</code>. Each letter in the key is used as an offset.</p>
+<p>A phrase allows us to eliminate any all-too-obvious patterns. <a href="https://0x00sec.org/t/crypto-algs-part-1-1-cracking-caesar/736">Frequency Analysis</a> would not work the way it did with the Caesar Cipher. Here’s an example.</p>
+<pre><code>Plaintext: Lemming
+Key: meatloaf
+Ciphertext: Ximftbg
+</code></pre>
+<p>Pay attention to the two <code>m</code>'s in <code>Lemming</code>. Notice how the Ciphertext does not have two of the same letter side-by-side. This is because each letter in <code>Lemming</code> is offset by a different letter in <code>meatloaf</code>, our key.</p>
+<p>When our plaintext is bigger than the key, the key will wrap to fit:</p>
+<pre><code>P: L E M M I N G S A R E C O O L
+K: M E A T L O A F M E A T L O A
+C: X I M F T B G X M V E V Z C L
+</code></pre>
+<p><em><strong>Note:</strong></em> <em>The key-wrapping is what leads to a vulnerability in the cipher. Sooner or later, the same word (“and,” for example) could be encrypted by the same three letters in the key. By noting the distance between the identically-obfuscated "and"s, we can determine possible lengths of the key. More on this later.</em></p>
+<p>That’s it for the concept. Now, let’s code it. With our Caesar Cipher knowledge freshly in mind, this will be rather straightforward.</p>
+<hr>
+<h1>Code</h1>
+<p><strong>encrypt.cpp</strong></p>
+<pre><code class="lang-auto">#include &lt;vector&gt;
+#include &lt;iostream&gt;
+#include &lt;string&gt;
+#include &lt;ctype.h&gt;
+
+namespace Vigenere {
+    std::string encrypt(const std::string&amp; str, const std::string&amp; key) {
+        std::string s = str;
+        
+        std::vector&lt;int&gt; k(key.length());
+
+        int key_len = key.length();
+
+        // let's make the key into an array of offset values
+        int i;
+        for (i = 0; i &lt; key_len; i++) {
+            k[i] = tolower(key[i]) - 'a';
+        }
+
+        i = 0;
+        for (auto&amp; c : s) {
+            if (islower(c)) {
+                c = (c - 'a' + k[i++ % key_len]) % 26 + 'a';
+            } else if (isupper(c)) {
+                c = (c - 'A' + k[i++ % key_len]) % 26 + 'A';
+            }
+        }
+
+        return s;
+    }
+
+    std::string decrypt(const std::string&amp; str, const std::string&amp; key) {
+        std::string k = key;
+
+        for (auto&amp; c : k) {
+            c = tolower(c) - 'a' - 1;
+            c = 'z' - c;
+        }
+
+        return encrypt(str,k);
+    }
+};
+</code></pre>
+<p>The first step in my implementation is turning the key phrase into an array (<code>vector</code>) of offset values. We standardize this by ensuring that each letter in the key is lowercase:</p>
+<pre><code class="lang-auto">std::vector&lt;int&gt; k(key.length());
+int key_len = key.length();
+
+int i;
+for (i = 0; i &lt; key_len; i++) {
+    k[i] = tolower(key[i]) - 'a';
+}
+</code></pre>
+<p>Above is the specific code in which we load up <code>k</code> with the offset values. After doing that, all that is left is to apply the correct offsets to each alphabetical character in our plaintext.</p>
+<pre><code class="lang-auto">i = 0;
+for (auto&amp; c : s) {
+    if (islower(c)) {
+        c = (c - 'a' + k[i++ % key_len]) % 26 + 'a';
+    } else if (isupper(c)) {
+        c = (c - 'A' + k[i++ % key_len]) % 26 + 'A';
+    }
+}
+</code></pre>
+<p>This is very similar to what we did with the Caesar Cipher. Rather than a constant, numerical key <code>k</code>, however, we are using an array <code>k</code>, which is a series of offset values. By using the modulo operator, we can wrap the key to fit the plaintext’s length.</p>
+<p>Notice that we only increment our index in the key if <code>c</code> is alphabetical. We wouldn’t want to offset any spaces or skip an offset.</p>
+<p>For non-C/C++ people, one aspect might be strange:</p>
+<pre><code class="lang-auto">c = (c - 'a' + k[i++ % key_len]) % 26 + 'a';
+</code></pre>
+<p>In this line, <code>k[i++ % key_len]</code> is to be read like so:</p>
+<pre><code>Access the `(i % key_len)`th element of `k`.
+Increment `i`.
+</code></pre>
+<h3>The Decryption Routine</h3>
+<p>You’ll notice that the file (<strong>encrypt.cpp</strong>) also has a <code>Vigenere::decrypt(...)</code> function.</p>
+<pre><code class="lang-auto">std::string decrypt(const std::string&amp; str, const std::string&amp; key) {
+    std::string k = key;
+
+    for (auto&amp; c : k) {
+        c = tolower(c) - 'a' - 1;
+        c = 'z' - c;
+    }
+
+    return encrypt(str,k);
+}
+</code></pre>
+<p>What we do in this function is something I call <strong>complementing</strong>, in that we take the complement of each letter in the key. Since we are using the key to offset our plaintext, we can use the complement of the key to turn ciphertext back into plaintext using just the <code>encrypt(...)</code> function. For example:</p>
+<pre><code>P: H I
+K: B B
+C: I J
+</code></pre>
+<p>If we encrypt with <code>BB</code>, we are essentially offsetting our plaintext by <code>1</code>. If we offset our ciphertext by <code>1</code>'s alphabetical complement, <code>25</code>, we return to our plaintext. An offset of <code>25</code> is the same as encrypting with the key <code>ZZ</code>. By using this complement method, we avoid having to write a full-fledged decryption function, which would just <em>subtract</em> the offset instead of <em>adding</em>.</p>
+<hr>
+<p><strong>vigenere.cpp</strong></p>
+<pre><code class="lang-auto">#include "./encrypt.cpp"
+
+int main() {
+    std::string s; std::getline(std::cin, s);
+    std::string k; std::getline(std::cin, k);
+
+    std::string result = Vigenere::encrypt(s,k);
+    std::cout &lt;&lt; result &lt;&lt; std::endl;
+
+    std::cout &lt;&lt; Vigenere::decrypt(result, k) &lt;&lt; std::endl;
+
+    return 0;
+}
+</code></pre>
+<p>Alright. That’s all the code. We can now compile and run.</p>
+<pre><code>$ g++ -std=c++11 -Wall -Werror vigenere.cpp -o vigenere.o
+$ ./vigenere.o
+You'll never have my mom's recipe, Fred!
+meatloaf
+Ksu'ew beaqv htgs md ysm'l cscnbi, Fkpr!
+You'll never have my mom's recipe, Fred!
+</code></pre>
+<hr>
+<h1>Conclusion</h1>
+<p>That’s it for the implementation of the Vigenere Cipher. In <em>Part 2.1</em>, I will be showcasing more thoroughly some of this scheme’s weaknesses.</p>
+<p>I appreciate feedback, as always. Any questions can be asked below or via PM.</p>
+<p>Happy Ciphering<br>
+<a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a></p>
+            <p><small>11 posts - 5 participants</small></p>
+            <p><a href="https://0x00sec.org/t/crypto-algs-part-2-0-vigenere/780">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/crypto-algs-part-2-0-vigenere/780</link>
+          <pubDate>Thu, 21 Jul 2016 21:31:47 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-780</guid>
+          <source url="https://0x00sec.org/t/crypto-algs-part-2-0-vigenere/780.rss">Crypto Algs (Part 2.0): Vigenere</source>
+        </item>
+        <item>
+          <title>Crypto Algs (Part 1.2): Cracking Caesar [Brute Force + Dictionary]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Sometimes, frequency analysis may fail, as <a class="mention" href="https://0x00sec.org/u/dtm">@dtm</a> <a href="https://0x00sec.org/t/crypto-algs-part-1-1-cracking-caesar/736/5">pointed out</a>.</p>
+<p>Let’s send a message to our buddy, Bob. We want to tell him about an animal. Upon receiving the message and no key, Bob is confused. What does “rkssotm” mean!? He tries to use our frequency analysis program and this is his result: “dweeafy.”</p>
+<p>What is “dweeafy?” That means nothing to Bob. We see that our program did as intended. It found the most frequent letter in “rkssotm,” <code>s</code>, and calculated the offset from <code>e</code>. As you see, such a method is not a silver bullet.</p>
+<p>Let’s build out a dictionary scanner to help us figure out what to make of the message.</p>
+<hr>
+<p><strong>brute2.cpp</strong></p>
+<pre><code class="lang-auto">#include "dict-scan.cpp"
+#include "encrypt.cpp"
+#include &lt;utility&gt;
+
+#define RED "\033[0;31m"
+#define NORMAL "\033[0;39m"
+
+int main(int argc, char** argv) {
+    if (argc != 2) {
+        std::cout &lt;&lt; "Usage: ./brute2 /path/to/dict\n";
+        exit(1);
+    }
+
+    std::string s; std::getline(std::cin, s);
+    
+    std::vector&lt;std::string&gt; dictionary;
+    if ( !DictionaryScanner::load(std::string(argv[1]), dictionary) ) {
+        exit(1);
+    } else {
+        std::cout &lt;&lt; RED &lt;&lt; "[*] Loaded dictionary at "
+            &lt;&lt; NORMAL &lt;&lt; argv[1] &lt;&lt; std::endl;
+    }
+
+    std::pair&lt;int,int&gt; max_found(0,0); // key, num_found
+    std::string tmp;
+    int found;
+    std::cout &lt;&lt; RED &lt;&lt; "[*] Scanning brute forces...\n" &lt;&lt; NORMAL;
+
+    for (int i = 0; i &lt; 26; i++) {
+        tmp = Caesar::decrypt(s, i);
+        found = DictionaryScanner::scan( tmp, dictionary );
+        if (found &gt; max_found.second) {
+            max_found.second = found;
+            max_found.first = i;
+        }
+    }
+
+    std::cout &lt;&lt; RED &lt;&lt; "[ key: " &lt;&lt; max_found.first &lt;&lt; ", found: " &lt;&lt; max_found.second
+                &lt;&lt; " ] " &lt;&lt; NORMAL &lt;&lt; Caesar::decrypt(s, max_found.first) &lt;&lt; std::endl;
+    return 0;
+}
+</code></pre>
+<p>Woah. A lot happens in that file, huh?</p>
+<p>Let’s run through it.</p>
+<ol>
+<li>Take input from the user: <code>std::string s; std::getline(std::cin, s);</code>
+</li>
+<li>Load the specified dictionary into a <code>vector</code> of <code>string</code>s.</li>
+<li>Keep track of the maximum words found over all iterations. Remember the key used to get that max, too: <code>std::pair&lt;int,int&gt; max_found(0,0);</code> and the following <code>for</code> loop.</li>
+<li>Print out the result.</li>
+</ol>
+<p>That’s all there is to it. But what is under the hood, in the DictionaryScanner namespace?</p>
+<p>The first thing we encounter is <code>load(...)</code>, which (obviously) loads the dictionary into a <code>vector</code> for quick access.</p>
+<pre><code class="lang-auto">bool load(const std::string&amp; file_path, std::vector&lt;std::string&gt;&amp; dictionary)  {
+    
+    std::ifstream fp(file_path);
+
+    if (!fp) {
+        std::cout &lt;&lt; "[*] Error opening dictionary file at " &lt;&lt; file_path
+            &lt;&lt; ".\n";
+        return false;
+    }
+
+    std::string tmp;
+    while(fp &gt;&gt; tmp) {
+        dictionary.push_back(tmp);
+    }
+
+    fp.close();
+
+    return true;
+} 
+</code></pre>
+<p>Next, let’s take a look at the <code>scan(...)</code> subroutine.</p>
+<pre><code class="lang-auto">int scan(const std::string&amp; text, const std::vector&lt;std::string&gt;&amp; dictionary) {
+    
+    int found = 0;
+
+    for (auto&amp; s : dictionary) {
+        //std::cout &lt;&lt; "checking " &lt;&lt; s &lt;&lt; std::endl;
+        if ( find(text, s) )
+            found++;
+    }
+
+    return found;
+}
+</code></pre>
+<p>We see that it is just keeping track of how many words are found in the dictionary. But, it relies on a function called <code>find(...)</code>, which seems to take two parameters: the cipher- or plaintext, and a word from the dictionary.</p>
+<p><code>find(...)</code> is implemented by us (me), not a standard library. I got a weird compile error, okay? And I was too lazy to figure that out, so I made my own function. I understand that this is like popping a tire and then reinventing the wheel just to avoid a mechanic.</p>
+<pre><code class="lang-auto">bool find (const std::string&amp; text, const std::string&amp; s) {
+    size_t text_len = text.length(), s_len = s.length();
+
+    int j,k;
+    for (int i = 0; i &lt; text_len; i++) {
+        j = i;
+        k = 0;
+        while(k &lt; s_len &amp;&amp; j &lt; text_len &amp;&amp; tolower(text[j]) == tolower(s[k])) {
+            /*std::cout &lt;&lt; "\ttext[j] == s[k]: " &lt;&lt; text[j]
+                &lt;&lt; " == " &lt;&lt; s[k] &lt;&lt; std::endl;*/
+            j++;k++;
+        }
+        if (k == s_len &amp;&amp; j &lt;= text_len)
+            return true;
+    }
+
+    return false;
+}
+</code></pre>
+<p>The function – case-insensitively – checks for the first (if any) occurrence of a word in the <code>text</code>.</p>
+<hr>
+<p>Okay, so Bob has just spent the last 3 hours of his life writing all of this code, just because he wants to avoid reading over 25 different versions of “rkssotm.”</p>
+<p>Let’s load <a href="http://pastebin.com/LfCcMyCK" rel="noopener nofollow ugc">this dictionary</a>, adapted from <a href="https://github.com/hzlzh/Domain-Name-List/blob/master/Animal-words.txt" rel="noopener nofollow ugc">this</a> wordlist I found online.</p>
+<p>Okay:</p>
+<pre><code>$ ./brute2 ./animals.txt
+rkssotm
+[*] Loaded dictionary at ../animals.txt
+[*] Scanning brute forces...
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/224b222b154e1b5607f53b90d92ad3470345e8d2.jpg" alt="cute lemming"></p>
+<pre><code>[ key: 6, found: 1 ] lemming
+</code></pre>
+<p>Awwwww, a lemming! How cute! Bob now feels like that 3 hours of coding (with breaks for finger-icing) was all worth it!</p>
+<hr>
+<h1>Conclusion</h1>
+<p>I wasn’t going to do this post until <a class="mention" href="https://0x00sec.org/u/dtm">@dtm</a> brought up such a good point. Frequency analysis isn’t the do all end all. Neither is this. You could get some weird false-positives for some words.</p>
+<p>Some improvements to the code would be</p>
+<ol>
+<li>Make sure the word you are <code>find</code>ing is not some segment of a word that doesn’t exist. This could happen when scanning for <code>it</code>, or other small words.</li>
+<li>Handle plurality, maybe? You’d think this would be easy, but if your dictionary only has singular animals, you can’t just tack on an <code>s</code>. For example, Ox.</li>
+</ol>
+<p>Later…<br>
+<a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a></p>
+            <p><small>6 posts - 4 participants</small></p>
+            <p><a href="https://0x00sec.org/t/crypto-algs-part-1-2-cracking-caesar-brute-force-dictionary/747">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/crypto-algs-part-1-2-cracking-caesar-brute-force-dictionary/747</link>
+          <pubDate>Sun, 17 Jul 2016 23:30:40 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-747</guid>
+          <source url="https://0x00sec.org/t/crypto-algs-part-1-2-cracking-caesar-brute-force-dictionary/747.rss">Crypto Algs (Part 1.2): Cracking Caesar [Brute Force + Dictionary]</source>
+        </item>
+        <item>
+          <title>Crypto Algs (Part 1.1): Cracking Caesar</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Yesterday I dropped <a href="https://0x00sec.org/t/crypto-algs-part-1-0-the-caesar-cipher/733">an article</a> about the Caesar Cipher encryption “scheme”. Now, it’s time to break it.</p>
+<p>This one will be easy. Think about it. Our key can only be between 0 and 25. Sounds like a brute-forcable problem.</p>
+<hr>
+<h1>Method 1: Brute Force</h1>
+<p>First, here are the encryption and decryption functions we’ll be using.</p>
+<p><strong>encrypt.cpp</strong></p>
+<pre><code class="lang-auto">#include &lt;vector&gt;
+#include &lt;string&gt;
+#include &lt;iostream&gt;
+
+namespace Caesar {
+
+    std::string encrypt(const std::string&amp; str, const int&amp; key) {
+        
+        std::string s = str;
+
+        for (auto&amp; c : s) {
+            if (c &gt;= 'a' &amp;&amp; c &lt;= 'z') {
+
+                c = ((c - 'a' + key) % 26) + 'a';
+
+            } else if (c &gt;= 'A' &amp;&amp; c &lt;= 'Z') {
+
+                c = ((c - 'A' + key) % 26) + 'A';
+
+            }
+        }
+
+        return s;
+    }
+
+    std::string decrypt(const std::string&amp; str, const int&amp; key) {
+        return encrypt(str, 26 - key);
+    }
+};
+</code></pre>
+<p>Straight forward, right? If not, read my <a href="https://0x00sec.org/t/crypto-algs-part-1-0-the-caesar-cipher/733">last article</a> again.</p>
+<p>Now let’s get down to decrypting with brute force. We’re just going to use a simple <code>for</code> loop:</p>
+<p><strong>brute.cpp</strong></p>
+<pre><code class="lang-auto">#include "./encrypt.cpp"
+
+int main() {
+    std::string s; std::getline(std::cin, s);
+    std::cout &lt;&lt; std::endl;
+    
+    for (int i = 1; i &lt; 26; i++) {
+        std::cout &lt;&lt; "[ " &lt;&lt; i &lt;&lt; " ] "; 
+        std::cout &lt;&lt; Caesar::decrypt(s, i) &lt;&lt; std::endl;
+    }
+    return 0;
+}
+</code></pre>
+<p>Let’s say I encrypt a message.</p>
+<pre><code>$ ./caesar-cipher
+Hello World
+5
+Mjqqt Btwqi
+</code></pre>
+<p>Now let’s metaphorically swallow the key and then try to <em>unlock</em> our message via brute force.</p>
+<pre><code>$ ./brute
+Mjqqt Btwqi
+
+[ 1 ] Lipps Asvph
+[ 2 ] Khoor Zruog
+[ 3 ] Jgnnq Yqtnf
+[ 4 ] Ifmmp Xpsme
+[ 5 ] Hello World
+[ 6 ] Gdkkn Vnqkc
+[ 7 ] Fcjjm Umpjb
+[ 8 ] Ebiil Tloia
+[ 9 ] Dahhk Sknhz
+[ 10 ] Czggj Rjmgy
+[ 11 ] Byffi Qilfx
+[ 12 ] Axeeh Phkew
+[ 13 ] Zwddg Ogjdv
+[ 14 ] Yvccf Nficu
+[ 15 ] Xubbe Mehbt
+[ 16 ] Wtaad Ldgas
+[ 17 ] Vszzc Kcfzr
+[ 18 ] Uryyb Jbeyq
+[ 19 ] Tqxxa Iadxp
+[ 20 ] Spwwz Hzcwo
+[ 21 ] Rovvy Gybvn
+[ 22 ] Qnuux Fxaum
+[ 23 ] Pmttw Ewztl
+[ 24 ] Olssv Dvysk
+[ 25 ] Nkrru Cuxrj
+</code></pre>
+<p>A quick look-through reveals our message, “Hello World,” with a key of <code>5</code>.</p>
+<p>Now, that’s not all that efficient. Plus, we must burden our eyes with looking through each of the 25 results.</p>
+<p>Let’s make the computer do the work instead.</p>
+<hr>
+<h1>Method 2: Frequency Analysis</h1>
+<pre><code class="lang-auto">#include "./encrypt.cpp"
+
+#define REG_MAX 4 // the index of 'e' in alpha ('a' = 0)
+
+int main() {
+    std::string s; std::getline(std::cin, s);
+
+    std::vector&lt;unsigned int&gt; freq(26, 0);
+
+    /*
+        Collect frequencies
+    */
+    for (auto&amp; c : s) {
+        if (c &gt;= 'a' &amp;&amp; c &lt;= 'z') {
+            freq[c - 'a']++;
+        } else if (c &gt;= 'A' &amp;&amp; c &lt;= 'Z') {
+            freq[c - 'A']++;
+        }
+    }
+
+    // find most frequent letter
+    unsigned int max_idx = 0;
+    for (int i = 1; i &lt; 26; i++) {
+        if (freq[i] &gt; freq[max_idx]) {
+            max_idx = i;
+        }
+    }
+
+    int key = max_idx - REG_MAX;
+    while (key &lt; 0) {
+        key += 26;
+    }
+
+    std::cout &lt;&lt; Caesar::decrypt(s, key) &lt;&lt; std::endl;
+}
+</code></pre>
+<p>We count the occurrences of each letter and store it in <code>freq</code>. Taking advantage of the fact that ‘e’ is the most common letter in English, finding the most frequent letter and calculating its distance from ‘e’ reveals the key.</p>
+<p>This will sometimes fail on smaller sample sets. For example, “Hello” only has ‘e’ once, but ‘l’ appears <em>twice</em>. I’ll be using a larger input to ensure that we have enough data to make a good key assumption.</p>
+<p>Here’s the ciphertext we’ll be using:</p>
+<p>Wg obm ct wh fsoz? W asob, zccy oh hvwg. Zccy oh wh! O kcfzr piwzh cb tobhogm. Gmbhvshwq sachwcbg wb hvs tcfa ct dwzzg. Dgmqvczcuwqoz koftofs wb hvs tcfa ct orjsfhwgwbu. Awbr-ozhsfwbu qvsawqozg wb hvs tcfa ct… tccr! Pfowbkogvwbu gsawbofg wb hvs tcfa ct asrwo. Qcbhfczzsr wgczohsr pippzsg wb hvs tcfa ct gcqwoz bshkcfyg. Fsoz? Mci kobh hc hozy opcih fsozwhm? Ks vojsb’h zwjsr wb obmhvwbu fsachszm qzcgs hc wh gwbqs hvs hifb ct hvs qsbhifm. Ks hifbsr wh ctt, hccy cih hvs pohhsfwsg, gboqysr cb o pou ct UACg kvwzs ks hcggsr hvs fsabobhg wb hvs sjsf-sldobrwbu Riadghsf ct hvs viaob qcbrwhwcb. Ks zwjs wb pfobrsr vcigsg hforsaofysr pm qcfdcfohwcbg piwzh cb pwdczof biapsfg xiadwbu id obr rckb cb rwuwhoz rwgdzomg, vmdbchwnwbu ig wbhc hvs pwuusgh gziapsf aobywbr vog sjsf gssb. Mci vojs hc rwu dfshhm rssd, ywrrc, pstcfs mci qob twbr obmhvwbu fsoz. Ks zwjs wb o ywburca ct pizzgvwh. O ywburca mci’js zwjsr wb tcf tof hcc zcbu. Gc rcb’h hszz as opcih bch pswbu fsoz. W’a bc zsgg fsoz hvob hvs tiqywbu psst dohhm wb mcif Pwu Aoq.</p>
+<p>I’ve given you all the tools you need. You can decrypt it yourself. Bonus brownie points if you get the key, too!</p>
+<p>Later…<br>
+<a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a></p>
+<div class="spoiler"><a href="https://0x00sec.org/t/crypto-algs-part-1-1-cracking-caesar/736/1">spoiler</a></div>
+            <p><small>10 posts - 4 participants</small></p>
+            <p><a href="https://0x00sec.org/t/crypto-algs-part-1-1-cracking-caesar/736">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/crypto-algs-part-1-1-cracking-caesar/736</link>
+          <pubDate>Thu, 14 Jul 2016 16:08:48 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-736</guid>
+          <source url="https://0x00sec.org/t/crypto-algs-part-1-1-cracking-caesar/736.rss">Crypto Algs (Part 1.1): Cracking Caesar</source>
+        </item>
+        <item>
+          <title>Crypto Algs (Part 1.0): The Caesar Cipher</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hey guys! I thought I would start a little series on cryptography algorithms. I’m going to run out this last hour before Mr. Robot’s season 2 airs.</p>
+<p>With that said, let’s get down to business. The <strong>Caesar Cipher</strong> is named for its alleged use by the Roman Emperor Julius Caesar. In order to “ensure” the confidentiality of certain military-related messages, Caesar would perform an alphabetical shift on his messages.</p>
+<p>Here’s an example.</p>
+<pre><code>C H E E S E
+
+F K H H V H
+</code></pre>
+<p>Can you guess what the key is? It is… <span class="spoiler"><a href="https://0x00sec.org/t/crypto-algs-part-1-0-the-caesar-cipher/733/1">spoiler</a></span>!</p>
+<p>Okay. So all we did was shift each letter over to the “right” by three. Easy enough. What if the letters end up shifting past the alphabet?</p>
+<pre><code>X R A Y
+
+A S B Z
+</code></pre>
+<p>All we must do is wrap around – and there is an easy way to tell a computer to do this.</p>
+<p>Let’s develop an expression for the shift. Let’s say that the index of “A” is <code>0</code>, and the index of “X” is <code>25</code>. Our key, or shift-value, is <code>k</code>.</p>
+<p>Our expression would look like this:</p>
+<pre><code>character = ( index(character) + k ) % 26 + "A"
+</code></pre>
+<p>Let’s shift “B” over by <code>3</code> as an example. The index of “B” is <code>1</code>.</p>
+<pre><code>1 + 3 = 4
+4 % 26 = 4
+4 + "A" = "E"
+</code></pre>
+<hr>
+<h1>The Code</h1>
+<pre><code class="lang-auto">#include &lt;vector&gt;
+#include &lt;string&gt;
+#include &lt;iostream&gt;
+
+int main() {
+    std::string s; std::getline(std::cin, s);
+    int k; std::cin &gt;&gt; k;
+
+    for (auto&amp; c : s) {
+        if (c &gt;= 'a' &amp;&amp; c &lt;= 'z') {
+
+            c = ((c - 'a' + k) % 26) + 'a';
+
+        } else if (c &gt;= 'A' &amp;&amp; c &lt;= 'Z') {
+
+            c = ((c - 'A' + k) % 26) + 'A';
+
+        }
+    }
+
+    std::cout &lt;&lt; s &lt;&lt; std::endl;
+    return 0;
+}
+</code></pre>
+<p>You’ll notice that, rather than using some <code>index()</code> method, I subtract <code>c</code> from <code>'a'</code> to get an index. This is because your computer really just treats characters as special <code>unsigned</code>, one-byte (usually), <code>int</code>s.</p>
+<p>In the Caesar Cipher, we ignore non-alphabetical characters because we won’t shift those. What happens if you shift a period?</p>
+<p>Next, I’ll be doing the vigenere cipher.</p>
+<p>Later…<br>
+<a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a></p>
+<p>P.S. Nxs’y ymj hfjxfw hnumjw httq?</p>
+            <p><small>9 posts - 5 participants</small></p>
+            <p><a href="https://0x00sec.org/t/crypto-algs-part-1-0-the-caesar-cipher/733">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/crypto-algs-part-1-0-the-caesar-cipher/733</link>
+          <pubDate>Thu, 14 Jul 2016 01:21:01 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-733</guid>
+          <source url="https://0x00sec.org/t/crypto-algs-part-1-0-the-caesar-cipher/733.rss">Crypto Algs (Part 1.0): The Caesar Cipher</source>
+        </item>
+        <item>
+          <title>Graph Algorithms (Part 3.1): Kruskal&#39;s MST [Code]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>In this tutorial, I’ll be walking you through the code-implementation of <a href="https://en.wikipedia.org/wiki/Kruskal%27s_algorithm" rel="noopener nofollow ugc">Kruskal’s Algorithm</a>.</p>
+<p>To restate myself:</p>
+<aside class="quote no-group" data-username="oaktree" data-post="1" data-topic="637">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/oaktree/40/4077_2.png" class="avatar"><a href="https://0x00sec.org/t/graph-algorithms-part-3-0-kruskals-mst-concept/637/1">Graph Algorithms (Part 3.0): Kruskal's MST [Concept]</a>
+</div>
+<blockquote>
+<p>Kruskal’s Algorithm is one of a few algorithms (we’ll get to the rest later) for finding an undirected graph’s Minimum Spanning Tree (MST).</p>
+<p>A Minimum Spanning Tree is a tree connecting all nodes of a graph. Any node is reachable from any other node, and the total cost of traveling from one node in this MST to another is minimized.</p>
+</blockquote>
+</aside>
+<hr>
+<p>First, let’s get a few <code>typedef</code>s and function prototypes out of the way:</p>
+<pre><code class="lang-auto">#include &lt;iostream&gt;
+#include &lt;vector&gt;
+#include &lt;utility&gt;
+#include &lt;algorithm&gt;
+ 
+/* Define an edge struct to handle edges more easily.*/
+struct edge {
+    int first, second, weight;
+};
+ 
+/* Needed to typedef to reduce keystrokes or copy/paste */
+typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list;
+ 
+std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph);
+int get_pred(int vertex, const std::vector&lt;int&gt;&amp; pred);
+
+</code></pre>
+<p>Like in my <a href="https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570">Bellman Ford</a> program, we will use an <strong>adjacency list</strong> to to manage graph data.</p>
+<pre><code class="lang-auto">typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list
+</code></pre>
+<p>The above simply reduces the keystrokes necessary and allows our code to be more readable and expressive (for us dumb humans, that is).</p>
+<p>Next, you’ll see two function declarations:</p>
+<pre><code class="lang-auto">std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph);
+int get_pred(int vertex, const std::vector&lt;int&gt;&amp; pred);
+</code></pre>
+<p>The former will contain the actual algorithm, and the latter is a helper/subroutine (fancy word!). <code>kruskal(...)</code> will return a <code>vector</code> of <code>edge</code>s (see struct declaration above), because we are looking for all the <em>edges</em> in the <strong>Minimum Spanning Tree</strong>.</p>
+<hr>
+<h1>Input</h1>
+<pre><code class="lang-auto">int main() {
+    int n,m; std::cin &gt;&gt; n &gt;&gt; m;
+   
+    adj_list graph(n);
+    int f,s,w;
+    while (m-- &gt; 0) {
+        std::cin &gt;&gt; f &gt;&gt; s &gt;&gt; w;
+        if (f == s) continue; /* avoid loops */
+        graph[ f-1 ].push_back( std::make_pair( s-1 , w ) );
+    }
+
+    //...
+}
+</code></pre>
+<p><code>n</code> is the number of nodes, or vertices, and <code>m</code> is the number of edges. We declare an <code>adj_list</code> called <code>graph</code> and then proceed to fill it up with the <code>m</code> edges. We’re going to treat our graph as if it were directed, because redundant edges (used in an undirected graph) would only serve as clutter (here).</p>
+<hr>
+<h1>Find MST</h1>
+<p>The next step is to find the MST:</p>
+<pre><code class="lang-auto">int main() {
+    
+    //...
+ 
+    std::vector&lt;edge&gt; result = kruskal(graph);
+ 
+    std::cout &lt;&lt; "Here is the minimal tree:\n";
+    for (auto&amp; _edge : result) {
+        std::cout &lt;&lt; char(_edge.first+65) &lt;&lt; " connects to " &lt;&lt; char(_edge.second+65) &lt;&lt; std::endl;
+    }
+ 
+    return 0;
+}
+</code></pre>
+<p>Above is the rest of <code>main()</code>. I’m tossing it there now so you can see our expectations. Now, we’ll jump into the <code>kruskal(...)</code> function.</p>
+<hr>
+<h1>Kruskal Function</h1>
+<pre><code class="lang-auto">std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph) {
+    std::vector&lt;edge&gt; edges, minimum_spanning_tree;
+ 
+    /*
+        `pred` will represent our Disjointed sets by naming a set head.
+        In the beginning, each node is its own head in its own set.
+        We merge sets in the while loop.
+    */
+    std::vector&lt;int&gt; pred(graph.size());
+ 
+    for (int i = 0, n = graph.size(); i &lt; n; i++) {
+        for (auto&amp; _edge : graph[i])
+            edges.push_back( { i, _edge.first, _edge.second } );
+        pred[i] = i;
+    }
+
+    //...
+}
+</code></pre>
+<p>First, we declare two <code>edge</code> <code>vector</code>s, <code>edges</code> to hold all of the edges, and <code>minimum_spanning_tree</code> to be returned as the result.</p>
+<p>We also declare an <code>int</code> <code>vector</code> called <code>pred</code>, which we do not need to worry about just yet. For now, just know that <code>pred</code> helps us keep track of what is already in the MST, or a subset of the MST.</p>
+<p>In the <code>for</code> loop, we populate our <code>edges</code> array/<code>vector</code>. Additionally, <code>pred[i] = i</code> assures that each vertex belongs to its own <a href="https://en.wikipedia.org/wiki/Disjoint-set_data_structure" rel="noopener nofollow ugc">disjoint set</a>. At this point of the graph, each vertex is its own subset of the final MST (yet to be discovered). Each of these subsets currently has no edges, so no subset is connected to any other subset. Next, we have to find the lowest-weight/least-costly edges that will connect all the subsets <em>without cycles</em>.</p>
+<pre><code class="lang-auto">std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph) {
+    
+    //...
+ 
+    /*
+        Let's reverse-sort our edge vector
+        so that we can just pop off the last (smallest)
+        element.
+    */
+    auto comp = [&amp;](edge left, edge right) { return left.weight &gt; right.weight; };
+    std::sort(edges.begin(), edges.end(), comp);
+
+    //...
+}
+</code></pre>
+<p>The next step is to sort the edges in descending order. We want the smallest edge to be at the end of the array so that we can just pop (<code>std::vector::pop_back()</code>) it off.</p>
+<pre><code class="lang-auto">std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph) {
+
+   //...
+ 
+    while( !edges.empty() ) {
+ 
+        /* get shortest/least-heavy edge */
+        edge shortest = edges.back();
+        edges.pop_back();
+ 
+ 
+        int f_head,s_head; /* first_head, second... */
+        f_head = get_pred(shortest.first, pred);
+        s_head = get_pred(shortest.second, pred);
+ 
+ 
+        /*
+            If the nodes making up a certain edge are
+            not already in the same set...
+        */
+        if (f_head != s_head) {
+            /* Add that edge to the Min. Span. Tree*/
+            minimum_spanning_tree.push_back(shortest);
+ 
+            /*
+                Merge the sets by setting
+                the head of one set to the head
+                of the other set.
+ 
+                If the head of one set is A and the other is C,
+                as long as we point C to A, all nodes part of the
+                set once headed by C will find A in linear time.
+            */
+            if (f_head &lt; s_head)
+                pred[s_head] = f_head;
+            else
+                pred[f_head] = s_head;
+        }
+    }
+ 
+    return minimum_spanning_tree;
+}
+</code></pre>
+<p>Now the real fun happens! We’re going to pop off the shortest edge from the <code>edges</code> array (as promised) and see if we need it in our MST. The logic is rather trivial:</p>
+<ul>
+<li>If the two vertices connected by a given edge belong to the same <em>disjoint set</em>, the edge would create a <em>cycle</em> and is, thus, unneeded.</li>
+<li>If the two vertices are members of two different <em>disjoint sets</em>, the edge should be added to the MST, since it is the smallest edge connecting the two particular vertices (because we sorted the edges). The sets of the vertices are <em>joined</em>.</li>
+</ul>
+<p>Let’s walk through the process of joining two sets. <code>pred</code> keeps track of which set a vertex belongs to by pointing to a vertex’s predecessor, a vertex in the same set, which was added to the set before this vertex.</p>
+<p>Here’s an example. If we join the sets of vertex <code>F</code> and vertex <code>C</code>, we need to find the set to which each belongs <em>first</em> and join those. If vertex <code>F</code> belongs to the set headed by <code>A</code>, and vertex <code>C</code> belongs to the set headed by <code>D</code>, we take set <code>D</code> and tack it on to <code>A</code>. We can’t just add <code>C</code> to <code>A</code>, because there might be other vertexes attached to <code>D</code> that would get lost, and this would cause extra edges to be added or failure in finding a correct MST. To solve this, we just add <code>D</code> to <code>A</code>, and then all the vertexes with <code>D</code> as their head will point to <code>D</code> and then follow <code>D</code> to <code>A</code>.</p>
+<p>To better understand this, let’s take a look at <code>get_pred(...)</code>:</p>
+<pre><code class="lang-auto">int get_pred(int vertex, const std::vector&lt;int&gt;&amp; pred) {
+    /*
+        We stop when a node/vertex is its own predecessor.
+        This means we have found the head of the set.
+    */
+    while(pred[vertex] != vertex)
+        vertex = pred[vertex];
+    return vertex;
+}
+</code></pre>
+<p>It is looking for the vertex with itself as it’s predecessor. This means that this particular vertex is the head of its own set. If we join the head of a set to another set, all vertices under a particular head will find their way to the new head in the next iteration of the big <code>while</code> loop in <code>kruskal(...)</code>, if necessary.</p>
+<p>The algorithm is done when all the vertexes belong to the same set. If we run out of edges to evaluate before this happens, then one or more vertices is unreachable, meaning that we haven’t found the MST, but a <em>minimum spanning forest</em> instead, a subset of the undiscoverable MST.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>I know that this concept of <em>disjoint sets</em> may cause some confusion, but rest assured that it will come to you soon. <a href="https://www.youtube.com/watch?v=fAuF0EuZVCk" rel="noopener nofollow ugc">This video</a> will be helpful to you (it’s different from the one I showed you in <a href="https://0x00sec.org/t/graph-algorithms-part-3-0-kruskals-mst-concept/637">Part 3.0</a>.</p>
+<p>Also, note that <em><strong>there can be multiple correct MSTs in a particular graph.</strong></em></p>
+<p>That’s it for this tutorial! I’m happy to answer any questions, whether below or on IRC (#<a class="hashtag" href="https://0x00sec.org/tag/0x00sec">#<span>0x00sec</span></a> on freenode). Additionally, if you have any concerns or suggestions relating to how I can better explain some concepts/techniques, PM me.</p>
+<p>Full source:</p>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://pastebin.com/favicon.ico" class="site-icon" width="16" height="16">
+      <a href="https://pastebin.com/dLrywcs3" target="_blank" rel="noopener nofollow ugc">Pastebin</a>
+  </header>
+  <article class="onebox-body">
+    
+
+<h3><a href="https://pastebin.com/dLrywcs3" target="_blank" rel="noopener nofollow ugc">kruskal.cpp (rough) - Pastebin.com</a></h3>
+
+<p>Pastebin.com is the number one paste tool since 2002. Pastebin is a website where you can store text online for a set period of time.</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p>Later…<br>
+<a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/bdb2ce20c799ef05fcaf5970ba9a681ced06d502.jpg" alt="dos equis man" width="" height=""></p>
+            <p><small>3 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679</link>
+          <pubDate>Thu, 30 Jun 2016 18:53:36 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-679</guid>
+          <source url="https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679.rss">Graph Algorithms (Part 3.1): Kruskal&#39;s MST [Code]</source>
+        </item>
+        <item>
+          <title>Graph Algorithms (Part 3.0): Kruskal&#39;s MST [Concept]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hey everyone! I’m back with another Graph tutorial. This time, I plan to discuss Kruskal’s Algorithm.</p>
+<p><a href="https://en.wikipedia.org/wiki/Kruskal%27s_algorithm" rel="nofollow noopener">Kruskal’s Algorithm</a> is one of a few algorithms (we’ll get to the rest later) for finding an <em>undirected</em> graph’s <a href="https://en.wikipedia.org/wiki/Minimum_spanning_tree" rel="nofollow noopener">Minimum Spanning Tree</a> (MST).</p>
+<p>A <em>Minimum Spanning Tree</em> is a tree connecting all nodes of a graph. Any node is reachable from any other node, and the total cost of traveling from one node in this MST to another is <em>minimized</em>.</p>
+<p>I <em><strong>strongly recommend</strong></em> that you go watch <a href="https://www.youtube.com/watch?v=71UQH7Pr9kU" rel="nofollow noopener">this video</a> <em><strong>right now.</strong></em>  It’s the best walk-through of the algorithm I have found thus far.</p>
+<hr>
+<h1>Explanation</h1>
+<p>Alright, now that you’ve seen the video, you should get the gist of what’s to be done here:</p>
+<ol>
+<li>Sort the edges by weight.</li>
+<li>Pick the lightest edge (the one with the smallest weight) and add that to the tree.</li>
+<li>Pick the next smallest edge and add it to the tree. It <strong>doesn’t</strong> have to be connected to either of the nodes connected by the first edge (step 2).</li>
+<li>Keep picking the next smallest edge that <strong>doesn’t</strong> create a cycle. If we already have <code>A =&gt; B</code> and <code>B =&gt; C</code>, we do not want to add <code>A =&gt; C</code>, since we can already go from <code>A</code> to <code>C</code> through <code>B</code>.<br>
+<em><strong>Note:</strong></em> In this hypothetical situation, <code>A =&gt; B</code> and <code>B =&gt; C</code> both have edge weights equal to or less than <code>A =&gt; C</code>, so adding <code>A =&gt; C</code> instead of one of the other edges increases the <strong>cost</strong> of our tree, meaning it would no longer be the <em>Minimum Spanning Tree</em>.</li>
+<li>Once we have <strong>one</strong> tree, which includes <em>all</em> of a graph’s nodes, we have arrived at the <em>Minimum Spanning Tree</em>.</li>
+</ol>
+<hr>
+<h1>Conclusion</h1>
+<p>I hope that I explained the rough process well enough. If not, re-read the entire article, and watch the video one more time. If you’re still having troubles after that, post a comment and I’ll help you out.</p>
+<p>Oh, and don’t worry about the pseudo-code at the end of the video… It’s confusing, and the narrator doesn’t discuss all the aspects of it. Next time, I’ll walk through a code implementation of this algorithm, which’ll be more clear than that pseudo-code.</p>
+<p><a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a> out.</p>
+            <p><small>2 posts - 1 participant</small></p>
+            <p><a href="https://0x00sec.org/t/graph-algorithms-part-3-0-kruskals-mst-concept/637">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/graph-algorithms-part-3-0-kruskals-mst-concept/637</link>
+          <pubDate>Tue, 21 Jun 2016 22:12:42 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-637</guid>
+          <source url="https://0x00sec.org/t/graph-algorithms-part-3-0-kruskals-mst-concept/637.rss">Graph Algorithms (Part 3.0): Kruskal&#39;s MST [Concept]</source>
+        </item>
+        <item>
+          <title>Graph Algorithms (Part 2.1): Bellman-Ford [Implementation]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hey everyone! This article is a followup to my <a href="https://0x00sec.org/t/graph-algorithms-part-2-0-the-bellman-ford-algorithm-concept/557">last one</a> about the Bellman Ford Algorithm.</p>
+<pre><code class="lang-auto">/*
+    Bellman-Ford with an Adjacency List
+*/
+#include &lt;vector&gt;
+#include &lt;iostream&gt;
+#include &lt;algorithm&gt;
+#include &lt;limits&gt;
+#include &lt;utility&gt;
+ 
+typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list;
+ 
+void bellman(const int start, const adj_list&amp; graph, std::vector&lt;int&gt;&amp; distances);
+ 
+int main() {
+    int n,m; std::cin &gt;&gt; n &gt;&gt; m;
+   
+    // adj-list using vector of size n holding a vector for
+    // each vertex.
+    adj_list graph(n);
+   
+    int f,s,w; // first, second, weight
+    for (int i = 0; i &lt; m; i++) {
+        std::cin &gt;&gt; f &gt;&gt; s &gt;&gt; w;
+
+        // graph is directed
+        graph[f-1].push_back( std::make_pair(s-1,w) );
+    }
+   
+    int start; std::cin &gt;&gt; start;
+   
+    std::vector&lt;int&gt; distances(n /* n = graph.size() */, std::numeric_limits&lt;int&gt;::max());
+    bellman(start - 1, graph, distances);
+ 
+    // print out the distances here
+    for (int i = 0; i &lt; n; i++)
+        std::cout &lt;&lt; "The distance from " &lt;&lt; start &lt;&lt; " to "
+            &lt;&lt; i+1 &lt;&lt; " is " &lt;&lt; distances[i] &lt;&lt; ".\n";
+ 
+    return 0;
+}
+ 
+void bellman(const int start, const adj_list&amp; graph, std::vector&lt;int&gt;&amp; distances) {
+    // setting to infinity is done in main;
+    distances[start] = 0;
+ 
+    // for later.
+    std::vector&lt;int&gt; pred(graph.size());
+ 
+    // visit every node
+    // start with `start`
+    // keep track of predecessors
+ 
+    // do it V-1 times
+    bool changes_made = true;
+    for (int i = 1, n = graph.size(); i &lt; n; i++) {
+        // go through each node
+        for (int j = 0; j &lt; n; j++) {
+            if (distances[j] == std::numeric_limits&lt;int&gt;::max())
+                continue; // skip if we don't know how to reach a node yet.
+           
+            // go through a node's neighbors
+            for (auto&amp; neighbor : graph[j]) {
+                if (distances[neighbor.first] &gt; distances[j] + neighbor.second) {
+                    distances[neighbor.first] = distances[j] + neighbor.second;
+                    pred[neighbor.first] = j;
+                    changes_made = true;
+                }
+            }
+        }
+        if (!changes_made)
+            break;
+        changes_made = false;
+    }
+ 
+    // now we do it one more time to find any negative cycles
+    for (int i = 0, n = graph.size(); i &lt; n; i++) {
+        if (distances[i] == std::numeric_limits&lt;int&gt;::max())
+            continue; // skip if we don't know how to reach a node yet.
+       
+        // go through a node's neighbors
+        for (auto&amp; neighbor : graph[i]) {
+            if (distances[neighbor.first] &gt; distances[i] + neighbor.second)
+                std::cout &lt;&lt; "Found negative cycle from " &lt;&lt; i &lt;&lt; " to " &lt;&lt; neighbor.first &lt;&lt; ".\n";
+        }
+    }
+}
+</code></pre>
+<p>The code is well-commented, so I won’t talk much about it here. Review my <a href="https://0x00sec.org/t/graph-algorithms-part-2-0-the-bellman-ford-algorithm-concept/557">last article</a> for an explanation of the underlying algorithm and the pseudocode.</p>
+<pre><code>6 8
+1 2 10
+1 6 8
+2 4 2
+3 2 1
+4 3 -2
+5 4 -1
+6 5 1
+5 2 -4
+1
+</code></pre>
+<p>The above is a sample input to use. It follows this convention. The first line has <code>n</code> and <code>m</code>, the number of vertices and number of edges, respectively. The next <code>m</code> lines are <code>f</code>, <code>s</code>, <code>w</code>, denoting an edge of weight <code>w</code> between nodes <code>f</code> and <code>s</code>. The last line takes one number, <code>start</code>, the node to start from.</p>
+<p>The program expects input of nodes labeled <code>1</code> through <code>n</code>. The code itself will convert this to <code>0</code> through <code>n-1</code> for easier storage.</p>
+<p>There is one final thing I must mention.</p>
+<hr>
+<h1>Adjacency List</h1>
+<p>This program utilizes a certain way of representing a graph. An <strong>adjacency list</strong> has space complexity <code>|E|</code>, while an <strong>adjacency matrix</strong> (remember <a href="https://0x00sec.org/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482/1">this article</a>?) has <code>|V|*|V|</code> space complexity. If it wasn’t obvious, <em>space complexity</em> is how much space something takes up in memory.</p>
+<p>We design the adjacency list in this line:</p>
+<pre><code class="lang-auto">typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list;
+</code></pre>
+<p>It is a <code>vector</code> of <code>vector</code>s of <code>pair</code>s. Each index in the outer vector represents a node. Each element is a <code>vector</code> of edges connected to a node <code>f</code> at index <code>f</code>. The first value in the <code>pair</code> is a node <code>s</code> connected to <code>f</code> by an edge of weight <code>w</code> (the weight is the second value in the pair).</p>
+<p>Thus, if I did the following (making use of our <code>typedef</code>):</p>
+<pre><code class="lang-auto">// ...
+int f = 0, s = 1, w = 3;
+adj_list graph(n); // declares adjacency list for n elements
+graph[f].push_back( std::make_pair(s, w);
+//...
+</code></pre>
+<p>We add an edge between <code>f</code> and <code>s</code> with weight <code>w</code>. Specifically, we add an edge of weight <code>3</code> between nodes <code>0</code> and <code>1</code>.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>I hope you can take some time to review the source code. Alternatively, you can find it <a href="http://pastebin.com/NBNinvhp" rel="nofollow noopener">here</a>. If you have any questions, comment below or hit me up on IRC at #<a class="hashtag" href="https://0x00sec.org/tag/0x00sec">#<span>0x00sec</span></a>.</p>
+<p><a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a> out.</p>
+            <p><small>2 posts - 1 participant</small></p>
+            <p><a href="https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570</link>
+          <pubDate>Wed, 08 Jun 2016 19:37:31 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-570</guid>
+          <source url="https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570.rss">Graph Algorithms (Part 2.1): Bellman-Ford [Implementation]</source>
+        </item>
+        <item>
+          <title>Graph Algorithms (Part 2.0): The Bellman-Ford Algorithm [Concept]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hello 0x00sec people! It’s <a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a> once again coming at you with another tutorial. This time, it’s about the <a href="https://en.wikipedia.org/wiki/Bellman%E2%80%93Ford_algorithm" rel="noopener nofollow ugc">Bellman-Ford Algorithm</a>.</p>
+<p>This algorithm is very similar to Dijkstra’s Algorithm from <a href="https://0x00sec.org/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482/1">last time</a>, yet it diverges in that it is designed to handle <em>negative edge weights</em>, which are “negative distances,” in a way.</p>
+<p>The use of the algorithm is two-fold: determine the shortest path between a starting node and all other nodes in a graph; and, determine if there are any <em>negative cycles</em>. A <strong>negative cycle</strong> is when traversing the same path again makes the distance smaller. This would continue and approach negative infinity if we kept traversing the same <em>negative cycle</em>.</p>
+<hr>
+<h1>Applications</h1>
+<p>I’m paraphrasing <a href="https://en.wikipedia.org/wiki/Bellman%E2%80%93Ford_algorithm" rel="noopener nofollow ugc">Wikipedia</a> here. This algorithm is used in the <a href="https://en.wikipedia.org/wiki/Routing_Information_Protocol" rel="noopener nofollow ugc">Routing Information Protocol</a> (<em>cough</em> <span class="mention">@airth</span>). This allows each node in a network to know how far every other node is. Each node calculates the distance between it and all other reachable nodes, and then sends that information to <em>all</em> the other nodes, so that all the nodes can update their information if/when a shorter path is discovered.</p>
+<hr>
+<p><span class="hashtag">#Procedure</span></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/4d78788f9adcdf7bd93d67c27660b7b6d122e1b3.png" width="387" height="385"></p>
+<p><em>Image from <a href="https://www.youtube.com/watch?v=obWXjtg0L64" rel="noopener nofollow ugc">this guy’s</a> wonderful Youtube video on the subject. You should all go watch that video and give him a like.</em></p>
+<p>Alright: Here’s an example of a graph with negative edge weights. Our algorithm is going to go through and find the shortest distance to each node from a starting node. For this example, our starting node will be <code>S</code>. Once it does, it’ll go over it one more time. Any distances that get smaller will do so because of a negatively-weighted edge. When this happens, we have detected a <em>negative cycle</em>.</p>
+<hr>
+<h1>Time Complexity</h1>
+<p>To ensure that we have found the shortest path, we’ll iterate through the graph <code>|V| - 1</code> times, where <code>V</code> is the number of vertices. Then, we’ll iterate through one last time to find the <em>negative cycles</em>.</p>
+<p>All in all, the <strong>time complexity</strong> boils down to <code>O(|V|*|E|)</code>, where <code>E</code> is the number of edges.</p>
+<hr>
+<h1>Pseudocode</h1>
+<pre><code>bellman(start, graph, distances):
+    for_each vertex in graph:
+        distances[vertex] = infinity
+    
+    distances[start] = 0
+
+    previous = Array of graph.vertex_count elements
+
+    // find the minimum distances
+    (graph.vertex_count - 1) times:
+        for_each node in graph:
+            for_each neighbor of node:
+                if distances[neighbor] &gt;  distances[node] + edge(node,neighbor):
+                    distances[neighbor] = distances[node] + edge(node,neighbor)
+                    previous[neighbor] = node
+                
+
+    // go through one last time to check for negative cycles
+    for_each node in graph:
+        for_each neighbor of node:
+            if distances[neighbor] &gt;  distances[node] + edge(node,neighbor):
+                 print "negative cycle found between " + node + " and " + neighbor + "\n"
+</code></pre>
+<p>As you can see, the first thing we do is set each distance to <code>infinity</code>. Then, we make sure that <code>distances[start] = 0</code> because the distance between a node and itself should ideally be <code>0</code>.</p>
+<p>I also made an array called <code>previous</code> just to keep track of the path – not that it matters all that much for finding distances, though.</p>
+<p>The next thing to do is iterate through the graph <code>|V| - 1</code> times. We go through each node’s neighbors and see if we can find a better distance. If we do, we also update the <code>previous</code> element corresponding to the <code>neighbor</code>.</p>
+<p>After all of those <code>|V| - 1</code> times (it <em>can</em> be optimized, but I wouldn’t want to cause confusion), we loop through once more to see if there are any negative cycles. <code>|V| - 1</code> times is enough iterations to determine the shortest distance, so if it’s shorter now it <em>must</em> be due to a negative edge weight, a <em>negative cycle</em>.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>That’s about all the algorithm does. In <em>Part 2.1</em> (I really like to stick with my conventions), we’ll write out some C++ code to perform the algorithm.</p>
+<p>Graph ya’ later,<br>
+<a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a></p>
+<p>P.S. If you have Sublime Text 2/3, get the DarkKorokai color scheme.</p>
+            <p><small>4 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/graph-algorithms-part-2-0-the-bellman-ford-algorithm-concept/557">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/graph-algorithms-part-2-0-the-bellman-ford-algorithm-concept/557</link>
+          <pubDate>Sun, 05 Jun 2016 19:27:01 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-557</guid>
+          <source url="https://0x00sec.org/t/graph-algorithms-part-2-0-the-bellman-ford-algorithm-concept/557.rss">Graph Algorithms (Part 2.0): The Bellman-Ford Algorithm [Concept]</source>
+        </item>
+        <item>
+          <title>Graph Algorithms (Part 1.1): Dijkstra&#39;s Shortest Path [Code v1]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hey 0x00sec people! Not long ago, I said I would put up some source code for Dijkstra’s Algorithm. Today, I’ll be showing you just <em>one</em> way to do it. We’ll be utilizing an <strong>Adjacency Matrix</strong>, which is simply a 2D Array. <em>As we progress, each implementation will be more efficient than the last.</em></p>
+<p>Taking a page from <a class="mention" href="https://0x00sec.org/u/dtm">@dtm</a>’s book, this post is best understood when the reader has:</p>
+<pre><code>Intermediate C++ Skills
+read the first article
+</code></pre>
+<h1>Representation of A Graph</h1>
+<p>The first step in implementing any algorithm is understanding how to represent relevant data in a computer. So, how would we represent a graph in memory?</p>
+<p>There are really just two ways:</p>
+<ol>
+<li>Adjacency Matrix</li>
+<li>Adjacency List</li>
+</ol>
+<p>Today, we’re going to use the first one. Take a look at the image below:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/446c623541ed9008901f76c1b05ff5526f4fcee0.png" alt="matrix and graph representation"></p>
+<p>On the left, what is shown is a graph much like the one from the <a href="https://0x00sec.org/t/graph-algorithms-part-1-0-dijkstras-shortest-path-concept/419">first part of this series</a>. To the right of that graph is its corresponding representation in an adjacency matrix.</p>
+<p>This particular adjacency matrix is a Boolean one: a <code>1</code> means that an edge connects the two nodes. A matrix’s values can also be used to keep track of distances.</p>
+<blockquote>
+<p>Note: A matrix is represented in computer as a 2D array. The outer array makes up the rows; the inner the columns. Generally:  <code>some_matrix[row][col]</code>.</p>
+</blockquote>
+<hr>
+<h1>Let’s Start Coding</h1>
+<pre><code class="lang-java">#include &lt;iostream&gt;
+#include &lt;vector&gt;
+#include &lt;algorithm&gt;
+#include &lt;limits&gt;
+
+int dijkstra(std::vector&lt; std::vector&lt;int&gt; &gt;&amp; matrix, int start, int end) {
+
+	std::vector&lt;int&gt; distances(matrix.size()), previous(matrix.size());
+	std::vector&lt;int&gt; nodes, path;
+
+        // ...
+</code></pre>
+<p>We include our headers and then declare the function <code>dijkstra</code>. This function takes, as parameters, an adjacency matrix represented by a 2D <code>std::vector</code>, a starting point, and an ending point. The start/end points are assumed to be from a zero-based index.</p>
+<p>Then, we declare a few more vectors.</p>
+<ul>
+<li>
+<code>distances</code> will keep track of the distance between each node and the <code>start</code> node.</li>
+<li>
+<code>previous</code> keeps track of the order of visitation of the nodes.</li>
+<li>
+<code>nodes</code> is a <code>std::vector&lt;int&gt;</code> containing all of the nodes.</li>
+<li>
+<code>path</code> is simply the path to take from <code>start</code> to <code>end</code>. It’s empty because we have yet to find the path.</li>
+</ul>
+<pre><code class="lang-java">       // ...
+
+        for (int i = 0, n = matrix[start].size(); i &lt; n; i++) {
+
+		if (i == start)
+			distances[i] = 0;
+		else
+			distances[i] = std::numeric_limits&lt;int&gt;::max();
+
+		nodes.push_back(i);
+	}
+
+        // ...
+</code></pre>
+<p>We now go through each node, and set the distance to “infinity,” represented by the maximum value of an integer (<code>numeric_limits&lt;int&gt;::max()</code>). <em>But</em>, if the <code>i</code>th node is our <code>start</code> node, we set the distance to <code>0</code>. We then <code>push_back</code> each node.</p>
+<pre><code class="lang-java">        // ...
+        auto comp = [&amp;](int l, int r) {return distances[l] &gt; distances[r];};
+	std::sort(nodes.begin(), nodes.end(), comp);
+
+        // ...
+</code></pre>
+<p>Okay, that first line there seems a little daunting. Basically, we create a custom comparator, so that we can sort <code>nodes</code> by the distance between each node and <code>start</code>, with the smallest distances at the end, or back, of <code>nodes</code>.</p>
+<pre><code class="lang-java">        // ...
+        while(!nodes.empty()) {
+		int smallest = nodes.back();
+		nodes.pop_back();
+
+		if (smallest == end) {
+
+			while(smallest != start) {
+
+				path.push_back(smallest);
+				smallest = previous[smallest];
+			}
+			
+			path.push_back(start);
+			std::reverse(path.begin(), path.end());
+			break;
+		}
+
+		if (distances[smallest] == std::numeric_limits&lt;int&gt;::max())
+			break;
+
+		for(int i = 0, n = matrix[smallest].size(); i &lt; n; i++) {
+			int tmp = distances[smallest] + matrix[smallest][i];
+			
+			if (tmp &lt; 0)
+				tmp = std::numeric_limits&lt;int&gt;::max();
+				// combat integer overflow!
+			
+			if (tmp &lt; distances[i]) {
+				distances[i] = tmp;
+				previous[i] = smallest;
+
+				std::sort(nodes.begin(), nodes.end(), comp);
+			}
+		}
+	}
+        // ...
+</code></pre>
+<p>Now we enter a <code>while</code> loop, which says, “while we still have nodes…” The first thing we’re going to do is take the smallest node in <code>nodes</code> and “visit” it by popping it off of <code>nodes</code> and storing it in <code>smallest</code>.</p>
+<p>Skip those first two <code>if</code>s and go to that <code>for</code> loop. This loop says, “for each node connected to <code>smallest</code>, do…”</p>
+<p>In the loop, we first make a variable <code>tmp</code> equal to the sum of <code>distances[smallest]</code> and <code>matrix[smallest][i]</code>. This means, <code>tmp</code> is equal to the distance from <code>start</code> to <code>smallest</code> plus the distance from <code>smallest</code> to node <code>i</code>. <code>tmp</code> is, therefore, a possible distance from <code>start</code> to node <code>i</code>. But, we only want to use this distance if it’s less than the one we <em>already</em> may have.</p>
+<p>First, let’s make sure we didn’t add <code>numeric_limits&lt;int&gt;::max()</code> to some number above zero and accidentally overflow <code>tmp</code> to the negatives. We correct <code>tmp</code> to <code>numeric_limits&lt;int&gt;::max()</code> if we <em>did</em> overflow it.</p>
+<p>Now we’re at the second <code>if</code> in the <code>for</code> loop. If <code>tmp</code> is smaller than <code>distances[i]</code>, it means that we have found a better route from <code>start</code> to <code>i</code>. So, we update the distance and record that the node we visit before <code>i</code> should be <code>smallest</code>. Since we have updated a distance, we also need to re<code>sort</code> <code>nodes</code>.</p>
+<p>Okay, let’s go back to the first <code>if</code> in the <code>while</code> loop. If/when we reach the end, the code inside this <code>if</code> runs. We build up the <code>path</code> by calling on previous, and then recursively defining <code>smallest</code> as the <code>smallest</code> that came before it. Then, we <code>push_back( start )</code> to complete the path. We have to <code>reverse</code> it first, though, since the first element in <code>path</code> is <code>end</code> and the last is <code>start</code>.</p>
+<p>The second <code>if</code> in the <code>while</code> loop handles the corner case of not being able to reach <code>end</code> from <code>start</code>. If the smallest distance is <code>numeric_limits&lt;int&gt;::max()</code>, our “infinity”, then <code>end</code> can never be reached.</p>
+<pre><code class="lang-java">        // ...
+        for(auto&amp; v : path) std::cout &lt;&lt; v &lt;&lt; " ";
+        	std::cout &lt;&lt; "\n";
+
+        	return distances[end];
+    } // end of dijkstra()
+</code></pre>
+<p>In this final snippet of <code>dijkstra</code>, we print out the <code>path</code> and then <code>return distances[end]</code>, the distance from <code>start</code> to <code>end</code>.</p>
+<p>I’ll leave the <code>main()</code> function up to you guys, but <a href="http://pastebin.com/F8TpzSsc" rel="noopener nofollow ugc">here</a> is the source for this post. <em><strong>Note:</strong></em> <em>I have slightly modified the code shown here for simplicity and/or the tutorial’s sake.</em> There is a main function in <a href="http://pastebin.com/F8TpzSsc" rel="noopener nofollow ugc">that</a>, but feel free to make your own, as long as it satisfies the adjacency matrix.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>That’s all for today. Next time, I’ll be rolling out a (much) more optimized version of the algorithm that takes advantage of adjacency lists and more concise coding techniques I have omitted from this for clarity reasons.</p>
+            <p><small>2 posts - 1 participant</small></p>
+            <p><a href="https://0x00sec.org/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482</link>
+          <pubDate>Wed, 25 May 2016 01:34:53 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-482</guid>
+          <source url="https://0x00sec.org/t/graph-algorithms-part-1-1-dijkstras-shortest-path-code-v1/482.rss">Graph Algorithms (Part 1.1): Dijkstra&#39;s Shortest Path [Code v1]</source>
+        </item>
+        <item>
+          <title>Graph Algorithms (Part 1.0): Dijkstra&#39;s Shortest Path [Concept]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hey 0x00sec! I’ll be taking a pause from my Data Structures series to introduce this community to Graph Theory with Dijkstra’s Algorithm. I only just barely understand this, so bare with me.</p>
+<h1>Graph Theory (Brief)</h1>
+<p>There are two main types of graphs:</p>
+<ul>
+<li>
+<strong>Directed Graphs</strong> are graphs whose edges go a certain way. For example, the edge from node 1 to node 2 may be different in value than the edge from node 2 to node 1.</li>
+<li>
+<strong>Undirected Graphs</strong> are graphs whose edges’ direction does not matter: <code>1 -&gt; 2 == 2 -&gt; 1</code>.</li>
+</ul>
+<p>This series (the beginning, at least) will focus on undirected graphs.</p>
+<p>There can also be cyclical edges, which are edges that point from one node back to that node.</p>
+<hr>
+<h1>Description of Dijkstra’s</h1>
+<p><strong>Dijkstra’s Algorithm</strong> was created in the 1950s by a man named <a href="https://en.wikipedia.org/wiki/Edsger_W._Dijkstra" rel="noopener nofollow ugc">Edsger W. Dijkstra</a>. Its purpose is determining the shortest path between two points, or <em>nodes</em>, in a graph of points connected by <em>edges</em>.</p>
+<p>It has a Time Complexity of <code>O( num_edges + num_nodes * log(2,num_nodes) )</code>. You can see that the number of nodes has a more drastic effect than the number of edges.</p>
+<p>Let’s say we have some graph:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/fa8a66ccee7152f287d8afe31619f0b2eb339f30.png" alt="graph"><br>
+<em>Taken from <a href="http://www.maxburstein.com/blog/introduction-to-graph-theory-finding-shortest-path/" rel="noopener nofollow ugc">here</a>, a great Intro to Graph Theory that you should totally go read after finishing this.</em></p>
+<p>We want to find the distance between <code>A</code> and <code>H</code>. <code>A</code> is connected to two nodes, <code>B</code> and <code>C</code>. Let’s list out the distance from <code>A</code> to every other node:</p>
+<ul>
+<li>A: 0</li>
+<li>B: 7</li>
+<li>C: 8</li>
+<li>D: ?</li>
+<li>E: ?</li>
+<li>F: ?</li>
+<li>G: ?</li>
+<li>H: ?</li>
+</ul>
+<p>But why did I put all the question marks? It’s because, looking from <code>A</code>, we only directly have access to <code>B</code> and <code>C</code>. All other nodes can only be accessed by going through <code>B</code> or <code>C</code> (or a node may be totally inaccessible).</p>
+<p>But we’re trying to get to H, right? So, if we start from <code>A</code>, should we move to <code>B</code> or <code>C</code>? Well, which one is closer to <code>A</code>, meaning which edge-length is smaller? Okay, let’s pick <code>B</code>. From <code>B</code>, let’s update our data:</p>
+<ul>
+<li>A: 0</li>
+<li>B: 7</li>
+<li>C: 8</li>
+<li>D: ?</li>
+<li>E: ?</li>
+<li>F: 9</li>
+<li>G: ?</li>
+<li>H: ?</li>
+</ul>
+<p>Great. From <code>B</code> we can only go directly to <code>F</code>. Thus, we’ve discovered a distance from <code>A</code> to <code>F</code>. The distance from <code>A</code> to <code>F</code> is determined by the sum of the distance from <code>A</code> to <code>B</code> and <code>B</code> to <code>F</code>, 9. Now, let’s move to <code>F</code> and update our information again:</p>
+<ul>
+<li>A: 0</li>
+<li>B: 7</li>
+<li>C: 8</li>
+<li>D: ?</li>
+<li>E: ?</li>
+<li>F: 9</li>
+<li>G: ?</li>
+<li>H: 12</li>
+</ul>
+<p>Oh, would you look at that!? We’re at <code>H</code> now! So we know that the distance from <code>A</code> to <code>H</code> is twelve and our path was <code>A -&gt; B -&gt; F -&gt; H</code>.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>That’s it for the concept of Dijkstra’s Algorithm. In <em>Part 1.1</em>, I’ll walk you through the coding of Dijkstra’s algorithm. We’ll be using matrices (2D arrays). I should also tell you now that I’m going to use C++.  Surprised? I didn’t think so!</p>
+<p>I’ll tell you that it personally took me quite a lot of time to get a grasp on Graph Theory and this algorithm. <a href="http://www.maxburstein.com/blog/introduction-to-graph-theory-finding-shortest-path/" rel="noopener nofollow ugc">This article</a> was probably the most helpful thing I found on the internet about Dijkstra’s Algorithm. You should totally go read it. I will be using code I wrote myself in the next tutorial, but it is influenced at least slightly by the author of that article.</p>
+<p>Auf Wiedersehen,<br>
+oaktree</p>
+            <p><small>8 posts - 4 participants</small></p>
+            <p><a href="https://0x00sec.org/t/graph-algorithms-part-1-0-dijkstras-shortest-path-concept/419">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/graph-algorithms-part-1-0-dijkstras-shortest-path-concept/419</link>
+          <pubDate>Thu, 19 May 2016 23:26:03 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-419</guid>
+          <source url="https://0x00sec.org/t/graph-algorithms-part-1-0-dijkstras-shortest-path-concept/419.rss">Graph Algorithms (Part 1.0): Dijkstra&#39;s Shortest Path [Concept]</source>
+        </item>
+        <item>
+          <title>Data Structures (Part 1.4): Linked List [insert()]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Okay, 0x00sec people! Now for <code>insert(...)</code>. I expect this to be the last technical part of the Linked List subseries before a fairly significant code dump.</p>
+<h1>Algorithm Description</h1>
+<p>Our insertion function takes two parameters: <code>T val</code> and <code>const size_t&amp; idx</code>.</p>
+<ul>
+<li>
+<code>T val</code> is a value of type <code>T</code> (remember, I like <code>template</code>s) to be inserted.</li>
+<li>
+<code>const size_t&amp; idx</code> is the index at which a new <code>node</code> is to be placed.</li>
+</ul>
+<p>The function will return <code>val</code> upon a successful run; otherwise, it will <code>throw</code> an exception (to be explained later).</p>
+<p>So, <code>insert(...)</code> will traverse the list until it reaches the index <code>idx</code> desired, <em>or</em> until the end of the <code>List</code> is reached. If we never arrive at <code>idx</code>, the exception (again, to be discussed later) gets <code>throw</code>n.</p>
+<p><strong>Time Complexity:</strong> <code>O(n)</code>.</p>
+<hr>
+<h1>Source Code</h1>
+<pre><code class="lang-java">template &lt;class T&gt;
+T List&lt;T&gt;::insert(T val, const size_t&amp; idx) {
+        if (idx == 0 &amp;&amp; root == nullptr) {
+		this-&gt;append(val);
+		return val;
+	}
+	node&lt;T&gt;* h = root;
+	size_t cnt = 0;
+
+	while(cnt &lt; idx - 1 &amp;&amp; h != nullptr) {
+		h = h-&gt;next;
+		cnt++;
+	}
+
+	if (cnt == idx - 1) {
+		if (h != nullptr) {
+
+			node&lt;T&gt;* new_node = new node&lt;T&gt;(val);
+
+			new_node-&gt;next = h-&gt;next;
+			
+			h-&gt;next = new_node;
+
+			len++; // update length
+
+			return val;
+		} 
+	}
+
+	// WATCH THIS LINE
+	throw std::out_of_range("ERROR: called insert() past the acceptable range of the current linked list");
+}
+</code></pre>
+<p>Oh dear! That’s hella code. Let’s get to it…</p>
+<p>First, we want to check if <code>root</code> is <code>nullptr</code>. If it is, and if we’re trying to insert at <code>idx = 0</code>, we call a function <code>append()</code>, which I have yet to reveal, that tacks on to the end. In this case, our <code>insert(...)</code>ing is done, so we return right then and there.</p>
+<p>The next two lines of the function should remind you of the <code>delete(...)</code> function from <a href="https://0x00sec.org/t/data-structures-part-1-3-linked-list-delete/368">last time</a> (wait, you didn’t read that?).</p>
+<p>In the <code>while</code> loop we traverse the list (again, much like we did so in <code>delete(...)</code>) until we reach <code>idx - 1</code> or the end of the list. <em><strong>Note:</strong></em> <em>I chose <code>idx - 1</code> so that <code>h</code> is the <code>node</code> before. Thus, the new <code>node</code> becomes <code>h-&gt;next</code>.</em></p>
+<p>The <code>while</code> loop ended. Now we must check a few things:</p>
+<ol>
+<li>Are we at <code>idx - 1</code>; meaning, are we where we want to be (in the list)?</li>
+<li>Did we hit the end of the list already?</li>
+</ol>
+<p>First, I make sure that first condition is true. Inside that <code>if</code>, though, I put a second <code>if</code>, reading <code>if (h != nullptr)</code>. This is because, if <code>h</code> (which is <code>some_list[ idx - 1 ]</code>) is a <code>nullptr</code>, that means that we’ve come just short of the index <code>idx</code> where we want to put a new <code>node</code>. <em><strong>Note:</strong></em> <em>We can’t just tack on a new <code>node</code> at <code>idx - 1</code> if <code>h</code> is a <code>nullptr</code> because then we wouldn’t be inserting at <code>idx</code>, now would we?</em></p>
+<p>Okay, but what if we pass <strong>both</strong> conditions? Now we’re inside the nested <code>if</code>s.</p>
+<ol>
+<li>Construct a new <code>node&lt;T&gt;*</code> and set <code>val</code> as its <code>data</code>.</li>
+<li>Set <code>new_node-&gt;next</code> to <code>h-&gt;next</code>. In math-y English, this means "make <code>some_list[ idx ]</code> point to <code>some_list[ idx + 1]</code>". If <code>h-&gt;next</code> is a <code>nullptr</code>, that won’t affect us, because any <code>node</code>'s default <code>next</code> defaults to <code>nullptr</code>, anyway!</li>
+<li>Make <code>h-&gt;next = new_node</code>; ensure that <code>some_list[ idx - 1 ]</code> points to <code>some_list[ idx ]</code>. We are trying to <strong>not</strong> lose any <code>node</code>s (because that’d be a memory leak, and good programmers don’t leak their memories).</li>
+<li>Increment the length <code>len</code> of the list to account for this shiny new <code>node</code> we’ve just <code>insert(...)</code>ed!</li>
+<li>
+<code>return val</code>, thereby ending our presence in the function before reaching that default <code>throw</code>.</li>
+</ol>
+<h2>Brief Explanation of the Default Exception</h2>
+<pre><code class="lang-java">throw std::out_of_range("ERROR: there is no node at that index to delete!");
+</code></pre>
+<p>What does this mean? So, if we don’t reach the spot in the list where we wanted to <code>insert(...)</code> a new <code>node</code>, what do we do? Do we panic? Sort of. But it’s 2016! Let’s be civil about how we panic by using <code>exception</code>s. This way, the caller of the function can accommodate for trying to <code>insert(...)</code> past the bounds, or <code>out_of_range</code>, of the list.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>That’s <code>insert(...)</code> for ya! I now challenge you to implement an <code>insert</code>ion function that takes a linked list rather than one value to insert! Would you want to copy over all the values? What would you do?</p>
+<p>That’s it for today,<br>
+oaktree</p>
+<p><em>A microphone can be heard hitting the ground.</em></p>
+            <p><small>2 posts - 1 participant</small></p>
+            <p><a href="https://0x00sec.org/t/data-structures-part-1-4-linked-list-insert/396">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/data-structures-part-1-4-linked-list-insert/396</link>
+          <pubDate>Wed, 18 May 2016 23:39:39 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-396</guid>
+          <source url="https://0x00sec.org/t/data-structures-part-1-4-linked-list-insert/396.rss">Data Structures (Part 1.4): Linked List [insert()]</source>
+        </item>
+        <item>
+          <title>Data Structures (Part 1.3): Linked List [delete()]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hello 0x00sec people! This next part of my series is about <code>delete(...)</code>.</p>
+<h1>Basic Algorithm Description</h1>
+<p><code>delete(...)</code> will remove a <code>node</code> at a certain index in a linked list. It takes one parameter of type <code>const size_t&amp; idx</code>. Basically, it takes in a number corresponding to a certain <code>node</code> in the list, if we count the root node as 0 and so on.</p>
+<p>The function will then traverse the list until it arrives at the <code>idx</code>th <code>node</code>. Then, it’ll delete this <code>node</code>.</p>
+<p>The function returns the data stored at that particular <code>node</code>. It has <code>O(n)</code> time complexity.</p>
+<hr>
+<p><span class="hashtag">#The</span> Code</p>
+<pre><code class="lang-auto">template &lt;class T&gt;
+T List&lt;T&gt;::delete(const size_t&amp; idx) {
+	node&lt;T&gt;* h = root;
+	size_t cnt = 0;
+
+	while(cnt &lt; idx - 1 &amp;&amp; h/*-&gt;next*/ != nullptr) {
+		h = h-&gt;next;
+		cnt++;
+	}
+
+	if (cnt == idx - 1) {
+		if (h != nullptr &amp;&amp; h-&gt;next != nullptr) {
+			
+			node&lt;T&gt;* tmp = h-&gt;next;
+			T tmp2 = tmp-&gt;d();
+
+			h-&gt;next = tmp-&gt;next; // overlap
+
+			tmp-&gt;next = nullptr;
+			delete tmp;
+
+			len--; // update length
+
+			return tmp2;
+		} 
+		// should i have else?!?!?
+	}
+
+        throw std::out_of_range("ERROR: there is no node at that index to delete!");
+}
+</code></pre>
+<p><strong>Note</strong>: <em>I’m still actively trying to make this function better. This is just what I have as of this writing.</em></p>
+<p>So, first a <code>node&lt;T&gt;*</code> called <code>h</code> is declared for traversal purposes. Then, we declare a <code>size_t cnt</code> to keep track of our position in the list. This is so we’ll know if the index <code>idx</code> passed to the function is out of bounds. If we never reach it, no <code>node</code> should get deleted.</p>
+<p>Upon traversal (after the <code>while</code> loop), we’ve set it up so that <code>h-&gt;next</code> is the <code>node</code> to be deleted.</p>
+<p>In the outer <code>if</code>, we want to make sure that our <code>h</code> is correct (<code>h</code> should be the one before <code>h-&gt;next</code>, so it’s index is one less than <code>idx</code>).</p>
+<p>In that inner <code>if</code>, we want to make sure that <code>h</code>, or <code>mylist[idx - 1]</code>, isn’t <code>nullptr</code>; we also need to ensure that <code>h-&gt;next</code>, the <code>node</code> we’d like to delete, is not a <code>nullptr</code>, either. This is because: if <code>h</code> is a <code>nullptr</code>, there is no <code>mylist[idx]</code> to delete; and, if <code>h-&gt;next</code> is <code>nullptr</code>, <code>mylist[idx]</code> has nothing to delete, because it’s the end of the list.</p>
+<p>If we pass those two <code>if</code>s, then the fun begins!</p>
+<ol>
+<li>Make a temp <code>node&lt;T&gt;* tmp</code> to hold on to the <code>node</code> we intend to delete.</li>
+<li>Save it’s data in <code>T tmp2 = tmp-&gt;d()</code> to return later. (Note that d() is a member function of a <code>node</code> that returns the data stored at a <code>node</code>.</li>
+<li>Reassign <code>h-&gt;next</code> to <code>tmp-&gt;next</code>. This basically jumps over <code>tmp</code> in the linked list, virtually removing <code>tmp</code> from the list.</li>
+<li>Now we have to clean up <code>tmp-&gt;next</code> by setting it to <code>nullptr</code>. Don’t worry! We haven’t lost <code>tmp-&gt;next</code> because <code>h-&gt;next</code> now holds that!</li>
+<li>Now we can <code>delete tmp</code>, which calls the <code>node</code> destructor <code>~node()</code>.</li>
+<li>Since we’ve taken a <code>node</code> out, we need to decrement the length of the list <code>len</code>.</li>
+<li>Last, let’s return the data value stored in the <code>node</code> we just deleted.</li>
+</ol>
+<p>If, for any reason, we don’t arrive at the <code>node</code> to delete, we <code>throw</code> an exception saying that there is no <code>node</code> to delete.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>Okay, that’s it for <code>delete</code>. In the future, I will probably improve this function.</p>
+<p>Thaaanks,<br>
+<a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a></p>
+            <p><small>3 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/data-structures-part-1-3-linked-list-delete/368">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/data-structures-part-1-3-linked-list-delete/368</link>
+          <pubDate>Sun, 15 May 2016 23:22:20 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-368</guid>
+          <source url="https://0x00sec.org/t/data-structures-part-1-3-linked-list-delete/368.rss">Data Structures (Part 1.3): Linked List [delete()]</source>
+        </item>
+        <item>
+          <title>Data Structures (Part 1.2): Linked Lists [search()]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hello 0x00sec! Today, I’ll be going over <code>search(...)</code>, as promised.</p>
+<h1>Basic Algorithm Description</h1>
+<p><code>search(...)</code> will take one parameter <code>q</code> of type <code>T</code>, the value to look for in a linked list. The function returns a <code>node&lt;T&gt;*</code> (a pointer to a <code>node</code> in the list) if <code>q</code> is found; or <code>nullptr</code> if <code>q</code> is not found.</p>
+<p>This implementation of <code>search(...)</code> will at most traverse the entire linked list. Thus, it has <code>O(n)</code> complexity.</p>
+<hr>
+<h1>The Code</h1>
+<pre><code class="lang-java">template &lt;class T&gt;
+node&lt;T&gt;* List&lt;T&gt;::search(const T&amp; q) {
+	node&lt;T&gt;* h = root;
+
+	while(h != nullptr &amp;&amp; h-&gt;d() != q)
+                h = h-&gt;next;
+
+                // d() is a member function of `node` is the
+                // getter for the attribute `data` of a `node`
+
+	return h;
+}
+</code></pre>
+<p>The first thing we do is use <code>h</code> to store the pointer to the <code>root</code> of our linked list. We then traverse the list, stopping only when we have reached the end OR have found the value for which we are looking.</p>
+<p>Whatever <code>h</code> is at that point, we return.</p>
+<hr>
+<h1>Example</h1>
+<pre><code class="lang-java">#include &lt;node.h&gt;
+#include &lt;node.cpp&gt;
+#include &lt;list.h&gt;
+#include &lt;list.cpp&gt;
+#include &lt;iostream&gt;
+
+int main() {
+    List&lt;int&gt; mylist;
+
+    for (int i =0; i&lt;10; i++) mylist.append(i);
+    // append() tacks the value passed to it onto the end of the linked list
+
+    if (mylist.search(5) != nullptr)
+        std::cout &lt;&lt; "found 5 in mylist\n";
+    else
+        std::cout &lt;&lt; "didn't find 5 in mylist\n";
+
+    if (mylist.search(12) != nullptr)
+        std::cout &lt;&lt; "found 12 in mylist\n";
+    else
+        std::cout "did not find 12 in mylist\n";
+}
+</code></pre>
+<p>This code should read out:</p>
+<blockquote>
+<p>found 5 in mylist<br>
+did not find 12 in mylist</p>
+</blockquote>
+<hr>
+<h1>Conclusion</h1>
+<p>In its current state, you could use this <code>search(...)</code> to interact with <code>node</code>s. I’m now debating whether I should have returned an index instead. Ah, oh well. It still <em>is</em> a search function though. And it works.</p>
+<p>Bai,<br>
+oaktree</p>
+<p>P.S. If you have any suggestions, go ahead and comment or PM me! After all, I’m no <em>node-it-all</em>.</p>
+            <p><small>7 posts - 4 participants</small></p>
+            <p><a href="https://0x00sec.org/t/data-structures-part-1-2-linked-lists-search/316">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/data-structures-part-1-2-linked-lists-search/316</link>
+          <pubDate>Thu, 12 May 2016 00:10:15 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-316</guid>
+          <source url="https://0x00sec.org/t/data-structures-part-1-2-linked-lists-search/316.rss">Data Structures (Part 1.2): Linked Lists [search()]</source>
+        </item>
+        <item>
+          <title>Data Structures (Part 1.1): Linked List [Class Destructors]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hey 0x00sec community!</p>
+<p>This one will be short. Today, I’m going to show you the destructors I have implemented for my <code>List</code> and <code>node</code> classes.</p>
+<hr>
+<h1>A Recap of the Header Files</h1>
+<p><strong>node.h</strong>:</p>
+<pre><code class="lang-java">template &lt;class T&gt;
+class node {
+  private:
+	T data;
+	
+  public:
+
+  	node&lt;T&gt;* next;
+	
+	// class constructor
+	node(T _data = 0, node&lt;T&gt;* ptr = nullptr)
+		: data(_data), next(ptr) {}
+	
+	~node();
+
+	// other methods
+};
+</code></pre>
+<p>(lol, so using Java syntax highlighting makes comments work, but C++ highlighting doesn’t. “Note to self…”)</p>
+<hr>
+<p><strong>list.h</strong>:</p>
+<pre><code class="lang-java">template &lt;class T&gt;
+class List {
+  private:
+	  node&lt;T&gt;* root;
+	  size_t len;
+
+  public:
+
+  	List()
+  		: root(nullptr), len(0) {}
+
+  	~List();
+
+  	// other methods
+</code></pre>
+<hr>
+<h1>Destructors</h1>
+<p><strong>list destructor</strong></p>
+<pre><code class="lang-java">template &lt;class T&gt;
+List&lt;T&gt;::~List() {
+        if (root != nullptr) //EDIT: only delete root if it isn't a nullptr
+	        delete root; // root is a node&lt;T&gt;*,
+	// whose destructor deletes whatever the node points to
+}
+</code></pre>
+<hr>
+<p><strong>node destructor</strong></p>
+<pre><code class="lang-java">template &lt;class T&gt;
+node&lt;T&gt;::~node() {
+	if (next != nullptr) {
+		delete next;
+	}
+}
+</code></pre>
+<hr>
+<h1>Why It Works</h1>
+<p>In my design for linked lists, we never interact with <code>node</code>s outside of the <code>List</code> class, meaning we never deal with naked <code>node</code>s, nor do we deal with pointers to <code>node</code>s on our own.</p>
+<p>Every <code>node</code> is handled by a <code>List</code>.</p>
+<p>In some <code>main()</code>, I can make a new list  like so:</p>
+<pre><code class="lang-java">List&lt;int&gt; mylist;
+</code></pre>
+<p>Currently, I have only made a constructor for <code>List</code> that takes no parameters.</p>
+<p>If I want to add a <code>node</code> to <code>mylist</code>, I call <code>mylist.append(&lt;some data&gt;)</code>. <strong>Note</strong>: <em>I have yet to show you <code>append(...)</code>, but it does exist and it does work.</em></p>
+<p><code>List</code>'s <code>append()</code> takes care of acquiring resources for a new <code>node</code>. Now, remember that <code>List</code> has two data members: <code>node&lt;T&gt;* root</code> and <code>size_t len</code>. The one relevant to us now is <code>node&lt;T&gt;* root</code>. That is a pointer. How do we work with pointers in C++? <code>new</code> and <code>delete</code>.</p>
+<p>So, when I <code>append(...)</code> to <code>mylist</code>, I essentially do <code>new node&lt;T&gt;</code>.</p>
+<p>When <code>mylist</code> goes out of scope, <code>~List()</code> gets called. All it does is <code>delete root</code>. But, in deleting <code>root</code>, which is a <code>node&lt;T&gt;*</code>, we call <code>~node()</code>. In <code>~node()</code>, we <code>delete next</code> (remember that <code>next</code> is a <code>node&lt;T&gt;*</code>) <strong>IF</strong> <code>next</code> is not a <code>nullptr</code> (<code>NULL</code> in C). When we <code>delete next</code>, we call the destructor for <code>next</code>. Wait, what destructor is that? <code>~node()</code>!</p>
+<p><strong>BOOM</strong>. So, using <em>implicit recursion</em>, the entire linked list, consisting of <code>node&lt;T&gt;*</code>s gets deallocated responsibly.</p>
+<p>Keep linking those lists guys,<br>
+oaktree</p>
+            <p><small>5 posts - 4 participants</small></p>
+            <p><a href="https://0x00sec.org/t/data-structures-part-1-1-linked-list-class-destructors/281">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/data-structures-part-1-1-linked-list-class-destructors/281</link>
+          <pubDate>Tue, 10 May 2016 01:49:26 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-281</guid>
+          <source url="https://0x00sec.org/t/data-structures-part-1-1-linked-list-class-destructors/281.rss">Data Structures (Part 1.1): Linked List [Class Destructors]</source>
+        </item>
+        <item>
+          <title>Data Structures (Part 1.0): Linked List [Class Implementations]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hello 0x00sec!</p>
+<p>Welcome to the maiden article of my series on Data Structures. Today, I’ll be talking about <a href="https://en.wikipedia.org/wiki/Linked_list" rel="nofollow noopener">Linked Lists</a>.</p>
+<h2>What is a Linked List? <a name="whatis" href="https://0x00sec.org"></a>
+</h2>
+<p>Since, you can all read Wikipedia, I don’t really have to go into much detail. But, a Linked List is a datastructure with the following characteristics:</p>
+<ul>
+<li>A root <code>node</code>, which points to any succeeding nodes. It can point to one node, and in turn the node to which it points may point to yet another node (and so on); or, it can point to no nodes at all.</li>
+<li>An <code>O(n)</code> search</li>
+<li>An <code>O(n)</code> delete, which deletes the <code>node</code> at a certain index.</li>
+<li>An <code>O(n)</code> insert function that puts a new node at a certain index.</li>
+<li>An <code>O(n) insert function that puts a new node at the __beginning__, subordinating the root </code>node`.</li>
+</ul>
+<h2>Quick Vocab</h2>
+<ol>
+<li>A <code>node</code> is a member of the linked list. A <code>node</code> holds one piece of data (e.g. <code>int</code>, <code>double</code>, etc.) and a pointer to another node, typically the next node.</li>
+</ol>
+<hr>
+<h1>Beginning the Implementation</h1>
+<p>I’ll be writing C++ code for this series. I’ll be making use of generic programming and object-oriented programming. <code>node</code> and <code>list</code> will be classes.</p>
+<h2>Class Implementations</h2>
+<h3>node.h</h3>
+<pre><code class="lang-auto">template &lt;class T&gt;
+class node {
+  private:
+	T data;
+  public:
+
+    node&lt;T&gt;* next;
+	
+        // class constructor
+        node(T _data = 0, node&lt;T&gt;* ptr = nullptr)
+                : data(_data), next(ptr) {}
+	
+        ~node();
+
+        T&amp; d(); // data accessor
+
+        void d(T _data); // data setter
+};
+</code></pre>
+<p>Let’s go through this more-or-less line-by-line.</p>
+<p><code>template &lt;class T&gt;</code> means that we declare a type <code>T</code> to serve as a fill-in-the-blank for the future. Later on, we’ll do something like <code>node&lt;int&gt;</code> or <code>node&lt;char&gt;</code>. All the <code>T</code>s will be changed to the specified type.</p>
+<p>We declare a type and give it one private attribute: <code>data</code>, which is some type <code>T</code>.</p>
+<p>Then there is a class constructor. The particular syntax may look somewhat cryptic. We have a member function <code>node(...)</code> which takes two parameters, <code>_data</code>, and <code>ptr</code>. Both parameters have reasonable default values. <code>_data</code> is the information you want stored in the particular <code>node</code>. <code>ptr</code> is the <code>node</code> to which you want <em>this</em> <code>node</code> to point.</p>
+<p><code>~node()</code> is what is called a class destructor. When a <code>node</code> goes out of scope in a program, <code>~node()</code> is called to clean up any resources.</p>
+<p><strong>Note</strong>: All of the functions from ~node() down are implemented in another file, node.cpp.</p>
+<p><code>d()</code> is a member function that will allow a programmer to access a node’s data. Similarly, <code>d(T _data)</code> is the corresponding writer function, which allows a programmer to change the value of attribute <code>data</code> for a certain node.</p>
+<h3>list.h</h3>
+<pre><code class="lang-auto">    template &lt;class T&gt;
+    class List {
+      private:
+          node&lt;T&gt;* root;
+          size_t len;
+
+      public:
+
+          List() : root(nullptr), len(0) {}
+
+          ~List();
+
+          node&lt;T&gt;* search(const T&amp; q);
+
+          node&lt;T&gt;* insert(T val, const size_t&amp; idx);
+
+          T del(const size_t&amp; idx);
+
+          size_t size();
+    };
+</code></pre>
+<p>Okay… so something weird is happening with that syntax highlighting.</p>
+<p><code>List</code> is the class that will serve as the interface for our linked list. It has two <code>private</code> attributes: <code>root</code> is a pointer to the root <code>node</code> in the list; <code>len</code> is the length of the list (this is optional). <em>Note: <code>size_t</code> is like an <code>int</code> but it’s architecture dependent.</em></p>
+<p><code>List()</code> is the constructor for the class. It takes no parameters and just sets <code>root</code> to be a <code>nullptr</code>, a pointer which points nowhere. It also, logically, sets the length <code>len</code> of the list to zero.</p>
+<p><code>~List()</code> is the destructor. If you have not yet noticed, <code>~</code> denotes a class’s destructor. Again, from the destructor down, all of the member functions are implemented in another file (<strong>list.cpp</strong>), which I will show you in <em>Part 1.1</em>.</p>
+<p><code>search(...)</code>, <code>insert(...)</code>, and <code>del(...)</code> are the functions I mentioned <a href="https://0x00sec.org#whatis">earlier</a>; <code>size()</code> is a function that will return the value of <code>len</code>, telling is how long our list is.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>I did not want to make this too long, so I will be dividing <em>Linked List</em> up into several parts, this one being <em>Part 1.0</em>. Stay tuned for the implementations of <code>search()</code>, <code>insert()</code>, and <code>del()</code>.</p>
+<p>See ya next time, 0x00’ers,<br>
+oaktree</p>
+            <p><small>9 posts - 5 participants</small></p>
+            <p><a href="https://0x00sec.org/t/data-structures-part-1-0-linked-list-class-implementations/237">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/data-structures-part-1-0-linked-list-class-implementations/237</link>
+          <pubDate>Sat, 07 May 2016 23:29:44 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-237</guid>
+          <source url="https://0x00sec.org/t/data-structures-part-1-0-linked-list-class-implementations/237.rss">Data Structures (Part 1.0): Linked List [Class Implementations]</source>
+        </item>
+        <item>
+          <title>Sorting (Part 7.0): Merge Sort</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hello everyone! This is part 7.0 of my Sorting series.</p>
+<p>So, anyway, here we are at 7.0 – and I’m wondering about how long I can drag this whole thing out…</p>
+<h2>Merge Sort: The Algorithm Under the Hood</h2>
+<p><a href="https://en.wikipedia.org/wiki/Merge_sort" rel="nofollow noopener">Merge Sort</a> is another <a href="https://en.wikipedia.org/wiki/Divide_and_conquer_algorithms" rel="nofollow noopener">divide and conquer</a> algorithm, much like <a href="https://0x00sec.org/t/sorting-part-6-0-quick-sort-sorta-efficient/202/1">Quick Sort</a>.</p>
+<p>One big difference from Quick Sort is that Merge Sort doesn’t pick any special pivot. Rather, Merge Sort splits the array-to-sort <code>arr</code> right down the middle. Then, it uses recursion to Merge Sort the <code>left = arr[0..k]</code> and <code>right = arr[k+1..n-1]</code>.</p>
+<p>It 'll continue splitting each piece of the array-to-sort <code>arr</code> into smaller and smaller pieces, until the pieces are of size two or less.</p>
+<p>That’s the wonder of <em>divide and conquer</em>: take a daunting problem and split it into a lot of smaller, more manageable tasks.</p>
+<p>So, we get to very small arrays that essentially follow this pattern: <code>arr[a..b]</code>, where <code>0 &lt;= a &lt;= n - 2</code>, <code>1 &lt;= b &lt;= n - 1</code>, and <code>b - a &lt;= 1</code>, meaning that the array piece <code>arr[a..b]</code> has a length of two or less.</p>
+<p>Okay, so now we have a bunch of arrays that are two-or-less elements in length. <em>Two or less elements</em> can mean one of three things:</p>
+<ol>
+<li>There are no elements in the array, so we return it move on to the next piece.</li>
+<li>The array has one element, so we return that and move on.</li>
+<li>The array has two elements. Here, we swap the elements if they’re out of order, and then return it.</li>
+</ol>
+<p>~<a href="http://img.wonderhowto.com/img/57/25/63594753873245/0/sorting-part-7-0-merge-sort.w654.jpg" rel="nofollow noopener">merge sort diagram</a></p>
+<p>Once we have sorted the two or lesses, we need to <strong>MERGE</strong> each pair of <em>two or lesses</em> into arrays of size four (or less).</p>
+<p>Take a look at the picture above again. Do you understand what I mean by merging? Did you bring your head right up to the screen to examine the second line <em>closely</em>? Regardless of your answer, look at it again and imagine merging the -two_-size arrays into the <em>four</em>-size arrays above them.</p>
+<p>If the first element in the left array is smaller than the first of the right array, put the left’s first element in the first spot of the four array, now look at the second element of the left array, but keep looking at the right. Put the smaller one in. Now you’re looking at the last element of each two array. Put the smaller one in, that’s <code>5</code> on the left side of the diagram. Now you have no more values to merge in that left two array, so tack on the rest of that right two array if it still has values to be merged.</p>
+<p>You keep merging the pieces until you have the entire array. [Take a look at this video for a visual]<a href="https://youtu.be/ZRPoEKHXTJg" rel="nofollow noopener">https://youtu.be/ZRPoEKHXTJg</a>).</p>
+<p>Note that it does the left side first before doing anything for the right side. This is because of how recursion is used. All of the <code>mergesort(left)</code>s will be executed before it ever gets to a <code>mergesort(right)</code> on the same level.</p>
+<h2>Time Complexity</h2>
+<p>Merge Sort has an <code>O(n * log n )</code> worst-and best-case time complexity.</p>
+<h2>Ruby Implementation</h2>
+<pre><code class="lang-ruby">class Array
+    def mergesort
+ 
+        return self if length &lt;= 1
+       
+        if length == 2 # we swap if the length is two and the "two array" is unsorted still
+            if (self[0] &gt; self[1])
+                self[0],self[1] = self[1],self[0]
+            end
+ 
+            return self
+        end
+ 
+        left = self[0...self.length/2].mergesort
+        right = self[self.length/2...self.length].mergesort
+ 
+        arr = []
+ 
+        while(!left.empty? &amp;&amp; !right.empty?)
+            if left.first &lt; right.first
+                arr &lt;&lt; left.first
+                left.shift #i remove the first element from left after it gets merged
+                # it's so i can keep comparing using left/right.first
+            else
+                arr &lt;&lt; right.first
+                right.shift # remove first element from right after merging it
+            end
+        end
+ 
+        if !left.empty?
+            arr += left # if the left array is not yet fully merged, tack on the remaining values
+        elsif !right.empty?
+            arr += right # if the right array is not yet fully merged, tack on remaining values
+        end
+ 
+        return arr
+    end
+end
+</code></pre>
+<p>The first few lines of <code>mergesort()</code> are exit conditions, since we use recursion in <code>mergesort()</code>.</p>
+<p>In this implementation, I extended Ruby’s <code>Array</code> class to have a <code>mergesort()</code> method. That’s why I call it with dot-notation.</p>
+<p>If the array we are <code>mergesort</code>ing has more than two elements, we call <code>mergesort</code> on its left and right halves right away. No merging takes place until the array-to-sort <code>self</code> gets cut down into little two or less pieces.</p>
+<p>I make an empty array <code>arr</code> to hold the result. Then, I say <em>while left and right both have elements, merge</em>. The merging takes place in that <code>while</code> loop. I do it by comparing the smallest element of <code>left</code> to that of <code>right</code>. The smaller element of the two gets “merged” by appending it to <code>arr</code>. Then, we delete that element from <code>left</code> or <code>right</code> (where it came from) by calling <code>Array#shift</code>.</p>
+<p>After either <code>left</code> or <code>right</code> is emptied out, we append the non-empty array. <em><strong>Note:</strong></em> <em>only one array will have remaining elements at this point, and it’ll be guaranteed that the result is sorted.</em></p>
+<p>We then return the new array, <code>arr</code>.</p>
+<h2>C++ Version</h2>
+<pre><code class="lang-auto">void mergesort(vector&lt;char&gt;&amp; vec) {
+    int n = vec.size();
+ 
+    // recursion terminator
+    if (n &lt;= 1) return;
+    else if (n == 2) {
+        if (vec[0] &gt; vec[1]) {
+ 
+            char tmp = vec[0];
+            vec[0] = vec[1];
+            vec[1] = tmp;
+           
+        }
+ 
+        return;
+    }
+ 
+    vector&lt;char&gt; left(vec.begin(), vec.begin() + n / 2);
+    vector&lt;char&gt; right(vec.begin() + n / 2, vec.end());
+    vec.erase(vec.begin(), vec.end()); // because we have copied the values to the partitions (left and right)
+ 
+    mergesort(left); mergesort(right);
+ 
+    int itr = 0;
+   
+    while(!left.empty() &amp;&amp; !right.empty() &amp;&amp; itr &lt; n) {
+        if (left[0] &lt; right[0]) {
+ 
+            vec.push_back(left.front());
+ 
+            left.erase(left.begin());
+        } else {
+ 
+            vec.push_back(right.front());
+           
+            right.erase(right.begin());
+        }
+ 
+        itr++;
+    }
+   
+    if (!left.empty()) {
+        vec.insert(vec.end(), left.begin(), left.end());
+    } else if (!right.empty()) {
+        vec.insert(vec.end(), right.begin(), right.end());
+    }
+ 
+}
+</code></pre>
+<p>We do fundamentally the same thing, except that I didn’t extend <code>vector</code> as I extended <code>Array</code> in the Ruby version. It’s just a regular old function. Use the annotations I have provided above; otherwise, I’ve done all I can to explain Merge Sort.</p>
+<h2>Conclusion</h2>
+<p>That’s it for this article. The implementations above are great on time, but a little heavier on memory than I’d like, so Merge Sort may make a return to NB in the future, a little wiser, a little more optimized.</p>
+<p>Again, stay tuned for the optimization(s) of Quick Sort to come.</p>
+<p>Comment below if you have a special sorting algorithm you’d like included in my series.</p>
+<p>Stay sorted,<br>
+oaktree</p>
+            <p><small>3 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/sorting-part-7-0-merge-sort/205">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/sorting-part-7-0-merge-sort/205</link>
+          <pubDate>Fri, 06 May 2016 00:03:23 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-205</guid>
+          <source url="https://0x00sec.org/t/sorting-part-7-0-merge-sort/205.rss">Sorting (Part 7.0): Merge Sort</source>
+        </item>
+        <item>
+          <title>Sorting (Part 6.0): Quick Sort [Sorta Efficient]</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hello 0x00sec!</p>
+<p>Welcome to my sixth iteration of my sorting series. Today, we’ll be discussing a personal favorite: Quicksort, or Quick Sort.</p>
+<h2>Quick Sort: The Algorithm Under the Hood</h2>
+<p><a href="https://en.wikipedia.org/wiki/Quicksort" rel="noopener nofollow ugc">Quick Sort</a> is what’s called a “divide and conquer” sorting algorithm. It takes a particular approach: pick an element <code>p</code> from the array-to-sort <code>arr</code>, any element, and call that the pivot point. Put all the elements in <code>arr</code> that are less than <code>p</code> on the left side of <code>p</code>, so in <code>arr[0]</code> to <code>arr[k-1]</code>, where <code>k</code> is the final position in the sorted array of <code>p</code>. Put all the elements greater than <code>p</code> on the right of <code>p</code>, or in the spots <code>arr[k+1]</code> to <code>arr[n-1]</code>, where <code>n</code> is the size of the array.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/3bdb723d364f1ac3d19c3f7dfdcfe3f20b8953e1.jpeg" alt="quicksort diagram" data-base62-sha1="8xwkARIRVXqMaVswkvtkdxDRVNT" width="" height=""></p>
+<p>There are a few ways to accomplish this – some are more efficient than others. Today, I’ll be showing you the easiest way to do it, where we make new arrays for the “left” and “right” parts, and then join them at the end, rather than doing what’s called <a href="http://www.mathcs.emory.edu/~cheung/Courses/171/Syllabus/7-Sort/quick-sort2.html" rel="noopener nofollow ugc">in-place quicksort</a>.</p>
+<h2>Time Complexity</h2>
+<p>Mathematically, the worst-case time complexity of Quick Sort is <code>O(n^2)</code>, when the array-to-sort is in the worst possible order: reversed.</p>
+<p><strong>BUT</strong>, Quick Sort often behaves logarithmic-ally, rather than quadratic-ally, meaning it commonly has the time complexity <code>O(n * log(base 2) of n)</code>.</p>
+<p>So, it is <em>sometimes</em> faster than the previously-covered bubble, insertion, and selection sorts… Don’t get too excited, but insertion sort is coming back for a little cameo in a coming post…</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a0e9e6cf5d3c80c23a0879f7b2784cb7b86562a9.jpeg" alt="time complexity visual pun" data-base62-sha1="mXvwGkJlV3dnH14jhfRfxp1X2Ah" width="" height=""></p>
+<hr>
+<h2>Ruby Implementation</h2>
+<pre><code class="lang-ruby">#! /usr/bin/env ruby
+ 
+# str is array of chars
+# pivot point is index in array to pivot on
+# returns type like `str`
+def quicksort(str, pivot_point)
+    strlen = str.length
+ 
+    # recursion terminating condition:
+    return str if strlen &lt;= 1
+ 
+    # find the pivot character
+    pivot_char = str[pivot_point]
+   
+    # make new arrays for left and right of pivot
+    # note: I'm very much aware that this is not the most efficient method,
+    # but it WILL make it easier to understand the concept of quicksort before
+    # I proceed to cover the in-place version
+    left = []
+    right = []
+ 
+    # go through all the elements, put the ones smaller than pivot_char on the left;
+    # ...bigger on the right.
+    for i in 0...strlen # exclusive range: 0 to one less than str's length
+        next if i == pivot_point # skip over the pivot, we don't want to put it anywhere
+        # because it'll already be in final position at the end of the function.
+ 
+        if str[i] &lt; pivot_char
+            left &lt;&lt; str[i]
+        else
+            right &lt;&lt; str[i]
+        end
+    end
+</code></pre>
+<p>Okay, so our <code>quicksort(...)</code> function starts on line 6. The first thing you see is our declaration of <code>strlen</code>. On line 10, we check if <code>str</code>, our array-to-sort, is empty or only has one element. An array with one or fewer elements is always sorted, so we just return the original array.</p>
+<p>On line 13, we hold the value of our pivot in <code>pivot_char</code> by accessing the value stored at index <code>pivot_point</code> in <code>str</code>. This <code>pivot_point</code> is chosen by the caller of <code>quicksort(...)</code>. <em><strong>Note:</strong></em> <em>often, you’ll see implementations use different methods to pick out the pivot points, opting for the first or last element, or some other element entirely.</em></p>
+<p>We then declare <code>left = []</code> and <code>right = []</code> to hold the values less than the pivot and greater than the pivot, respectively.</p>
+<p>In the <code>for</code> loop on line 24 we go through <code>str</code> and put each element in either the <code>left</code> or <code>right</code> arrays, but never both, excluding the pivot, because we don’t need to re-sort the pivot; it will be in its final position.</p>
+<pre><code class="lang-ruby">    # utilize recursion to sort the left and right arrays, until the partitions become
+    # a singular-element array or an empty one.
+    left = quicksort(left, rand(left.length))
+    right = quicksort(right, rand(right.length))
+ 
+    # overwrite the original str and drop the new stuff in, in order
+    str = []
+    str &lt;&lt; left &lt;&lt; pivot_char &lt;&lt; right
+ 
+    return str.flatten # flatten because we pushed an array, a character/one-letter-string, and another array
+    # FYI: flatten makes a 2+D array 1D.
+ 
+end
+ 
+puts "give me a string"
+str = gets.chomp.split('')
+ 
+puts quicksort(str, rand(str.length)).join('')
+</code></pre>
+<p>But we’re not done yet. We now take the newly filled (or not filled) <code>left</code> and <code>right</code> and call <code>quicksort(...)</code> on them, too. <em><strong>Note:</strong></em> <em>this calling of a function from within itself is known as <a href="https://en.wikipedia.org/wiki/Recursion" rel="noopener nofollow ugc">recursion</a>. Make sure you have a terminator (ours is line 10) so that your function doesn’t keep calling itself forever.</em></p>
+<p>After the <code>left</code> and <code>right</code> arrays are quickly sorted – pun intended – we can stitch them together, the pivot in between, to build the completed, sorted <code>str</code>. We do this by erasing <code>str</code> and then copying <code>left</code>, <code>pivot_char</code>, and <code>right</code> into the just-emptied <code>str</code>.</p>
+<p>We flatten <code>str</code> before returning it because pushing left/right to <code>str</code> creates a 2D array, something we do not desire.</p>
+<h2>C++ Version</h2>
+<pre><code class="lang-auto">void quicksort(vector&lt;char&gt;&amp; vec, const int pivot_point) {
+    if (vec.size() &lt;= 1) return;
+ 
+    char pivot_char = vec[pivot_point];
+ 
+    vector&lt;char&gt; left, right;
+ 
+    for (int i = 0, n = vec.size(); i &lt; n; i++) {
+        if (i == pivot_point) continue;
+ 
+        if (vec[i] &lt; pivot_char) {
+            left.push_back(vec[i]);
+        } else {
+            right.push_back(vec[i]);
+        }
+    }
+ 
+    if (!left.empty()) quicksort(left, rand() % left.size());
+    if (!right.empty()) quicksort(right, rand() % right.size());
+ 
+    vec = left;
+    vec.push_back(pivot_char);
+    vec.insert(vec.end(), right.begin(), right.end());
+}
+</code></pre>
+<p>As usual, I chose to use <code>vec</code> in place of <code>str</code>. Other than that, there is only one major contrast from the Ruby version: Before calling <code>quicksort(...)</code>, I check if the array-to-sort is empty. This is because of how C++ does random numbers. If I pick a random pivot in for an empty array, passing a random pivot would look like <code>rand() % 0</code>, because the size of an empty array is 0, yet you cannot do a modulo of 0, because you cannot divide by 0.</p>
+<p>Conclusion<br>
+If you noticed in the title, this article is <em>Part 6.0</em> that “.0” is there because I am implying the coming of a <em>6.1</em> and maybe even <em>6.2</em>.</p>
+<p>Why? Because this method of quicksorting is resource-inefficient. I only showed you it because it’s the easiest form of quicksort to understand and implement.</p>
+<p>So, stay tuned for <em>Sorting (Part 6.1): Quick Sort [In-Place]</em>.</p>
+<p>Happy Hacking,<br>
+oaktree</p>
+            <p><small>3 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/sorting-part-6-0-quick-sort-sorta-efficient/202">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/sorting-part-6-0-quick-sort-sorta-efficient/202</link>
+          <pubDate>Thu, 05 May 2016 23:48:44 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-202</guid>
+          <source url="https://0x00sec.org/t/sorting-part-6-0-quick-sort-sorta-efficient/202.rss">Sorting (Part 6.0): Quick Sort [Sorta Efficient]</source>
+        </item>
+        <item>
+          <title>Sorting (Part 5.0): Selection Sort</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <p>Hello 0x00sec people! Let’s talk about Selection Sort – oh yeah, I linked Wikipedia!</p>
+<p>Selection sort is a lot like Insertion Sort, which – if you can recall from an <a href="https://0x00sec.org/t/sorting-part-3-0-insertion-sort/199/1">earlier post</a> of mine – involves finding the smallest element in an array and shifting it to one side, proceeding to find the next smallest element, and so on, and so on…</p>
+<p>But Selection Sort, in contrast, does not shift over all of the elements; it finds the smallest element <code>a[i]</code>, wherever it may be, and swaps it with whichever element currently occupies <code>a[0]</code>, unless <code>i == 0</code>.</p>
+<p>It goes on to find the next smallest element, excluding the new <code>a[0]</code>. We could call this <code>a[j]</code>. The algorithm swaps this out with <code>a[1]</code> unless <code>j == 1</code>. And this goes on until the elements are all in order.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/51332934f87c8ccf1fde815e1344ed513391daa4.jpeg" alt="selection sort" data-base62-sha1="bAkhN6lFqjpkv8DdA8tVteCT23W" width="" height=""></p>
+<p>The algorithm is <code>O(n^2)</code> and <code>o(n)</code>. This is the last quadratic complexity sorting algorithm I intend to cover.</p>
+<h2>Ruby Implementation</h2>
+<pre><code class="lang-ruby">#! /usr/bin/env ruby
+ 
+# just input, ignore
+puts "give me a string"
+str = gets.chomp.split('')
+strlen = str.length
+# end of input section, stop ignoring
+ 
+# begin sorting
+for i in 0...strlen
+    min_pos = i # assume the min element is the first element in the unsorted section of str
+ 
+    for j in i+1...strlen # now loop through str, starting from i+1 since there is no need to reevaluate str[i]
+        min_pos = j if (str[j] &lt; str[min_pos]) # update min_pos if we find a smaller element
+    end
+   
+    # now we swap them IF AND ONLY IF the smallest element in the unsorted portion of the array is not in its place yet
+    # below you'll see the Ruby syntax for swapping two variables' values... it might look strange, but it actually
+    # makes it stupidly simple
+    str[i] , str[min_pos] = str[min_pos] , str[i] if min_pos != i
+end
+ 
+puts str.join('')
+</code></pre>
+<p>First of all, notice the nested <code>for</code> loops are what makes this algorithm <code>O(n^2)</code>.</p>
+<p>Alright, so we start with the first element, <code>str[0]</code>. And we go ahead and assume that <code>str[0]</code> is the smallest element, because we have yet to see any smaller element in <code>str</code>. But let’s only store the <em>position</em> of this minimum element, <code>0</code>. Thus, we have <code>min_pos = i</code>.</p>
+<p>So now we go through the array in the inner <code>for</code> loop looking for a smaller element. We won’t start from <code>i</code> because that would just be silly and redundant, since we know that the <code>if</code> condition inside the loop could never evaluate to true when <code>i == j</code> without Divine interference from the Computer Science gods.</p>
+<p>If we find a smaller element, let’s update <code>min_pos</code> to contain the index of that element. Once we’ve looped through <code>str</code>, finishing the inner <code>for</code>, we know we’ve found the smallest element between <code>i</code> and the end of the array (<code>n-1</code>).</p>
+<p>If i is not the position of the smallest element in the unsorted portion of <code>str</code>, we must swap <code>str[i]</code> with <code>str[min_pos]</code>, meaning we put the smallest element from the still unsorted portion of <code>str</code> (<em><strong>Note:</strong></em> <em>any elements to the left of <code>str[i]</code> make up the sorted portion of <code>str</code></em>) where it belongs and toss the “original” <code>str[i]</code> in the only available slot, <code>str[min_pos]</code>, since that smallest element in the unsorted portion has moved to the sorted portion of the array.</p>
+<p>Here’s a visual:</p>
+<p><span alt="visual of selection sort" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>And we just keep on with this process until we’ve gone through the entirety of <code>str</code>, making all of <code>str</code> part of the sorted portion.</p>
+<h2>C++ Version</h2>
+<pre><code class="lang-auto">#include &lt;iostream&gt;
+#include &lt;string&gt;
+#include &lt;vector&gt;
+#include &lt;cstdlib&gt;
+ 
+using namespace std;
+ 
+void selectionsort(vector&lt;char&gt;&amp; vec) {
+    int n = vec.size();
+   
+    // start from first element till last
+    for (int i = 0; i &lt; n; i++) {
+ 
+        int min_pos = i; // assume first element is the smallest
+ 
+        for (int j = i + 1; j &lt; n; j++) {
+            // update position of min element if we find a smaller one
+            if (vec[j] &lt; vec[min_pos]) {
+                min_pos = j;
+            }
+        }
+ 
+        // if the minimun is not at position i, we must swap
+        if (min_pos != i) {
+            int tmp = vec[i];
+            vec[i] = vec[min_pos];
+            vec[min_pos] = tmp;
+        }
+    }
+}
+ 
+int main() {
+    cout &lt;&lt; "give me a string" &lt;&lt; endl;
+    string s; getline(cin, s);
+ 
+    vector&lt;char&gt; vec(s.begin(), s.end());
+ 
+    if (!vec.empty()) selectionsort(vec);
+ 
+    string str(vec.begin(), vec.end());
+ 
+    cout &lt;&lt; str &lt;&lt; endl;
+    return 0;
+}
+</code></pre>
+<p>It’s fundamentally the same as the Ruby code is, semantically.</p>
+<p>Peruse the comments, but I feel that there is no point in explaining this code more, since I did a (hopefully) bang-up job up above. <em><strong>Note:</strong></em> <em>what was <code>str</code> in the Ruby code is <code>vec</code> in the C++ code, because I… uh… no reason, really.</em></p>
+<h2>Python</h2>
+<p>I know I said I’d be using Ruby and C++ exclusively for this series, but good guy JSchmoe went and ported the algorithms to Python. You can find his sorty porties (IRC joke [join #<a class="hashtag" href="https://0x00sec.org/tag/0x00sec">#<span>0x00sec</span></a> !]) <a href="http://pastebin.com/iLYm75pu" rel="noopener nofollow ugc">on pastebin here</a>.</p>
+<h2>Conclusion</h2>
+<p>That’s it for Selection Sort, the last quadratic complexity sorting algorithm I set out to cover in this series.</p>
+<p>'Twas a pleasure,<br>
+oaktree</p>
+<p>P.S. Quicksort is still to come!</p>
+            <p><small>3 posts - 2 participants</small></p>
+            <p><a href="https://0x00sec.org/t/sorting-part-5-0-selection-sort/201">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/sorting-part-5-0-selection-sort/201</link>
+          <pubDate>Thu, 05 May 2016 23:34:17 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-201</guid>
+          <source url="https://0x00sec.org/t/sorting-part-5-0-selection-sort/201.rss">Sorting (Part 5.0): Selection Sort</source>
+        </item>
+        <item>
+          <title>Sorting (Part 4.0): Bogo Sort</title>
+          <dc:creator><![CDATA[oaktree]]></dc:creator>
+          <category>Algorithms</category>
+          <description><![CDATA[
+            <h2>What Is Bogo Sort?</h2>
+<p>Bogo Sort is a sorting algorithm that is not used in production at all. Why? Because it’s extremely stupid. Some even call it “Stupid Sort.”</p>
+<p>The algorithm works by generating random permutations of an inputted array-to-sort. Then, it checks to see if the randomly generated permutation is sorted. If so, it returns that sorted array and exits; otherwise, it makes another permutation.</p>
+<p>Worst-Case Time Complexity: <code>O( (n+1)! )</code> because of all the possible permuting.</p>
+<p>Best-Case Time Complexity: <code>o(n)</code> if the array-to-sort is already sorted.</p>
+<p><strong>Note:</strong> Bogo Sort can generate the same permutation more than once in a run, thus wasting even more of our time.</p>
+<h2>Ruby Implementation</h2>
+<pre><code class="lang-ruby">class Array
+    def sorted?
+        ### goes thru array and checks if all elements are in order
+        for i in 1...self.length
+            return false if self[i-1] &gt; self[i]
+        end
+        return true
+    end
+    def bogosort
+        ### randomly shuffles until sorted
+        self.shuffle! until self.sorted?
+        return self #return sorted array
+    end
+end
+ 
+puts "give me a string"
+str = gets.chomp.split('')
+puts str.bogosort.join('')
+</code></pre>
+<p>I’ll tell you that I got inspiration for this implementation from various parts of the internet – and probably Wikipedia.</p>
+<p>So, anyway, I’ve extended Ruby’s <code>Array</code> class to have a few extra methods: <code>sorted?</code> and <code>bogosort</code>.</p>
+<p>I hope that you all can infer what <code>sorted?</code> does; yet, if not, I’ll tell you that it ensures that all the elements are in order… and, yes, I’m that guy who uses for loops in Ruby.</p>
+<p>Okay, so <code>bogosort</code> basically just uses a built-in shuffle method to get a new permutation of the array-to-sort and stops shuffling when the array-to-sort is sorted. Simple enough.</p>
+<h2>C++ Version</h2>
+<pre><code class="lang-auto">#include &lt;iostream&gt;
+#include &lt;string&gt;
+#include &lt;vector&gt;
+#include &lt;cstdlib&gt;
+ 
+using namespace std;
+ 
+bool is_sorted(const vector&lt;char&gt;&amp; vec) {
+   
+    for (int i = 1, n = vec.size(); i &lt; n; i++) {
+        if (vec[i-1] &gt; vec[i]) return false;
+        // returns false if an element is smaller than one to its left
+    }
+ 
+    return true;
+}
+ 
+void shuffle(vector&lt;char&gt;&amp; vec) {
+    int i,n, tmp, rand_idx;
+ 
+    for(i = 0, n = vec.size(); i &lt; n; i++) {
+       
+        tmp = vec[i]; // store temporarily
+       
+        rand_idx = rand() % n; // pick a random index in the vector/array
+ 
+        // swap each element in vector/array with another one that is chosen randomly
+        vec[i] = vec[rand_idx];
+        vec[rand_idx] = tmp;
+    }
+}
+ 
+void bogosort(vector&lt;char&gt;&amp; vec) {
+    while( !is_sorted(vec) ) shuffle(vec);
+}
+ 
+int main() {
+    cout &lt;&lt; "give me a string" &lt;&lt; endl;
+    string s; getline(cin, s);
+ 
+    vector&lt;char&gt; vec(s.begin(), s.end());
+ 
+    if (!vec.empty()) bogosort(vec);
+ 
+    string str(vec.begin(), vec.end());
+ 
+    cout &lt;&lt; str &lt;&lt; endl;
+    return 0;
+}
+</code></pre>
+<p>The deal is the same for <code>is_sorted(...)</code> as it was for our Ruby implementation’s <code>sorted?</code>.</p>
+<p>In our C++ implementation, however, I actually define my own shuffle function. Basically, it swaps an element in our vector/array with another, randomly-chosen one to create a fresh permutation. Of course, it could potentially do the same thing twice.</p>
+<p>The actual <code>bogosort(...)</code> function does the same thing in this C++ version as our Ruby version did.</p>
+<p>Conclusion<br>
+That’s it for Bogo/Stupid/Monkey Sort.</p>
+<p>You can check out <a href="https://stackoverflow.com/questions/2609857/are-there-any-worse-sorting-algorithms-than-bogosort-a-k-a-monkey-sort" rel="nofollow noopener">this cool Stack Overflow post</a> for some more crazy sorting algorithms.</p>
+<p>Leave a comment if you have a question.</p>
+<p>See you all later,<br>
+oaktree</p>
+            <p><small>17 posts - 6 participants</small></p>
+            <p><a href="https://0x00sec.org/t/sorting-part-4-0-bogo-sort/200">Read full topic</a></p>
+          ]]></description>
+          <link>https://0x00sec.org/t/sorting-part-4-0-bogo-sort/200</link>
+          <pubDate>Thu, 05 May 2016 23:23:46 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">0x00sec.org-topic-200</guid>
+          <source url="https://0x00sec.org/t/sorting-part-4-0-bogo-sort/200.rss">Sorting (Part 4.0): Bogo Sort</source>
+        </item>
+  </channel>
+</rss>

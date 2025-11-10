@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Intro to Microservices part 2</title>
+    <link>https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682</link>
+    <description>_The second in a series on microservices._
+
+# Microservices
+---
+
+## Part 2: The start of microservices
+
+### Out of the water, onto land...
+
+The motivation for and benefits of a microservices architecture extend far beyond simply breaking down the monolith as mentioned, but for most engineers and companies I&#39;ve spoken with looking to make the switch, scaling and cost savings are the primary motivation. They realize that deployments are painful, that money is wasted on power or cloud compute resources, that choke points are killing performance. But they quickly realize additional benefits: the application can be extended more easily. Services and functions can be decoupled from one another and refactored without affecting other parts. Each segment can handle it own security. Each service can dynamically scale independently of others. Let your imaginations run wild, boys and girls.
+
+To better understand the move from a monolith to a microservices architecture, consider your own applications and how they have evolved over time. Initially, they were likely simple scripts. Probably less than 100 lines. I know mine were, at least. Over time, as the needs grew more complex, so did the code that supported them. No longer would 100 lines of straight imperative code work, so you added some functions here, functions there. Sometimes they were reused, sometimes it was just a pipeline from one function to the next. As you matured and your problems grew more complex, your solutions became more sophisticated and elegant. You embraced the DRY principle and wrote highly compact and reusable pieces of code. Helpful libraries that you were able to recycle across projects. You took each job that your code did and broke it down until it did one thing and did it _very well_. That my friends, is the sprit of microservices. We take services--tasks--and break them out of the monolith and into their own tiny little app, apply an interface to it so it can communicate with other things, and bam, microservice.
+
+Now, imagine how we might do that in practice?
+
+### Killing the monolith, a little at a time
+
+As I mentioned earlier, one of the first services that gets split off from the main monolith is the database. This makes the most sense as it&#39;s the most un-like service from the rest of the application and data has a higher demand for integrity so a safer option is to move it off the server hosting the application. Additionally, clustering databases can be a headache, so moving the database off the application server makes administration of both easier, as the app servers can come and go without affecting the database. Already you can probably see some themes emerging that will become quite prominent soon, namely the decoupling of services.
+
+### Okay, I broke something off. What is the next thing?
+
+This is often entirely dependent upon the organization, but let me give you a scenario:
+
+After splitting the DB off from the main application, you get a new feature request dropped into your lap: send users notifications on pending actions in their account. Do you add this to the monolith or do you create a new, tiny little application? Why, a microservice of course! So you imagine that this mircoservice serves the same role in the overall app architecture that a function might in a program: You try to make it reusable, you write a solid API, you document it, you isolate it away from lateral movement and practice good defensive coding. You have a lovely little service now. Just one catch: You have written it in such a way (no fault of your own really, the app architecture of the old ugly monolith forced you to) that you have to call the monolith and ask it for a piece of information on every transaction you perform. It&#39;s a terrible, no good, very bad situation. In the process, you have actually identified the next great candidate for a microservice and a prime illustration of another benefit of the microservices architecture: reusability.
+
+### DRY off
+
+Whether implicitly or explicitly, programmers understand the concept of DRY: Don&#39;t Repeat Yourself. It&#39;s why we have functions. Why write the same 10 lines every time I need to do something? Just write a function and pass data in and get data out. Easy. Mircoservices can serve the same purpose for us, and a well-written, reusable microservice is a lovely little gem that should be cherished.
+
+In our situation, let&#39;s take a look at how the notification service (let&#39;s call him Mercury, since he&#39;s dispatching messages) talks to Cronus (the big daddy Titan who ruled before Zeus and friends took over). Mercury needs information about the user it needs to dispatch a message to, so it has to call Cronos and ask it for some specific user info. Why? This sounds like bad design. Well, it is. That&#39;s the nature of apps in the real world: they&#39;re designed poorly. However, rather than giving Mercury direct access to the database, we can take something that Cronos is doing well, which is serving info about users and customers, and split it off. After all, this new service will instantly have two consumers as soon as it&#39;s live and given what it&#39;s serving, it will have many more.
+
+So on your next sprint you decide to make this new service your top priority. Let&#39;s call it Athena, after the goddess of wisdom known for her calm demeanor. Athena has one very narrow job: When asked about a user, it will authenticate and authorize the request. If the request is authorized, it will serve the requested information in a JSON object back to the requestor. Athena now has two customers: Cronos and Mercury, but more are coming. Therefore, Athena might end up being busy.
+
+As it turns out, Athena&#39;s job was a bit of a bottleneck. The developers were able to run it in a nice, compact server (512mb that usually ran at close to 80% capacity. She handles quite a few requests per second). However, once Athena was decoupled from Cronos and allowed to scale up to 4 instances, a total of 2gb of memory and nearly negligible cost, performance improved by 25%. Who knew! Previously, the entire app would have been scaled at enormous cost to get achieve what was possible by a surgical allocation of resources in a single service. 
+
+*In terms of accuracy and precision, this is the difference between carpet bombing cities and a laser-guided JDAM flying through a window to blow up a room*
+
+Additionally, in off-peak hours, Athena easily scales back down to a single node until the traffic picks up again. We can already see the benefits of decoupling services from one another. Independent scaling is one, but what about refactor and replacement of large chunks of the application?
+
+### Decoupling gone wild
+
+When Athena was first created, she was just cut and pasted right out of Cronos, monkeypatched a little to provide an interface, and largely left the way she originated. After a couple months, a developer who had been experimenting with Elixir in her free time had an idea. &quot;Hey, based on what Athena is doing, we can get a performance gain and cut our codebase by half if we switch to elixir. Dropping the Node dependency will save install time and reduce RAM usage!&quot; Excited, she codes up an MVP the next day and demos it to the team. They&#39;re so impressed that they work on it and introduce Athena 2.0 the next week. Using the same exact API, they drop Athena 2.0 into place without any other app or service ever noticing while clawing back gains in memory utilization and request execution time.
+
+---
+
+## Conclusion
+
+Most people get into microservices for the benefits of scaling. &quot;If it was just easier to deploy my app, or just this piece of my app, life would be so much better.&quot; Once they have dipped their toes in the waters of microservices, they quickly realize the flexibility this provides for the overall design of the system and how things like decoupling can lead to independent refactoring (or even wholesale rebuilding) of services to improve performance. In the next article, we will address new problems microservices introduce.</description>
+    
+    <lastBuildDate>Tue, 21 Feb 2017 15:22:03 +0000</lastBuildDate>
+    <category>Operations</category>
+    <atom:link href="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Intro to Microservices part 2</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/6</link>
+        <pubDate>Sun, 21 Jan 2018 00:34:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1682-6</guid>
+        <source url="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682.rss">Intro to Microservices part 2</source>
+      </item>
+      <item>
+        <title>Intro to Microservices part 2</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <p>In a way, yes. One of the guiding principles of a microservice is that it interacts with other services strictly over API, since the services are distributed. In that way, Legobot follows the microservices idea. However, microservices also operate purely independently of other services, which Legobot does not do.</p>
+<p>There are a lot of parallels to programming, but the analogy breaks down after a bit. This is more of a systems design problem and a strictly programming one.</p>
+<p>Consider the Athena in our example. It could happily exist on its own without Cronos or Mercury. It wouldn’t be used and it wouldn’t have much of a purpose, but it would be ready to service requests if they came along.</p>
+          <p><a href="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/5</link>
+        <pubDate>Tue, 21 Feb 2017 15:22:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1682-5</guid>
+        <source url="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682.rss">Intro to Microservices part 2</source>
+      </item>
+      <item>
+        <title>Intro to Microservices part 2</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>So the Legos in Legobot are kinda like microservices, right?</p>
+          <p><a href="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/4</link>
+        <pubDate>Tue, 21 Feb 2017 15:15:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1682-4</guid>
+        <source url="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682.rss">Intro to Microservices part 2</source>
+      </item>
+      <item>
+        <title>Intro to Microservices part 2</title>
+        <dc:creator><![CDATA[Joe_Schmoe]]></dc:creator>
+        <description><![CDATA[
+            <p>Good writeup about a topic I never thought about. I thoroughly enjoyed reading this, well done!</p>
+          <p><a href="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/3</link>
+        <pubDate>Tue, 21 Feb 2017 13:52:09 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1682-3</guid>
+        <source url="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682.rss">Intro to Microservices part 2</source>
+      </item>
+      <item>
+        <title>Intro to Microservices part 2</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Well done mate. I love your series ! I faced the same issue 1 year ago. My team and I built a new product, that I can’t disclose yet, using our own cloud system. We didn’t spend too much time designing our service and adding new features or even maintaining our code base was awful. Then, we switched to a microservices architecture and the magic happened <img src="https://0x00sec.org/images/emoji/twitter/yum.png?v=9" title=":yum:" class="emoji" alt=":yum:"></p>
+<p>Upstream simplifing the maintainance and enhancement of each service, coding became a true pleasure again. I could not give a better advise for any developer who plans to launch a project that taking the time to think about its architecture, even for a simple script, as I did with whichCDN. Indeed, I started by a simple script then I revamped my entire code following a plugin architecture, improving its enhancement and maintainability. This example has nothing to do with microservices but it perferctly fits with the spirit <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<p>Keep going !</p>
+<p>Best,<br>
+Nitrax</p>
+          <p><a href="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/2</link>
+        <pubDate>Tue, 21 Feb 2017 08:22:31 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1682-2</guid>
+        <source url="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682.rss">Intro to Microservices part 2</source>
+      </item>
+      <item>
+        <title>Intro to Microservices part 2</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <p><em>The second in a series on microservices.</em></p>
+<h1>Microservices</h1>
+<hr>
+<h2>Part 2: The start of microservices</h2>
+<h3>Out of the water, onto land…</h3>
+<p>The motivation for and benefits of a microservices architecture extend far beyond simply breaking down the monolith as mentioned, but for most engineers and companies I’ve spoken with looking to make the switch, scaling and cost savings are the primary motivation. They realize that deployments are painful, that money is wasted on power or cloud compute resources, that choke points are killing performance. But they quickly realize additional benefits: the application can be extended more easily. Services and functions can be decoupled from one another and refactored without affecting other parts. Each segment can handle it own security. Each service can dynamically scale independently of others. Let your imaginations run wild, boys and girls.</p>
+<p>To better understand the move from a monolith to a microservices architecture, consider your own applications and how they have evolved over time. Initially, they were likely simple scripts. Probably less than 100 lines. I know mine were, at least. Over time, as the needs grew more complex, so did the code that supported them. No longer would 100 lines of straight imperative code work, so you added some functions here, functions there. Sometimes they were reused, sometimes it was just a pipeline from one function to the next. As you matured and your problems grew more complex, your solutions became more sophisticated and elegant. You embraced the DRY principle and wrote highly compact and reusable pieces of code. Helpful libraries that you were able to recycle across projects. You took each job that your code did and broke it down until it did one thing and did it <em>very well</em>. That my friends, is the sprit of microservices. We take services–tasks–and break them out of the monolith and into their own tiny little app, apply an interface to it so it can communicate with other things, and bam, microservice.</p>
+<p>Now, imagine how we might do that in practice?</p>
+<h3>Killing the monolith, a little at a time</h3>
+<p>As I mentioned earlier, one of the first services that gets split off from the main monolith is the database. This makes the most sense as it’s the most un-like service from the rest of the application and data has a higher demand for integrity so a safer option is to move it off the server hosting the application. Additionally, clustering databases can be a headache, so moving the database off the application server makes administration of both easier, as the app servers can come and go without affecting the database. Already you can probably see some themes emerging that will become quite prominent soon, namely the decoupling of services.</p>
+<h3>Okay, I broke something off. What is the next thing?</h3>
+<p>This is often entirely dependent upon the organization, but let me give you a scenario:</p>
+<p>After splitting the DB off from the main application, you get a new feature request dropped into your lap: send users notifications on pending actions in their account. Do you add this to the monolith or do you create a new, tiny little application? Why, a microservice of course! So you imagine that this mircoservice serves the same role in the overall app architecture that a function might in a program: You try to make it reusable, you write a solid API, you document it, you isolate it away from lateral movement and practice good defensive coding. You have a lovely little service now. Just one catch: You have written it in such a way (no fault of your own really, the app architecture of the old ugly monolith forced you to) that you have to call the monolith and ask it for a piece of information on every transaction you perform. It’s a terrible, no good, very bad situation. In the process, you have actually identified the next great candidate for a microservice and a prime illustration of another benefit of the microservices architecture: reusability.</p>
+<h3>DRY off</h3>
+<p>Whether implicitly or explicitly, programmers understand the concept of DRY: Don’t Repeat Yourself. It’s why we have functions. Why write the same 10 lines every time I need to do something? Just write a function and pass data in and get data out. Easy. Mircoservices can serve the same purpose for us, and a well-written, reusable microservice is a lovely little gem that should be cherished.</p>
+<p>In our situation, let’s take a look at how the notification service (let’s call him Mercury, since he’s dispatching messages) talks to Cronus (the big daddy Titan who ruled before Zeus and friends took over). Mercury needs information about the user it needs to dispatch a message to, so it has to call Cronos and ask it for some specific user info. Why? This sounds like bad design. Well, it is. That’s the nature of apps in the real world: they’re designed poorly. However, rather than giving Mercury direct access to the database, we can take something that Cronos is doing well, which is serving info about users and customers, and split it off. After all, this new service will instantly have two consumers as soon as it’s live and given what it’s serving, it will have many more.</p>
+<p>So on your next sprint you decide to make this new service your top priority. Let’s call it Athena, after the goddess of wisdom known for her calm demeanor. Athena has one very narrow job: When asked about a user, it will authenticate and authorize the request. If the request is authorized, it will serve the requested information in a JSON object back to the requestor. Athena now has two customers: Cronos and Mercury, but more are coming. Therefore, Athena might end up being busy.</p>
+<p>As it turns out, Athena’s job was a bit of a bottleneck. The developers were able to run it in a nice, compact server (512mb that usually ran at close to 80% capacity. She handles quite a few requests per second). However, once Athena was decoupled from Cronos and allowed to scale up to 4 instances, a total of 2gb of memory and nearly negligible cost, performance improved by 25%. Who knew! Previously, the entire app would have been scaled at enormous cost to get achieve what was possible by a surgical allocation of resources in a single service.</p>
+<p><em>In terms of accuracy and precision, this is the difference between carpet bombing cities and a laser-guided JDAM flying through a window to blow up a room</em></p>
+<p>Additionally, in off-peak hours, Athena easily scales back down to a single node until the traffic picks up again. We can already see the benefits of decoupling services from one another. Independent scaling is one, but what about refactor and replacement of large chunks of the application?</p>
+<h3>Decoupling gone wild</h3>
+<p>When Athena was first created, she was just cut and pasted right out of Cronos, monkeypatched a little to provide an interface, and largely left the way she originated. After a couple months, a developer who had been experimenting with Elixir in her free time had an idea. “Hey, based on what Athena is doing, we can get a performance gain and cut our codebase by half if we switch to elixir. Dropping the Node dependency will save install time and reduce RAM usage!” Excited, she codes up an MVP the next day and demos it to the team. They’re so impressed that they work on it and introduce Athena 2.0 the next week. Using the same exact API, they drop Athena 2.0 into place without any other app or service ever noticing while clawing back gains in memory utilization and request execution time.</p>
+<hr>
+<h2>Conclusion</h2>
+<p>Most people get into microservices for the benefits of scaling. “If it was just easier to deploy my app, or just this piece of my app, life would be so much better.” Once they have dipped their toes in the waters of microservices, they quickly realize the flexibility this provides for the overall design of the system and how things like decoupling can lead to independent refactoring (or even wholesale rebuilding) of services to improve performance. In the next article, we will address new problems microservices introduce.</p>
+          <p><a href="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682/1</link>
+        <pubDate>Tue, 21 Feb 2017 05:03:24 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1682-1</guid>
+        <source url="https://d.clarkee.co.uk/t/intro-to-microservices-part-2/1682.rss">Intro to Microservices part 2</source>
+      </item>
+  </channel>
+</rss>

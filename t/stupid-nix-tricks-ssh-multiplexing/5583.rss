@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Stupid Nix Tricks: SSH Multiplexing</title>
+    <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583</link>
+    <description>At this point, it should basically be &quot;Stupid SSH tricks™&quot;, but whatever.
+
+Prerequisites:  Basic understanding of *nix and SSH
+
+## Scenario
+
+You have a server behind a firewalled network and you need to connect. You _could_ just do something like `ssh first-server` and from there `ssh internal-server`. Not too bad, right?
+
+What if there&#39;s a whole subnet of servers that you might wanna reach? What if you don&#39;t wanna SSH twice? What if you&#39;re using something that wants to execute from your local machine but can&#39;t really handle the manual two step SSH jump (such as [Ansible](https://www.ansible.com/))
+
+This is where SSH Multiplexing comes in _very_ handy
+
+## Solution, part 1: Pivot box
+
+As you probably expected by now, we&#39;re going to be digging into our ssh config file, so go ahead and pop an editor open to `~/.ssh/config`
+
+The first thing we want to do is setup our &quot;gateway&quot; or &quot;bastion&quot; or &quot;jump&quot; host. Whatever you want to call it. Doesn&#39;t matter to me. Here&#39;s an excerpt of mine with a breakdown of each line in the config
+
+```
+host jump
+  User fraq
+  Hostname foo.bar.baz
+  ControlMaster auto
+  ControlPath ~/.ssh/proxy-%r@%h:%p
+  ControlPersist 5m
+```
+
+`host jump` defines a friendly name in SSH for your machine. Note that this isn&#39;t in `/etc/hosts`, so you can&#39;t `ping jump`, but you can `ssh jump`. When you do use `ssh jump`, ssh opens up the config file, looks for a host entry that matches, and then uses that config to build the connection. Nothing we haven&#39;t covered already in previous chapters.
+
+`User fraq` is the username we use to connect to `jump`
+
+`Hostname foo.bar.baz` means that we connect to a server called `foo.bar.baz` in DNS. This can also be an IP address.
+
+These next three are the ones you need for multiplexing:
+`ControlMaster auto` tells the ssh connection that you want to listen for control connections (used for multiplexing)
+
+`ControlPath` tells ssh where to put the control socket for the connections and how to format the file names. Per the OpenSSH cookbook: 
+
+&gt; The combination %r,  %h and %p stand for the remote user name, the remote host and the remote host&#39;s port. The control sockets should be given unique names.
+
+`ControlPersist` tells ssh how long to leave the master open. 
+
+## Solution, part 2: Target box
+
+Now that your jump host is setup to accept multiplexed SSH connections, it&#39;s time to tell the SSH how to connect to your target box _through_ the jump box. 
+
+```
+Host target
+    ProxyCommand ssh -W %h:%p jump
+    User fraq
+    Hostname 10.10.10.10
+```
+
+As you can see, it looks very similar to a standard config file, except for the `ProxyCommand` option. This tells the ssh connection to execute that command _first_ as a prerequisite for connecting to the target machine. In our case, we&#39;re saying that we want to `ssh -W` through the machine known to ssh as `jump`. 
+
+## Conclusion
+
+With this in place, you can now use `jump` as a pivot to get into internal networks that it can access but you cannot, all without having to `ssh` twice manually. This means scripts or tools that invoke `ssh` can be used locally on your machine as well.
+
+And yes, this can be chained basically indefinitely, so you can create some pretty long and crazy proxy connections.
+
+Also, I very intentionally skipped over the in-depth explanation of `ssh -W` and the older `ssh nc` implementation. The whole purpose of this post was just to setup ssh multiplexing.
+
+
+### References
+https://en.wikibooks.org/wiki/OpenSSH/Cookbook/Multiplexing</description>
+    
+    <lastBuildDate>Mon, 26 Feb 2018 19:47:53 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/12</link>
+        <pubDate>Sat, 24 Mar 2018 15:51:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-12</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[maderas]]></dc:creator>
+        <description><![CDATA[
+            <p>fraq-</p>
+<p>I am glad you enjoyed the quip brother; it was in no way an equivalent exchange for the knowledge you (and pry0cc) shared.</p>
+<p>It was a spontaneous flourish on my part; as well as being an apex skill of my trade, Nix Administration reminds of me of the older generations of Unix Administrators (far too many are retiring or being pushed into retirement ) who  projected a tangible  aura of arcane, strange power.</p>
+<p>I was managed/mentored by one grey beard who got into Systems Administration of huge industrial/energy sector enterprise environments to “ease into retirement” .</p>
+<p>His career had started as a programmer in the 1960’s: he designed and  programmed microprocessors for submarines .</p>
+<p>The company provided no tools or resources other then the microprocessors themselves (back then software bundling as a service was still going strong thanks to companies likeIBM).</p>
+<p>He had to program not just the microprocessors, but also almost all of his tools…mostly in Haskell…</p>
+<p>I think your post and the back and forth with pyr0cc (which those Unix sorcerers were also prone to) reminded me of those times.</p>
+<p>I think my mind got weird  with those words  as I realized that this community is building  the future facsimiles of those mages.</p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/11</link>
+        <pubDate>Mon, 26 Feb 2018 19:47:53 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-11</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="maderas" data-post="9" data-topic="5583">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/maderas/48/41549_2.png" class="avatar"> maderas:</div>
+<blockquote>
+<p>There are no sacred cows in this community, only cows and BBQ.</p>
+</blockquote>
+</aside>
+<p>I’m gonna have to remember that <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/10</link>
+        <pubDate>Sun, 25 Feb 2018 20:50:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-10</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[maderas]]></dc:creator>
+        <description><![CDATA[
+            <p>Your “Stupid Nix Tricks” have become a favorite of mine fraq…thank you.</p>
+<p>Also, I understand and appreciate pry0cc’s contribution to this post.</p>
+<p>It should be noted that where exploitation is concerned, there could be any number of variables that could force improvisation of a concept or skill.</p>
+<p>Stupid snags happen all the time on engagements, and sometimes you don’t have time to fully appreciate the cause of a snag until you are drafting your report (or even later when the client’s IT department let you in  on what could have occurred); you just keep shifting the methods by which you’d achieve your next step.</p>
+<p>Thus, I appreciate fraq’s introduction of this concept and both your and pry0cc’s methods of execution.</p>
+<p>I also appreciate the measures by which any work here on the Big0 is open to review and fair, polite criticism and discourse…so thank you both for being an example of this as well.</p>
+<p>There are no sacred cows in this community, only cows and BBQ.</p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/9</link>
+        <pubDate>Sun, 25 Feb 2018 05:14:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-9</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <p>This is a basic example of connecting through machines, yeah. If you wanna use this to do additional fun stuff, that’s up to you.</p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/8</link>
+        <pubDate>Thu, 22 Feb 2018 16:41:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-8</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Isn’t that what you want to achieve? Use a machine to connect through? Or am I mistaken?</p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/7</link>
+        <pubDate>Thu, 22 Feb 2018 16:40:31 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-7</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <p>It should also be noted that ProxyCommand and ProxyJump are not the same. ProxyCommand is present on most but not all older SSH versions and allows for arbitrary commands attached to SSH (like <code>nc</code>), whereas ProxyJump is shorthand for <code>ssh</code>ing through multiple machines.</p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/6</link>
+        <pubDate>Thu, 22 Feb 2018 16:39:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-6</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Well, that code snippet ^ is an ssh config file. Not a command line switch.</p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/5</link>
+        <pubDate>Thu, 22 Feb 2018 16:36:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-5</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <p>so, <code>ssh -J</code> is valid and good and useful if you’re doing a one-off. As you know I always recommend that if you do something twice, script/automate/remove the manual interaction.</p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/4</link>
+        <pubDate>Thu, 22 Feb 2018 16:20:06 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-4</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <p>“Complicating” all depends on your use case.</p>
+<p>I intentionally omitted the CLI version of this, but as you’re probably aware, anything you do on the CLI can be done in the ssh config and vice versa. For me, I <em>always</em> ssh in certain boxes via jump hosts, so I want to remove the <code>-J whatevermiddlehost</code> from my command and just <code>ssh foo</code>.</p>
+<p>Beyond that, there’s a very good reason to setup and use this via the config file: SSH config files can accept regex! If you want to execute a command against a whole subnet (ie, Ansible plays) then you can setup a host entry like <code>*.mydomain</code> or <code>10.10.*</code>, so in one fell swoop you setup proxycommands for a whole bunch of servers.</p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/3</link>
+        <pubDate>Thu, 22 Feb 2018 16:10:25 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-3</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This is cool and all. But I think you’re complicating this massively.</p>
+<p>Here is an example of a jump box I use in my ssh config.</p>
+<pre><code class="lang-auto">Host myhost
+    Hostname 10.10.10.10
+    Port 4040 
+    User pry0cc
+    ProxyJump pry@jumpbox.com
+</code></pre>
+<p>Simply putting a host inside ProxyJump does the same thing.</p>
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/2</link>
+        <pubDate>Thu, 22 Feb 2018 15:56:17 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-2</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+      <item>
+        <title>Stupid Nix Tricks: SSH Multiplexing</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <p>At this point, it should basically be “Stupid SSH tricks™”, but whatever.</p>
+<p>Prerequisites:  Basic understanding of *nix and SSH</p>
+<h2><a name="p-21698-scenario-1" class="anchor" href="https://d.clarkee.co.uk#p-21698-scenario-1"></a>Scenario</h2>
+<p>You have a server behind a firewalled network and you need to connect. You <em>could</em> just do something like <code>ssh first-server</code> and from there <code>ssh internal-server</code>. Not too bad, right?</p>
+<p>What if there’s a whole subnet of servers that you might wanna reach? What if you don’t wanna SSH twice? What if you’re using something that wants to execute from your local machine but can’t really handle the manual two step SSH jump (such as <a href="https://www.ansible.com/" rel="noopener nofollow ugc">Ansible</a>)</p>
+<p>This is where SSH Multiplexing comes in <em>very</em> handy</p>
+<h2><a name="p-21698-solution-part-1-pivot-box-2" class="anchor" href="https://d.clarkee.co.uk#p-21698-solution-part-1-pivot-box-2"></a>Solution, part 1: Pivot box</h2>
+<p>As you probably expected by now, we’re going to be digging into our ssh config file, so go ahead and pop an editor open to <code>~/.ssh/config</code></p>
+<p>The first thing we want to do is setup our “gateway” or “bastion” or “jump” host. Whatever you want to call it. Doesn’t matter to me. Here’s an excerpt of mine with a breakdown of each line in the config</p>
+<pre><code class="lang-auto">host jump
+  User fraq
+  Hostname foo.bar.baz
+  ControlMaster auto
+  ControlPath ~/.ssh/proxy-%r@%h:%p
+  ControlPersist 5m
+</code></pre>
+<p><code>host jump</code> defines a friendly name in SSH for your machine. Note that this isn’t in <code>/etc/hosts</code>, so you can’t <code>ping jump</code>, but you can <code>ssh jump</code>. When you do use <code>ssh jump</code>, ssh opens up the config file, looks for a host entry that matches, and then uses that config to build the connection. Nothing we haven’t covered already in previous chapters.</p>
+<p><code>User fraq</code> is the username we use to connect to <code>jump</code></p>
+<p><code>Hostname foo.bar.baz</code> means that we connect to a server called <code>foo.bar.baz</code> in DNS. This can also be an IP address.</p>
+<p>These next three are the ones you need for multiplexing:<br>
+<code>ControlMaster auto</code> tells the ssh connection that you want to listen for control connections (used for multiplexing)</p>
+<p><code>ControlPath</code> tells ssh where to put the control socket for the connections and how to format the file names. Per the OpenSSH cookbook:</p>
+<blockquote>
+<p>The combination %r,  %h and %p stand for the remote user name, the remote host and the remote host’s port. The control sockets should be given unique names.</p>
+</blockquote>
+<p><code>ControlPersist</code> tells ssh how long to leave the master open.</p>
+<h2><a name="p-21698-solution-part-2-target-box-3" class="anchor" href="https://d.clarkee.co.uk#p-21698-solution-part-2-target-box-3"></a>Solution, part 2: Target box</h2>
+<p>Now that your jump host is setup to accept multiplexed SSH connections, it’s time to tell the SSH how to connect to your target box <em>through</em> the jump box.</p>
+<pre><code class="lang-auto">Host target
+    ProxyCommand ssh -W %h:%p jump
+    User fraq
+    Hostname 10.10.10.10
+</code></pre>
+<p>As you can see, it looks very similar to a standard config file, except for the <code>ProxyCommand</code> option. This tells the ssh connection to execute that command <em>first</em> as a prerequisite for connecting to the target machine. In our case, we’re saying that we want to <code>ssh -W</code> through the machine known to ssh as <code>jump</code>.</p>
+<h2><a name="p-21698-conclusion-4" class="anchor" href="https://d.clarkee.co.uk#p-21698-conclusion-4"></a>Conclusion</h2>
+<p>With this in place, you can now use <code>jump</code> as a pivot to get into internal networks that it can access but you cannot, all without having to <code>ssh</code> twice manually. This means scripts or tools that invoke <code>ssh</code> can be used locally on your machine as well.</p>
+<p>And yes, this can be chained basically indefinitely, so you can create some pretty long and crazy proxy connections.</p>
+<p>Also, I very intentionally skipped over the in-depth explanation of <code>ssh -W</code> and the older <code>ssh nc</code> implementation. The whole purpose of this post was just to setup ssh multiplexing.</p>
+<h3><a name="p-21698-references-5" class="anchor" href="https://d.clarkee.co.uk#p-21698-references-5"></a>References</h3>
+<aside class="onebox allowlistedgeneric" data-onebox-src="https://en.wikibooks.org/wiki/OpenSSH/Cookbook/Multiplexing">
+  <header class="source">
+      <img src="https://en.wikibooks.org/static/favicon/wikibooks.ico" class="site-icon" alt="" width="48" height="48">
+
+      <a href="https://en.wikibooks.org/wiki/OpenSSH/Cookbook/Multiplexing" target="_blank" rel="noopener nofollow ugc">en.wikibooks.org</a>
+  </header>
+
+  <article class="onebox-body">
+    
+
+<h3><a href="https://en.wikibooks.org/wiki/OpenSSH/Cookbook/Multiplexing" target="_blank" rel="noopener nofollow ugc">OpenSSH/Cookbook/Multiplexing - Wikibooks, open books for an open world</a></h3>
+
+
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+          <p><a href="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583/1</link>
+        <pubDate>Thu, 22 Feb 2018 15:51:42 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5583-1</guid>
+        <source url="https://d.clarkee.co.uk/t/stupid-nix-tricks-ssh-multiplexing/5583.rss">Stupid Nix Tricks: SSH Multiplexing</source>
+      </item>
+  </channel>
+</rss>

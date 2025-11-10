@@ -1,0 +1,811 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>How do those hackers tools work? Sniffers Part I</title>
+    <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686</link>
+    <description>A sniffer is an application able to capture data being transmitted through some medium. In general, the term is associated with capturing network traffic and the term Eavesdroping ( https://en.wikipedia.org/wiki/Eavesdropping) is used in the general case.
+
+In this post we are going to find out how sniffers work. Actually, what we are going to discuss is how to capture network traffic. As we will see in this series, traffic capture is actually required for some other tools. Or, if you prefer, some other tools have to capture traffic to accomplish its task.
+
+# A Word on the Hardware
+Before going straight to the code, let&#39;s briefly introduce some general topics. The first thing we have to understand is that, in order to capture traffic, we have to see it. This may sound stupid, but basically it means that you need to understand how networks work and how the traffic moves through them.
+
+A classical example of this is a computer network connected by switchs. A switch _knows_ which computer is connected to which network connection it has, and it will just send traffic through the right physical cable. This means that, even when you can talk to any other machine in the network, you can only see the traffic that goes to/from you.
+
+Even then, the network adapter, by default, filters out any traffic not targeted to it. In other words, even if the traffic from some other computer is going through the cable we are connected to, the network hardware will just ignore those frames and they will not be captured. Think for instance in a computer network connected with a hub (a device that whatever it receives in a connection is sent back on all others) or a wifi network.
+
+In those cases, the network hardware enables (normally) a special mode known as &quot;**promiscuous mode**&quot;. When this mode is activated, anything we see, whether is send to us or not will be captured... but again, we have to be able to see it.
+
+Depending on what you want to achieve with your sniffer, you may not need to use the __promiscuous__ mode.
+
+# A Word on the Software
+So we want to capture the traffic going through our network interface. How do we do that?. The reply to that question is: RAW socket.
+
+A RAW socket is a special kind of socket connected below level 4. Remember, level 4 is the so called transport level. TCP and UDP are protocols of that level, and if you had ever write any network related code, those are the two kind of sockets you have been worked with (`STREAM` and `DGRAM`).
+
+Yes, RAW sockets allows us to get a file descriptor connected to the level 3 (network level or IP if you prefer), or level 2 (link or ethernet/wifi/... frame level). Sounds like what we need.
+
+As you can imagine, this objects are pretty low level and, as you know, as you go down, systems starts to behave in different ways. We will see how to use sockets RAW here (in a later post), but, in general, you better use a library designed to deal with different systems. This library is called `libpcap` and we will also briefly introduce it in this post.
+
+This is actually it, unless you are a script language coder. I will skip that part because, I feel like this post/series is going to be already very long. Additionally, most of those scripting language modules are just wrappers around `libpcap`. So, getting to know `libpcap` will automatically make you understand how to use those modules in minutes.
+
+For all the Python coders around here, the module you want to use is called `scapy` (actually it covers more than just packet capturing) but you can also directly use socket RAW from Python and other scripting languages. 
+
+Be free to post complementary information on how to sniff data using different languages... maybe a code challenge? ;)
+
+# Right to the Code
+So, let&#39;s start with a simple sniffer using `libpcap`, this is the bare minimum sniffer you can write that does something useful (without using filters). The code looks like this:
+
+```
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+
+#include &lt;netinet/ether.h&gt;
+#include &lt;netinet/ip.h&gt;
+#include &lt;arpa/inet.h&gt;
+#include &lt;pcap.h&gt;
+
+int
+main (int argc, char *argv[])
+{
+  char                err[PCAP_ERRBUF_SIZE];
+  pcap_t              *h;
+  struct pcap_pkthdr  header;	
+  const u_char        *packet;	
+  struct ip           *ip;
+  struct ether_header *eh;
+
+  if ((h = pcap_open_live (argv[1], BUFSIZ, 0, 1000, err)) == NULL)
+    {
+      fprintf (stderr, &quot;%s\n&quot;, err);
+      exit (1);
+    }
+  while (1)
+    {
+      int etype;
+      packet = pcap_next (h, &amp;header);
+      usleep (0);
+
+      if (!packet) continue;
+      /* get some useful info */
+      /* Assuming Ethernet Link 802.3 */
+      eh = (struct ether_header*)packet;
+      etype = ntohs (eh-&gt;ether_type);
+
+      /* Ignore non IP packets... */
+      if (etype != ETHERTYPE_IP) continue;
+      ip = (struct ip*) (packet + sizeof(struct ether_header));
+
+      if (ip-&gt;ip_p == IPPROTO_ICMP)     printf (&quot;[ICMP] &quot;);
+      else if (ip-&gt;ip_p == IPPROTO_UDP) printf (&quot;[UDP ] &quot;);
+      else if (ip-&gt;ip_p == IPPROTO_TCP) printf (&quot;[TCP ] &quot;);
+
+      printf (&quot;--&gt; TTL: %03d PROTO: %02d | src: %s&quot;,
+	      ip-&gt;ip_ttl, ip-&gt;ip_p, inet_ntoa (ip-&gt;ip_src));
+
+      printf (&quot;-&gt; dst: %s\n&quot;, inet_ntoa(ip-&gt;ip_dst));
+    }
+  pcap_close (h);
+  return 0;
+}
+```
+
+Before looking into the code, let&#39;s compile and test it. I have named the file `snif-01.c`, and I have compiled it with:
+
+    gcc -Wall -o snif-01 snif-01.c -lpcap
+
+The program expects as first parameter a network interface to listen to. I will use my wired interface for the tests. Remember that you need to run the application as `root`... do you remember those RAW sockets deep inside libpcap?.
+
+    sudo ./snif-01 eth0
+
+# Tests
+Now we can do a couple of tests. Make sure that the IP you use for testing is up... Basically, in a LAN environment, down machines will be marked up in your local ARP table and no packet will ever leave you machine. So, either use, the loopback interface, a virtual machine or something like that.
+
+## Single Ping
+
+    ping -c 1 192.168.1.1
+    --
+    [ICMP] --&gt; TTL: 064 PROTO: 01 | src: 192.168.1.10-&gt; dst: 192.168.1.1
+    [ICMP] --&gt; TTL: 064 PROTO: 01 | src: 192.168.1.1-&gt; dst: 192.168.1.10
+
+We are sending a `ECHO` request (the first packet) to `192.168.1.1`, and `192.168.1.1` is replying with an `ECHO` reply. Of course we are not printing that information and it is not shown in the output above... but we all know that.
+
+## UDP Scanning a Closed Port.
+
+    sudo nmap -sU 192.168.1.1 -p 123
+    ----
+    [UDP ] --&gt; TTL: 040 PROTO: 17 | src: 192.168.1.10-&gt; dst: 192.168.1.1
+    [ICMP] --&gt; TTL: 064 PROTO: 01 | src: 192.168.1.1-&gt; dst: 192.168.1.10
+
+We see our UDP packet leaving towards its destination, and receiving back and ICMP packet. If we change the program to show the ICMP packet, we will see the _Port Unreachable_ message.
+
+# TCP SYN Scan a Closed Port
+
+    sudo nmap -sS 192.168.1.1 -p 121
+    ---
+    [TCP ] --&gt; TTL: 059 PROTO: 06 | src: 192.168.1.10-&gt; dst: 192.168.1.1
+    [TCP ] --&gt; TTL: 064 PROTO: 06 | src: 192.168.1.1-&gt; dst: 192.168.1.10
+
+Here we see our `SYN` packet leaving, and a `RST` packet coming back (because the port is closed).
+
+So, it looks like this basic sniffer is kind of working. Let&#39;s get back to the code to figure out what it does.
+
+# The Code
+if you pay attention to the code, you will actually find two function calls to the `libpcap` library: `pcap_open_live` and `pcap_next`.
+
+The first one does most of the work. It creates our RAW socket bound to the device we pass as first parameter, and sets up some internal data structures used by the capture object. The function returns a handler, which we will have to use to interact with the capture session we just created via `pcap_open_live`. The rest of the parameters are:
+
+* Param 2 (`snaplen`). This is the maximum size of packets to capture. In general you will like to set it to `BUFSIZ`. This is a constant defined by `libpcap` for this parameter. Unless you really know what you are doing (and we are not getting to that point in this post), just use this value.
+* Param 3 (`promisc`). Setting this parameter to 1 will enable promiscuous mode in your network card, supposing your hardware supports this mode. We have already talked about what this means.
+* param 3 (`timeout`). This parameters sets a timeout in the packet capture function. This means that your capture function (aka `pcap_next` in this example), will return after this amount of time in case no packet has been captured. A value of -1 means no timeout. Usually you will notice a high CPU load if you set the timeout to -1, but also a lower latency getting your packets.
+* param4 (`err`). This is just a string to store an error message in case something goes wrong. For instance, you do not have the permissions to create RAW sockets.
+
+After successfully executing `pcap_open_live`, you are ready to capture packets. To caught them all (packetmons :)), you can use `pcap_next`. This function receives as first parameter the handler to our capture session, and as second parameter a pointer to a packet header struct where the function will store some generic information about the packet. The function returns a pointer to the captured packet... that is actually thee data we are interested on.
+
+
+&gt; Note that libpcap provides many functions to initialize the packet capture and also to get the data from the capture session. The two functions we have commented so far are, maybe, the simplest combination to get you going.
+
+
+# Accessing the Data
+So, now we have the packet and we want to do something with it. 
+
+The first thing to do is to check if the pointer returned by `pcap_next` is NULL. That means that the timeout has expired or that something bad happened. In any case we will not have data to access and we have to act accordingly.
+
+Then we have to start ripping off the packet. For doing that we need a sharp knife and also to know which kind of packet we  are capturing. In this case, an Ethernet packet. This means that, our packet will have multiple headers and we will have to process them one by one. The figure below shows a summary of what we will find:
+
+    ETHER HEADER | Data                    -&gt; ARP, RARP, IPX, VLAN tags,...
+    ETHER HEADER | IP HEADER | Data        -&gt; Generic IP packet (a header should follow)
+    ETHER HEADER | IP HEADER | ICMP | Data -&gt; ICMP Packet
+    ETHER HEADER | IP HEADER | TCP  | Data -&gt; TCP packet
+    ETHER HEADER | IP HEADER | UDP  | Data -&gt; UDP packet
+
+Let&#39;s go through the different headers to figure out what&#39;s the relevant information they provide us to  decode each  packet.
+
+# The Ethernet Header
+The Ethernet header is defined in the file `/usr/include/net/ethernet.h`, and it looks like this:
+
+```
+struct ether_header
+{
+  u_int8_t  ether_dhost[ETH_ALEN];	/* destination eth addr	*/
+  u_int8_t  ether_shost[ETH_ALEN];	/* source ether addr	*/
+  u_int16_t ether_type;		        /* packet type ID field	*/
+} __attribute__ ((__packed__));
+
+```
+This is pretty simple. The two first fields are the MAC addresses of the two machines interchanging information. The third one, `type`, is the one that is going to tell us what come next. The possible values are also defined in the same header file, and here is the list:
+
+```
+/* Ethernet protocol ID&#39;s */
+#define	ETHERTYPE_PUP		0x0200          /* Xerox PUP */
+#define ETHERTYPE_SPRITE	0x0500		/* Sprite */
+#define	ETHERTYPE_IP		0x0800		/* IP */
+#define	ETHERTYPE_ARP		0x0806		/* Address resolution */
+#define	ETHERTYPE_REVARP	0x8035		/* Reverse ARP */
+#define ETHERTYPE_AT		0x809B		/* AppleTalk protocol */
+#define ETHERTYPE_AARP		0x80F3		/* AppleTalk ARP */
+#define	ETHERTYPE_VLAN		0x8100		/* IEEE 802.1Q VLAN tagging */
+#define ETHERTYPE_IPX		0x8137		/* IPX */
+#define	ETHERTYPE_IPV6		0x86dd		/* IP protocol version 6 */
+#define ETHERTYPE_LOOPBACK	0x9000		/* used to test interfaces */
+```
+
+You can see that there is a world besides TCP/IP. You can also see the ARP protocol everybody talks about and you can also see the IP protocol. The one we are interested on.
+
+Now, you can go back to out minimal sniffer code and check how we just skip anything that is not an IP packet. This way, we are sure that the next header in the packet is an IP header and we can keep on decoding the information.
+
+&gt; 
+&gt; **Challenge**: Can you modify the sniffer to show ARP packets and, for instance, detect an ARP poisoning attack? . You can print MAC addresses with a line like this:
+
+&gt; `ether_ntoa((const struct ether_addr *)eh-&gt;ether_dhost)`
+&gt; 
+
+# The IP Header
+At this point, we know that our packet is an IP packet and now we can access the IP header, which is just next to the ethernet header we have just processed. So, in order to access the header, we just need to skip the ethernet header:
+
+`   ip = (struct ip*) (packet + sizeof(struct ether_header));`
+
+The IP header structure is defined in ` /usr/include/netinet/ip.h` and it looks like this (I have removed the endianess defines and some constants defined within the struct for easy reading):
+
+```
+struct ip
+  {
+    unsigned int ip_hl:4;		/* header length */
+    unsigned int ip_v:4;		/* version */
+    u_int8_t ip_tos;			/* type of service */
+    u_short ip_len;			/* total length */
+    u_short ip_id;			/* identification */
+    u_short ip_off;			/* fragment offset field */
+    u_int8_t ip_ttl;			/* time to live */
+    u_int8_t ip_p;			/* protocol */
+    u_short ip_sum;			/* checksum */
+    struct in_addr ip_src, ip_dst;	/* source and dest address */
+  };
+```
+You can see here some familiar fields like the `TTL` value or the source and destination IP addresses at the very end. 
+
+Again, an IP packet can carry many different protocols, so we need to figure out what is coming after the IP header. The payload protocol is specified by the field `ip_p` (take a look to the code again) and possible values can be found at `/usr/include/netinet/in.h`. This is the list:
+
+```
+    IPPROTO_IP = 0,	   /* Dummy protocol for TCP.  */
+    IPPROTO_HOPOPTS = 0,   /* IPv6 Hop-by-Hop options.  */
+    IPPROTO_ICMP = 1,	   /* Internet Control Message Protocol.  */
+    IPPROTO_IGMP = 2,	   /* Internet Group Management Protocol. */
+    IPPROTO_IPIP = 4,	   /* IPIP tunnels (older KA9Q tunnels use 94).  */
+    IPPROTO_TCP = 6,	   /* Transmission Control Protocol.  */
+    IPPROTO_EGP = 8,	   /* Exterior Gateway Protocol.  */
+    IPPROTO_PUP = 12,	   /* PUP protocol.  */
+    IPPROTO_UDP = 17,	   /* User Datagram Protocol.  */
+    IPPROTO_IDP = 22,	   /* XNS IDP protocol.  */
+    IPPROTO_TP = 29,	   /* SO Transport Protocol Class 4.  */
+    IPPROTO_DCCP = 33,	   /* Datagram Congestion Control Protocol.  */
+    IPPROTO_IPV6 = 41,     /* IPv6 header.  */
+    IPPROTO_ROUTING = 43,  /* IPv6 routing header.  */
+    IPPROTO_FRAGMENT = 44, /* IPv6 fragmentation header.  */
+    IPPROTO_RSVP = 46,	   /* Reservation Protocol.  */
+    IPPROTO_GRE = 47,	   /* General Routing Encapsulation.  */
+    IPPROTO_ESP = 50,      /* encapsulating security payload.  */
+    IPPROTO_AH = 51,       /* authentication header.  */
+    IPPROTO_ICMPV6 = 58,   /* ICMPv6.  */
+    IPPROTO_NONE = 59,     /* IPv6 no next header.  */
+    IPPROTO_DSTOPTS = 60,  /* IPv6 destination options.  */
+    IPPROTO_MTP = 92,	   /* Multicast Transport Protocol.  */
+    IPPROTO_ENCAP = 98,	   /* Encapsulation Header.  */
+    IPPROTO_PIM = 103,	   /* Protocol Independent Multicast.  */
+    IPPROTO_COMP = 108,	   /* Compression Header Protocol.  */
+    IPPROTO_SCTP = 132,	   /* Stream Control Transmission Protocol.  */
+    IPPROTO_UDPLITE = 136, /* UDP-Lite protocol.  */
+    IPPROTO_RAW = 255,	   /* Raw IP packets.  */
+```
+
+There is a bunch of stuff we can accommodate inside an IP packet, isn&#39;t it?. Now, back to our code, you can check that we are just processing ICMP, TCP and UDP.
+
+# Your Turn
+This is it for this first post about sniffing. Now is your turn to apply what you have just learn (really hope you have learn something). With the information we have put in this post you should be able to:
+
+* Find the header files for TCP, UDP and ICMP and associated structures
+* Update the sniffer to print the source and destination port for the transport protocols (TCP and UDP)
+* Update the sniffer to print the TCP flags so you can identify SIN, RST or ACK packets
+* Update the sniffer to print the ICMP message type and code
+* Detect a potential Xmas scan checking the TCP flags of the packets you capture
+* ... much more
+
+Get your hands dirty and don&#39;t be a skid ;)</description>
+    
+    <lastBuildDate>Thu, 07 Jul 2016 19:30:07 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/21">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/21</link>
+        <pubDate>Sun, 21 Jan 2018 00:37:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-21</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>It’s not better or worse, just different. It allows you to create new protocols and it allows you to control the fields of your headers. That includes spoofing IP, MAC, etc</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/20">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/20</link>
+        <pubDate>Thu, 07 Jul 2016 19:30:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-20</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Yes, <span class="mention">@airth</span> is right. In general running setuid programs is dangerous. If a vulnerability appears in such a program, an attacker can get full access to the system. Using the capabilities approach will just allow the attacker to create sockets RAW, but not access system files for instance.</p>
+<p>My understanding is that, <code>wireshark</code> being a security related tool, they have to be consistent with regards to security and limiting process privileges to the minimum required is a well-known good practice.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/19">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/19</link>
+        <pubDate>Thu, 07 Jul 2016 18:36:29 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-19</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the explanation! I am just wondering what’s the “dangerous thing” in running Wireshark as root? It can’t be only a precaution for newbies like <span class="mention">@airth</span> said, can it?</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/18</link>
+        <pubDate>Thu, 07 Jul 2016 16:50:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-18</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Did you read <code>/usr/share/doc/wireshark-common/README.Debian</code>?<br>
+When you install wireshark you can chose to enable non-root users to capture packets. That basically means that:</p>
+<ul>
+<li>If you kernel does not support capabilities, the capture back-end, a process called <code>dumpcap</code>, will be setuid and therefore executed as <code>root</code>
+</li>
+<li>Otherwise, if your kernel supports capabilities, the <code>CAP_NET_RAW</code> capability will be set, effectively allowing the use of sockets RAW (the same that the previous one but only for sockets RAW instead of full root access).</li>
+</ul>
+<p>For instance, in my system:</p>
+<pre><code>$ sudo getcap /usr/bin/dumpcap
+/usr/bin/dumpcap = cap_net_admin,cap_net_raw+eip
+</code></pre>
+<p>Think about it as a constrained set-uid. Check <code>man capabilities</code> for more information.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/17</link>
+        <pubDate>Tue, 05 Jul 2016 21:23:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-17</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>You shouldn’t run the program as root. You should set up a <code>wireshark</code> group and then add yourself to that.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/16</link>
+        <pubDate>Tue, 05 Jul 2016 21:19:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-16</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s targeted towards the newbies mostly. Root == God of the OS. If you fuck up something by accident, there may be no coming back. It’s just a precaution message I believe.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/15</link>
+        <pubDate>Tue, 05 Jul 2016 20:53:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-15</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>Maybe, I was just curious why every time I fire up Wireshark as root, this window pops up<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/8ab3284e2a92834c4a8ecebeb3594d878d396709.jpg" width="" height=""></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/14</link>
+        <pubDate>Tue, 05 Jul 2016 20:22:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-14</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/smartone">@SmartOne</a>, especially Wireshark requires root permission in order to work properly on my machine.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/13</link>
+        <pubDate>Tue, 05 Jul 2016 19:18:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-13</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>Maybe a silly beginner question, but why do we have to call our program with root permissions, while e.g. Wireshark even alerts us not to do so? Nice post BTW <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/12</link>
+        <pubDate>Tue, 05 Jul 2016 19:00:45 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-12</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Personally I don’t find it basic, I like this level really, of course there are people of a higher level than me, as well as a lower level. With my limited C experience and socket programming I found this easy to follow, which was nice. I like how you broke down each bit as well as the headers. I would love to see more of this kind of stuff. <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/11</link>
+        <pubDate>Mon, 04 Jul 2016 17:42:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-11</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> I just wanted to keep it simple and not fire up too many questions in the reader, because it will take me a while to write the second part to get into these details… When going into 802.11 a lot more options are possible.</p>
+<p>By decent you mean you find it very basic?.. too short?.. any feedback will be appreciated</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/10</link>
+        <pubDate>Mon, 04 Jul 2016 16:58:28 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-10</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/joeysm">@JoeySm</a>:</p>
+<p>I was talking about a native wrapper as <code>libpcap</code>. I think <code>Scapy</code> is pure Python over RAW sockets.  I think it is reasonable to think that it will have a performance penalty.</p>
+<p>I haven’t benchmarking myself Python so I cannot say for sure, but all those language goodies (dynamic typing, automatic memory allocation, etc…) always comes with a price.</p>
+<p>And yes, user space is “slower” that kernel space. The same logic applies here. In a sense you are actually using a wrapper around the kernel from user space. Even when there are quite some smart optimizations in place, at some point you have to move data from user space to kernel space. Then you have context switching, I/O scheduling, bus latencies, interrupt handlers, etc… That is mainly the reason why, real-time extensions basically gives you tools to run your code inside the kernel… at least it was like that last time I looked into them.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/9</link>
+        <pubDate>Mon, 04 Jul 2016 16:54:13 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-9</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Decent article right here! I tried it on my network card not expecting it to work since the script specifies expecting Ethernet link 802.3, yet it still works.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/8</link>
+        <pubDate>Mon, 04 Jul 2016 09:11:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-8</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[JoeySm]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank both of you for your answers!</p>
+<p><a class="mention" href="https://d.clarkee.co.uk/u/oaktree">@oaktree</a>: that’s what I thought; the only thing I wasn’t sure was if there were any advantage/disadvantage using RAW sockets “indirectly” (through a wrapper), “easier to use” aside.</p>
+<p><a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>:  yes, thanks!</p>
+<p>It’s just because some time ago I wrote a little program in python to “bridge” two WiFi interfaces: one was listening (the more sensitive one) and the other one was answering (the one that could packet inject).<br>
+[Yes, this was more fun than useful].<br>
+What I noticed was that because the signal strength was good, in a normal connection between a client and the AP the exchange of packets was ideal (1 authentication req/ans + 1 association req/ans + …), but with the bridge it was slower (requests were resent more than once before receiving an answer).<br>
+So when I read this article I asked myself if it could have been a scapy “problem” (because it uses RAW sockets indirectly).</p>
+<aside class="quote no-group" data-username="0x00pf" data-post="6" data-topic="686">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/0x00pf/48/13708_2.png" class="avatar"> 0x00pf:</div>
+<blockquote>
+<p>the performance difference between the wrapper and accessing the low-level API directly is minimal.</p>
+</blockquote>
+</aside>
+<p>So maybe the problem is just what I thought back then: user level “actions” are slower than kernel level ones… (correct me if I’m wrong).</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/7</link>
+        <pubDate>Mon, 04 Jul 2016 09:06:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-7</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="JoeySm" data-post="4" data-topic="686">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/joeysm/48/738_2.png" class="avatar"> JoeySm:</div>
+<blockquote>
+<p>does anyone think/know if using RAW sockets is best (in performance or whatever) than using wrappers?</p>
+</blockquote>
+</aside>
+<p>It always depends on what you want to do. As <a class="mention" href="https://d.clarkee.co.uk/u/oaktree">@oaktree</a> said, functionally, a wrapper is usually an advantage as it provides a higher level of abstraction (it is easy to use).</p>
+<p>Performance-wise, on the other hand, a wrapper always introduce a penalty, by definition. It requires some extra memory, calling additional functions that will finally call the low-level functions, etc…</p>
+<p>However, unless you really, really, really know what you are doing, or your application is suitable for some specific optimizations, the performance difference between the wrapper and accessing the low-level API directly is minimal. In general, if you can use the wrapper, it would work better than any code you or me could write, However, some times, you just cannot use it.</p>
+<p>Hope this, somehow, answers your question</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/6</link>
+        <pubDate>Sun, 03 Jul 2016 19:10:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-6</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/joeysm">@JoeySm</a>:<br>
+AFAIK: A RAW socket is a lower-level type of socket. You could have a wrapper, which is more or less an abstraction, around a RAW socket, but that doesn’t change the fact that you are interacting with a RAW socket; it only changes <em>how</em> you interact with it.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/5</link>
+        <pubDate>Sun, 03 Jul 2016 17:10:06 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-5</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[JoeySm]]></dc:creator>
+        <description><![CDATA[
+            <p>First of all: cool How-To!<br>
+I know something about libpcap/winpcap, but I never actually used them… (well, not directly at least).</p>
+<p>And then, I have a question (more a curiosity, really): does anyone think/know if using RAW sockets is best (in performance or whatever) than using wrappers?</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/4</link>
+        <pubDate>Sun, 03 Jul 2016 17:04:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-4</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Sorry. I said it will take longer… I was thinking on the whole thing, but then I realise I have to split it anyway. Sorry if I wasted some of your time <img src="https://0x00sec.org/images/emoji/twitter/frowning.png?v=9" title=":frowning:" class="emoji" alt=":frowning:"></p>
+<p>Good points in your message!</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/3</link>
+        <pubDate>Sat, 02 Jul 2016 14:54:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-3</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Dammit! I was thinking of making a post on libpcap sniffing as well but you were faster xD Fantastic article once again <a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>, you explained it better than I would.</p>
+<p><em>Some notes:</em></p>
+<ul>
+<li>
+<p>For the people who didn’t know, Promiscuous mode means to sniff all traffic on the wire. On the other side, during non-promiscuous sniffing, a host is sniffing only traffic to, from, or routed through the chosen interface so be careful which mode you choose because you may get unwanted results.</p>
+</li>
+<li>
+<p>Another interesting function of libpcap is the <code>int pcap_findalldevs(pcap_if_t **alldevsp, char *errbuf)</code> which will give you a list of all the available interfaces on your machine from which you can choose the one to sniff on.</p>
+</li>
+<li>
+<p>After you choose your interface, you can find its IP Address and Subnet Mask via the <code>pcap_lookupnet(interface, &amp;raw_ip, &amp;raw_subnet, errbuf)</code> function (Keep in mind, it will not return them in network byte order so you will need to fix that.)</p>
+</li>
+</ul>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/2</link>
+        <pubDate>Sat, 02 Jul 2016 11:56:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-2</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+      <item>
+        <title>How do those hackers tools work? Sniffers Part I</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>A sniffer is an application able to capture data being transmitted through some medium. In general, the term is associated with capturing network traffic and the term Eavesdroping ( <a href="https://en.wikipedia.org/wiki/Eavesdropping" class="inline-onebox" rel="noopener nofollow ugc">Eavesdropping - Wikipedia</a>) is used in the general case.</p>
+<p>In this post we are going to find out how sniffers work. Actually, what we are going to discuss is how to capture network traffic. As we will see in this series, traffic capture is actually required for some other tools. Or, if you prefer, some other tools have to capture traffic to accomplish its task.</p>
+<h1><a name="p-3321-a-word-on-the-hardware-1" class="anchor" href="https://d.clarkee.co.uk#p-3321-a-word-on-the-hardware-1"></a>A Word on the Hardware</h1>
+<p>Before going straight to the code, let’s briefly introduce some general topics. The first thing we have to understand is that, in order to capture traffic, we have to see it. This may sound stupid, but basically it means that you need to understand how networks work and how the traffic moves through them.</p>
+<p>A classical example of this is a computer network connected by switchs. A switch <em>knows</em> which computer is connected to which network connection it has, and it will just send traffic through the right physical cable. This means that, even when you can talk to any other machine in the network, you can only see the traffic that goes to/from you.</p>
+<p>Even then, the network adapter, by default, filters out any traffic not targeted to it. In other words, even if the traffic from some other computer is going through the cable we are connected to, the network hardware will just ignore those frames and they will not be captured. Think for instance in a computer network connected with a hub (a device that whatever it receives in a connection is sent back on all others) or a wifi network.</p>
+<p>In those cases, the network hardware enables (normally) a special mode known as “<strong>promiscuous mode</strong>”. When this mode is activated, anything we see, whether is send to us or not will be captured… but again, we have to be able to see it.</p>
+<p>Depending on what you want to achieve with your sniffer, you may not need to use the <strong>promiscuous</strong> mode.</p>
+<h1><a name="p-3321-a-word-on-the-software-2" class="anchor" href="https://d.clarkee.co.uk#p-3321-a-word-on-the-software-2"></a>A Word on the Software</h1>
+<p>So we want to capture the traffic going through our network interface. How do we do that?. The reply to that question is: RAW socket.</p>
+<p>A RAW socket is a special kind of socket connected below level 4. Remember, level 4 is the so called transport level. TCP and UDP are protocols of that level, and if you had ever write any network related code, those are the two kind of sockets you have been worked with (<code>STREAM</code> and <code>DGRAM</code>).</p>
+<p>Yes, RAW sockets allows us to get a file descriptor connected to the level 3 (network level or IP if you prefer), or level 2 (link or ethernet/wifi/… frame level). Sounds like what we need.</p>
+<p>As you can imagine, this objects are pretty low level and, as you know, as you go down, systems starts to behave in different ways. We will see how to use sockets RAW here (in a later post), but, in general, you better use a library designed to deal with different systems. This library is called <code>libpcap</code> and we will also briefly introduce it in this post.</p>
+<p>This is actually it, unless you are a script language coder. I will skip that part because, I feel like this post/series is going to be already very long. Additionally, most of those scripting language modules are just wrappers around <code>libpcap</code>. So, getting to know <code>libpcap</code> will automatically make you understand how to use those modules in minutes.</p>
+<p>For all the Python coders around here, the module you want to use is called <code>scapy</code> (actually it covers more than just packet capturing) but you can also directly use socket RAW from Python and other scripting languages.</p>
+<p>Be free to post complementary information on how to sniff data using different languages… maybe a code challenge? <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+<h1><a name="p-3321-right-to-the-code-3" class="anchor" href="https://d.clarkee.co.uk#p-3321-right-to-the-code-3"></a>Right to the Code</h1>
+<p>So, let’s start with a simple sniffer using <code>libpcap</code>, this is the bare minimum sniffer you can write that does something useful (without using filters). The code looks like this:</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+
+#include &lt;netinet/ether.h&gt;
+#include &lt;netinet/ip.h&gt;
+#include &lt;arpa/inet.h&gt;
+#include &lt;pcap.h&gt;
+
+int
+main (int argc, char *argv[])
+{
+  char                err[PCAP_ERRBUF_SIZE];
+  pcap_t              *h;
+  struct pcap_pkthdr  header;	
+  const u_char        *packet;	
+  struct ip           *ip;
+  struct ether_header *eh;
+
+  if ((h = pcap_open_live (argv[1], BUFSIZ, 0, 1000, err)) == NULL)
+    {
+      fprintf (stderr, "%s\n", err);
+      exit (1);
+    }
+  while (1)
+    {
+      int etype;
+      packet = pcap_next (h, &amp;header);
+      usleep (0);
+
+      if (!packet) continue;
+      /* get some useful info */
+      /* Assuming Ethernet Link 802.3 */
+      eh = (struct ether_header*)packet;
+      etype = ntohs (eh-&gt;ether_type);
+
+      /* Ignore non IP packets... */
+      if (etype != ETHERTYPE_IP) continue;
+      ip = (struct ip*) (packet + sizeof(struct ether_header));
+
+      if (ip-&gt;ip_p == IPPROTO_ICMP)     printf ("[ICMP] ");
+      else if (ip-&gt;ip_p == IPPROTO_UDP) printf ("[UDP ] ");
+      else if (ip-&gt;ip_p == IPPROTO_TCP) printf ("[TCP ] ");
+
+      printf ("--&gt; TTL: %03d PROTO: %02d | src: %s",
+	      ip-&gt;ip_ttl, ip-&gt;ip_p, inet_ntoa (ip-&gt;ip_src));
+
+      printf ("-&gt; dst: %s\n", inet_ntoa(ip-&gt;ip_dst));
+    }
+  pcap_close (h);
+  return 0;
+}
+</code></pre>
+<p>Before looking into the code, let’s compile and test it. I have named the file <code>snif-01.c</code>, and I have compiled it with:</p>
+<pre><code>gcc -Wall -o snif-01 snif-01.c -lpcap
+</code></pre>
+<p>The program expects as first parameter a network interface to listen to. I will use my wired interface for the tests. Remember that you need to run the application as <code>root</code>… do you remember those RAW sockets deep inside libpcap?.</p>
+<pre><code>sudo ./snif-01 eth0
+</code></pre>
+<h1><a name="p-3321-tests-4" class="anchor" href="https://d.clarkee.co.uk#p-3321-tests-4"></a>Tests</h1>
+<p>Now we can do a couple of tests. Make sure that the IP you use for testing is up… Basically, in a LAN environment, down machines will be marked up in your local ARP table and no packet will ever leave you machine. So, either use, the loopback interface, a virtual machine or something like that.</p>
+<h2><a name="p-3321-single-ping-5" class="anchor" href="https://d.clarkee.co.uk#p-3321-single-ping-5"></a>Single Ping</h2>
+<pre><code>ping -c 1 192.168.1.1
+--
+[ICMP] --&gt; TTL: 064 PROTO: 01 | src: 192.168.1.10-&gt; dst: 192.168.1.1
+[ICMP] --&gt; TTL: 064 PROTO: 01 | src: 192.168.1.1-&gt; dst: 192.168.1.10
+</code></pre>
+<p>We are sending a <code>ECHO</code> request (the first packet) to <code>192.168.1.1</code>, and <code>192.168.1.1</code> is replying with an <code>ECHO</code> reply. Of course we are not printing that information and it is not shown in the output above… but we all know that.</p>
+<h2><a name="p-3321-udp-scanning-a-closed-port-6" class="anchor" href="https://d.clarkee.co.uk#p-3321-udp-scanning-a-closed-port-6"></a>UDP Scanning a Closed Port.</h2>
+<pre><code>sudo nmap -sU 192.168.1.1 -p 123
+----
+[UDP ] --&gt; TTL: 040 PROTO: 17 | src: 192.168.1.10-&gt; dst: 192.168.1.1
+[ICMP] --&gt; TTL: 064 PROTO: 01 | src: 192.168.1.1-&gt; dst: 192.168.1.10
+</code></pre>
+<p>We see our UDP packet leaving towards its destination, and receiving back and ICMP packet. If we change the program to show the ICMP packet, we will see the <em>Port Unreachable</em> message.</p>
+<h1><a name="p-3321-tcp-syn-scan-a-closed-port-7" class="anchor" href="https://d.clarkee.co.uk#p-3321-tcp-syn-scan-a-closed-port-7"></a>TCP SYN Scan a Closed Port</h1>
+<pre><code>sudo nmap -sS 192.168.1.1 -p 121
+---
+[TCP ] --&gt; TTL: 059 PROTO: 06 | src: 192.168.1.10-&gt; dst: 192.168.1.1
+[TCP ] --&gt; TTL: 064 PROTO: 06 | src: 192.168.1.1-&gt; dst: 192.168.1.10
+</code></pre>
+<p>Here we see our <code>SYN</code> packet leaving, and a <code>RST</code> packet coming back (because the port is closed).</p>
+<p>So, it looks like this basic sniffer is kind of working. Let’s get back to the code to figure out what it does.</p>
+<h1><a name="p-3321-the-code-8" class="anchor" href="https://d.clarkee.co.uk#p-3321-the-code-8"></a>The Code</h1>
+<p>if you pay attention to the code, you will actually find two function calls to the <code>libpcap</code> library: <code>pcap_open_live</code> and <code>pcap_next</code>.</p>
+<p>The first one does most of the work. It creates our RAW socket bound to the device we pass as first parameter, and sets up some internal data structures used by the capture object. The function returns a handler, which we will have to use to interact with the capture session we just created via <code>pcap_open_live</code>. The rest of the parameters are:</p>
+<ul>
+<li>Param 2 (<code>snaplen</code>). This is the maximum size of packets to capture. In general you will like to set it to <code>BUFSIZ</code>. This is a constant defined by <code>libpcap</code> for this parameter. Unless you really know what you are doing (and we are not getting to that point in this post), just use this value.</li>
+<li>Param 3 (<code>promisc</code>). Setting this parameter to 1 will enable promiscuous mode in your network card, supposing your hardware supports this mode. We have already talked about what this means.</li>
+<li>param 3 (<code>timeout</code>). This parameters sets a timeout in the packet capture function. This means that your capture function (aka <code>pcap_next</code> in this example), will return after this amount of time in case no packet has been captured. A value of -1 means no timeout. Usually you will notice a high CPU load if you set the timeout to -1, but also a lower latency getting your packets.</li>
+<li>param4 (<code>err</code>). This is just a string to store an error message in case something goes wrong. For instance, you do not have the permissions to create RAW sockets.</li>
+</ul>
+<p>After successfully executing <code>pcap_open_live</code>, you are ready to capture packets. To caught them all (packetmons :)), you can use <code>pcap_next</code>. This function receives as first parameter the handler to our capture session, and as second parameter a pointer to a packet header struct where the function will store some generic information about the packet. The function returns a pointer to the captured packet… that is actually thee data we are interested on.</p>
+<blockquote>
+<p>Note that libpcap provides many functions to initialize the packet capture and also to get the data from the capture session. The two functions we have commented so far are, maybe, the simplest combination to get you going.</p>
+</blockquote>
+<h1><a name="p-3321-accessing-the-data-9" class="anchor" href="https://d.clarkee.co.uk#p-3321-accessing-the-data-9"></a>Accessing the Data</h1>
+<p>So, now we have the packet and we want to do something with it.</p>
+<p>The first thing to do is to check if the pointer returned by <code>pcap_next</code> is NULL. That means that the timeout has expired or that something bad happened. In any case we will not have data to access and we have to act accordingly.</p>
+<p>Then we have to start ripping off the packet. For doing that we need a sharp knife and also to know which kind of packet we  are capturing. In this case, an Ethernet packet. This means that, our packet will have multiple headers and we will have to process them one by one. The figure below shows a summary of what we will find:</p>
+<pre><code>ETHER HEADER | Data                    -&gt; ARP, RARP, IPX, VLAN tags,...
+ETHER HEADER | IP HEADER | Data        -&gt; Generic IP packet (a header should follow)
+ETHER HEADER | IP HEADER | ICMP | Data -&gt; ICMP Packet
+ETHER HEADER | IP HEADER | TCP  | Data -&gt; TCP packet
+ETHER HEADER | IP HEADER | UDP  | Data -&gt; UDP packet
+</code></pre>
+<p>Let’s go through the different headers to figure out what’s the relevant information they provide us to  decode each  packet.</p>
+<h1><a name="p-3321-the-ethernet-header-10" class="anchor" href="https://d.clarkee.co.uk#p-3321-the-ethernet-header-10"></a>The Ethernet Header</h1>
+<p>The Ethernet header is defined in the file <code>/usr/include/net/ethernet.h</code>, and it looks like this:</p>
+<pre><code class="lang-auto">struct ether_header
+{
+  u_int8_t  ether_dhost[ETH_ALEN];	/* destination eth addr	*/
+  u_int8_t  ether_shost[ETH_ALEN];	/* source ether addr	*/
+  u_int16_t ether_type;		        /* packet type ID field	*/
+} __attribute__ ((__packed__));
+
+</code></pre>
+<p>This is pretty simple. The two first fields are the MAC addresses of the two machines interchanging information. The third one, <code>type</code>, is the one that is going to tell us what come next. The possible values are also defined in the same header file, and here is the list:</p>
+<pre><code class="lang-auto">/* Ethernet protocol ID's */
+#define	ETHERTYPE_PUP		0x0200          /* Xerox PUP */
+#define ETHERTYPE_SPRITE	0x0500		/* Sprite */
+#define	ETHERTYPE_IP		0x0800		/* IP */
+#define	ETHERTYPE_ARP		0x0806		/* Address resolution */
+#define	ETHERTYPE_REVARP	0x8035		/* Reverse ARP */
+#define ETHERTYPE_AT		0x809B		/* AppleTalk protocol */
+#define ETHERTYPE_AARP		0x80F3		/* AppleTalk ARP */
+#define	ETHERTYPE_VLAN		0x8100		/* IEEE 802.1Q VLAN tagging */
+#define ETHERTYPE_IPX		0x8137		/* IPX */
+#define	ETHERTYPE_IPV6		0x86dd		/* IP protocol version 6 */
+#define ETHERTYPE_LOOPBACK	0x9000		/* used to test interfaces */
+</code></pre>
+<p>You can see that there is a world besides TCP/IP. You can also see the ARP protocol everybody talks about and you can also see the IP protocol. The one we are interested on.</p>
+<p>Now, you can go back to out minimal sniffer code and check how we just skip anything that is not an IP packet. This way, we are sure that the next header in the packet is an IP header and we can keep on decoding the information.</p>
+<blockquote>
+<p><strong>Challenge</strong>: Can you modify the sniffer to show ARP packets and, for instance, detect an ARP poisoning attack? . You can print MAC addresses with a line like this:</p>
+</blockquote>
+<blockquote>
+<p><code>ether_ntoa((const struct ether_addr *)eh-&gt;ether_dhost)</code></p>
+</blockquote>
+<h1><a name="p-3321-the-ip-header-11" class="anchor" href="https://d.clarkee.co.uk#p-3321-the-ip-header-11"></a>The IP Header</h1>
+<p>At this point, we know that our packet is an IP packet and now we can access the IP header, which is just next to the ethernet header we have just processed. So, in order to access the header, we just need to skip the ethernet header:</p>
+<p><code>   ip = (struct ip*) (packet + sizeof(struct ether_header));</code></p>
+<p>The IP header structure is defined in <code> /usr/include/netinet/ip.h</code> and it looks like this (I have removed the endianess defines and some constants defined within the struct for easy reading):</p>
+<pre><code class="lang-auto">struct ip
+  {
+    unsigned int ip_hl:4;		/* header length */
+    unsigned int ip_v:4;		/* version */
+    u_int8_t ip_tos;			/* type of service */
+    u_short ip_len;			/* total length */
+    u_short ip_id;			/* identification */
+    u_short ip_off;			/* fragment offset field */
+    u_int8_t ip_ttl;			/* time to live */
+    u_int8_t ip_p;			/* protocol */
+    u_short ip_sum;			/* checksum */
+    struct in_addr ip_src, ip_dst;	/* source and dest address */
+  };
+</code></pre>
+<p>You can see here some familiar fields like the <code>TTL</code> value or the source and destination IP addresses at the very end.</p>
+<p>Again, an IP packet can carry many different protocols, so we need to figure out what is coming after the IP header. The payload protocol is specified by the field <code>ip_p</code> (take a look to the code again) and possible values can be found at <code>/usr/include/netinet/in.h</code>. This is the list:</p>
+<pre><code class="lang-auto">    IPPROTO_IP = 0,	   /* Dummy protocol for TCP.  */
+    IPPROTO_HOPOPTS = 0,   /* IPv6 Hop-by-Hop options.  */
+    IPPROTO_ICMP = 1,	   /* Internet Control Message Protocol.  */
+    IPPROTO_IGMP = 2,	   /* Internet Group Management Protocol. */
+    IPPROTO_IPIP = 4,	   /* IPIP tunnels (older KA9Q tunnels use 94).  */
+    IPPROTO_TCP = 6,	   /* Transmission Control Protocol.  */
+    IPPROTO_EGP = 8,	   /* Exterior Gateway Protocol.  */
+    IPPROTO_PUP = 12,	   /* PUP protocol.  */
+    IPPROTO_UDP = 17,	   /* User Datagram Protocol.  */
+    IPPROTO_IDP = 22,	   /* XNS IDP protocol.  */
+    IPPROTO_TP = 29,	   /* SO Transport Protocol Class 4.  */
+    IPPROTO_DCCP = 33,	   /* Datagram Congestion Control Protocol.  */
+    IPPROTO_IPV6 = 41,     /* IPv6 header.  */
+    IPPROTO_ROUTING = 43,  /* IPv6 routing header.  */
+    IPPROTO_FRAGMENT = 44, /* IPv6 fragmentation header.  */
+    IPPROTO_RSVP = 46,	   /* Reservation Protocol.  */
+    IPPROTO_GRE = 47,	   /* General Routing Encapsulation.  */
+    IPPROTO_ESP = 50,      /* encapsulating security payload.  */
+    IPPROTO_AH = 51,       /* authentication header.  */
+    IPPROTO_ICMPV6 = 58,   /* ICMPv6.  */
+    IPPROTO_NONE = 59,     /* IPv6 no next header.  */
+    IPPROTO_DSTOPTS = 60,  /* IPv6 destination options.  */
+    IPPROTO_MTP = 92,	   /* Multicast Transport Protocol.  */
+    IPPROTO_ENCAP = 98,	   /* Encapsulation Header.  */
+    IPPROTO_PIM = 103,	   /* Protocol Independent Multicast.  */
+    IPPROTO_COMP = 108,	   /* Compression Header Protocol.  */
+    IPPROTO_SCTP = 132,	   /* Stream Control Transmission Protocol.  */
+    IPPROTO_UDPLITE = 136, /* UDP-Lite protocol.  */
+    IPPROTO_RAW = 255,	   /* Raw IP packets.  */
+</code></pre>
+<p>There is a bunch of stuff we can accommodate inside an IP packet, isn’t it?. Now, back to our code, you can check that we are just processing ICMP, TCP and UDP.</p>
+<h1><a name="p-3321-your-turn-12" class="anchor" href="https://d.clarkee.co.uk#p-3321-your-turn-12"></a>Your Turn</h1>
+<p>This is it for this first post about sniffing. Now is your turn to apply what you have just learn (really hope you have learn something). With the information we have put in this post you should be able to:</p>
+<ul>
+<li>Find the header files for TCP, UDP and ICMP and associated structures</li>
+<li>Update the sniffer to print the source and destination port for the transport protocols (TCP and UDP)</li>
+<li>Update the sniffer to print the TCP flags so you can identify SIN, RST or ACK packets</li>
+<li>Update the sniffer to print the ICMP message type and code</li>
+<li>Detect a potential Xmas scan checking the TCP flags of the packets you capture</li>
+<li>… much more</li>
+</ul>
+<p>Get your hands dirty and don’t be a skid <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686/1</link>
+        <pubDate>Sat, 02 Jul 2016 10:38:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-686-1</guid>
+        <source url="https://d.clarkee.co.uk/t/how-do-those-hackers-tools-work-sniffers-part-i/686.rss">How do those hackers tools work? Sniffers Part I</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,773 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Late Easter Challenge Solution with STAN :)</title>
+    <link>https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666</link>
+    <description>It has been a while since I wrote the _[Late Easter](https://0x00sec.org/t/late-easter-challenge/2017/)_  challenge and now that STAN is around, this is a good excuse to present some of the latest functions I have add to my little tool ;)
+
+So, in this write-up I&#39;m going to solve the stripped version of the challenge. Grab the binary, grab STAN (https://github.com/0x00pf/STAN) and let&#39;s start!!! :)
+
+
+# Getting started
+After loading the binary with STAN we see it is a stripped static binary (this is new information shown by the latest version of STAN).
+
+    + Dumming Core
+      - File         : ./test/eo-strip
+      - Size         : 15374
+      - Entry Point  : 4001ef
+      - Type         : ELF64
+      - Valid        : VALID
+      - Architecture : X86
+      - Mode         : 64bits(2)
+      - Info         : Static Stripped
+    [00] text_00 Addr:0x400000 Offset:0x0000 Size:0x2718 (10008)
+    [01] data_01 Addr:0x603000 Offset:0x3000 Size:0x00e0 (224)
+    .................................................
+    [00]           .text 0x03 Addr:0x400144 Offset:0x0144 Size:0x1d6b (   7531) [text_00+0x0144]
+    [01]         .rodata 0x06 Addr:0x401eb0 Offset:0x1eb0 Size:0x0170 (    368) [text_00+0x1eb0]
+    [02]       .eh_frame 0x06 Addr:0x402020 Offset:0x2020 Size:0x06f8 (   1784) [text_00+0x2020]
+    [03]           .data 0x06 Addr:0x603000 Offset:0x3000 Size:0x00e0 (    224) [data_01+0x0000]
+
+
+So, let&#39;s take a look to the entry point (you can now use TAB completion for symbols :) ). STAN names the entry point as `__entry_point`.
+
+    STAN] &gt; dis.function __entry_point
+    + Function &#39;__entry_point&#39;@0x4001ef found at section &#39;.text&#39;(7531 bytes)
+    + Disassembling function __entry_point@0x4001ef
+      * Analysing 3440 instructions at (0x4001ef)
+
+                             __entry_point:
+    4001ef:   5f                      	pop	rdi
+    4001f0:   48 89 e6                	mov	rsi, rsp
+    4001f3:   57                      	push	rdi
+    4001f4:   48 8d 54 fe 08          	lea	rdx, qword ptr [rsi + rdi*8 + 8]
+    4001f9:   48 89 15 e0 2e 20 00    	mov	qword ptr [rip + 0x202ee0], rdx		# ! 0x6030e0
+    400200:   e8 ee 00 00 00          	call	&lt;func_4002f3&gt;			#  &lt;func_4002f3&gt; 4002f3(.text+0x1af)
+    400205:   48 89 c7                	mov	rdi, rax
+    400208:   e8 2a 15 00 00          	call	&lt;func_401737&gt;			#  &lt;func_401737&gt; 401737(.text+0x15f3)
+    40020d:   f4                      	hlt
+    + Stopped after finding symbol &#39;func_40020e&#39; (8 instructions)
+
+
+Normally, you should start disassembling the two functions calls in the `__entry_point`, but I can tell you that this is how the `_start` function looks like for a `dietlibc` binary. I can also tell you that `dietlibc` usually puts the `main` function at the beginning of the `.text` segment.
+
+Alternatively, as this is a small binary, you can just dump the whole `.text` section using the command `dis.section .text` and look for the messages printed in the screen. You will quickly find the `main` function. I&#39;m working on more options to easily find the part of the program you may be interested on.
+
+# Looking at `main`
+So, let&#39;s rename our `.text` symbol to `main` and take a look to the function.
+
+    STAN] &gt; func.rename .text main
+     + Found function .text
+     + Found Symbol .text
+    STAN] &gt; dis.function main
+    + Function &#39;main&#39;@0x400144 found at section &#39;.text&#39;(7531 bytes)
+    + Disassembling function main@0x400144
+      * Analysing 3398 instructions at (0x400144)
+
+                                      main:
+    400144:   55                      	push	rbp
+    400145:   31 c0                   	xor	eax, eax
+    400147:   b9 04 00 00 00          	mov	ecx, 4
+    40014c:   53                      	push	rbx
+    40014d:   48 81 ec 18 04 00 00    	sub	rsp, 0x418
+    400154:   48 89 e7                	mov	rdi, rsp
+    400157:   48 8d 6c 24 10          	lea	rbp, qword ptr [rsp + 0x10]
+    40015c:   f3 ab                   	rep stosd	dword ptr [rdi], eax
+    40015e:   bf b0 1e 40 00          	mov	edi, 0x401eb0		#  &lt;.rodata&gt; 401eb0(.rodata+0)  : &#39;0x00sec Easter Challenge&#39;
+    400163:   e8 4d 05 00 00          	call	&lt;func_4006b5&gt;			#  &lt;func_4006b5&gt; 4006b5(.text+0x571)
+    400168:   bf c9 1e 40 00          	mov	edi, 0x401ec9		#  401ec9(.rodata+19)  : &#39;Enter Password: &#39;
+    40016d:   31 c0                   	xor	eax, eax
+    40016f:   e8 82 04 00 00          	call	&lt;func_4005f6&gt;			#  &lt;func_4005f6&gt; 4005f6(.text+0x4b2)
+    400174:   48 8b 15 a5 2e 20 00    	mov	rdx, qword ptr [rip + 0x202ea5]		#  603020(.data+20)  : &#39;00`&#39;
+    40017b:   be 00 04 00 00          	mov	esi, 0x400
+    400180:   48 89 ef                	mov	rdi, rbp
+    400183:   e8 fb 03 00 00          	call	&lt;func_400583&gt;			#  &lt;func_400583&gt; 400583(.text+0x43f)
+    400188:   31 c0                   	xor	eax, eax
+    40018a:   48 83 c9 ff             	or	rcx, 0xffffffffffffffff
+    40018e:   48 89 ef                	mov	rdi, rbp
+    400191:   f2 ae                   	repne scasb	al, byte ptr [rdi]
+    400193:   ba 10 00 00 00          	mov	edx, 0x10
+    400198:   48 89 ee                	mov	rsi, rbp
+    40019b:   48 89 e7                	mov	rdi, rsp
+    40019e:   48 f7 d1                	not	rcx
+    4001a1:   c6 44 0c 0e 00          	mov	byte ptr [rsp + rcx + 0xe], 0
+    4001a6:   e8 46 03 00 00          	call	&lt;func_4004f1&gt;			#  &lt;func_4004f1&gt; 4004f1(.text+0x3ad)
+    4001ab:   48 89 e7                	mov	rdi, rsp
+    4001ae:   e8 a9 00 00 00          	call	&lt;func_40025c&gt;			#  &lt;func_40025c&gt; 40025c(.text+0x118)
+    4001b3:   85 c0                   	test	eax, eax
+    4001b5:   b9 08 00 00 00          	mov	ecx, 8
+    4001ba:   74 13                   	je	&lt;l0&gt;			# 4001cf(.text+0x8b)
+    4001bc:   ba 3a 00 00 00          	mov	edx, 0x3a		# &#39;:&#39;
+    4001c1:   be 10 30 60 00          	mov	esi, 0x603010		#  603010(.data+10)  : 0x1df32e0
+    4001c6:   48 8b 3d 3b 2e 20 00    	mov	rdi, qword ptr [rip + 0x202e3b]		#  603008(.data+8)  : 0x1df32d8
+    4001cd:   eb 11                   	jmp	&lt;l1&gt;			# 4001e0(.text+0x9c)
+                                        l0:
+    4001cf:   48 8b 3d 2a 2e 20 00    	mov	rdi, qword ptr [rip + 0x202e2a]		#  &lt;.data&gt; 603000(.data+0)  : 0x1df32d0
+    4001d6:   ba 19 00 00 00          	mov	edx, 0x19
+    4001db:   be 10 30 60 00          	mov	esi, 0x603010		#  603010(.data+10)  : 0x1df32e0
+                                        l1:
+    4001e0:   e8 29 00 00 00          	call	&lt;func_40020e&gt;			#  &lt;func_40020e&gt; 40020e(.text+0xca)
+    4001e5:   48 81 c4 18 04 00 00    	add	rsp, 0x418
+    4001ec:   5b                      	pop	rbx
+    4001ed:   5d                      	pop	rbp
+    4001ee:   c3                      	ret
+    + Stopped after finding symbol &#39;__entry_point&#39; (43 instructions)
+
+
+Let&#39;s start making some assumptions to narrow down the interesting part of the program. The first function call receives as first parameter (the value of register `RDI`) a welcome string. Then the next function call does the same to print a prompt for the password. Both functions are different... probably one is `printf` and the other is `puts`... actually we do not care for the time being. Let&#39;s rename them to `maybe_printf` and `maybe_printf1`. 
+
+Following the same reasoning, the third function will probably be a `fgets` as the first parameter is a local variable in the stack (actually is the bottom of the stack `RSP`). After renaming then the initial part of the program will look like this:
+
+
+    main:
+    400144:   55                      	push	rbp
+    400145:   31 c0                   	xor	eax, eax
+    400147:   b9 04 00 00 00          	mov	ecx, 4
+    40014c:   53                      	push	rbx
+    40014d:   48 81 ec 18 04 00 00    	sub	rsp, 0x418
+    400154:   48 89 e7                	mov	rdi, rsp
+    400157:   48 8d 6c 24 10          	lea	rbp, qword ptr [rsp + 0x10]
+    40015c:   f3 ab                   	rep stosd	dword ptr [rdi], eax
+    40015e:   bf b0 1e 40 00          	mov	edi, 0x401eb0		#  &lt;.rodata&gt; 401eb0(.rodata+0)  : &#39;0x00sec Easter Challenge&#39;
+    400163:   e8 4d 05 00 00          	call	&lt;maybe_printf&gt;			#  &lt;maybe_printf&gt; 4006b5(.text+0x571)
+    400168:   bf c9 1e 40 00          	mov	edi, 0x401ec9		#  401ec9(.rodata+19)  : &#39;Enter Password: &#39;
+    40016d:   31 c0                   	xor	eax, eax
+    40016f:   e8 82 04 00 00          	call	&lt;maybe_printf1&gt;			#  &lt;maybe_printf1&gt; 4005f6(.text+0x4b2)
+    400174:   48 8b 15 a5 2e 20 00    	mov	rdx, qword ptr [rip + 0x202ea5]		#  603020(.data+20)  : &#39;00`&#39;
+    40017b:   be 00 04 00 00          	mov	esi, 0x400
+    400180:   48 89 ef                	mov	rdi, rbp
+    400183:   e8 fb 03 00 00          	call	&lt;maybe_fgets&gt;			#  &lt;maybe_fgets&gt; 400583(.text+0x43f)
+
+
+This looks very reasonable, so, for the time being, we will continue. We will find out later if we have to come back and look into those function in more detail, but  I can tell you right now, that this is not the case.
+
+
+# Going on
+Just after, the function that we have renamed as `maybe_fgets`, there is a block of code just before the next function call. Well, that is actually an `strlen`, but for the shake of our own enlightenment let&#39;s rip it off.
+
+```
+400188:   31 c0                   	xor	eax, eax
+40018a:   48 83 c9 ff             	or	rcx, 0xffffffffffffffff
+40018e:   48 89 ef                	mov	rdi, rbp
+400191:   f2 ae                   	repne scasb	al, byte ptr [rdi]
+```
+
+First we set `EAX` to `0`. As you know, this is the value that indicates the end of the a string in C. In other words, the value we have to look for to calculate the length of the string. Then we set `RCX` to -1. We will discuss this in a sec. Finally we set `RDI` to `RBP`. If you double check again the `maybe_fgets` call just before, you will see that the first parameter is actually `RDP`... so we are effectively setting `RDI` to the memory address where the user input has been stored.
+
+Then, the next instruction is the one that does all the magic. Let&#39;s look at it in detail.
+
+```
+repne scasb	al, byte ptr [rdi]
+```
+
+The `repne` is a instruction modifier for strings operations, and `scasb` is one of those string operations supported by Intel processors. When the `repne` modifier is used, the next instruction (`scansb` in this case) will be repeated while the content of `RDI` and the value of `AL` are different (`NE` stands for `NonEqual`).
+
+As you can figure out by now, there are different `repXX` modifiers depending on the condition we are interested on.
+
+But, `repXX` modifier does a few more things. Every time the instruction is repeated, two things happens at the same time. The `RCX` register is decreased and the `RDI` register is increased. There are other string operations that also makes use of `RSI` and in addition to the two operation we have just mentioned, `RSI` is also increased. 
+
+&gt; Note: `RDI` stands for Destination Index and `RSI` stand for Source Index. Intel processor traditionally have assigned special powers to certain registers :)
+
+In this specific case we will be scanning (`SCAn String Byte`) the memory pointed by `RDI` until the flag Z is set (this is the `ne` non-equal condition on rep). This may happen because `RCX` becomes 0 (and this is the reason why we start with the largest possible value for `RCX`, i.e. -1) or because we&#39;ve  found a byte with the same value than `AL` (that is 0 in this case). 
+
+Whenever the condition is satisfied, we have to convert the value stored on `RCX`, as we haven been counting negative numbers. What we need to do is inverted again with a `not` operation to get the absolute value of out counter, and subtract 1 in order to obtain the actual length of the string. I&#39;m not going to explain this, but you can take a look to this (https://en.wikipedia.org/wiki/Two%27s_complement) to get better understand why.
+
+So, if we consider the last `mov`, what all this code actually does is:
+
+```
+buffer[strlen(buffer) - 1] = 0
+```
+
+OK, this may not be that obvious, so take a look to this line, the one actually writing the 0 at the end of the string:
+
+```
+mov	byte ptr [rsp + rcx + 0xe], 0
+```
+
+If you look at the beginning of our `main function` you will find this line:
+
+```
+lea	rbp, qword ptr [rsp + 0x10]
+```
+
+This means that `RSP` and `RBP` are `0x10` bytes away. If we index against `RSP` instead of `RBP`, the we add `RCX` (that actually contains `strlen(string) +  1`) and we decrement this by 1 we can conclude that:
+
+      RBP        + strlen    - 1 = 
+    (RSP + 0x10) + (RCX - 1) - 1 = RSP +RCX + 0xe
+
+Now that we fully understand this piece of code, we find a new function to tackle. You should be able to deal with it by yourself... I can tell you it is a `strncpy` :)
+
+# Checking the Password
+Finally we get to the function that checks the password: `func_40025c`. Let&#39;s rename it to `check_password`, and let&#39;s take a look:
+
+    func_40025c:
+    40025c:   31 c0                   	xor	eax, eax
+    40025e:   48 83 c9 ff             	or	rcx, 0xffffffffffffffff
+    400262:   48 89 fa                	mov	rdx, rdi
+    400265:   f2 ae                   	repne scasb	al, byte ptr [rdi]
+    400267:   31 c0                   	xor	eax, eax
+    400269:   48 83 f9 f6             	cmp	rcx, 0xf6
+    40026d:   75 27                   	jne	&lt;l4&gt;			# 400296(.text+0x152)
+    40026f:   31 c0                   	xor	eax, eax
+                                    l6:
+    400271:   0f b6 0c 02             	movzx	ecx, byte ptr [rdx + rax]
+    400275:   0f b6 b0 10 30 60 00    	movzx	esi, byte ptr [rax + 0x603010]		#  603010(.data+10)  : 0x6a42e0
+    40027c:   83 e9 30                	sub	ecx, 0x30		# &#39;0&#39;
+    40027f:   39 ce                   	cmp	esi, ecx
+    400281:   75 10                   	jne	&lt;l5&gt;			# 400293(.text+0x14f)
+    400283:   48 ff c0                	inc	rax
+    400286:   48 83 f8 08             	cmp	rax, 8
+    40028a:   75 e5                   	jne	&lt;l6&gt;			# 400271(.text+0x12d)
+    40028c:   b8 01 00 00 00          	mov	eax, 1
+    400291:   eb 03                   	jmp	&lt;l4&gt;			# 400296(.text+0x152)
+                                    l5:
+    400293:   31 c0                   	xor	eax, eax
+    400295:   c3                      	ret
+                                    l4:
+    400296:   c3                      	ret
+    + Stopped after finding symbol &#39;func_400297&#39; (20 instructions)
+
+Not bad.... uhm?. OK, you should now recognize the code at the beginning of the function... Don&#39;t we?. No?. Fine, just go back to the previous section and read it again. 
+
+The only difference here is that the `RCX` is not fully converted to the string length... the comparison is done against the lower byte of the negative number... The compiler just saves a few instructions there (a `not` and a `sub` or `dec` :).
+
+Now that we know the length is right, we can go into a typical loop. I think you can really understand this code by now, so I will just add some brief comment at each line:
+
+```
+    xor     eax, eax                         ; EAX = 0 This is our loop counter
+loop:
+    movzx	ecx, byte ptr [rdx + rax]        ; ECX = [RDX + RAX] = user_input[rax]
+    movzx	esi, byte ptr [rax + 0x603010]	 ; ESI = [603010 + RAX] = some_data[rax]
+    sub	ecx, 0x30		         ; ECX= ECX = &#39;0&#39; (ASCII 2 NUMBER)
+    cmp	esi, ecx                         ; if ECX != ESI
+    jne	&lt;l5&gt;			         ;   return 0
+    inc	rax				 ; RAX++
+    cmp	rax, 8				 ; if RAX != 8)
+    jne	&lt;l6&gt;			         ;   continue
+    mov	eax, 1				 ; else
+    jmp	&lt;l4&gt;				 ; return 1
+```
+
+What translated into C will lead to something like this
+
+```
+for (RAX = 0; RAX &lt; 8; RAX++)
+  if ((user_input[RAX] - &#39;0&#39;) != password[RAX]) return 0;
+
+return 1;
+```
+
+This was really straightforward... wasn&#39;t it?... Our password is actually at `0x603010`... So let&#39;s take a look with STAN:
+
+    STAN] &gt; mem.dump x 603010 8
+    + Dumping 8 items from segment &#39;.data&#39;
+    0x603010 : 08 05 02 01 03 02 07 09                         |........
+
+There you go, the password is : `85213279`... Let&#39;s try:
+
+    0x00sec Easter Challenge
+    Enter Password: 85213279
+    Well done. But... this is not the bean you have to grind!
+
+What?... what does this mean? 
+
+# Finishing
+The idea was that the message above will be a hint to keep looking for something more. There are a couple more hints on the comments in the original challenge to lead you into the path of looking farther. 
+
+So, let&#39;s take a closest look to the file... `strings` is our best friend:
+
+    $ strings eo
+    (...)
+    f\&#39;F9/U|O
+    G4NA
+    META-INF/
+    META-INF/MANIFEST.MFPK
+    e3/E3.classPK
+    e3/S.classPK
+
+OK... we see some strings in there that suggest it may be some Java code hidden. So, it looks like we have to _grind_ some coffee _beans_ (I&#39;m afraid the hint wasn&#39;t that good after all ). Alternatively you could also have run `binwalk` and get a result like this:
+
+    $ binwalk eo
+
+    DECIMAL   	HEX       	DESCRIPTION
+    -------------------------------------------------------------------------------------------------------
+    0         	0x0       	ELF 64-bit LSB executable, AMD x86-64, version 1 (SYSV)
+    12824     	0x3218    	LZMA compressed data, properties: 0x24, dictionary size: 16777216 bytes, uncompressed size: 33554432 bytes
+    12952     	0x3298    	LZMA compressed data, properties: 0x36, dictionary size: 16777216 bytes, uncompressed size: 50331648 bytes
+    13080     	0x3318    	LZMA compressed data, properties: 0x41, dictionary size: 16777216 bytes, uncompressed size: 805306368 bytes
+    13208     	0x3398    	Zip archive data, at least v2.0 to extract, name: &quot;META-INF/&quot;
+    13269     	0x33D5    	Zip archive data, at least v2.0 to extract, name: &quot;META-INF/MANIFEST.MF&quot;
+    13425     	0x3471    	Zip archive data, at least v2.0 to extract, name: &quot;e3/E3.class&quot;
+    14450     	0x3872    	Zip archive data, at least v2.0 to extract, name: &quot;e3/S.class&quot;
+    15374     	0x3C0E    	End of Zip archive
+
+So... it looks like there is a jar file inside the binary, this is a ZIP file containing a `MANIFEST` and some Java class files... Jar files are pretty cool because they can be anywhere and Java is able to find them and run them... Let&#39;s try:
+
+    $ java -jar eo
+    Password:
+
+WoW... another password to crack!!!... We are so lucky :)
+
+#This is a lot easier
+Yes, there is another challenge inside the challenge, but this time is Java. Let&#39;s grab a decompiler and hope the bytecode has not been obfuscated ;).
+
+I just quickly _google it_ and found JD-GUI. There are probably better options but I do not do much Java reversing so I cannot really propose a better candidate. This one worked just fine. Let&#39;s download it and give it a try.
+
+    $ curl http://jd.benow.ca/jd-gui/downloads/jd-gui-0.3.5.linux.i686.tar.gz | tar xz
+    $ ./jd-gui
+
+OK... `jd-gui` cannot directly open the binary, so we better extract it. We can use the flag `-e` (for extract) with `binwalk` (you will get a bit of crap in the folder) or just `unzip` the binary. You can also be c00l and actually extract the Jar/ZIP file. Let&#39;s see how to do this just for the LuLz
+
+Zip files starts with the characters `PK`, so we have to look for that characters. We will use `xxd` because what we need is the offset inside the file where the zip file starts. 
+
+    $ xxd eo | grep PK | head -1
+    0003390: 0000 0000 0000 0000 504b 0304 1400 0800  ........PK......
+
+So the offset is `3390 + 8` in hexadecimal. Converting it to decimal we get the value `13208`... Now just `dd` it
+
+`$ dd if=eo of=eo.zip bs=1 skip=13208 count=1M`
+
+I just used a `count` of 1Megabyte to dump everything after the beginning of the ZIP mark (because the file is smaller than that). You may try to calculate the end of the file... and provide a specific `count`. I leave this as an exercise to you to sharp your spec reading skills :) . In this case the ZIP file has been attached to the end of the file so just giving a big `count` value works fine.
+
+After that you can open the java code in your preferred decompiler and you will get a clean Java source code.
+
+Now it is up to you to interpret the code... it should be pretty straightforward. You will need to do some operations with the numbers you will find in the Java source... but that should be easy for you.... it is just Java code... 
+
+Well, this was it... a _easter egg_ challenge in a challenge :)... and whenever you crack that easter egg... well, you could cook a pie or an __omelette__.
+
+
+# Conclusions
+Let&#39;s finish this paper with some conclusions.
+
+* We have learned a bit about string operations in assembler. Probably many of you already mastered this but I believe some newbies may have learned something
+* We have also learned that following a systematic approach may save us some time. Check your binary before jumping into the assembly. Use `strings`, `binwalk`, pay attention to the sections and segments reported by `readelf`, look for strange permissions or non-matching sizes,....
+* We have also learned that STAN rocks!
+
+In case you want to take a look to the binary using STAN, you can use the following STAN case file. Remember just open the binary with STAN and then load the case with `case.load filename`.
+
+    S:main:0x400144
+    S:some_print_stuff:0x40020e
+    S:check_password:0x40025c
+    S:strncmp:0x4004f1
+    S:maybe_fgets:0x400583
+    S:maybe_printf1:0x4005f6
+    S:maybe_printf:0x4006b5
+    L:BadBoy:0x4001cf
+    L:GoodBoy:0x4001e0
+    L:loop:0x400271
+    L:return_0:0x400293
+    L:DONE:0x400296
+    F:main:0x400144
+    F:some_print_stuff:0x40020e
+    F:check_password:0x40025c
+    F:strncmp:0x4004f1
+    F:maybe_fgets:0x400583
+    F:maybe_printf1:0x4005f6
+    F:maybe_printf:0x4006b5
+    C:0x40019e:RCX = strlen (user_input) + 1
+    C:0x4001a1:user_input[strlen(user_input) - 1] = 0 -&gt; chomp
+    C:0x40026d:Exits if length of strings is different 8 (-1 0xfff... -8 = 0xfff...f6)
+    C:0x400275:mem.dump x 603010 8 -&gt; 08 05 02 01 03 02 07 09
+    C:0x40027c:Convert ASCII to int for numbers
+    C:0x400286:Loop from 0 to 8 using RAX as counter
+    C:0x40028c:Return 1 on success... we have completed the 8 iterations
+
+
+
+
+Hack Fun</description>
+    
+    <lastBuildDate>Thu, 29 Jun 2017 16:36:28 +0000</lastBuildDate>
+    <category>Challenges</category>
+    <atom:link href="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Late Easter Challenge Solution with STAN :)</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks <a class="mention" href="https://0x00sec.org/u/smartone">@SmartOne</a>  I will fix the typo in the next commit</p>
+          <p><a href="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/6</link>
+        <pubDate>Thu, 29 Jun 2017 16:36:28 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2666-6</guid>
+        <source url="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666.rss">Late Easter Challenge Solution with STAN :)</source>
+      </item>
+      <item>
+        <title>Late Easter Challenge Solution with STAN :)</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="0x00pf" data-post="1" data-topic="2666">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/0x00pf/40/199_2.png" class="avatar"> 0x00pf:</div>
+<blockquote>
+<ul>
+<li>Dumming Core</li>
+</ul>
+</blockquote>
+</aside>
+<p>Meant to be “Dumping Core”? <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/5</link>
+        <pubDate>Thu, 29 Jun 2017 13:18:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2666-5</guid>
+        <source url="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666.rss">Late Easter Challenge Solution with STAN :)</source>
+      </item>
+      <item>
+        <title>Late Easter Challenge Solution with STAN :)</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/_py">@_py</a> Thanks mate… no worries I know you are busy and as <a class="mention" href="https://0x00sec.org/u/ricksanchez">@ricksanchez</a> it is all about promotion <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">… I have been looking at Unicorn Engine… <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<p><a class="mention" href="https://0x00sec.org/u/ricksanchez">@ricksanchez</a> thanks mate. Glad to hear you liked it</p>
+          <p><a href="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/4</link>
+        <pubDate>Wed, 28 Jun 2017 18:24:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2666-4</guid>
+        <source url="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666.rss">Late Easter Challenge Solution with STAN :)</source>
+      </item>
+      <item>
+        <title>Late Easter Challenge Solution with STAN :)</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>Great write up for your own challenge, promoting your own tool again.<br>
+Smart move <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"> .</p>
+<p>Seriously though, really solid article which is easy to follow.<br>
+Helped me and most likely will help all the new people who want to dive into RE as well <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/3</link>
+        <pubDate>Wed, 28 Jun 2017 18:22:16 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2666-3</guid>
+        <source url="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666.rss">Late Easter Challenge Solution with STAN :)</source>
+      </item>
+      <item>
+        <title>Late Easter Challenge Solution with STAN :)</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>You need to stop being so good man! If you manage to add some sort of symbolic execution features in STAN, it’d be pure orgasm.</p>
+<p>By the way, my apologies for not posting my write up for your challenge but I got caught up with exams.</p>
+          <p><a href="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/2</link>
+        <pubDate>Wed, 28 Jun 2017 18:12:31 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2666-2</guid>
+        <source url="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666.rss">Late Easter Challenge Solution with STAN :)</source>
+      </item>
+      <item>
+        <title>Late Easter Challenge Solution with STAN :)</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>It has been a while since I wrote the <em><a href="https://0x00sec.org/t/late-easter-challenge/2017/">Late Easter</a></em>  challenge and now that STAN is around, this is a good excuse to present some of the latest functions I have add to my little tool <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<p>So, in this write-up I’m going to solve the stripped version of the challenge. Grab the binary, grab STAN (<a href="https://github.com/0x00pf/STAN" rel="nofollow noopener">https://github.com/0x00pf/STAN</a>) and let’s start!!! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<h1>Getting started</h1>
+<p>After loading the binary with STAN we see it is a stripped static binary (this is new information shown by the latest version of STAN).</p>
+<pre><code>+ Dumming Core
+  - File         : ./test/eo-strip
+  - Size         : 15374
+  - Entry Point  : 4001ef
+  - Type         : ELF64
+  - Valid        : VALID
+  - Architecture : X86
+  - Mode         : 64bits(2)
+  - Info         : Static Stripped
+[00] text_00 Addr:0x400000 Offset:0x0000 Size:0x2718 (10008)
+[01] data_01 Addr:0x603000 Offset:0x3000 Size:0x00e0 (224)
+.................................................
+[00]           .text 0x03 Addr:0x400144 Offset:0x0144 Size:0x1d6b (   7531) [text_00+0x0144]
+[01]         .rodata 0x06 Addr:0x401eb0 Offset:0x1eb0 Size:0x0170 (    368) [text_00+0x1eb0]
+[02]       .eh_frame 0x06 Addr:0x402020 Offset:0x2020 Size:0x06f8 (   1784) [text_00+0x2020]
+[03]           .data 0x06 Addr:0x603000 Offset:0x3000 Size:0x00e0 (    224) [data_01+0x0000]
+</code></pre>
+<p>So, let’s take a look to the entry point (you can now use TAB completion for symbols <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> ). STAN names the entry point as <code>__entry_point</code>.</p>
+<pre><code>STAN] &gt; dis.function __entry_point
++ Function '__entry_point'@0x4001ef found at section '.text'(7531 bytes)
++ Disassembling function __entry_point@0x4001ef
+  * Analysing 3440 instructions at (0x4001ef)
+
+                         __entry_point:
+4001ef:   5f                      	pop	rdi
+4001f0:   48 89 e6                	mov	rsi, rsp
+4001f3:   57                      	push	rdi
+4001f4:   48 8d 54 fe 08          	lea	rdx, qword ptr [rsi + rdi*8 + 8]
+4001f9:   48 89 15 e0 2e 20 00    	mov	qword ptr [rip + 0x202ee0], rdx		# ! 0x6030e0
+400200:   e8 ee 00 00 00          	call	&lt;func_4002f3&gt;			#  &lt;func_4002f3&gt; 4002f3(.text+0x1af)
+400205:   48 89 c7                	mov	rdi, rax
+400208:   e8 2a 15 00 00          	call	&lt;func_401737&gt;			#  &lt;func_401737&gt; 401737(.text+0x15f3)
+40020d:   f4                      	hlt
++ Stopped after finding symbol 'func_40020e' (8 instructions)
+</code></pre>
+<p>Normally, you should start disassembling the two functions calls in the <code>__entry_point</code>, but I can tell you that this is how the <code>_start</code> function looks like for a <code>dietlibc</code> binary. I can also tell you that <code>dietlibc</code> usually puts the <code>main</code> function at the beginning of the <code>.text</code> segment.</p>
+<p>Alternatively, as this is a small binary, you can just dump the whole <code>.text</code> section using the command <code>dis.section .text</code> and look for the messages printed in the screen. You will quickly find the <code>main</code> function. I’m working on more options to easily find the part of the program you may be interested on.</p>
+<h1>Looking at <code>main</code>
+</h1>
+<p>So, let’s rename our <code>.text</code> symbol to <code>main</code> and take a look to the function.</p>
+<pre><code>STAN] &gt; func.rename .text main
+ + Found function .text
+ + Found Symbol .text
+STAN] &gt; dis.function main
++ Function 'main'@0x400144 found at section '.text'(7531 bytes)
++ Disassembling function main@0x400144
+  * Analysing 3398 instructions at (0x400144)
+
+                                  main:
+400144:   55                      	push	rbp
+400145:   31 c0                   	xor	eax, eax
+400147:   b9 04 00 00 00          	mov	ecx, 4
+40014c:   53                      	push	rbx
+40014d:   48 81 ec 18 04 00 00    	sub	rsp, 0x418
+400154:   48 89 e7                	mov	rdi, rsp
+400157:   48 8d 6c 24 10          	lea	rbp, qword ptr [rsp + 0x10]
+40015c:   f3 ab                   	rep stosd	dword ptr [rdi], eax
+40015e:   bf b0 1e 40 00          	mov	edi, 0x401eb0		#  &lt;.rodata&gt; 401eb0(.rodata+0)  : '0x00sec Easter Challenge'
+400163:   e8 4d 05 00 00          	call	&lt;func_4006b5&gt;			#  &lt;func_4006b5&gt; 4006b5(.text+0x571)
+400168:   bf c9 1e 40 00          	mov	edi, 0x401ec9		#  401ec9(.rodata+19)  : 'Enter Password: '
+40016d:   31 c0                   	xor	eax, eax
+40016f:   e8 82 04 00 00          	call	&lt;func_4005f6&gt;			#  &lt;func_4005f6&gt; 4005f6(.text+0x4b2)
+400174:   48 8b 15 a5 2e 20 00    	mov	rdx, qword ptr [rip + 0x202ea5]		#  603020(.data+20)  : '00`'
+40017b:   be 00 04 00 00          	mov	esi, 0x400
+400180:   48 89 ef                	mov	rdi, rbp
+400183:   e8 fb 03 00 00          	call	&lt;func_400583&gt;			#  &lt;func_400583&gt; 400583(.text+0x43f)
+400188:   31 c0                   	xor	eax, eax
+40018a:   48 83 c9 ff             	or	rcx, 0xffffffffffffffff
+40018e:   48 89 ef                	mov	rdi, rbp
+400191:   f2 ae                   	repne scasb	al, byte ptr [rdi]
+400193:   ba 10 00 00 00          	mov	edx, 0x10
+400198:   48 89 ee                	mov	rsi, rbp
+40019b:   48 89 e7                	mov	rdi, rsp
+40019e:   48 f7 d1                	not	rcx
+4001a1:   c6 44 0c 0e 00          	mov	byte ptr [rsp + rcx + 0xe], 0
+4001a6:   e8 46 03 00 00          	call	&lt;func_4004f1&gt;			#  &lt;func_4004f1&gt; 4004f1(.text+0x3ad)
+4001ab:   48 89 e7                	mov	rdi, rsp
+4001ae:   e8 a9 00 00 00          	call	&lt;func_40025c&gt;			#  &lt;func_40025c&gt; 40025c(.text+0x118)
+4001b3:   85 c0                   	test	eax, eax
+4001b5:   b9 08 00 00 00          	mov	ecx, 8
+4001ba:   74 13                   	je	&lt;l0&gt;			# 4001cf(.text+0x8b)
+4001bc:   ba 3a 00 00 00          	mov	edx, 0x3a		# ':'
+4001c1:   be 10 30 60 00          	mov	esi, 0x603010		#  603010(.data+10)  : 0x1df32e0
+4001c6:   48 8b 3d 3b 2e 20 00    	mov	rdi, qword ptr [rip + 0x202e3b]		#  603008(.data+8)  : 0x1df32d8
+4001cd:   eb 11                   	jmp	&lt;l1&gt;			# 4001e0(.text+0x9c)
+                                    l0:
+4001cf:   48 8b 3d 2a 2e 20 00    	mov	rdi, qword ptr [rip + 0x202e2a]		#  &lt;.data&gt; 603000(.data+0)  : 0x1df32d0
+4001d6:   ba 19 00 00 00          	mov	edx, 0x19
+4001db:   be 10 30 60 00          	mov	esi, 0x603010		#  603010(.data+10)  : 0x1df32e0
+                                    l1:
+4001e0:   e8 29 00 00 00          	call	&lt;func_40020e&gt;			#  &lt;func_40020e&gt; 40020e(.text+0xca)
+4001e5:   48 81 c4 18 04 00 00    	add	rsp, 0x418
+4001ec:   5b                      	pop	rbx
+4001ed:   5d                      	pop	rbp
+4001ee:   c3                      	ret
++ Stopped after finding symbol '__entry_point' (43 instructions)
+</code></pre>
+<p>Let’s start making some assumptions to narrow down the interesting part of the program. The first function call receives as first parameter (the value of register <code>RDI</code>) a welcome string. Then the next function call does the same to print a prompt for the password. Both functions are different… probably one is <code>printf</code> and the other is <code>puts</code>… actually we do not care for the time being. Let’s rename them to <code>maybe_printf</code> and <code>maybe_printf1</code>.</p>
+<p>Following the same reasoning, the third function will probably be a <code>fgets</code> as the first parameter is a local variable in the stack (actually is the bottom of the stack <code>RSP</code>). After renaming then the initial part of the program will look like this:</p>
+<pre><code>main:
+400144:   55                      	push	rbp
+400145:   31 c0                   	xor	eax, eax
+400147:   b9 04 00 00 00          	mov	ecx, 4
+40014c:   53                      	push	rbx
+40014d:   48 81 ec 18 04 00 00    	sub	rsp, 0x418
+400154:   48 89 e7                	mov	rdi, rsp
+400157:   48 8d 6c 24 10          	lea	rbp, qword ptr [rsp + 0x10]
+40015c:   f3 ab                   	rep stosd	dword ptr [rdi], eax
+40015e:   bf b0 1e 40 00          	mov	edi, 0x401eb0		#  &lt;.rodata&gt; 401eb0(.rodata+0)  : '0x00sec Easter Challenge'
+400163:   e8 4d 05 00 00          	call	&lt;maybe_printf&gt;			#  &lt;maybe_printf&gt; 4006b5(.text+0x571)
+400168:   bf c9 1e 40 00          	mov	edi, 0x401ec9		#  401ec9(.rodata+19)  : 'Enter Password: '
+40016d:   31 c0                   	xor	eax, eax
+40016f:   e8 82 04 00 00          	call	&lt;maybe_printf1&gt;			#  &lt;maybe_printf1&gt; 4005f6(.text+0x4b2)
+400174:   48 8b 15 a5 2e 20 00    	mov	rdx, qword ptr [rip + 0x202ea5]		#  603020(.data+20)  : '00`'
+40017b:   be 00 04 00 00          	mov	esi, 0x400
+400180:   48 89 ef                	mov	rdi, rbp
+400183:   e8 fb 03 00 00          	call	&lt;maybe_fgets&gt;			#  &lt;maybe_fgets&gt; 400583(.text+0x43f)
+</code></pre>
+<p>This looks very reasonable, so, for the time being, we will continue. We will find out later if we have to come back and look into those function in more detail, but  I can tell you right now, that this is not the case.</p>
+<h1>Going on</h1>
+<p>Just after, the function that we have renamed as <code>maybe_fgets</code>, there is a block of code just before the next function call. Well, that is actually an <code>strlen</code>, but for the shake of our own enlightenment let’s rip it off.</p>
+<pre><code class="lang-auto">400188:   31 c0                   	xor	eax, eax
+40018a:   48 83 c9 ff             	or	rcx, 0xffffffffffffffff
+40018e:   48 89 ef                	mov	rdi, rbp
+400191:   f2 ae                   	repne scasb	al, byte ptr [rdi]
+</code></pre>
+<p>First we set <code>EAX</code> to <code>0</code>. As you know, this is the value that indicates the end of the a string in C. In other words, the value we have to look for to calculate the length of the string. Then we set <code>RCX</code> to -1. We will discuss this in a sec. Finally we set <code>RDI</code> to <code>RBP</code>. If you double check again the <code>maybe_fgets</code> call just before, you will see that the first parameter is actually <code>RDP</code>… so we are effectively setting <code>RDI</code> to the memory address where the user input has been stored.</p>
+<p>Then, the next instruction is the one that does all the magic. Let’s look at it in detail.</p>
+<pre><code class="lang-auto">repne scasb	al, byte ptr [rdi]
+</code></pre>
+<p>The <code>repne</code> is a instruction modifier for strings operations, and <code>scasb</code> is one of those string operations supported by Intel processors. When the <code>repne</code> modifier is used, the next instruction (<code>scansb</code> in this case) will be repeated while the content of <code>RDI</code> and the value of <code>AL</code> are different (<code>NE</code> stands for <code>NonEqual</code>).</p>
+<p>As you can figure out by now, there are different <code>repXX</code> modifiers depending on the condition we are interested on.</p>
+<p>But, <code>repXX</code> modifier does a few more things. Every time the instruction is repeated, two things happens at the same time. The <code>RCX</code> register is decreased and the <code>RDI</code> register is increased. There are other string operations that also makes use of <code>RSI</code> and in addition to the two operation we have just mentioned, <code>RSI</code> is also increased.</p>
+<blockquote>
+<p>Note: <code>RDI</code> stands for Destination Index and <code>RSI</code> stand for Source Index. Intel processor traditionally have assigned special powers to certain registers <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+</blockquote>
+<p>In this specific case we will be scanning (<code>SCAn String Byte</code>) the memory pointed by <code>RDI</code> until the flag Z is set (this is the <code>ne</code> non-equal condition on rep). This may happen because <code>RCX</code> becomes 0 (and this is the reason why we start with the largest possible value for <code>RCX</code>, i.e. -1) or because we’ve  found a byte with the same value than <code>AL</code> (that is 0 in this case).</p>
+<p>Whenever the condition is satisfied, we have to convert the value stored on <code>RCX</code>, as we haven been counting negative numbers. What we need to do is inverted again with a <code>not</code> operation to get the absolute value of out counter, and subtract 1 in order to obtain the actual length of the string. I’m not going to explain this, but you can take a look to this (<a href="https://en.wikipedia.org/wiki/Two%27s_complement" rel="nofollow noopener">https://en.wikipedia.org/wiki/Two’s_complement</a>) to get better understand why.</p>
+<p>So, if we consider the last <code>mov</code>, what all this code actually does is:</p>
+<pre><code class="lang-auto">buffer[strlen(buffer) - 1] = 0
+</code></pre>
+<p>OK, this may not be that obvious, so take a look to this line, the one actually writing the 0 at the end of the string:</p>
+<pre><code class="lang-auto">mov	byte ptr [rsp + rcx + 0xe], 0
+</code></pre>
+<p>If you look at the beginning of our <code>main function</code> you will find this line:</p>
+<pre><code class="lang-auto">lea	rbp, qword ptr [rsp + 0x10]
+</code></pre>
+<p>This means that <code>RSP</code> and <code>RBP</code> are <code>0x10</code> bytes away. If we index against <code>RSP</code> instead of <code>RBP</code>, the we add <code>RCX</code> (that actually contains <code>strlen(string) +  1</code>) and we decrement this by 1 we can conclude that:</p>
+<pre><code>  RBP        + strlen    - 1 = 
+(RSP + 0x10) + (RCX - 1) - 1 = RSP +RCX + 0xe
+</code></pre>
+<p>Now that we fully understand this piece of code, we find a new function to tackle. You should be able to deal with it by yourself… I can tell you it is a <code>strncpy</code> <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<h1>Checking the Password</h1>
+<p>Finally we get to the function that checks the password: <code>func_40025c</code>. Let’s rename it to <code>check_password</code>, and let’s take a look:</p>
+<pre><code>func_40025c:
+40025c:   31 c0                   	xor	eax, eax
+40025e:   48 83 c9 ff             	or	rcx, 0xffffffffffffffff
+400262:   48 89 fa                	mov	rdx, rdi
+400265:   f2 ae                   	repne scasb	al, byte ptr [rdi]
+400267:   31 c0                   	xor	eax, eax
+400269:   48 83 f9 f6             	cmp	rcx, 0xf6
+40026d:   75 27                   	jne	&lt;l4&gt;			# 400296(.text+0x152)
+40026f:   31 c0                   	xor	eax, eax
+                                l6:
+400271:   0f b6 0c 02             	movzx	ecx, byte ptr [rdx + rax]
+400275:   0f b6 b0 10 30 60 00    	movzx	esi, byte ptr [rax + 0x603010]		#  603010(.data+10)  : 0x6a42e0
+40027c:   83 e9 30                	sub	ecx, 0x30		# '0'
+40027f:   39 ce                   	cmp	esi, ecx
+400281:   75 10                   	jne	&lt;l5&gt;			# 400293(.text+0x14f)
+400283:   48 ff c0                	inc	rax
+400286:   48 83 f8 08             	cmp	rax, 8
+40028a:   75 e5                   	jne	&lt;l6&gt;			# 400271(.text+0x12d)
+40028c:   b8 01 00 00 00          	mov	eax, 1
+400291:   eb 03                   	jmp	&lt;l4&gt;			# 400296(.text+0x152)
+                                l5:
+400293:   31 c0                   	xor	eax, eax
+400295:   c3                      	ret
+                                l4:
+400296:   c3                      	ret
++ Stopped after finding symbol 'func_400297' (20 instructions)
+</code></pre>
+<p>Not bad… uhm?. OK, you should now recognize the code at the beginning of the function… Don’t we?. No?. Fine, just go back to the previous section and read it again.</p>
+<p>The only difference here is that the <code>RCX</code> is not fully converted to the string length… the comparison is done against the lower byte of the negative number… The compiler just saves a few instructions there (a <code>not</code> and a <code>sub</code> or <code>dec</code> :).</p>
+<p>Now that we know the length is right, we can go into a typical loop. I think you can really understand this code by now, so I will just add some brief comment at each line:</p>
+<pre><code class="lang-auto">    xor     eax, eax                         ; EAX = 0 This is our loop counter
+loop:
+    movzx	ecx, byte ptr [rdx + rax]        ; ECX = [RDX + RAX] = user_input[rax]
+    movzx	esi, byte ptr [rax + 0x603010]	 ; ESI = [603010 + RAX] = some_data[rax]
+    sub	ecx, 0x30		         ; ECX= ECX = '0' (ASCII 2 NUMBER)
+    cmp	esi, ecx                         ; if ECX != ESI
+    jne	&lt;l5&gt;			         ;   return 0
+    inc	rax				 ; RAX++
+    cmp	rax, 8				 ; if RAX != 8)
+    jne	&lt;l6&gt;			         ;   continue
+    mov	eax, 1				 ; else
+    jmp	&lt;l4&gt;				 ; return 1
+</code></pre>
+<p>What translated into C will lead to something like this</p>
+<pre><code class="lang-auto">for (RAX = 0; RAX &lt; 8; RAX++)
+  if ((user_input[RAX] - '0') != password[RAX]) return 0;
+
+return 1;
+</code></pre>
+<p>This was really straightforward… wasn’t it?.. Our password is actually at <code>0x603010</code>… So let’s take a look with STAN:</p>
+<pre><code>STAN] &gt; mem.dump x 603010 8
++ Dumping 8 items from segment '.data'
+0x603010 : 08 05 02 01 03 02 07 09                         |........
+</code></pre>
+<p>There you go, the password is : <code>85213279</code>… Let’s try:</p>
+<pre><code>0x00sec Easter Challenge
+Enter Password: 85213279
+Well done. But... this is not the bean you have to grind!
+</code></pre>
+<p>What?.. what does this mean?</p>
+<h1>Finishing</h1>
+<p>The idea was that the message above will be a hint to keep looking for something more. There are a couple more hints on the comments in the original challenge to lead you into the path of looking farther.</p>
+<p>So, let’s take a closest look to the file… <code>strings</code> is our best friend:</p>
+<pre><code>$ strings eo
+(...)
+f\'F9/U|O
+G4NA
+META-INF/
+META-INF/MANIFEST.MFPK
+e3/E3.classPK
+e3/S.classPK
+</code></pre>
+<p>OK… we see some strings in there that suggest it may be some Java code hidden. So, it looks like we have to <em>grind</em> some coffee <em>beans</em> (I’m afraid the hint wasn’t that good after all ). Alternatively you could also have run <code>binwalk</code> and get a result like this:</p>
+<pre><code>$ binwalk eo
+
+DECIMAL   	HEX       	DESCRIPTION
+-------------------------------------------------------------------------------------------------------
+0         	0x0       	ELF 64-bit LSB executable, AMD x86-64, version 1 (SYSV)
+12824     	0x3218    	LZMA compressed data, properties: 0x24, dictionary size: 16777216 bytes, uncompressed size: 33554432 bytes
+12952     	0x3298    	LZMA compressed data, properties: 0x36, dictionary size: 16777216 bytes, uncompressed size: 50331648 bytes
+13080     	0x3318    	LZMA compressed data, properties: 0x41, dictionary size: 16777216 bytes, uncompressed size: 805306368 bytes
+13208     	0x3398    	Zip archive data, at least v2.0 to extract, name: "META-INF/"
+13269     	0x33D5    	Zip archive data, at least v2.0 to extract, name: "META-INF/MANIFEST.MF"
+13425     	0x3471    	Zip archive data, at least v2.0 to extract, name: "e3/E3.class"
+14450     	0x3872    	Zip archive data, at least v2.0 to extract, name: "e3/S.class"
+15374     	0x3C0E    	End of Zip archive
+</code></pre>
+<p>So… it looks like there is a jar file inside the binary, this is a ZIP file containing a <code>MANIFEST</code> and some Java class files… Jar files are pretty cool because they can be anywhere and Java is able to find them and run them… Let’s try:</p>
+<pre><code>$ java -jar eo
+Password:
+</code></pre>
+<p>WoW… another password to crack!!!.. We are so lucky <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p><span class="hashtag">#This</span> is a lot easier<br>
+Yes, there is another challenge inside the challenge, but this time is Java. Let’s grab a decompiler and hope the bytecode has not been obfuscated ;).</p>
+<p>I just quickly <em>google it</em> and found JD-GUI. There are probably better options but I do not do much Java reversing so I cannot really propose a better candidate. This one worked just fine. Let’s download it and give it a try.</p>
+<pre><code>$ curl http://jd.benow.ca/jd-gui/downloads/jd-gui-0.3.5.linux.i686.tar.gz | tar xz
+$ ./jd-gui
+</code></pre>
+<p>OK… <code>jd-gui</code> cannot directly open the binary, so we better extract it. We can use the flag <code>-e</code> (for extract) with <code>binwalk</code> (you will get a bit of crap in the folder) or just <code>unzip</code> the binary. You can also be c00l and actually extract the Jar/ZIP file. Let’s see how to do this just for the LuLz</p>
+<p>Zip files starts with the characters <code>PK</code>, so we have to look for that characters. We will use <code>xxd</code> because what we need is the offset inside the file where the zip file starts.</p>
+<pre><code>$ xxd eo | grep PK | head -1
+0003390: 0000 0000 0000 0000 504b 0304 1400 0800  ........PK......
+</code></pre>
+<p>So the offset is <code>3390 + 8</code> in hexadecimal. Converting it to decimal we get the value <code>13208</code>… Now just <code>dd</code> it</p>
+<p><code>$ dd if=eo of=eo.zip bs=1 skip=13208 count=1M</code></p>
+<p>I just used a <code>count</code> of 1Megabyte to dump everything after the beginning of the ZIP mark (because the file is smaller than that). You may try to calculate the end of the file… and provide a specific <code>count</code>. I leave this as an exercise to you to sharp your spec reading skills <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> . In this case the ZIP file has been attached to the end of the file so just giving a big <code>count</code> value works fine.</p>
+<p>After that you can open the java code in your preferred decompiler and you will get a clean Java source code.</p>
+<p>Now it is up to you to interpret the code… it should be pretty straightforward. You will need to do some operations with the numbers you will find in the Java source… but that should be easy for you… it is just Java code…</p>
+<p>Well, this was it… a <em>easter egg</em> challenge in a challenge :)… and whenever you crack that easter egg… well, you could cook a pie or an <strong>omelette</strong>.</p>
+<h1>Conclusions</h1>
+<p>Let’s finish this paper with some conclusions.</p>
+<ul>
+<li>We have learned a bit about string operations in assembler. Probably many of you already mastered this but I believe some newbies may have learned something</li>
+<li>We have also learned that following a systematic approach may save us some time. Check your binary before jumping into the assembly. Use <code>strings</code>, <code>binwalk</code>, pay attention to the sections and segments reported by <code>readelf</code>, look for strange permissions or non-matching sizes,…</li>
+<li>We have also learned that STAN rocks!</li>
+</ul>
+<p>In case you want to take a look to the binary using STAN, you can use the following STAN case file. Remember just open the binary with STAN and then load the case with <code>case.load filename</code>.</p>
+<pre><code>S:main:0x400144
+S:some_print_stuff:0x40020e
+S:check_password:0x40025c
+S:strncmp:0x4004f1
+S:maybe_fgets:0x400583
+S:maybe_printf1:0x4005f6
+S:maybe_printf:0x4006b5
+L:BadBoy:0x4001cf
+L:GoodBoy:0x4001e0
+L:loop:0x400271
+L:return_0:0x400293
+L:DONE:0x400296
+F:main:0x400144
+F:some_print_stuff:0x40020e
+F:check_password:0x40025c
+F:strncmp:0x4004f1
+F:maybe_fgets:0x400583
+F:maybe_printf1:0x4005f6
+F:maybe_printf:0x4006b5
+C:0x40019e:RCX = strlen (user_input) + 1
+C:0x4001a1:user_input[strlen(user_input) - 1] = 0 -&gt; chomp
+C:0x40026d:Exits if length of strings is different 8 (-1 0xfff... -8 = 0xfff...f6)
+C:0x400275:mem.dump x 603010 8 -&gt; 08 05 02 01 03 02 07 09
+C:0x40027c:Convert ASCII to int for numbers
+C:0x400286:Loop from 0 to 8 using RAX as counter
+C:0x40028c:Return 1 on success... we have completed the 8 iterations
+</code></pre>
+<p>Hack Fun</p>
+          <p><a href="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666/1</link>
+        <pubDate>Wed, 28 Jun 2017 16:38:21 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2666-1</guid>
+        <source url="https://0x00sec.org/t/late-easter-challenge-solution-with-stan/2666.rss">Late Easter Challenge Solution with STAN :)</source>
+      </item>
+  </channel>
+</rss>

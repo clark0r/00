@@ -1,0 +1,842 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>How do those hackers&#39; tools work? Proxychains</title>
+    <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426</link>
+    <description>Welcome to this new series intended to explain the guts of all those hacker&#39;s tools out there you use or want to use... Basically, we are going to explain you how does they work and how do you can build your own... Keep reading if you do not want to be a Skid ;).
+
+We will start the series with Proxychains. Before, keeping on reading, make sure you had read the 0x00sec introduction from @OilSlick to () [ProxyChains](https://0x00sec.org/t/a-brief-introduction-to-proxychains/418). 
+
+To understand how ProxyChains works we first need to understand how does a proxy works...So let&#39;s code one!
+
+# Coding a Proxy
+Proxychains supports HTTP and SOCKS proxies. Conceptually they are the same thing. They just differ in the way, the clients (your web browser for instance) interchange information with the proxy itself..
+
+For the sake of simplicity we are going to code a simple (very simple) HTTP proxy. Improving this proxy and adding SOCKS capabilities will be an interesting exercise for the reader (do you know that access to Tor is perform via a SOCKS proxy?...)
+
+So, our proxy is going to be pretty simple:
+
+1. We start a server waiting for connections
+2. When we get a connection, we read the client request. This request will tell us where we should connect to.
+3. After that, we just read data from the client and send it to the target server, and we also read the replies for the server and send them back to the client
+
+If you had read my series on Remote Shells ([Part I](https://0x00sec.org/t/remote-shells-part-i/269) and [Part II](https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306)) all these should sound familiar. Yes, we have already written most of the code we need. So let&#39;s start from the part II code and do some modifications
+
+# Changing a Remote Shell into a Proxy
+The first thing to do is to delete the remote_shell function. We do not need that. Then we just need to change our main function, and add an extra function.... Yes. Really. It&#39;s that easy.
+
+This is how the `main` function will look like:
+
+```
+int
+main (int argc, char *argv[])
+{
+  int  s, c;
+  char buffer[2048];
+
+  s = server_init (atoi(argv[1]));
+  read (s, buffer, 2048);
+  c = process_request (buffer);
+
+  async_read (s, c);
+
+  return 0;
+}
+```
+
+We just start our server listening in the port we passed as parameter from the command line. Then we read the request from the just connected client and call a function we have called `process_request`. This function will parse the client request and establish the proper connection as per the client request.
+
+Now we have a client socket `s`, connected to our proxy, for instance from a web browser. Another socket (`c`), connects our proxy to the server the client wanted to connect to. So, we just call our `async_read` function and we get those two ends up and running interchanging information.
+
+# HTTP Proxies
+To complete our proxy we have to write the `process_request` function, and for that we have to know how does an HTTP proxy request looks like. Well, it looks like a normal HTTP request, something like this:
+
+`GET http://server:port/page HTTP/1.0`
+
+This is what we are going to receive from a browser using a HTTP proxy. Let&#39;s try:
+
+In one terminal launch a listening netcat:
+
+```
+$ nc -l 8081
+```
+
+In another terminal, configure your proxy. It has to be localhost:8081 so we get the request in the netcat server running in the first terminal. Finally, launch the lynx web browser:
+
+```
+$ export http_proxy=http://127.0.0.1:8081
+$ lynx http://127.0.0.1:1234
+```
+
+In your netcat terminal you will see the information sent by the browser:
+
+`
+GET http://127.0.0.1:1234/ HTTP/1.0
+Host: google.com
+Accept: text/html, text/plain, text/css, text/sgml, */*;q=0.01
+Accept-Encoding: gzip, compress, bzip2
+Accept-Language: en
+User-Agent: Lynx/...
+`
+
+So, let&#39; build a quick and dirty parser for these requests.
+
+# Parsing an HTTP Proxy request
+This is how our parser looks like.
+
+```
+int
+process_request (char *buffer)
+{
+  int  port, c;
+  char *aux;
+  char ip[1024];
+
+  sscanf (buffer, &quot;GET http://%s/&quot;, ip);
+  if ((aux = strchr (ip, &#39;:&#39;))) 
+    {
+      *aux = 0;
+      sscanf (aux+1, &quot;%d&quot;, &amp;port);
+    }
+  else port = 80;
+
+  printf (&quot;Request to connect to: %s(%d)\n&quot;, ip, port);
+  c = client_init (ip, port);
+  return c;
+}
+```
+
+It is ugly, but parsing strings is not the topic we are actually interested on. The code just extracts the ip and the port from the HTTP request and then it creates a client socket to connect to that  server.
+
+Note that you cannot use server names. For doing that you have to change the `client_init` function to actually resolve the name. It is not difficult but, as it happened with the parser, it does not bring much value to the current discussion. So, you had just got another exercise if you want.
+
+# Testing our proxy
+To test our proxy, we need 3 terminals!... WoW
+
+In the first terminal we launch our proxy:
+```
+$ ./proxy 8081
+```
+
+In the second we launch our target server. The one we want to connect to using the proxy:
+
+```
+$ nc -l 1234
+```
+
+Finally, in the third one we launch `lynx` connecting through our proxy:
+
+```
+$ export http_proxy=http://127.0.0.1:8081
+$ lynx http://127.0.0.1:1234
+```
+
+To complete the test, in the target netcat terminal (the one listening in port 1234 and acting as the final web server), we send back a HTTP reply so `lynx` gets the page it was requesting.
+
+```
+$ nc -v -l 1234
+HTTP/1.0 200 OK
+Content-Type: text/html
+
+&lt;html&gt;&lt;body&gt;&lt;h1&gt;Hello&lt;/h1&gt;&lt;/body&gt;&lt;/html&gt;
+
+```
+You have to press CTRL+C on the netcat server terminal to close the connection and force `lynx` to show the page.
+
+Very good. Now we have a pretty simple proxy server for our tests. Yes, indeed we could have used one of the already available proxies in our GNU/Linux distros... but then, you will not know how to build your own ;)
+
+# Back to ProxyChains
+So, ProxyChains basically gets a list of proxies, and, when the user request to access some service, it sends a bunch of requests, similar to the ones we used in our example below, to connect from one proxy to another, until the actual request to the target machine reaches the last proxy in the chain.
+
+So, it connects to a proxy, and instead of providing the address for the server to access, it provides a new request to another proxy, opening one by one multiple connections through different machines.
+
+There is a bunch of code (you should take a look) in the project to manage the list of proxies, select them re-connect, etc... All that part is complex, but does not really have to do with security, it is normal software business.
+
+However what it is hacking related is how does ProxyChains allows any application (that does not even supports proxy connections) to establish that chain. The answer is `LD_PRELOAD`.
+
+# LD_PRELOAD
+`LD_PRELOAD` is an environmental variable that allows us to specify some dynamic libraries that will be pre-loaded automatically and can, therefore, overwrite certain functions in the code.
+
+So, how is this used by Proxychains?. You just need to provide a shared library that changes the behavior of the `connect` function. Instead of connecting to where the application wants it to connect, we will change the function to connect to our proxy and generate a connection request to get our data through the proxy.
+
+This is a possible simple implementation:
+
+```
+int connect(int sockfd, const struct sockaddr *addr,
+	    socklen_t addrlen)
+{
+
+  int                 s, port;
+  struct sockaddr_in  serv, *cli;
+  char                req[1024], *ip;
+  int                 (*real_connect) (int sockfd, 
+                       const struct sockaddr *addr,
+                       socklen_t addrlen);
+  /* get pointer to original connect function */
+  real_connect = dlsym (RTLD_NEXT, &quot;connect&quot;);
+
+  /* Obtain text info to build the proxy connection request */
+  cli = (struct sockaddr_in*)addr;
+
+  ip   = inet_ntoa (cli-&gt;sin_addr);
+  port = ntohs (cli-&gt;sin_port);
+
+  /* Create a new socket as the other one is currently trying to connect*/
+  /* Otherwise we get a &#39;connect:: Operation now in progress&#39; error */
+  if ((s = socket (AF_INET, SOCK_STREAM, 0)) &lt; 0)
+    {
+      perror (&quot;socket:&quot;); exit (EXIT_FAILURE);
+    }
+
+  /* Swap file descriptors */
+  close (sockfd);
+  dup2 (s,sockfd);
+
+  /* Connect to proxy */
+  serv.sin_family = AF_INET;
+  serv.sin_port = htons(atoi(getenv(&quot;MY_PROXY_PORT&quot;)));
+  serv.sin_addr.s_addr = inet_addr(getenv(&quot;MY_PROXY&quot;));
+
+  if (real_connect (s, (struct sockaddr *) &amp;serv, sizeof(serv)) &lt; 0) 
+    {
+      perror(&quot;connect:&quot;); exit (EXIT_FAILURE);
+    }
+
+  /* Send proxy connection request */
+  sprintf (req, &quot;GET http://%s:%d HTTP/1.1\r\n\r\n&quot;, ip, port);
+  write (s, req, strlen(req));
+
+  return 0;
+}
+
+```
+OK, it is not that simple and it might even look scary at first glance, but it is not that bad. Just take a cup of coffee and keep calm.
+
+## Getting the original connect
+We are overwriting the `connect` function but, at some point we will have to actually connect to somewhere. That means that we will have to invoke the original `connect` function later in our code.
+
+So, the first thing we have to do is to grab the pointer to the original function. And we have to do two things to do that.
+
+1. Declare a function pointer
+2. Get the pointer to the original function.
+
+A function pointer in C is declared as a normal function prototype but enclosing the function name in parenthesis and prefixing it with an *. Our function pointer looks like this:
+
+```
+int (*real_connect) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+```
+
+That declares a variable named `real_connect` that will point to a function with the indicated prototype. In this case the prototype of the `connect` function. So far, so good.
+
+To actually get the pointer to the original `connect` we use the `dlsym` function provided by the `dl` (dynamic linking) library. Yes, we have to link against that library and we also have to add a header file and ask for the GNU extensions... Just take a look to the final code in[ github](https://github.com/0x00pf/0x00sec_code/tree/master/proxies).
+
+The line that gets the function pointer is:
+
+```
+ real_connect = dlsym (RTLD_NEXT, &quot;connect&quot;);
+```
+
+This function looks for the &quot;NEXT&quot; definition of the `connect` function in the process symbol list. Note that you can pre-load many libraries and you may have multiple definitions of the same function. The `RTLD_NEXT` allows you to find the next pointer for the indicated symbol in the chain.
+
+## Obtaining the original connection information
+The next thing we have to do is to convert the server information provided to the `connect` function (received as the parameter `addr`) to strings, so we can build an HTTP request for our HTTP proxy.
+
+We easily get this information using `inet_ntoa` (ntoa stands for network to ASCII/string) and `ntohs` (network to host short). The three lines below do the trick.
+
+```
+  cli = (struct sockaddr_in*)addr;
+  ip   = inet_ntoa (cli-&gt;sin_addr);
+  port = ntohs (cli-&gt;sin_port);
+```
+
+## Preparing the connection
+If we just try to call the `real_connect` now, passing the socket we got from the top level application, we will get an error (at least that is what I&#39;ve got):
+
+`Operation now in progress&#39; error`
+
+I haven&#39;t fully investigated why does this happen, so I just went for a workaround. I will create a new socket, and then use the `dup2` function call to assign it the same file descriptor that the original socket created by the top level application. This way, all the later operations on the socket will just be performed on this new created socket, instead of on the original socket created by the top level application.
+
+```
+  if ((s = socket (AF_INET, SOCK_STREAM, 0)) &lt; 0)
+    {
+      perror (&quot;socket:&quot;);
+      exit (EXIT_FAILURE);
+    }
+
+  /* Swap file descriptors */
+  close (sockfd);
+  dup2 (s,sockfd);
+```
+
+## Connect to the proxy
+Now we can connect to our proxy server. The code for this process, is overall the same that the one we used in the Remote Shell series (check the `client_init` function). There are only two minor changes we have done to the code.
+
+```
+  /* Connect to proxy */
+  serv.sin_family = AF_INET;
+  serv.sin_port = htons(atoi(getenv(&quot;MY_PROXY_PORT&quot;)));
+  serv.sin_addr.s_addr = inet_addr(getenv(&quot;MY_PROXY&quot;));
+
+  if (real_connect (s, (struct sockaddr *) &amp;serv, sizeof(serv)) &lt; 0) 
+    {
+      perror(&quot;connect:&quot;);
+      exit (EXIT_FAILURE);
+    }
+```
+
+1. We are taking the proxy IP and the proxy port from two environmental variables. We did it like this so we do not have to parse the URL required by the `http_proxy` env var, and we do not write all the code to manage files with proxies lists as ProxyChains does.
+2. Instead of calling `connect`, we call `real_connect`, otherwise we will call this same function again and we will get in an infinite loop.
+
+## Sending the HTTP request
+Everything is in place right now, so we just need to send our connection request to the proxy to get the top level application connected to the original server. Nothing special here, just build the request string and send it out.
+
+```
+  /* Send proxy connection request */
+  sprintf (req, &quot;GET http://%s:%d HTTP/1.1\r\n\r\n&quot;, ip, port);
+  write (s, req, strlen(req));
+```
+
+## Compiling the shared library
+Our library code is ready and now we have to compile it. You can do it as you prefer (setup some autotools project, using cmake, with a Makefile, manually). We just put a couple of rules in a Makefile
+
+```
+proxify.o:proxify.c
+	${CC} -c -fpic -o $@ $&lt;
+
+libproxify.so:proxify.o
+	${CC} -shared -o $@ $&lt; -ldl
+
+```
+
+The first rule produces a pic (Position Independent Code) object file and the second one links it into a dynamic library (.so) and adds the `dl` library we mentioned before (in order to use `dlsym`). 
+
+If on doubt just clone the github repo.
+
+# Testing our Proxyfier
+So, the testing will be exactly the same that in our previous case but, instead of setting the system  `http_proxy` env var, we are going to preload our proxifier library.
+
+Launch the target netcat at 1234 and the proxy at whatever port you like. I will use 8081 as example in the commands below:
+
+In a different console:
+
+```
+$ unset http_proxy
+$ lynx http://127.0.0.1:1234
+```
+
+We should get a direct connection to the netcat listening on 1234. Nothing shown in our proxy terminal. Now let&#39;s proxify lynx (you may need to relaunch netcat in the first terminal).
+
+```
+$ export MY_PROXY=127.0.0.1
+$ export MY_PROXY_PORT=8081
+$ LD_PRELOAD= ./libproxify.so lynx http://127.0.0.1:1234
+```
+
+Did it work?... Hope so, it worked for me.
+
+# Going Further
+Now, you know the basis of how does a proxy works, how to override functions in a program to proxify it and the basics of how proxy chain works. What you can do from this point on:
+
+- Modify the program to chain multiple proxies. Basically you will have to produce many connection request in your version of `connect`
+- Extend the program to use domain names instead of just IP addresses, otherwise it will not work in a real world scenario
+- Implement a SOCKS proxy and a SOCK proxify library
+
+Note that, the code as presented in this tutorial will not properly work on the wild. This is done on purpose.... because.... you do not want to be a skid!, don&#39;t you?
+
+# A Final note
+You may have heard that you can run nmap through a proxy chain. This is indeed true but only if you use a fully connected scan, that is pretty noisy... None of the stealth scans will work and I hope you know now why.
+
+Happy Hacking
+pico</description>
+    
+    <lastBuildDate>Wed, 20 Jul 2016 07:18:17 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/19">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/19</link>
+        <pubDate>Sun, 21 Jan 2018 00:30:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-19</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Impressive ! Great article mate. I hope to see more soon !</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/18</link>
+        <pubDate>Wed, 20 Jul 2016 07:18:17 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-18</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>I will be re-reading this soon! My adventures in C will be nicely aided by this.</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/17</link>
+        <pubDate>Tue, 19 Jul 2016 22:27:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-17</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p><a href="http://www.cprogramming.com/tutorial/shared-libraries-linux-gcc.html" class="onebox" target="_blank" rel="nofollow noopener">http://www.cprogramming.com/tutorial/shared-libraries-linux-gcc.html</a><br>
+For more info on linking</p>
+<p>Another world opened for me <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a><br>
+Thanks again !!</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/16</link>
+        <pubDate>Fri, 24 Jun 2016 19:04:25 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-16</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><span class="mention">@unh0lys0da</span> yes that is the one!<br>
+<a class="mention" href="https://0x00sec.org/u/wawa">@Wawa</a> thanks for reading and I’m glad to hear you liked it</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/15</link>
+        <pubDate>Sun, 19 Jun 2016 12:55:23 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-15</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[Wawa]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice! Holy cow, I don’t think I will be finished reading this article today but so far its incredibly detailed and informative. Great job!</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/14</link>
+        <pubDate>Sun, 19 Jun 2016 04:40:08 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-14</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>The <code>connect</code> function you speak of, is that the function I find with command:<br>
+<code>objdump -T /usr/bin/lynx | grep connect</code> ?</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/13</link>
+        <pubDate>Sun, 19 Jun 2016 01:48:56 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-13</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah, im free tomorrow, ill get one up. Hope to get another post up as well so ill add it to my to-do list.</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/12</link>
+        <pubDate>Sat, 21 May 2016 03:04:33 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-12</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[Ninja243]]></dc:creator>
+        <description><![CDATA[
+            <p>Is there any chance your tutorial in Python could be posted?</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/11</link>
+        <pubDate>Fri, 20 May 2016 23:47:57 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-11</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Stay strong buddy! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/10</link>
+        <pubDate>Fri, 20 May 2016 19:10:31 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-10</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m looking forward to it. Hope your assignments went/are going well!</p>
+<p>I think I will be in a similar situation soon…</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/9</link>
+        <pubDate>Fri, 20 May 2016 18:41:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-9</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m trying to finish my subnetting series. Currently writing an article on VLSM <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> I apologize for my lack of uploads, I’ve just been busy with a ton of university assignments unfortunately.</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/8</link>
+        <pubDate>Fri, 20 May 2016 18:38:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-8</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>I didn’t know… That makes the comment a lot more valuable.</p>
+<p>I’m missing your network posts <img src="https://0x00sec.org/images/emoji/twitter/cry.png?v=9" title=":cry:" class="emoji" alt=":cry:"></p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/7</link>
+        <pubDate>Fri, 20 May 2016 18:36:14 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-7</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m PySec by the way, in case you didn’t know <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/6</link>
+        <pubDate>Fri, 20 May 2016 18:34:23 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-6</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p><span class="mention">@Airth</span> is correct, You truly are on fire! This again is absolute gold! I am so pleased you are in our community, you are such a valuable asset!</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/5</link>
+        <pubDate>Fri, 20 May 2016 17:42:58 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-5</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>Well done! <img src="https://0x00sec.org/images/emoji/twitter/clap.png?v=9" title=":clap:" class="emoji" alt=":clap:">, and youve saved me the time of posting on writing a proxy in python! (which i may still do for those non c users.)</p>
+<p>Also, well noted on the nmap through proxychains as i failed to specify it requires a full connect scan <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"> oops.</p>
+<p>Nice read, well written. I may play with your code a bit in breaks from my other projects.</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/4</link>
+        <pubDate>Fri, 20 May 2016 16:59:26 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-4</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"> Thanks</p>
+<p>I started this some time ago, and it looked like a good moment to share it following the user view we’ve got yesterday.</p>
+<p>Unfortunately I will be busy with other projects in the coming weeks so it will be difficult to post these long tutorials</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/3</link>
+        <pubDate>Fri, 20 May 2016 16:13:04 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-3</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>You are on fire mate.</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/2</link>
+        <pubDate>Fri, 20 May 2016 15:55:00 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-2</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+      <item>
+        <title>How do those hackers&#39; tools work? Proxychains</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Welcome to this new series intended to explain the guts of all those hacker’s tools out there you use or want to use… Basically, we are going to explain you how does they work and how do you can build your own… Keep reading if you do not want to be a Skid ;).</p>
+<p>We will start the series with Proxychains. Before, keeping on reading, make sure you had read the 0x00sec introduction from <a class="mention" href="https://0x00sec.org/u/oilslick">@OilSlick</a> to () <a href="https://0x00sec.org/t/a-brief-introduction-to-proxychains/418">ProxyChains</a>.</p>
+<p>To understand how ProxyChains works we first need to understand how does a proxy works…So let’s code one!</p>
+<h1>Coding a Proxy</h1>
+<p>Proxychains supports HTTP and SOCKS proxies. Conceptually they are the same thing. They just differ in the way, the clients (your web browser for instance) interchange information with the proxy itself…</p>
+<p>For the sake of simplicity we are going to code a simple (very simple) HTTP proxy. Improving this proxy and adding SOCKS capabilities will be an interesting exercise for the reader (do you know that access to Tor is perform via a SOCKS proxy?..)</p>
+<p>So, our proxy is going to be pretty simple:</p>
+<ol>
+<li>We start a server waiting for connections</li>
+<li>When we get a connection, we read the client request. This request will tell us where we should connect to.</li>
+<li>After that, we just read data from the client and send it to the target server, and we also read the replies for the server and send them back to the client</li>
+</ol>
+<p>If you had read my series on Remote Shells (<a href="https://0x00sec.org/t/remote-shells-part-i/269">Part I</a> and <a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306">Part II</a>) all these should sound familiar. Yes, we have already written most of the code we need. So let’s start from the part II code and do some modifications</p>
+<h1>Changing a Remote Shell into a Proxy</h1>
+<p>The first thing to do is to delete the remote_shell function. We do not need that. Then we just need to change our main function, and add an extra function… Yes. Really. It’s that easy.</p>
+<p>This is how the <code>main</code> function will look like:</p>
+<pre><code class="lang-auto">int
+main (int argc, char *argv[])
+{
+  int  s, c;
+  char buffer[2048];
+
+  s = server_init (atoi(argv[1]));
+  read (s, buffer, 2048);
+  c = process_request (buffer);
+
+  async_read (s, c);
+
+  return 0;
+}
+</code></pre>
+<p>We just start our server listening in the port we passed as parameter from the command line. Then we read the request from the just connected client and call a function we have called <code>process_request</code>. This function will parse the client request and establish the proper connection as per the client request.</p>
+<p>Now we have a client socket <code>s</code>, connected to our proxy, for instance from a web browser. Another socket (<code>c</code>), connects our proxy to the server the client wanted to connect to. So, we just call our <code>async_read</code> function and we get those two ends up and running interchanging information.</p>
+<h1>HTTP Proxies</h1>
+<p>To complete our proxy we have to write the <code>process_request</code> function, and for that we have to know how does an HTTP proxy request looks like. Well, it looks like a normal HTTP request, something like this:</p>
+<p><code>GET http://server:port/page HTTP/1.0</code></p>
+<p>This is what we are going to receive from a browser using a HTTP proxy. Let’s try:</p>
+<p>In one terminal launch a listening netcat:</p>
+<pre><code class="lang-auto">$ nc -l 8081
+</code></pre>
+<p>In another terminal, configure your proxy. It has to be localhost:8081 so we get the request in the netcat server running in the first terminal. Finally, launch the lynx web browser:</p>
+<pre><code class="lang-auto">$ export http_proxy=http://127.0.0.1:8081
+$ lynx http://127.0.0.1:1234
+</code></pre>
+<p>In your netcat terminal you will see the information sent by the browser:</p>
+<p><code>GET http://127.0.0.1:1234/ HTTP/1.0 Host: google.com Accept: text/html, text/plain, text/css, text/sgml, */*;q=0.01 Accept-Encoding: gzip, compress, bzip2 Accept-Language: en User-Agent: Lynx/...</code></p>
+<p>So, let’ build a quick and dirty parser for these requests.</p>
+<h1>Parsing an HTTP Proxy request</h1>
+<p>This is how our parser looks like.</p>
+<pre><code class="lang-auto">int
+process_request (char *buffer)
+{
+  int  port, c;
+  char *aux;
+  char ip[1024];
+
+  sscanf (buffer, "GET http://%s/", ip);
+  if ((aux = strchr (ip, ':'))) 
+    {
+      *aux = 0;
+      sscanf (aux+1, "%d", &amp;port);
+    }
+  else port = 80;
+
+  printf ("Request to connect to: %s(%d)\n", ip, port);
+  c = client_init (ip, port);
+  return c;
+}
+</code></pre>
+<p>It is ugly, but parsing strings is not the topic we are actually interested on. The code just extracts the ip and the port from the HTTP request and then it creates a client socket to connect to that  server.</p>
+<p>Note that you cannot use server names. For doing that you have to change the <code>client_init</code> function to actually resolve the name. It is not difficult but, as it happened with the parser, it does not bring much value to the current discussion. So, you had just got another exercise if you want.</p>
+<h1>Testing our proxy</h1>
+<p>To test our proxy, we need 3 terminals!.. WoW</p>
+<p>In the first terminal we launch our proxy:</p>
+<pre><code class="lang-auto">$ ./proxy 8081
+</code></pre>
+<p>In the second we launch our target server. The one we want to connect to using the proxy:</p>
+<pre><code class="lang-auto">$ nc -l 1234
+</code></pre>
+<p>Finally, in the third one we launch <code>lynx</code> connecting through our proxy:</p>
+<pre><code class="lang-auto">$ export http_proxy=http://127.0.0.1:8081
+$ lynx http://127.0.0.1:1234
+</code></pre>
+<p>To complete the test, in the target netcat terminal (the one listening in port 1234 and acting as the final web server), we send back a HTTP reply so <code>lynx</code> gets the page it was requesting.</p>
+<pre><code class="lang-auto">$ nc -v -l 1234
+HTTP/1.0 200 OK
+Content-Type: text/html
+
+&lt;html&gt;&lt;body&gt;&lt;h1&gt;Hello&lt;/h1&gt;&lt;/body&gt;&lt;/html&gt;
+
+</code></pre>
+<p>You have to press CTRL+C on the netcat server terminal to close the connection and force <code>lynx</code> to show the page.</p>
+<p>Very good. Now we have a pretty simple proxy server for our tests. Yes, indeed we could have used one of the already available proxies in our GNU/Linux distros… but then, you will not know how to build your own <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<h1>Back to ProxyChains</h1>
+<p>So, ProxyChains basically gets a list of proxies, and, when the user request to access some service, it sends a bunch of requests, similar to the ones we used in our example below, to connect from one proxy to another, until the actual request to the target machine reaches the last proxy in the chain.</p>
+<p>So, it connects to a proxy, and instead of providing the address for the server to access, it provides a new request to another proxy, opening one by one multiple connections through different machines.</p>
+<p>There is a bunch of code (you should take a look) in the project to manage the list of proxies, select them re-connect, etc… All that part is complex, but does not really have to do with security, it is normal software business.</p>
+<p>However what it is hacking related is how does ProxyChains allows any application (that does not even supports proxy connections) to establish that chain. The answer is <code>LD_PRELOAD</code>.</p>
+<h1>LD_PRELOAD</h1>
+<p><code>LD_PRELOAD</code> is an environmental variable that allows us to specify some dynamic libraries that will be pre-loaded automatically and can, therefore, overwrite certain functions in the code.</p>
+<p>So, how is this used by Proxychains?. You just need to provide a shared library that changes the behavior of the <code>connect</code> function. Instead of connecting to where the application wants it to connect, we will change the function to connect to our proxy and generate a connection request to get our data through the proxy.</p>
+<p>This is a possible simple implementation:</p>
+<pre><code class="lang-auto">int connect(int sockfd, const struct sockaddr *addr,
+	    socklen_t addrlen)
+{
+
+  int                 s, port;
+  struct sockaddr_in  serv, *cli;
+  char                req[1024], *ip;
+  int                 (*real_connect) (int sockfd, 
+                       const struct sockaddr *addr,
+                       socklen_t addrlen);
+  /* get pointer to original connect function */
+  real_connect = dlsym (RTLD_NEXT, "connect");
+
+  /* Obtain text info to build the proxy connection request */
+  cli = (struct sockaddr_in*)addr;
+
+  ip   = inet_ntoa (cli-&gt;sin_addr);
+  port = ntohs (cli-&gt;sin_port);
+
+  /* Create a new socket as the other one is currently trying to connect*/
+  /* Otherwise we get a 'connect:: Operation now in progress' error */
+  if ((s = socket (AF_INET, SOCK_STREAM, 0)) &lt; 0)
+    {
+      perror ("socket:"); exit (EXIT_FAILURE);
+    }
+
+  /* Swap file descriptors */
+  close (sockfd);
+  dup2 (s,sockfd);
+
+  /* Connect to proxy */
+  serv.sin_family = AF_INET;
+  serv.sin_port = htons(atoi(getenv("MY_PROXY_PORT")));
+  serv.sin_addr.s_addr = inet_addr(getenv("MY_PROXY"));
+
+  if (real_connect (s, (struct sockaddr *) &amp;serv, sizeof(serv)) &lt; 0) 
+    {
+      perror("connect:"); exit (EXIT_FAILURE);
+    }
+
+  /* Send proxy connection request */
+  sprintf (req, "GET http://%s:%d HTTP/1.1\r\n\r\n", ip, port);
+  write (s, req, strlen(req));
+
+  return 0;
+}
+
+</code></pre>
+<p>OK, it is not that simple and it might even look scary at first glance, but it is not that bad. Just take a cup of coffee and keep calm.</p>
+<h2>Getting the original connect</h2>
+<p>We are overwriting the <code>connect</code> function but, at some point we will have to actually connect to somewhere. That means that we will have to invoke the original <code>connect</code> function later in our code.</p>
+<p>So, the first thing we have to do is to grab the pointer to the original function. And we have to do two things to do that.</p>
+<ol>
+<li>Declare a function pointer</li>
+<li>Get the pointer to the original function.</li>
+</ol>
+<p>A function pointer in C is declared as a normal function prototype but enclosing the function name in parenthesis and prefixing it with an *. Our function pointer looks like this:</p>
+<pre><code class="lang-auto">int (*real_connect) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+</code></pre>
+<p>That declares a variable named <code>real_connect</code> that will point to a function with the indicated prototype. In this case the prototype of the <code>connect</code> function. So far, so good.</p>
+<p>To actually get the pointer to the original <code>connect</code> we use the <code>dlsym</code> function provided by the <code>dl</code> (dynamic linking) library. Yes, we have to link against that library and we also have to add a header file and ask for the GNU extensions… Just take a look to the final code in<a href="https://github.com/0x00pf/0x00sec_code/tree/master/proxies" rel="nofollow noopener"> github</a>.</p>
+<p>The line that gets the function pointer is:</p>
+<pre><code class="lang-auto"> real_connect = dlsym (RTLD_NEXT, "connect");
+</code></pre>
+<p>This function looks for the “NEXT” definition of the <code>connect</code> function in the process symbol list. Note that you can pre-load many libraries and you may have multiple definitions of the same function. The <code>RTLD_NEXT</code> allows you to find the next pointer for the indicated symbol in the chain.</p>
+<h2>Obtaining the original connection information</h2>
+<p>The next thing we have to do is to convert the server information provided to the <code>connect</code> function (received as the parameter <code>addr</code>) to strings, so we can build an HTTP request for our HTTP proxy.</p>
+<p>We easily get this information using <code>inet_ntoa</code> (ntoa stands for network to ASCII/string) and <code>ntohs</code> (network to host short). The three lines below do the trick.</p>
+<pre><code class="lang-auto">  cli = (struct sockaddr_in*)addr;
+  ip   = inet_ntoa (cli-&gt;sin_addr);
+  port = ntohs (cli-&gt;sin_port);
+</code></pre>
+<h2>Preparing the connection</h2>
+<p>If we just try to call the <code>real_connect</code> now, passing the socket we got from the top level application, we will get an error (at least that is what I’ve got):</p>
+<p><code>Operation now in progress' error</code></p>
+<p>I haven’t fully investigated why does this happen, so I just went for a workaround. I will create a new socket, and then use the <code>dup2</code> function call to assign it the same file descriptor that the original socket created by the top level application. This way, all the later operations on the socket will just be performed on this new created socket, instead of on the original socket created by the top level application.</p>
+<pre><code class="lang-auto">  if ((s = socket (AF_INET, SOCK_STREAM, 0)) &lt; 0)
+    {
+      perror ("socket:");
+      exit (EXIT_FAILURE);
+    }
+
+  /* Swap file descriptors */
+  close (sockfd);
+  dup2 (s,sockfd);
+</code></pre>
+<h2>Connect to the proxy</h2>
+<p>Now we can connect to our proxy server. The code for this process, is overall the same that the one we used in the Remote Shell series (check the <code>client_init</code> function). There are only two minor changes we have done to the code.</p>
+<pre><code class="lang-auto">  /* Connect to proxy */
+  serv.sin_family = AF_INET;
+  serv.sin_port = htons(atoi(getenv("MY_PROXY_PORT")));
+  serv.sin_addr.s_addr = inet_addr(getenv("MY_PROXY"));
+
+  if (real_connect (s, (struct sockaddr *) &amp;serv, sizeof(serv)) &lt; 0) 
+    {
+      perror("connect:");
+      exit (EXIT_FAILURE);
+    }
+</code></pre>
+<ol>
+<li>We are taking the proxy IP and the proxy port from two environmental variables. We did it like this so we do not have to parse the URL required by the <code>http_proxy</code> env var, and we do not write all the code to manage files with proxies lists as ProxyChains does.</li>
+<li>Instead of calling <code>connect</code>, we call <code>real_connect</code>, otherwise we will call this same function again and we will get in an infinite loop.</li>
+</ol>
+<h2>Sending the HTTP request</h2>
+<p>Everything is in place right now, so we just need to send our connection request to the proxy to get the top level application connected to the original server. Nothing special here, just build the request string and send it out.</p>
+<pre><code class="lang-auto">  /* Send proxy connection request */
+  sprintf (req, "GET http://%s:%d HTTP/1.1\r\n\r\n", ip, port);
+  write (s, req, strlen(req));
+</code></pre>
+<h2>Compiling the shared library</h2>
+<p>Our library code is ready and now we have to compile it. You can do it as you prefer (setup some autotools project, using cmake, with a Makefile, manually). We just put a couple of rules in a Makefile</p>
+<pre><code class="lang-auto">proxify.o:proxify.c
+	${CC} -c -fpic -o $@ $&lt;
+
+libproxify.so:proxify.o
+	${CC} -shared -o $@ $&lt; -ldl
+
+</code></pre>
+<p>The first rule produces a pic (Position Independent Code) object file and the second one links it into a dynamic library (.so) and adds the <code>dl</code> library we mentioned before (in order to use <code>dlsym</code>).</p>
+<p>If on doubt just clone the github repo.</p>
+<h1>Testing our Proxyfier</h1>
+<p>So, the testing will be exactly the same that in our previous case but, instead of setting the system  <code>http_proxy</code> env var, we are going to preload our proxifier library.</p>
+<p>Launch the target netcat at 1234 and the proxy at whatever port you like. I will use 8081 as example in the commands below:</p>
+<p>In a different console:</p>
+<pre><code class="lang-auto">$ unset http_proxy
+$ lynx http://127.0.0.1:1234
+</code></pre>
+<p>We should get a direct connection to the netcat listening on 1234. Nothing shown in our proxy terminal. Now let’s proxify lynx (you may need to relaunch netcat in the first terminal).</p>
+<pre><code class="lang-auto">$ export MY_PROXY=127.0.0.1
+$ export MY_PROXY_PORT=8081
+$ LD_PRELOAD= ./libproxify.so lynx http://127.0.0.1:1234
+</code></pre>
+<p>Did it work?.. Hope so, it worked for me.</p>
+<h1>Going Further</h1>
+<p>Now, you know the basis of how does a proxy works, how to override functions in a program to proxify it and the basics of how proxy chain works. What you can do from this point on:</p>
+<ul>
+<li>Modify the program to chain multiple proxies. Basically you will have to produce many connection request in your version of <code>connect</code>
+</li>
+<li>Extend the program to use domain names instead of just IP addresses, otherwise it will not work in a real world scenario</li>
+<li>Implement a SOCKS proxy and a SOCK proxify library</li>
+</ul>
+<p>Note that, the code as presented in this tutorial will not properly work on the wild. This is done on purpose… because… you do not want to be a skid!, don’t you?</p>
+<h1>A Final note</h1>
+<p>You may have heard that you can run nmap through a proxy chain. This is indeed true but only if you use a fully connected scan, that is pretty noisy… None of the stealth scans will work and I hope you know now why.</p>
+<p>Happy Hacking<br>
+pico</p>
+          <p><a href="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426/1</link>
+        <pubDate>Fri, 20 May 2016 15:52:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-426-1</guid>
+        <source url="https://0x00sec.org/t/how-do-those-hackers-tools-work-proxychains/426.rss">How do those hackers&#39; tools work? Proxychains</source>
+      </item>
+  </channel>
+</rss>

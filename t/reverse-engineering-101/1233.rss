@@ -1,0 +1,917 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Reverse Engineering 101</title>
+    <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233</link>
+    <description>Continuing the discussion from [[KEYGENME - EASY] Cracking Your First Program](https://0x00sec.org/t/keygenme-easy-cracking-your-first-program/1075/9):
+
+
+
+As requested by @pry0cc, this is a crash course on reverse engineering. Before reading this, you should try to solve @dtm challenge:
+
+https://0x00sec.org/t/keygenme-easy-cracking-your-first-program/1075
+
+If you didn&#39;t manage or you want to see somebody else solution keep reading.
+
+# Our Target
+I will start writing our target program. You can try what is described in this paper against the original challenge binaries the process is the same. Showing the C code at the beginning makes the explanation easier. Also, you will note that the code from this example is roughly the same that the one you see in the original challenge.
+
+This is my free implementation of @dtm&#39;s original challenge.
+
+```
+#include &lt;stdio.h&gt;
+
+#define PEXIT(s) {printf (&quot;%s&quot;,s); return 0;}
+
+int
+main (void)
+{
+  FILE *f;
+  char buffer[16];
+  int  n;
+
+  if (((f = fopen (&quot;key.txt&quot;, &quot;rb&quot;)) != NULL) &amp;&amp;
+      (n = fread (buffer, 1, 16, f)) == 16)
+    {
+      for (;n &gt;= 0 &amp;&amp; buffer[--n] == &#39;a&#39;;);
+      
+      if (n &lt; 0) PEXIT(&quot;Key is correct\n&quot;);
+    }
+  
+  PEXIT(&quot;Wrong Key\n&quot;);
+}
+
+```
+
+Fine, let&#39;s compile it for a 32bits platform (as the original challenge) and then, let&#39;s strip all symbols from it to make the process a bit more difficult. In this case, removing the symbols means that we will have to find the `main` function ourselves.
+
+    gcc -m32 -o kg kg.c
+    strip -s kg
+
+&gt; **EXERCISE:** 
+You can use `readelf -s` to check the symbols in the program before and after running the `strip` command. Note how the `main` function is gone after stripping the binary. 
+
+# Gathering information
+In this case it is not really needed, but in general, you will want to gather as much information about the target as you want... you may also want to run it on a VM and actually take a snapshot before you start... specially if you do dynamic analysis and you do not know what the sample does (backdoor, worm, virus,...)
+
+Some tools you may want to use: `file`, `strings`, `readelf -a` and also `objdump`. 
+
+In this case, we already know everything for this program. After all, we wrote it ourselves, so let&#39;s go straight into the reverse stuff.
+
+&gt; **EXERCISE:** 
+&gt; Run the tools mentioned above on the program you just compile.
+
+# Reversing with gdb
+Let&#39;s start this tutorial reversing the sample using `gdb`. 
+
+Let&#39;s start:
+
+&gt; $ gdb ./kg
+&gt; (.... gdb messages here...)
+&gt; (gdb)
+
+As this sample does not have symbols (that&#39;s normal in real life) we do not know right away where our `main` function is (yep, I have already said that). But we can ask `gdb` about the program entry point:
+
+&gt; (gdb) info file
+&gt; (...)
+&gt; 	Entry point: 0x80483f0
+&gt; (...)
+
+Sometimes you cannot even get this information (when using `sstrip -z` for instance). In those cases... well, let&#39;s leave those for another post.
+
+Now we can start disassembling the entry point. If you have been following the &quot;Programming for Wannabes&quot; course you should know that the `main` function is not the first function the OS executes when we run a program. You don&#39;t know... go and read the &quot;Programming for Wannabe&quot; series now!. The `main` function gets called from the entry point (the entry point is usually named `_start`). 
+
+Let&#39;s see what we can find at our entry point:
+
+```
+(gdb)  x/15i 0x80483f0
+   0x80483f0:	xor    %ebp,%ebp
+   0x80483f2:	pop    %esi
+   0x80483f3:	mov    %esp,%ecx
+   0x80483f5:	and    $0xfffffff0,%esp
+   0x80483f8:	push   %eax
+   0x80483f9:	push   %esp
+   0x80483fa:	push   %edx
+   0x80483fb:	push   $0x8048620
+   0x8048400:	push   $0x80485b0
+   0x8048405:	push   %ecx
+   0x8048406:	push   %esi
+   0x8048407:	push   $0x80484ed
+   0x804840c:	call   0x80483d0 &lt;__libc_start_main@plt&gt;
+   0x8048411:	hlt
+   0x8048412:	xchg   %ax,%ax
+```
+
+&gt; **NOTE:** The `x` command on gdb dumps memory. After the slash you can indicate the number of _items_ to dump and the format. In this case we are using `i` that indicates `gdb` to dump instructions. You can also use the command `disassemble`:
+
+&gt; `(gdb) disassemble  0x80483f0,+30`
+
+&gt; In this case the second parameter is the size in bytes of the dump, instead of the number of instructions to dump. You can use the flag `/r` to also dump the machine code.
+
+
+Well, as you see not all symbols have been removed. Being dynamically linked, the  program has to keep some information to be able to find the functions provided by other libraries. So the `call` instruction at `0x804840c` is the one that is going to run `main`and therefore, it receives as a parameter, among other things, the pointer to the `main` function. In this case it is the last parameter pushed into the stack.... So, let&#39;s take a look to the `main` function!
+
+&gt; **NOTE:** You will find this kind of sequences in many programs out there... you will learn to easily identify them as you keep practising.
+
+# The `main` Function
+We have finally found the `main` function. It is at position `0x80484ed`. And this is how it does look like:
+
+```
+(gdb) x/50i 0x80484ed
+   0x80484ed:	push   %ebp
+   0x80484ee:	mov    %esp,%ebp
+   0x80484f0:	and    $0xfffffff0,%esp
+   0x80484f3:	sub    $0x30,%esp
+   0x80484f6:	mov    %gs:0x14,%eax
+   0x80484fc:	mov    %eax,0x2c(%esp)
+   0x8048500:	xor    %eax,%eax
+   0x8048502:	movl   $0x8048640,0x4(%esp)
+   0x804850a:	movl   $0x8048643,(%esp)
+   0x8048511:	call   0x80483e0 &lt;fopen@plt&gt;
+   0x8048516:	mov    %eax,0x18(%esp)
+   0x804851a:	cmpl   $0x0,0x18(%esp)
+   0x804851f:	je     0x8048587
+   0x8048521:	mov    0x18(%esp),%eax
+   0x8048525:	mov    %eax,0xc(%esp)
+   0x8048529:	movl   $0x10,0x8(%esp)
+   0x8048531:	movl   $0x1,0x4(%esp)
+   0x8048539:	lea    0x1c(%esp),%eax
+   0x804853d:	mov    %eax,(%esp)
+   0x8048540:	call   0x80483a0 &lt;fread@plt&gt;
+   0x8048545:	mov    %eax,0x14(%esp)
+   0x8048549:	cmpl   $0x10,0x14(%esp)
+   0x804854e:	jne    0x8048587
+   0x8048550:	cmpl   $0x0,0x14(%esp)
+   0x8048555:	js     0x804856d
+   0x8048557:	subl   $0x1,0x14(%esp)
+   0x804855c:	lea    0x1c(%esp),%edx
+   0x8048560:	mov    0x14(%esp),%eax
+   0x8048564:	add    %edx,%eax
+   0x8048566:	movzbl (%eax),%eax
+   0x8048569:	cmp    $0x61,%al
+   0x804856b:	je     0x8048550
+   0x804856d:	cmpl   $0x0,0x14(%esp)
+   0x8048572:	jns    0x8048587
+   0x8048574:	movl   $0x804864b,(%esp)
+   0x804857b:	call   0x80483b0 &lt;puts@plt&gt;
+   0x8048580:	mov    $0x0,%eax
+   0x8048585:	jmp    0x8048598
+   0x8048587:	movl   $0x804865a,(%esp)
+   0x804858e:	call   0x80483b0 &lt;puts@plt&gt;
+   0x8048593:	mov    $0x0,%eax
+   0x8048598:	mov    0x2c(%esp),%ecx
+   0x804859c:	xor    %gs:0x14,%ecx
+   0x80485a3:	je     0x80485aa
+   0x80485a5:	call   0x8048390 &lt;__stack_chk_fail@plt&gt;
+   0x80485aa:	leave
+   0x80485ab:	ret
+   0x80485ac:	xchg   %ax,%ax
+   0x80485ae:	xchg   %ax,%ax
+   0x80485b0:	push   %ebp
+```
+
+This is our whole `main` function. You can see the calls to all the functions we used in our C program (`fopen`, `fread`, `puts`... yes, `gcc` automatically converts a `printf` with a single static string parameter into a `puts` call). All those functions are provided by libc and therefore, dynamically linked. You can refer to the great paper from @_py on the topic to know more about this process:
+
+https://0x00sec.org/t/elf-binaries-dynamic-linking-wizardry/1082
+
+Now, we can start reversing each function one by one. 
+
+# Calling `fopen`
+Let&#39;s skip to address `0x8048502`. The instructions before just set the stack to store our local variables. You will see that type of code all the time just ignore it for this simple case. So at `0x8048502` we have
+
+```
+   0x8048502:	movl   $0x8048640,0x4(%esp)
+   0x804850a:	movl   $0x8048643,(%esp)
+   0x8048511:	call   0x80483e0 &lt;fopen@plt&gt;
+   0x8048516:	mov    %eax,0x18(%esp)
+   0x804851a:	cmpl   $0x0,0x18(%esp)
+   0x804851f:	je     0x8048587
+```
+
+The first thing to do is to put the function parameter in the stack (pointed by register `ESP`). At offset 0 in the stack `(%esp)` we store one pointer, and at offset 4 `0x4(%esp)` or `[ESP + 0x4]` if you prefer, another pointer. Let&#39;s see to what are those pointers are pointing to:
+
+
+    (gdb) x/s 0x8048640
+    0x8048640:	&quot;rb&quot;
+    (gdb) x/s 0x8048643
+    0x8048643:	&quot;key.txt&quot;
+
+
+&gt; **NOTE**: Type `s` for the `gdb` dump command `x` will dump a zero-terminated string
+
+Nice, those are actually the two parameters passed to the `fopen` function. Then we see how the program stores the value of `eax` at offset `0x18` in the stack. `0x18(%esp)` actually means; Give me the content of `ESP + 0x18`... it&#39;s called indexed addressing mode).
+
+Let&#39;s create our local variable tables, to keep track of them to help us during the reversing process. For now we only have one:
+
+    ESP + 0x18   -&gt;   FILE *f;
+
+Finally, the function checks the return value. If it is 0 (or `NULL` in this case, check the C code above), the program will jump to `0x8048587`.
+
+From these 6 assembly lines we have got the following information:
+
+* The key has to be stored in a file named &#39;key.txt&#39; in the current directory
+* It is open in binary read mode (this is actually irrelevant for this case)
+
+Good, that is the file we have to create. Now we need to figure out what do we have to put in it.
+
+# Calling `fread`
+The next function we find is `fread`. We can follow the same process to reverse it. I&#39;m not going to repeat it here, you should manage yourself. This is the part that _pushes_ the parameters and calls the function:
+
+```
+   0x8048521:	mov    0x18(%esp),%eax
+   0x8048525:	mov    %eax,0xc(%esp)
+   0x8048529:	movl   $0x10,0x8(%esp)
+   0x8048531:	movl   $0x1,0x4(%esp)
+   0x8048539:	lea    0x1c(%esp),%eax
+   0x804853d:	mov    %eax,(%esp)
+   0x8048540:	call   0x80483a0 &lt;fread@plt&gt;
+   0x8048545:	mov    %eax,0x14(%esp)
+```
+Carefully looking at this code and knowing the prototype of the `fread` function (`man fread`) we can infer that:
+
+    ESP + 0x18   -&gt;   FILE *f;  (we already knew that)
+    ESP + 0x1c   -&gt;   buffer
+    ESP + 0x14   -&gt;   n;
+
+&gt; **EXERCISE**: Good through the code instruction by instruction and draw the content of the stack (whatever is indexed from `%esp`). Identify the parameters passed to the function and the local variables we identified in the table above.
+
+Again the result of the function (the number of items read)  is stored at offset `0x14` in the stack. After that, we find the check of the number of bytes read (take a look to the C code if you do not believe me).
+
+```
+   0x8048549:	cmpl   $0x10,0x14(%esp)
+   0x804854e:	jne    0x8048587
+   ....
+   0x8048587:	movl   $0x804865a,(%esp)
+   0x804858e:	call   0x80483b0 &lt;puts@plt&gt;
+   0x8048593:	mov    $0x0,%eax
+   0x8048598:	mov    0x2c(%esp),%ecx
+   0x804859c:	xor    %gs:0x14,%ecx
+   0x80485a3:	je     0x80485aa
+   0x80485a5:	call   0x8048390 &lt;__stack_chk_fail@plt&gt;
+   0x80485aa:	leave
+   0x80485ab:	ret
+```
+
+You can clearly see the comparison of the value returned by `fread` and stored at offset `0x14` against the value `0x10` (16 in decimal). If the two values are `Non-Equal` (that&#39;s they are different ;) ), the program will jump to `0x8048587`. This is the same address we jumped to in the case of a problem with `fopen` (see above). At that position, we will find the `puts` call with the message shown when the key is wrong:
+
+    (gdb) x/s 0x804865a
+    0x804865a:	&quot;Wrong Key&quot;
+
+The rest of the code is just the stack cleaning and the return from the main function.
+
+# The Key Check
+The code left in the midle of our ASM listing is the key check. For a real program, the key generation is a lot more complex that these few lines, but let&#39;s start with this simple example to master the basics:
+
+```
+   0x8048550:	cmpl   $0x0,0x14(%esp)
+   0x8048555:	js     0x804856d
+   0x8048557:	subl   $0x1,0x14(%esp)
+   0x804855c:	lea    0x1c(%esp),%edx
+   0x8048560:	mov    0x14(%esp),%eax
+   0x8048564:	add    %edx,%eax
+   0x8048566:	movzbl (%eax),%eax
+   0x8048569:	cmp    $0x61,%al
+   0x804856b:	je     0x8048550
+   0x804856d:	cmpl   $0x0,0x14(%esp)
+   0x8048572:	jns    0x8048587
+   0x8048574:	movl   $0x804864b,(%esp)
+   0x804857b:	call   0x80483b0 &lt;puts@plt&gt;
+   0x8048580:	mov    $0x0,%eax
+   0x8048585:	jmp    0x8048598
+```
+
+If you remember our original C code, we are reusing the variable `n`, the one storing the number of bytes read from `fread`, as our loop counter. We go from `n` (`n - 1` actually) to `-1` . So the end loop condition consists on checking against `0` and do a `js` (`Jump if Sign`).... In other words, we will jump (leave the loop) if our counter is negative. Otherwise, we decrease the counter by 1 unit, set `edx` to point to our buffer (check `fread` above), `eax` to our counter/index, get the value from the buffer and compare it with `0x61` that is ASCII for the lowercase `a` letter. Confused... OK, let&#39;s do it again in slow-mo.
+
+First, our local variables table:
+
+    ESP + 0x18   -&gt;   FILE *f;
+    ESP + 0x1c   -&gt;   char* buffer
+    ESP + 0x14   -&gt;   int n;
+
+Then the code and its interpretation with the help of our local variables table:
+
+```
+   0x8048550:	subl   $0x1,0x14(%esp)    ; n--
+   0x8048555:	lea    0x1c(%esp),%edx    ; edx = &amp;buffer
+   0x8048559:	mov    0x14(%esp),%eax    ; eax = n
+   0x804855d:	add    %edx,%eax          ; edx = &amp;buffer + n = &amp;buffer[n]
+   0x804855f:	movzbl (%eax),%eax        ; eax = buffer[n]
+   0x8048562:	cmp    $0x61,%al          ; if (al == &#39;a&#39;) 
+   0x8048564:	je     0x8048549          ;   continue;
+```
+
+So, we are checking that our buffer is filled with `n` `a`&#39;s. If any of the characters read from the file is other than an `a`, the code will continue like this:
+
+```
+   0x8048566:	cmpl   $0x0,0x14(%esp) 
+   0x804856b:	jns    0x8048580              ; if (n &gt; 0) goto Fail_msg_and_exit
+   0x804856d:	movl   $0x804864b,(%esp)
+   0x8048574:	call   0x80483b0 &lt;puts@plt&gt;   ; puts &quot;Key is Correct&quot;
+   0x8048579:	mov    $0x0,%eax
+   0x804857e:	jmp    0x8048591              ; return 0
+```
+
+We check again the value of `n`... If it is positive (`jns`), that means that we have left the loop before processing the `0x10` characters and the key in the file is wrong, so we have to jump to the code showing the `Wrong Key` message. Otherwise we show the &#39;Key is Correct&#39; string and we jump to the exit code to leave the `main` function.
+
+So, this is it for a simple program like this.
+
+Note that you may get different addresses in your system and even slightly different code, depending on your gcc or libc version. But the important thing is the process and that you should be able to reproduce.
+
+Also note that this is static analysis. We haven&#39;t run the code at all. In this case it is not needed, but sometimes it will save you a lot of time (think for instance on a crypter...)
+
+# Reversing with Radare2
+The process above is a bit tedious, and actually, there is no fun on it once you know what you are doing. It is interesting to do it at the beginning to fully understand what is going on. And it is also good to know how to do it when your super-fancy tool fails. However, if you are in a hurry or this is your everyday work, you will want to use more advanced tools. Radare2 is one of those tools.
+
+Radare2 will automate a lot of things for us. This is a very brief introduction on how to reverse this specific challenge using this tool.
+
+First you load the program in radare2 (the program is called `r2`)
+
+    $  r2 ./kg
+     -- Setup dbg.fpregs to true to visualize the fpu registers in the debugger view.
+    [0x080483f0]&gt;
+
+Yes, you get a different message every time you start the program.
+
+You can see that it automatically detects the entry point `0x080483f0` and starts from there. We have already saved a few keystrokes.
+
+After that you will usually ask radare to analyse the binary. That is the `a` command family. Just type `a` and press ENTER to get a list of the options. For this example, running `aa` will locate most of the information we need... including the `main` function (usually you will do the `aaaa` to get as much as you can from the analysis):
+
+    [0x080483f0]&gt; aa
+    [x] Analyze all flags starting with sym. and entry0 (aa)
+    [0x080483f0]&gt;
+
+And now we can just look at the `main` function
+
+```
+[0x080483f0]&gt; pdf @main
+/ (fcn) main 191
+|           ; DATA XREF from 0x08048407 (main)
+|           0x080484ed      55             push ebp
+|           0x080484ee      89e5           mov ebp, esp
+|           0x080484f0      83e4f0         and esp, 0xfffffff0
+|           0x080484f3      83ec30         sub esp, 0x30
+|           0x080484f6      65a114000000   mov eax, dword gs:[0x14]    ; [0x14:4]=1
+|           0x080484fc      8944242c       mov dword [esp + 0x2c], eax
+|           0x08048500      31c0           xor eax, eax
+|           0x08048502      c74424044086.  mov dword [esp + 4], 0x8048640 ; [0x8048640:4]=0x6b006272 ; &quot;rb&quot; @ 0x8048640
+|           0x0804850a      c70424438604.  mov dword [esp], str.key.txt ; [0x8048643:4]=0x2e79656b LEA str.key.txt ; &quot;key.txt&quot; @ 0x8048643
+|           0x08048511      e8cafeffff     call sym.imp.fopen
+|           0x08048516      89442418       mov dword [esp + 0x18], eax
+|           0x0804851a      837c241800     cmp dword [esp + 0x18], 0
+|       ,=&lt; 0x0804851f      7466           je 0x8048587
+|       |   0x08048521      8b442418       mov eax, dword [esp + 0x18] ; [0x18:4]=0x80483f0 section..text
+|       |   0x08048525      8944240c       mov dword [esp + 0xc], eax
+|       |   0x08048529      c74424081000.  mov dword [esp + 8], 0x10   ; [0x10:4]=0x30002
+|       |   0x08048531      c74424040100.  mov dword [esp + 4], 1
+|       |   0x08048539      8d44241c       lea eax, [esp + 0x1c]       ; 0x1c
+|       |   0x0804853d      890424         mov dword [esp], eax
+|       |   0x08048540      e85bfeffff     call sym.imp.fread
+|       |   0x08048545      89442414       mov dword [esp + 0x14], eax
+|       |   0x08048549      837c241410     cmp dword [esp + 0x14], 0x10 ; [0x10:4]=0x30002
+|      ,==&lt; 0x0804854e      7537           jne 0x8048587
+|     .---&gt; 0x08048550      837c241400     cmp dword [esp + 0x14], 0
+|    ,====&lt; 0x08048555      7816           js 0x804856d
+|    ||||   0x08048557      836c241401     sub dword [esp + 0x14], 1
+|    ||||   0x0804855c      8d54241c       lea edx, [esp + 0x1c]       ; 0x1c
+|    ||||   0x08048560      8b442414       mov eax, dword [esp + 0x14] ; [0x14:4]=1
+|    ||||   0x08048564      01d0           add eax, edx
+|    ||||   0x08048566      0fb600         movzx eax, byte [eax]
+|    ||||   0x08048569      3c61           cmp al, 0x61                ; &#39;a&#39;
+|    |`===&lt; 0x0804856b      74e3           je 0x8048550
+|    `----&gt; 0x0804856d      837c241400     cmp dword [esp + 0x14], 0
+|     ,===&lt; 0x08048572      7913           jns 0x8048587
+|     |||   0x08048574      c704244b8604.  mov dword [esp], str.Key_is_correct ; [0x804864b:4]=0x2079654b LEA str.Key_is_correct ; &quot;Key is correct&quot; @ 0x804864b
+|     |||   0x0804857b      e830feffff     call sym.imp.puts
+|     |||   0x08048580      b800000000     mov eax, 0
+|    ,====&lt; 0x08048585      eb11           jmp 0x8048598
+|    |```-&gt; 0x08048587      c704245a8604.  mov dword [esp], str.Wrong_Key ; [0x804865a:4]=0x6e6f7257 LEA str.Wrong_Key ; &quot;Wrong Key&quot; @ 0x804865a
+|    |      0x0804858e      e81dfeffff     call sym.imp.puts
+|    |      0x08048593      b800000000     mov eax, 0
+|    |      ; JMP XREF from 0x08048585 (main)
+|    `----&gt; 0x08048598      8b4c242c       mov ecx, dword [esp + 0x2c] ; [0x2c:4]=0x280009 ; &#39;,&#39;
+|           0x0804859c      65330d140000.  xor ecx, dword gs:[0x14]
+|       ,=&lt; 0x080485a3      7405           je 0x80485aa
+|       |   0x080485a5      e8e6fdffff     call sym.imp.__stack_chk_fail
+|       `-&gt; 0x080485aa      c9             leave
+\           0x080485ab      c3             ret
+```
+
+&gt; **EXERCISE**: 
+Try to run the `pdf @main` command before running the `aa` command and see what happens.
+
+So what do we see in here?
+
+* On the left side we see some ASCII graphing indicating the flow of the program. Roughly the jumps the program will do.
+* It has already assigned symbols to all function calls
+* It is showing as a comment after the assembly, the content of the memory pointed by any pointer in the code. For instance, take a look to the two `fopen` parameters at the beginning of the program
+* It will also assign symbols to program data. See how it creates the symbols `str.Key_is_correct` and symbol `str.Wrong_key`.
+
+Overall, we are just getting a pretty good overview of the program just with this two commands (`aa` and `pdf @main`).
+
+Now you need to read the assembly just like before. If this is not easy enough for you, just jump into the radare2 visual mode. First set the main function (`s main`) and then type `V` (has to be capital)+ENTER. Then press `V` again... there you go!
+
+&gt; **EXERCISE**: 
+&gt; Crack the program so it always shows the &quot;Key is correct&quot; message :P
+
+&gt; **EXERCISE**: 
+&gt; Recompile for 64bits (remove -m32 from the compilation command) and repeat the process.
+
+Now go and Reverse&#39;em all!</description>
+    
+    <lastBuildDate>Sun, 28 Apr 2019 06:19:07 +0000</lastBuildDate>
+    <category>Reverse Engineering</category>
+    <atom:link href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 8 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/11</link>
+        <pubDate>Mon, 06 May 2019 17:00:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-11</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[BL4CKH47H4CK3R]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice work &amp; nice explanation keep working like this <img src="https://0x00sec.org/images/emoji/twitter/love_you_gesture.png?v=9" title=":love_you_gesture:" class="emoji" alt=":love_you_gesture:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/10</link>
+        <pubDate>Sun, 28 Apr 2019 06:19:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-10</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a> that will be cool. I’ll love to see that parser…</p>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/9</link>
+        <pubDate>Fri, 10 Feb 2017 17:05:06 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-9</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a> Every symbol’s string name can be found either in .dynstr or .strtab I believe. Your point about static binaries can be valid if the (s)strip command does strip those tables as well. I’ll code a quick lil parser and check it out.</p>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/8</link>
+        <pubDate>Fri, 10 Feb 2017 16:56:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-8</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[d0kt0r]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey <a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a> very nice tutorial.</p>
+<p>For those who want to try a few more exercises here for more info: <a href="http://pwnable.kr/" rel="nofollow noopener">http://pwnable.kr/</a></p>
+<p>Exercises list: <a href="http://pwnable.kr/play.php" rel="nofollow noopener">http://pwnable.kr/play.php</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/7</link>
+        <pubDate>Fri, 10 Feb 2017 16:51:26 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-7</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/pry0cc">@pry0cc</a></p>
+<p>All the classical stuff. Anti-debug techniques: auto-trace, auto-checksums, jump in the middle of instructions, crypters/packers, VMs,…</p>
+<p><a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a>  You can do that with dynamically linked programs. With static ones you get most of that information actually gone (specially with <code>sstrip </code>). As there is no dynamic linking there is no need to keep symbol information. You can reconstruct something but with funny names like <code>fun.04005ab</code></p>
+<p>Just try:</p>
+<pre><code>$ diet gcc -o kg kg.c
+$ sstrip -z kg
+$ strings kg</code></pre>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/6</link>
+        <pubDate>Fri, 10 Feb 2017 16:27:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-6</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>You can reconstruct the symbol table with a parser if your ELF knowledge is decent enough in order to get around the strip protection.</p>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/5</link>
+        <pubDate>Fri, 10 Feb 2017 10:34:24 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-5</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>So to make this more difficult, you have stripped the binary of symbols, how else would people obfuscate, and how would we get around it?</p>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/4</link>
+        <pubDate>Fri, 10 Feb 2017 09:20:03 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-4</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[TheDoctor]]></dc:creator>
+        <description><![CDATA[
+            <p>Just awesome <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:">! I came to have a quick look at new posts and stayed with reading thruogh your full article <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">. Great explanation of the basics!</p>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/3</link>
+        <pubDate>Thu, 27 Oct 2016 17:52:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-3</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>HELL YES. DOING IT NOW. You guys are so awesome <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/2</link>
+        <pubDate>Wed, 26 Oct 2016 17:40:22 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-2</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+      <item>
+        <title>Reverse Engineering 101</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Continuing the discussion from <a href="https://0x00sec.org/t/keygenme-easy-cracking-your-first-program/1075/9" rel="noopener nofollow ugc">[KEYGENME - EASY] Cracking Your First Program</a>:</p>
+<p>As requested by <a class="mention" href="https://d.clarkee.co.uk/u/pry0cc">@pry0cc</a>, this is a crash course on reverse engineering. Before reading this, you should try to solve <a class="mention" href="https://d.clarkee.co.uk/u/dtm">@dtm</a> challenge:</p>
+<p><a href="https://0x00sec.org/t/keygenme-easy-cracking-your-first-program/1075" class="onebox" target="_blank" rel="noopener nofollow ugc">https://0x00sec.org/t/keygenme-easy-cracking-your-first-program/1075</a></p>
+<p>If you didn’t manage or you want to see somebody else solution keep reading.</p>
+<h1><a name="p-5857-our-target-1" class="anchor" href="https://d.clarkee.co.uk#p-5857-our-target-1"></a>Our Target</h1>
+<p>I will start writing our target program. You can try what is described in this paper against the original challenge binaries the process is the same. Showing the C code at the beginning makes the explanation easier. Also, you will note that the code from this example is roughly the same that the one you see in the original challenge.</p>
+<p>This is my free implementation of <a class="mention" href="https://d.clarkee.co.uk/u/dtm">@dtm</a>’s original challenge.</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+
+#define PEXIT(s) {printf ("%s",s); return 0;}
+
+int
+main (void)
+{
+  FILE *f;
+  char buffer[16];
+  int  n;
+
+  if (((f = fopen ("key.txt", "rb")) != NULL) &amp;&amp;
+      (n = fread (buffer, 1, 16, f)) == 16)
+    {
+      for (;n &gt;= 0 &amp;&amp; buffer[--n] == 'a';);
+      
+      if (n &lt; 0) PEXIT("Key is correct\n");
+    }
+  
+  PEXIT("Wrong Key\n");
+}
+
+</code></pre>
+<p>Fine, let’s compile it for a 32bits platform (as the original challenge) and then, let’s strip all symbols from it to make the process a bit more difficult. In this case, removing the symbols means that we will have to find the <code>main</code> function ourselves.</p>
+<pre><code>gcc -m32 -o kg kg.c
+strip -s kg
+</code></pre>
+<blockquote>
+<p><strong>EXERCISE:</strong><br>
+You can use <code>readelf -s</code> to check the symbols in the program before and after running the <code>strip</code> command. Note how the <code>main</code> function is gone after stripping the binary.</p>
+</blockquote>
+<h1><a name="p-5857-gathering-information-2" class="anchor" href="https://d.clarkee.co.uk#p-5857-gathering-information-2"></a>Gathering information</h1>
+<p>In this case it is not really needed, but in general, you will want to gather as much information about the target as you want… you may also want to run it on a VM and actually take a snapshot before you start… specially if you do dynamic analysis and you do not know what the sample does (backdoor, worm, virus,…)</p>
+<p>Some tools you may want to use: <code>file</code>, <code>strings</code>, <code>readelf -a</code> and also <code>objdump</code>.</p>
+<p>In this case, we already know everything for this program. After all, we wrote it ourselves, so let’s go straight into the reverse stuff.</p>
+<blockquote>
+<p><strong>EXERCISE:</strong><br>
+Run the tools mentioned above on the program you just compile.</p>
+</blockquote>
+<h1><a name="p-5857-reversing-with-gdb-3" class="anchor" href="https://d.clarkee.co.uk#p-5857-reversing-with-gdb-3"></a>Reversing with gdb</h1>
+<p>Let’s start this tutorial reversing the sample using <code>gdb</code>.</p>
+<p>Let’s start:</p>
+<blockquote>
+<p>$ gdb ./kg<br>
+(… gdb messages here…)<br>
+(gdb)</p>
+</blockquote>
+<p>As this sample does not have symbols (that’s normal in real life) we do not know right away where our <code>main</code> function is (yep, I have already said that). But we can ask <code>gdb</code> about the program entry point:</p>
+<blockquote>
+<p>(gdb) info file<br>
+(…)<br>
+Entry point: 0x80483f0<br>
+(…)</p>
+</blockquote>
+<p>Sometimes you cannot even get this information (when using <code>sstrip -z</code> for instance). In those cases… well, let’s leave those for another post.</p>
+<p>Now we can start disassembling the entry point. If you have been following the “Programming for Wannabes” course you should know that the <code>main</code> function is not the first function the OS executes when we run a program. You don’t know… go and read the “Programming for Wannabe” series now!. The <code>main</code> function gets called from the entry point (the entry point is usually named <code>_start</code>).</p>
+<p>Let’s see what we can find at our entry point:</p>
+<pre><code class="lang-auto">(gdb)  x/15i 0x80483f0
+   0x80483f0:	xor    %ebp,%ebp
+   0x80483f2:	pop    %esi
+   0x80483f3:	mov    %esp,%ecx
+   0x80483f5:	and    $0xfffffff0,%esp
+   0x80483f8:	push   %eax
+   0x80483f9:	push   %esp
+   0x80483fa:	push   %edx
+   0x80483fb:	push   $0x8048620
+   0x8048400:	push   $0x80485b0
+   0x8048405:	push   %ecx
+   0x8048406:	push   %esi
+   0x8048407:	push   $0x80484ed
+   0x804840c:	call   0x80483d0 &lt;__libc_start_main@plt&gt;
+   0x8048411:	hlt
+   0x8048412:	xchg   %ax,%ax
+</code></pre>
+<blockquote>
+<p><strong>NOTE:</strong> The <code>x</code> command on gdb dumps memory. After the slash you can indicate the number of <em>items</em> to dump and the format. In this case we are using <code>i</code> that indicates <code>gdb</code> to dump instructions. You can also use the command <code>disassemble</code>:</p>
+</blockquote>
+<blockquote>
+<p><code>(gdb) disassemble  0x80483f0,+30</code></p>
+</blockquote>
+<blockquote>
+<p>In this case the second parameter is the size in bytes of the dump, instead of the number of instructions to dump. You can use the flag <code>/r</code> to also dump the machine code.</p>
+</blockquote>
+<p>Well, as you see not all symbols have been removed. Being dynamically linked, the  program has to keep some information to be able to find the functions provided by other libraries. So the <code>call</code> instruction at <code>0x804840c</code> is the one that is going to run <code>main</code>and therefore, it receives as a parameter, among other things, the pointer to the <code>main</code> function. In this case it is the last parameter pushed into the stack… So, let’s take a look to the <code>main</code> function!</p>
+<blockquote>
+<p><strong>NOTE:</strong> You will find this kind of sequences in many programs out there… you will learn to easily identify them as you keep practising.</p>
+</blockquote>
+<h1><a name="p-5857-the-main-function-4" class="anchor" href="https://d.clarkee.co.uk#p-5857-the-main-function-4"></a>The <code>main</code> Function</h1>
+<p>We have finally found the <code>main</code> function. It is at position <code>0x80484ed</code>. And this is how it does look like:</p>
+<pre><code class="lang-auto">(gdb) x/50i 0x80484ed
+   0x80484ed:	push   %ebp
+   0x80484ee:	mov    %esp,%ebp
+   0x80484f0:	and    $0xfffffff0,%esp
+   0x80484f3:	sub    $0x30,%esp
+   0x80484f6:	mov    %gs:0x14,%eax
+   0x80484fc:	mov    %eax,0x2c(%esp)
+   0x8048500:	xor    %eax,%eax
+   0x8048502:	movl   $0x8048640,0x4(%esp)
+   0x804850a:	movl   $0x8048643,(%esp)
+   0x8048511:	call   0x80483e0 &lt;fopen@plt&gt;
+   0x8048516:	mov    %eax,0x18(%esp)
+   0x804851a:	cmpl   $0x0,0x18(%esp)
+   0x804851f:	je     0x8048587
+   0x8048521:	mov    0x18(%esp),%eax
+   0x8048525:	mov    %eax,0xc(%esp)
+   0x8048529:	movl   $0x10,0x8(%esp)
+   0x8048531:	movl   $0x1,0x4(%esp)
+   0x8048539:	lea    0x1c(%esp),%eax
+   0x804853d:	mov    %eax,(%esp)
+   0x8048540:	call   0x80483a0 &lt;fread@plt&gt;
+   0x8048545:	mov    %eax,0x14(%esp)
+   0x8048549:	cmpl   $0x10,0x14(%esp)
+   0x804854e:	jne    0x8048587
+   0x8048550:	cmpl   $0x0,0x14(%esp)
+   0x8048555:	js     0x804856d
+   0x8048557:	subl   $0x1,0x14(%esp)
+   0x804855c:	lea    0x1c(%esp),%edx
+   0x8048560:	mov    0x14(%esp),%eax
+   0x8048564:	add    %edx,%eax
+   0x8048566:	movzbl (%eax),%eax
+   0x8048569:	cmp    $0x61,%al
+   0x804856b:	je     0x8048550
+   0x804856d:	cmpl   $0x0,0x14(%esp)
+   0x8048572:	jns    0x8048587
+   0x8048574:	movl   $0x804864b,(%esp)
+   0x804857b:	call   0x80483b0 &lt;puts@plt&gt;
+   0x8048580:	mov    $0x0,%eax
+   0x8048585:	jmp    0x8048598
+   0x8048587:	movl   $0x804865a,(%esp)
+   0x804858e:	call   0x80483b0 &lt;puts@plt&gt;
+   0x8048593:	mov    $0x0,%eax
+   0x8048598:	mov    0x2c(%esp),%ecx
+   0x804859c:	xor    %gs:0x14,%ecx
+   0x80485a3:	je     0x80485aa
+   0x80485a5:	call   0x8048390 &lt;__stack_chk_fail@plt&gt;
+   0x80485aa:	leave
+   0x80485ab:	ret
+   0x80485ac:	xchg   %ax,%ax
+   0x80485ae:	xchg   %ax,%ax
+   0x80485b0:	push   %ebp
+</code></pre>
+<p>This is our whole <code>main</code> function. You can see the calls to all the functions we used in our C program (<code>fopen</code>, <code>fread</code>, <code>puts</code>… yes, <code>gcc</code> automatically converts a <code>printf</code> with a single static string parameter into a <code>puts</code> call). All those functions are provided by libc and therefore, dynamically linked. You can refer to the great paper from <a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a> on the topic to know more about this process:</p>
+<p><a href="https://0x00sec.org/t/elf-binaries-dynamic-linking-wizardry/1082" class="onebox" target="_blank" rel="noopener nofollow ugc">https://0x00sec.org/t/elf-binaries-dynamic-linking-wizardry/1082</a></p>
+<p>Now, we can start reversing each function one by one.</p>
+<h1><a name="p-5857-calling-fopen-5" class="anchor" href="https://d.clarkee.co.uk#p-5857-calling-fopen-5"></a>Calling <code>fopen</code></h1>
+<p>Let’s skip to address <code>0x8048502</code>. The instructions before just set the stack to store our local variables. You will see that type of code all the time just ignore it for this simple case. So at <code>0x8048502</code> we have</p>
+<pre><code class="lang-auto">   0x8048502:	movl   $0x8048640,0x4(%esp)
+   0x804850a:	movl   $0x8048643,(%esp)
+   0x8048511:	call   0x80483e0 &lt;fopen@plt&gt;
+   0x8048516:	mov    %eax,0x18(%esp)
+   0x804851a:	cmpl   $0x0,0x18(%esp)
+   0x804851f:	je     0x8048587
+</code></pre>
+<p>The first thing to do is to put the function parameter in the stack (pointed by register <code>ESP</code>). At offset 0 in the stack <code>(%esp)</code> we store one pointer, and at offset 4 <code>0x4(%esp)</code> or <code>[ESP + 0x4]</code> if you prefer, another pointer. Let’s see to what are those pointers are pointing to:</p>
+<pre><code>(gdb) x/s 0x8048640
+0x8048640:	"rb"
+(gdb) x/s 0x8048643
+0x8048643:	"key.txt"
+</code></pre>
+<blockquote>
+<p><strong>NOTE</strong>: Type <code>s</code> for the <code>gdb</code> dump command <code>x</code> will dump a zero-terminated string</p>
+</blockquote>
+<p>Nice, those are actually the two parameters passed to the <code>fopen</code> function. Then we see how the program stores the value of <code>eax</code> at offset <code>0x18</code> in the stack. <code>0x18(%esp)</code> actually means; Give me the content of <code>ESP + 0x18</code>… it’s called indexed addressing mode).</p>
+<p>Let’s create our local variable tables, to keep track of them to help us during the reversing process. For now we only have one:</p>
+<pre><code>ESP + 0x18   -&gt;   FILE *f;
+</code></pre>
+<p>Finally, the function checks the return value. If it is 0 (or <code>NULL</code> in this case, check the C code above), the program will jump to <code>0x8048587</code>.</p>
+<p>From these 6 assembly lines we have got the following information:</p>
+<ul>
+<li>The key has to be stored in a file named ‘key.txt’ in the current directory</li>
+<li>It is open in binary read mode (this is actually irrelevant for this case)</li>
+</ul>
+<p>Good, that is the file we have to create. Now we need to figure out what do we have to put in it.</p>
+<h1><a name="p-5857-calling-fread-6" class="anchor" href="https://d.clarkee.co.uk#p-5857-calling-fread-6"></a>Calling <code>fread</code></h1>
+<p>The next function we find is <code>fread</code>. We can follow the same process to reverse it. I’m not going to repeat it here, you should manage yourself. This is the part that <em>pushes</em> the parameters and calls the function:</p>
+<pre><code class="lang-auto">   0x8048521:	mov    0x18(%esp),%eax
+   0x8048525:	mov    %eax,0xc(%esp)
+   0x8048529:	movl   $0x10,0x8(%esp)
+   0x8048531:	movl   $0x1,0x4(%esp)
+   0x8048539:	lea    0x1c(%esp),%eax
+   0x804853d:	mov    %eax,(%esp)
+   0x8048540:	call   0x80483a0 &lt;fread@plt&gt;
+   0x8048545:	mov    %eax,0x14(%esp)
+</code></pre>
+<p>Carefully looking at this code and knowing the prototype of the <code>fread</code> function (<code>man fread</code>) we can infer that:</p>
+<pre><code>ESP + 0x18   -&gt;   FILE *f;  (we already knew that)
+ESP + 0x1c   -&gt;   buffer
+ESP + 0x14   -&gt;   n;
+</code></pre>
+<blockquote>
+<p><strong>EXERCISE</strong>: Good through the code instruction by instruction and draw the content of the stack (whatever is indexed from <code>%esp</code>). Identify the parameters passed to the function and the local variables we identified in the table above.</p>
+</blockquote>
+<p>Again the result of the function (the number of items read)  is stored at offset <code>0x14</code> in the stack. After that, we find the check of the number of bytes read (take a look to the C code if you do not believe me).</p>
+<pre><code class="lang-auto">   0x8048549:	cmpl   $0x10,0x14(%esp)
+   0x804854e:	jne    0x8048587
+   ....
+   0x8048587:	movl   $0x804865a,(%esp)
+   0x804858e:	call   0x80483b0 &lt;puts@plt&gt;
+   0x8048593:	mov    $0x0,%eax
+   0x8048598:	mov    0x2c(%esp),%ecx
+   0x804859c:	xor    %gs:0x14,%ecx
+   0x80485a3:	je     0x80485aa
+   0x80485a5:	call   0x8048390 &lt;__stack_chk_fail@plt&gt;
+   0x80485aa:	leave
+   0x80485ab:	ret
+</code></pre>
+<p>You can clearly see the comparison of the value returned by <code>fread</code> and stored at offset <code>0x14</code> against the value <code>0x10</code> (16 in decimal). If the two values are <code>Non-Equal</code> (that’s they are different <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"> ), the program will jump to <code>0x8048587</code>. This is the same address we jumped to in the case of a problem with <code>fopen</code> (see above). At that position, we will find the <code>puts</code> call with the message shown when the key is wrong:</p>
+<pre><code>(gdb) x/s 0x804865a
+0x804865a:	"Wrong Key"
+</code></pre>
+<p>The rest of the code is just the stack cleaning and the return from the main function.</p>
+<h1><a name="p-5857-the-key-check-7" class="anchor" href="https://d.clarkee.co.uk#p-5857-the-key-check-7"></a>The Key Check</h1>
+<p>The code left in the midle of our ASM listing is the key check. For a real program, the key generation is a lot more complex that these few lines, but let’s start with this simple example to master the basics:</p>
+<pre><code class="lang-auto">   0x8048550:	cmpl   $0x0,0x14(%esp)
+   0x8048555:	js     0x804856d
+   0x8048557:	subl   $0x1,0x14(%esp)
+   0x804855c:	lea    0x1c(%esp),%edx
+   0x8048560:	mov    0x14(%esp),%eax
+   0x8048564:	add    %edx,%eax
+   0x8048566:	movzbl (%eax),%eax
+   0x8048569:	cmp    $0x61,%al
+   0x804856b:	je     0x8048550
+   0x804856d:	cmpl   $0x0,0x14(%esp)
+   0x8048572:	jns    0x8048587
+   0x8048574:	movl   $0x804864b,(%esp)
+   0x804857b:	call   0x80483b0 &lt;puts@plt&gt;
+   0x8048580:	mov    $0x0,%eax
+   0x8048585:	jmp    0x8048598
+</code></pre>
+<p>If you remember our original C code, we are reusing the variable <code>n</code>, the one storing the number of bytes read from <code>fread</code>, as our loop counter. We go from <code>n</code> (<code>n - 1</code> actually) to <code>-1</code> . So the end loop condition consists on checking against <code>0</code> and do a <code>js</code> (<code>Jump if Sign</code>)… In other words, we will jump (leave the loop) if our counter is negative. Otherwise, we decrease the counter by 1 unit, set <code>edx</code> to point to our buffer (check <code>fread</code> above), <code>eax</code> to our counter/index, get the value from the buffer and compare it with <code>0x61</code> that is ASCII for the lowercase <code>a</code> letter. Confused… OK, let’s do it again in slow-mo.</p>
+<p>First, our local variables table:</p>
+<pre><code>ESP + 0x18   -&gt;   FILE *f;
+ESP + 0x1c   -&gt;   char* buffer
+ESP + 0x14   -&gt;   int n;
+</code></pre>
+<p>Then the code and its interpretation with the help of our local variables table:</p>
+<pre><code class="lang-auto">   0x8048550:	subl   $0x1,0x14(%esp)    ; n--
+   0x8048555:	lea    0x1c(%esp),%edx    ; edx = &amp;buffer
+   0x8048559:	mov    0x14(%esp),%eax    ; eax = n
+   0x804855d:	add    %edx,%eax          ; edx = &amp;buffer + n = &amp;buffer[n]
+   0x804855f:	movzbl (%eax),%eax        ; eax = buffer[n]
+   0x8048562:	cmp    $0x61,%al          ; if (al == 'a') 
+   0x8048564:	je     0x8048549          ;   continue;
+</code></pre>
+<p>So, we are checking that our buffer is filled with <code>n</code> <code>a</code>’s. If any of the characters read from the file is other than an <code>a</code>, the code will continue like this:</p>
+<pre><code class="lang-auto">   0x8048566:	cmpl   $0x0,0x14(%esp) 
+   0x804856b:	jns    0x8048580              ; if (n &gt; 0) goto Fail_msg_and_exit
+   0x804856d:	movl   $0x804864b,(%esp)
+   0x8048574:	call   0x80483b0 &lt;puts@plt&gt;   ; puts "Key is Correct"
+   0x8048579:	mov    $0x0,%eax
+   0x804857e:	jmp    0x8048591              ; return 0
+</code></pre>
+<p>We check again the value of <code>n</code>… If it is positive (<code>jns</code>), that means that we have left the loop before processing the <code>0x10</code> characters and the key in the file is wrong, so we have to jump to the code showing the <code>Wrong Key</code> message. Otherwise we show the ‘Key is Correct’ string and we jump to the exit code to leave the <code>main</code> function.</p>
+<p>So, this is it for a simple program like this.</p>
+<p>Note that you may get different addresses in your system and even slightly different code, depending on your gcc or libc version. But the important thing is the process and that you should be able to reproduce.</p>
+<p>Also note that this is static analysis. We haven’t run the code at all. In this case it is not needed, but sometimes it will save you a lot of time (think for instance on a crypter…)</p>
+<h1><a name="p-5857-reversing-with-radare2-8" class="anchor" href="https://d.clarkee.co.uk#p-5857-reversing-with-radare2-8"></a>Reversing with Radare2</h1>
+<p>The process above is a bit tedious, and actually, there is no fun on it once you know what you are doing. It is interesting to do it at the beginning to fully understand what is going on. And it is also good to know how to do it when your super-fancy tool fails. However, if you are in a hurry or this is your everyday work, you will want to use more advanced tools. Radare2 is one of those tools.</p>
+<p>Radare2 will automate a lot of things for us. This is a very brief introduction on how to reverse this specific challenge using this tool.</p>
+<p>First you load the program in radare2 (the program is called <code>r2</code>)</p>
+<pre><code>$  r2 ./kg
+ -- Setup dbg.fpregs to true to visualize the fpu registers in the debugger view.
+[0x080483f0]&gt;
+</code></pre>
+<p>Yes, you get a different message every time you start the program.</p>
+<p>You can see that it automatically detects the entry point <code>0x080483f0</code> and starts from there. We have already saved a few keystrokes.</p>
+<p>After that you will usually ask radare to analyse the binary. That is the <code>a</code> command family. Just type <code>a</code> and press ENTER to get a list of the options. For this example, running <code>aa</code> will locate most of the information we need… including the <code>main</code> function (usually you will do the <code>aaaa</code> to get as much as you can from the analysis):</p>
+<pre><code>[0x080483f0]&gt; aa
+[x] Analyze all flags starting with sym. and entry0 (aa)
+[0x080483f0]&gt;
+</code></pre>
+<p>And now we can just look at the <code>main</code> function</p>
+<pre><code class="lang-auto">[0x080483f0]&gt; pdf @main
+/ (fcn) main 191
+|           ; DATA XREF from 0x08048407 (main)
+|           0x080484ed      55             push ebp
+|           0x080484ee      89e5           mov ebp, esp
+|           0x080484f0      83e4f0         and esp, 0xfffffff0
+|           0x080484f3      83ec30         sub esp, 0x30
+|           0x080484f6      65a114000000   mov eax, dword gs:[0x14]    ; [0x14:4]=1
+|           0x080484fc      8944242c       mov dword [esp + 0x2c], eax
+|           0x08048500      31c0           xor eax, eax
+|           0x08048502      c74424044086.  mov dword [esp + 4], 0x8048640 ; [0x8048640:4]=0x6b006272 ; "rb" @ 0x8048640
+|           0x0804850a      c70424438604.  mov dword [esp], str.key.txt ; [0x8048643:4]=0x2e79656b LEA str.key.txt ; "key.txt" @ 0x8048643
+|           0x08048511      e8cafeffff     call sym.imp.fopen
+|           0x08048516      89442418       mov dword [esp + 0x18], eax
+|           0x0804851a      837c241800     cmp dword [esp + 0x18], 0
+|       ,=&lt; 0x0804851f      7466           je 0x8048587
+|       |   0x08048521      8b442418       mov eax, dword [esp + 0x18] ; [0x18:4]=0x80483f0 section..text
+|       |   0x08048525      8944240c       mov dword [esp + 0xc], eax
+|       |   0x08048529      c74424081000.  mov dword [esp + 8], 0x10   ; [0x10:4]=0x30002
+|       |   0x08048531      c74424040100.  mov dword [esp + 4], 1
+|       |   0x08048539      8d44241c       lea eax, [esp + 0x1c]       ; 0x1c
+|       |   0x0804853d      890424         mov dword [esp], eax
+|       |   0x08048540      e85bfeffff     call sym.imp.fread
+|       |   0x08048545      89442414       mov dword [esp + 0x14], eax
+|       |   0x08048549      837c241410     cmp dword [esp + 0x14], 0x10 ; [0x10:4]=0x30002
+|      ,==&lt; 0x0804854e      7537           jne 0x8048587
+|     .---&gt; 0x08048550      837c241400     cmp dword [esp + 0x14], 0
+|    ,====&lt; 0x08048555      7816           js 0x804856d
+|    ||||   0x08048557      836c241401     sub dword [esp + 0x14], 1
+|    ||||   0x0804855c      8d54241c       lea edx, [esp + 0x1c]       ; 0x1c
+|    ||||   0x08048560      8b442414       mov eax, dword [esp + 0x14] ; [0x14:4]=1
+|    ||||   0x08048564      01d0           add eax, edx
+|    ||||   0x08048566      0fb600         movzx eax, byte [eax]
+|    ||||   0x08048569      3c61           cmp al, 0x61                ; 'a'
+|    |`===&lt; 0x0804856b      74e3           je 0x8048550
+|    `----&gt; 0x0804856d      837c241400     cmp dword [esp + 0x14], 0
+|     ,===&lt; 0x08048572      7913           jns 0x8048587
+|     |||   0x08048574      c704244b8604.  mov dword [esp], str.Key_is_correct ; [0x804864b:4]=0x2079654b LEA str.Key_is_correct ; "Key is correct" @ 0x804864b
+|     |||   0x0804857b      e830feffff     call sym.imp.puts
+|     |||   0x08048580      b800000000     mov eax, 0
+|    ,====&lt; 0x08048585      eb11           jmp 0x8048598
+|    |```-&gt; 0x08048587      c704245a8604.  mov dword [esp], str.Wrong_Key ; [0x804865a:4]=0x6e6f7257 LEA str.Wrong_Key ; "Wrong Key" @ 0x804865a
+|    |      0x0804858e      e81dfeffff     call sym.imp.puts
+|    |      0x08048593      b800000000     mov eax, 0
+|    |      ; JMP XREF from 0x08048585 (main)
+|    `----&gt; 0x08048598      8b4c242c       mov ecx, dword [esp + 0x2c] ; [0x2c:4]=0x280009 ; ','
+|           0x0804859c      65330d140000.  xor ecx, dword gs:[0x14]
+|       ,=&lt; 0x080485a3      7405           je 0x80485aa
+|       |   0x080485a5      e8e6fdffff     call sym.imp.__stack_chk_fail
+|       `-&gt; 0x080485aa      c9             leave
+\           0x080485ab      c3             ret
+</code></pre>
+<blockquote>
+<p><strong>EXERCISE</strong>:<br>
+Try to run the <code>pdf @main</code> command before running the <code>aa</code> command and see what happens.</p>
+</blockquote>
+<p>So what do we see in here?</p>
+<ul>
+<li>On the left side we see some ASCII graphing indicating the flow of the program. Roughly the jumps the program will do.</li>
+<li>It has already assigned symbols to all function calls</li>
+<li>It is showing as a comment after the assembly, the content of the memory pointed by any pointer in the code. For instance, take a look to the two <code>fopen</code> parameters at the beginning of the program</li>
+<li>It will also assign symbols to program data. See how it creates the symbols <code>str.Key_is_correct</code> and symbol <code>str.Wrong_key</code>.</li>
+</ul>
+<p>Overall, we are just getting a pretty good overview of the program just with this two commands (<code>aa</code> and <code>pdf @main</code>).</p>
+<p>Now you need to read the assembly just like before. If this is not easy enough for you, just jump into the radare2 visual mode. First set the main function (<code>s main</code>) and then type <code>V</code> (has to be capital)+ENTER. Then press <code>V</code> again… there you go!</p>
+<blockquote>
+<p><strong>EXERCISE</strong>:<br>
+Crack the program so it always shows the “Key is correct” message <img src="https://d.clarkee.co.uk/images/emoji/twitter/stuck_out_tongue.png?v=15" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:" loading="lazy" width="20" height="20"></p>
+</blockquote>
+<blockquote>
+<p><strong>EXERCISE</strong>:<br>
+Recompile for 64bits (remove -m32 from the compilation command) and repeat the process.</p>
+</blockquote>
+<p>Now go and Reverse’em all!</p>
+          <p><a href="https://d.clarkee.co.uk/t/reverse-engineering-101/1233/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/reverse-engineering-101/1233/1</link>
+        <pubDate>Wed, 26 Oct 2016 16:10:48 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1233-1</guid>
+        <source url="https://d.clarkee.co.uk/t/reverse-engineering-101/1233.rss">Reverse Engineering 101</source>
+      </item>
+  </channel>
+</rss>

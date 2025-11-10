@@ -1,0 +1,643 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Mitigating Program Tampering and Bypassing AV/EDR Through Blocking Operations on Executable Memory Pages</title>
+    <link>https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113</link>
+    <description>This article is a continuation in a multi-part evasion technique series to bypass antivirus (AV) and endpoint detection and response (EDR) systems. This method, unlike the last one discussed [here](https://44.is-a.dev/posts/Building-A-DLL-Blocker/), imposes a different strategy that can also help protect against reverse engineering efforts made by blue team analysts. Similarly to other methods discussed in this series, this concept can also apply to aid in protecting legitimate processes againt several different code execution strategies used by modern day state of the art malicious software.
+(This article is copied down from my website which has much better formatting and layout that you can find [here](https://44.is-a.dev/posts/Blocking-Operations-On-Executable-Memory-Pages/))
+
+---
+
+&lt;details&gt;
+  &lt;summary&gt;&lt;strong&gt;Table of Contents&lt;/strong&gt;&lt;/summary&gt;
+&lt;div markdown=&quot;1&quot;&gt;
+
+- [Introduction](#introduction)
+- [Overview](#overview)
+- [A foreword on Code Integrity Guard (CIG)](#a-foreword-on-code-integrity-guard-cig)
+- [RWX Operations](#rwx-operations)
+- [Downsides of ACG](#downsides-of-acg)
+- [But what about JIT compiled code?](#but-what-about-jit-compiled-code)
+- [Mitigating these downsides](#mitigating-these-downsides)
+- [Implementation](#implementation)
+    - [1. Laying out the groundwork:](#1-laying-out-the-groundwork)
+    - [2. Program entry point:](#2-program-entry-point)
+    - [3. Configuring Process Mitigation Policy:](#3-configuring-process-mitigation-policy)
+    - [4. Running the first RWX test (pre-mitigation policy):](#4-running-the-first-rwx-test-pre-mitigation-policy)
+    - [5. Applying the mitigation policy:](#5-applying-the-mitigation-policy)
+    - [6. Running the second RWX test (post-mitigation policy):](#6-running-the-second-rwx-test-post-mitigation-policy)
+    - [7. Finishing the program and final thoughts:](#7-finishing-the-program-and-final-thoughts)
+- [Conclusion](#conclusion)
+
+&lt;/div&gt;
+&lt;/details&gt;
+
+## Introduction
+
+The widespread use of DLL loading/injection in programs, including instances where these DLLs are signed by reputable entities like Microsoft, (the weakness of our [last approach](https://44.is-a.dev/posts/Building-A-DLL-Blocker/)) highlights the need for more robust and adaptable mitigation strategies. This is particularly important in the context of malware development, where such strategies can serve as potent countermeasures against detection of our meticulously crafted payloads and or target processes. By combining this technique with our [previous approach](https://44.is-a.dev/posts/Building-A-DLL-Blocker/), we can effectively protect against a myriad of threat actors rather than just one.
+
+[![](upload://ztFlq31pQhWOdip3l3LZuhQA3Yu.png)](https://mermaid.live/edit#pako:eNptUl1P6zAM_StRnjoJtvddCals3eVK3UAFxiTCQ25i1mitUyUpHwL-O04zBpPoQ-vY55zaJ37jymrgU_7Y2GdVSxdYWQmsinWx-psJXsETOA-swK1BACdQ8NFQv6ouvwEGt-zG2mZy5ezWyXYA5etiXhEkX08oEMjoyUrZo6rBM4vMB_pf340GdNSr8uW94F8amM0sBmnQs6VsjDK29wtiB2MxG_0h2sOBtvi3yssj7p0J9a886h5a-wR6ct5YtaPvHAKoADopLm5Xs2JTzEjtd3o2t9Q_2sDgBVQfIPHKnIgXsR9iXsfR2MENKvv-P8Vdzaq7DbuPr8sOnAzW-YfkzeAXS3G6gEMcVdNBGwdDK6wqUwZQ73GkeXp69i74rac76aQCdmHtTghcGzJaNnlDE8cZBBZBjcdjwd_Z3sGk8T1ElDqu7Q8_C4PtR9UhQ5AX9uUjP-EtuFYaTWv2FsGChxpaEHxKoZZuJ7jAD8LJPtjrV1R8GlwPJ7zvtAwwNzK6yKePsvGUBW3ItWXa22F9Pz4B0nzmRg)
+
+In this article, we will explore the technique of using Arbitrary Code Guard (ACG) and breifly touch on Code Integrity Guard (CIG) to block operations on executable memory pages to bypass AVs/EDRs, as well as, some reverse engineering methods and advanced debugger programs (also can be used to prevent malware from hooking onto, and nesting itself inside of legitimate programs as well). Pretty much, our program can effectively prevent the execution of dynamically generated code. By doing so, we not only secure the front door but also the windows, the back door, and even the chimney, making life as difficult as possible for any possible threat actors.
+For our demonstration we will be,
+1. Attempting to allocate new memory with executable permissions, and
+2. Attempting to make existing memory with executable permissions writable.
+In order to accomplish these tasks we will use the `VirtualAlloc()`, as well as, `VirtualProtect()` functions from the Windows API to simulate a read-write-execute (RWX) operation from an AV/EDR in an example program called **acg_program.exe**. Without wasting anymore time lets get started!
+
+&gt; I was originally intending on including CIG as one of the main methods discussed in this article but upon further research the use cases on specific threat actors is partically refined and this can be a very *noisy* and might break your system as it is not compatible on certain hardware and messes around with Windows Registry settings using virtualization and sandboxing. However, if you are interested in learning more about these topics, I recommend checking out the following articles: 
+- [Microsoft Documentation information on what CIG does and can be used for](https://learn.microsoft.com/en-us/windows/security/application-security/application-control/introduction-to-device-guard-virtualization-based-security-and-windows-defender-application-control)
+- [Microsoft Documentation for enabling such protection](https://learn.microsoft.com/en-us/windows/security/hardware-security/enable-virtualization-based-protection-of-code-integrity)
+
+&gt; All of the source code for this article is available on [GitHub](https://github.com/9xN/Blocking-Operations-On-Executable-Memory-Pages)
+
+## Overview
+
+One such technique commonly employed by AV/EDR products is the implementation of userspace hooks around critical functions. However, these hooks often rely on the ability to modify existing executable pages, necessitating the use of functions such as the aforementioned `VirtualProtect()` to update memory protection. More so, a malicious, or more intrusive threat actor might even try to allocate memory with `VirtualAlloc()` to then use later on to run arbitrary code. By blocking operations on executable memory pages and restricting the creation of RWX pages, we can potentially render even a Microsoft-signed DLL ineffective. 
+
+[![](upload://jzcXvGIx9g0T4BZ7kecXdjHude4.png)](https://mermaid.live/edit#pako:eNptksFO4zAQhl_F8ikV0N6LtFIU0oKUFhS2BQlzMPa0sXDGke3ssgLefSdxKSCRQzSe-edz5s-8cuU08DnfWfdXNdJHVtUC63JbrpeZ4DX8AR-Albg3COAFCj4Z6zf19afA4J79ds7Obrzbe9mOonxbXtQkybczCgQyerJK9qgaCMwhC5Hu67vJqB54db56EPyDgSfEKJaz4mopMCscRmkwsJW0RhnXhwWRonGYTc4J8XhELK7WefWVk92Z2PzYJ3CDrdNmZ0AnxmKzLsr7sqD-nxsIZi2DF1B9hNRT5dR0OdxOXbfDUOzoA5VD_0Rx17D67p49DK_rDryMzofH5MroFEtxsv4YD9R00MbD-BmsrlIGUB90xDw7e2Fvgm8C_Y5OKmCXzj0LgVtDHkubW-vUMIDAMqrpdCr4GzsYliCfUxDr1_fa4fC1MLr8rTpmRsmHifyUt-BbaTRt2OsgFjw20ILgcwq19M-CC3wnneyju_2His-j7-GU952WES6MHGzk8520gbKgDdm2Sis7bu77f1H644w)
+
+## A foreword on Code Integrity Guard (CIG)
+
+As mentioned in the introduction, I was originally going to include CIG in conjuction with ACG but its *just not stable enough* and *not worth the risk* of breaking the target system in an attempt to pull this off. *Not to mention* could have adverse effects on our payload itself and or target process preformance. However, I will still briefly touch on the topic and have provided some resources for further reading if you are interested in learning more about it up above.
+
+&gt; Memory integrity is sometimes referred to as hypervisor-protected code integrity (HVCI) or hypervisor enforced code integrity, and was originally released as part of Device Guard. Device Guard is no longer used except to locate memory integrity and VBS settings in Group Policy or the Windows registry.
+
+CIG is a feature that is part of Windows Defender Application Control (WDAC) that uses virtualization-based security to prevent unsigned code from being loaded into the kernel. This is accomplished by using a hypervisor to create a virtualized environment for the kernel to run in. This virtualized environment is known as the hypervisor-enforced code integrity (HVCI) environment. 
+
+The HVCI environment is isolated from the rest of the system and is protected from any unsigned code that may be running on the system. This means that any unsigned code that attempts to run in the kernel will be blocked by the hypervisor. 
+
+This is a very powerful feature that can be used to prevent malicious code from running in the kernel. However, it is not without its drawbacks. For example, CIG is not compatible with all hardware and can cause system instability. Furthermore, it is not compatible with all versions of Windows 10, however it does seem to *mostly sorta work* on Windows 11.
+
+![](upload://4mMfosv8IovOA5vmSIq1cjvz8At.png)
+_Diagram of the HVCI compartmentalization_
+
+## RWX Operations
+
+In our example program we will use `VirtualAlloc()` and `VirtualProtect()`, however, there are several other Windows API functions you could use instead of these two in the code example:
+
+- VirtualAllocEx
+
+This allocates memory in another process. You can specify executable permissions:
+
+```c
+void* mem = VirtualAllocEx(hProcess, NULL, 1024, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+```
+
+- NtAllocateVirtualMemory
+
+Lower level API to allocate memory with RWX permissions:
+
+```c
+void* mem;
+NtAllocateVirtualMemory(GetCurrentProcess(), &amp;mem, 0, 1024, 
+  MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+```
+
+- VirtualProtectEx
+
+Changes permissions on an existing memory region in another process:
+
+```c 
+VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect, &amp;lpflOldProtect);
+```
+
+- NtProtectVirtualMemory
+
+Lower level API to modify protections on a memory region:
+
+```c
+HANDLE hProcess;
+void* baseAddress;
+
+NtProtectVirtualMemory(hProcess, &amp;baseAddress, &amp;size, 
+  newProtection, &amp;oldProtection);
+```
+
+- ZwProtectVirtualMemory
+
+Kernel-mode version of NtProtectVirtualMemory:
+
+```c
+ZwProtectVirtualMemory(hProcess, &amp;baseAddress, &amp;size,
+  newProtection, &amp;oldProtection);
+```
+
+So in summary, the key Windows API options for modifying page protections are VirtualProtect, VirtualAllocEx, and the Nt/Zw variants.
+
+&gt; Note: these are just a few of the possible RWX operations that can be used to modify memory protections. There are many more that can be used to accomplish the same task all the way from the high level Windows API, as well as, the lower level Nt/Zw API and its abstractions.
+
+## Downsides of ACG
+
+While Arbitrary Code Guard (ACG) provides strong mitigation against exploits, some may assume it completely prevents injecting arbitrary code into a protected process. This is a common misconception. Now you may be asking yourself, how can this be? How can we still inject arbitrary code into a protected process if ACG prevents making memory executable? Well smart reader, you raise a good point - if ACG prevents making memory executable, how can we still inject arbitrary code into a protected process?
+
+The key is that ACG only prevents a process from making its own memory executable. It does not restrict a remote process from allocating executable memory in the target process.
+
+Specifically, ACG allows calls like `VirtualAllocEx()` from remote processes to allocate memory with executable permissions in the target process. This allows injecting shellcode into the allocated memory region.
+
+Once allocated, the target process can execute this shellcode, even though ACG prevents it from marking its own memory executable.
+
+So in summary:
+
+- ACG prevents a process from making its own memory executable after-the-fact. Calls like VirtualProtect() will fail.
+
+- But ACG does not restrict other processes from allocating executable memory in the target process. 
+
+- This allows injecting arbitrary shellcode into the freshly allocated RWX memory.
+
+- The target process can then execute the injected shellcode, bypassing ACG&#39;s protections on its own memory.
+
+So ACG makes exploitation harder by preventing common techniques like marking stack/heap memory as executable. But it does not prevent the initial allocation of executable memory for shellcode injection.
+
+The tradeoff is allowing processes to allocate executable memory is required for legitimate functionality like just-in-time (JIT) compilers to work. ACG tries to strike a balance in increasing exploit difficulty while permitting necessary executable allocations.
+
+## But what about JIT compiled code?
+
+JIT engines need to generate executable code at runtime, which seems incompatible with ACG. Microsoft Edge handles this cleverly with a separate JIT process. The browser content runs in a protected process with ACG enabled. The JIT engine runs in a separate unprotected process called `MicrosoftEdgeCP.exe`. The JIT process allocates memory pages as read-write to allow generating code. These pages are mapped into the content process as read-execute, allowing the content process to run the JIT code while staying protected by ACG. So in summary, ACG forces attackers to rely on complex ROP techniques for their full shellcode. The separate JIT process pattern allows JIT compiled code while keeping ACG protection intact. These measures significantly raise the bar for exploit reliability and complexity.
+
+## Mitigating these downsides
+
+Exploit mitigation techniques like ACG aim to prevent attackers from easily executing arbitrary code during an exploitation attempt.
+
+A common exploit technique is to inject malicious shellcode into the target process&#39;s memory space. The attacker needs this memory to be writable so they can inject the code. However, they also need it to be executable to actually run the shellcode. 
+
+This is where DEP (Data Execution Prevention) comes in - it prevents code execution from memory regions marked as only writable. So attackers got around this using return-oriented programming (ROP) - chaining together snippets of existing executable code to build their payload. ROP is complex and tedious though. 
+
+An easier method is to change the permissions on the shellcode&#39;s memory page to make it executable after injecting it. The attacker can use API functions like `VirtualProtect()` to mark the page as executable. ACG blocks these attempts to change permissions. Any call to `VirtualProtect()` or similar to mark pages as executable will fail. Now the attacker has no choice but to fully ROP their exploit payload.
+
+## Implementation
+
+Ok, so now that we have some background information about how and what RWX is, as well as, a general understanding of ACG, lets get started with our RWX blocker program. We will start off by opening up Visual Studio and creating a new blank template project. I decided to name mine **ACG Program** but you can really put just about anything your heart desires. For this example I decided to use **C** programming language as I am fairly well versed and familiar with it but you can use any programming language you want as long as there is some sort of implementation that allows you to utilize the Windows API.
+
+Alright, now that we have a blank project open, lets get started with the code.
+
+&gt; For the sake of simplicity I will only be importing the windows.h header file and stdio.h for some basic information logging and error printouts. However, if you are planning on using this code in a larger project or in conjuction with other code or evasion techniques I will be covering later on, you may need to import other header files as well.
+
+### 1. Laying out the groundwork:
+
+In this initial step, we declare a pointer to a function and initialize it with the memory address returned by the `malloc()` function. This is just a dummy function that will be used later to demonstrate the `VirtualProtect()` function.
+
+```c
+// Dummy function pointer to use for VirtualProtect demo
+void* dummyFunction = (void*)malloc;
+```
+
+This next function tries to allocate some RWX memory using the `VirtualAlloc()` function with the `MEM_RESERVE | MEM_COMMIT` flags set, which reserve and commit the specified memory region. The `PAGE_EXECUTE_READWRITE` flag is also set to allow the memory to be both readable and writable as well as executable.
+
+If the allocation is successful, the memory address is printed to the console. The function then tries to update an existing memory page with RWX protection using the `VirtualProtect()` function. The `dummyFunction` pointer is used as the memory address to update, and the `4096` parameter specifies the size of the memory page being updated. If the protection update is successful, the memory address of the function is printed to the console.
+
+
+```c
+void rwxOperations() {
+    DWORD oldProtection;
+
+    // Let&#39;s try to allocate some RWX memory
+    void* mem = VirtualAlloc(0, 1024, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    if (mem == NULL) {
+        printf(&quot; |--- [-] Error allocating RWX memory\n&quot;);
+    }
+    else {
+        printf(&quot; |--- [+] RWX memory allocated: %p\n&quot;, mem);
+    }
+
+    // Let&#39;s also try a VirtualProtect to see if we can update an existing page to RWX
+    if (!VirtualProtect(dummyFunction, 4096, PAGE_EXECUTE_READWRITE, &amp;oldProtection)) {
+        printf(&quot; |--- [-] Error updating dummyFunction [%p] memory to RWX\n\n&quot;, dummyFunction);
+    }
+    else {
+        printf(&quot; |--- [+] dummyFunction [%p] memory updated to RWX\n\n&quot;, dummyFunction);
+    }
+}
+```
+
+### 2. Program entry point:
+
+We start off the entry point of the program by specifying;
+
+```c
+int main(void) {
+    // ...
+}   
+```
+This step defines the `main()` function the void keyword in the parentheses indicates that the function takes no arguments. 
+
+&gt; It is important to note that specifying void inside of the main paranthese is a debate that has been going on for a while now and is not required depending on your compiler or C version. However, it is still a good practice to include it as it makes the code more readable and easier to understand. You can read more about this in [this](https://stackoverflow.com/questions/3156423/why-dont-we-use-void-in-main) StackOverflow post.
+
+We also go ahead and declare a variable `c` to hold the value returned by the `getchar()` function. This is used to pause the program execution and wait for the user to make an input on their keyboard before continuing in order to help us demonstrate the process using process hacker.
+
+```c
+int c;
+```
+
+### 3. Configuring Process Mitigation Policy:
+
+First off we declare a `PROCESS_MITIGATION_DYNAMIC_CODE_POLICY` structure named `policy`.
+
+Here is what the structure internals look like in the Windows API:
+
+```c
+typedef struct _PROCESS_MITIGATION_DYNAMIC_CODE_POLICY {
+  union {
+    DWORD Flags;
+    struct {
+      DWORD ProhibitDynamicCode : 1;
+      DWORD AllowThreadOptOut : 1;
+      DWORD AllowRemoteDowngrade : 1;
+      DWORD AuditProhibitDynamicCode : 1;
+      DWORD ReservedFlags : 28;
+    } DUMMYSTRUCTNAME;
+  } DUMMYUNIONNAME;
+} PROCESS_MITIGATION_DYNAMIC_CODE_POLICY, *PPROCESS_MITIGATION_DYNAMIC_CODE_POLICY;
+```
+
+And here is what it looks like when we define the policy variable in our program:
+
+```c
+PROCESS_MITIGATION_DYNAMIC_CODE_POLICY policy;
+```
+
+We then use the `ZeroMemory()` function to zero out the memory allocated for the `policy` structure. This is necessary because the `SetProcessMitigationPolicy()` function requires the structure to be initialized to 0.
+
+```c
+ZeroMemory(&amp;policy, sizeof(policy));
+```
+
+After this we set the `policy.ProhibitDynamicCode` field to 1 to indicate that dynamic code creation should be prohibited and print out a message to the console indicating that the program has started.
+
+```c
+policy.ProhibitDynamicCode = 1;
+
+printf(&quot;Program started\n---------------\n&quot;);
+```
+
+### 4. Running the first RWX test (pre-mitigation policy):
+
+At this point in the program we now want to test out those two RWX functions we were talking about before. We start off by printing a message to the console and wait for the user to press a key before calling the `rwxOperations()` function to allocate and set RWX memory.
+
+```c
+printf(&quot;[*] Press a key to allocate and set RWX memory...\n&quot;);
+c = getchar();
+rwxOperations();
+```
+
+The output we get should look something like this:
+
+![](upload://d89NX9RZPDBlbOIZIjTY7ZMOtuA.png)
+_Terminal Output of the **first** RWX Test_
+
+### 5. Applying the mitigation policy:
+
+Ok so now we have made it to the part in the article where the actual magic happens, first off, we print a message to the console and wait for the user to make an input with their keyboard before calling the `SetProcessMitigationPolicy()` function to apply the `PROCESS_MITIGATION_DYNAMIC_CODE_POLICY` mitigation policy.
+
+Before we do this however, there is a very easy way to actually check if our policy is applied via an external process managing program called process hacker. Using process hacker. In this image below we can see that the `acg_program.exe` process has the &quot;DEP&quot; and &quot;ASLR&quot; policies applied that we touched on briefly [here](#mitigating-these-downsides) but does **not** have any mitigation policies against dynamic code execution.
+
+![](upload://najXzCDUwMfpI267mRWRPJaYl2u.png)
+_ACG Program running with **no** dynamic code prohibited policy_
+
+Now back to the code:
+
+```c
+printf(&quot;[*] Press a key to run SetProcessMitigationPolicy to apply PROCESS_MITIGATION_DYNAMIC_CODE_POLICY...\n&quot;);
+c = getchar();
+```
+
+Once the user has made an input we can use the `SetProcessMitigationPolicy()` function to apply the `PROCESS_MITIGATION_DYNAMIC_CODE_POLICY` mitigation policy. If the function call fails, an error message is printed to the console and the program returns 1 to indicate failure. If the function call is successful, a message is printed to the console indicating that the policy has been set.
+
+```c
+if (SetProcessMitigationPolicy(ProcessDynamicCodePolicy, &amp;policy, sizeof(policy)) == false) {
+    printf(&quot; |--- [-] SetProcessMitigationPolicy failed\n&quot;);
+    return 1; // Return 1 on failure
+}
+else {
+    printf(&quot; |--- [+] Process mitigation policy set\n\n&quot;);
+}
+```
+
+The terminal output should look something like this now:
+
+![](upload://d89NX9RZPDBlbOIZIjTY7ZMOtuA.png)
+_Terminal Output Once we Attempt to Apply the Policy_
+
+Now if we go back to process hacker and refresh the process list we can see that the `acg_program.exe` process still has the same &quot;DEP&quot; and &quot;ASLR&quot; policies applied, however, it now also has the `PROCESS_MITIGATION_DYNAMIC_CODE_POLICY` mitigation policy applied to it.
+
+![](upload://l6axV36nzlK86NTYnqhL4Mf2yqm.png)
+_ACG Program running **with** dynamic code prohibited policy_
+
+### 6. Running the second RWX test (post-mitigation policy):
+
+Now that the policy has been set can print a message to the console and wait for the user to press a key before calling the `rwxOperations()` function again to try and allocate and set RWX memory again. However, this time the operation should fail due to the dynamic code policy being in effect.
+
+```c
+printf(&quot;[*] Press a key to allocate and set RWX memory again (should fail due to the dynamic code policy)...\n&quot;);
+c = getchar();
+
+// Allocate and set RWX memory again (should fail due to the dynamic code policy)
+rwxOperations();
+```
+
+The output that we should be getting now should look something like this:
+
+![](upload://aOcpfBuTIUsfbr4WFjpiMBV2Jni.png)
+_Terminal Output of the **Second** RWX Test_
+
+### 7. Finishing the program and final thoughts:
+
+Finally, we can return 0 to indicate success and gracefully exit the program.
+
+```c
+return 0; // Return 0 on success
+```
+
+Now that we have finished our program, lets compile it and see what happens when we try to run it.
+
+![](upload://mwnaR2finco3h4mcsRSmt35Fi5b.gif)
+_Recording of Full Program Usage_
+
+## Conclusion:
+
+In this article, we built a program that demonstrates how to allocate and set RWX memory in Windows using the `VirtualAlloc()` function and how to apply the `PROCESS_MITIGATION_DYNAMIC_CODE_POLICY` mitigation policy to prohibit the creation of dynamic code. The `dummyFunction` pointer and the `VirtualProtect()` function are used to demonstrate updating the protection of an existing memory page to RWX.
+We learnt about what exactly ACG really is, how it works, its downfalls, and how we can use it to our advantage to protect our programs from malicious threat actors.
+This example program demonstrates just *one* possible way to help improve your projects evasion level in a secure enviroment and how to implement process creation mitigation policies. However we also discoverd that we can effectively protect a program from more threat actors by conjoining multiple of these policies together.
+As I mentioned multiple times before this is only the beginning. In my next project I will be exploring a more *advanced* technique known as DLL patching and how we can also use this technique to bypass AV/EDR hooks and evade detection in a much *quieter* and *effective* way. I hope you enjoyed this article and I will see you in the next one!
+(This article is copied down from my website which has much better formatting and layout that you can find [here](https://44.is-a.dev/posts/Blocking-Operations-On-Executable-Memory-Pages/))</description>
+    
+    <lastBuildDate>Tue, 25 Jul 2023 15:10:43 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Mitigating Program Tampering and Bypassing AV/EDR Through Blocking Operations on Executable Memory Pages</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113/4</link>
+        <pubDate>Thu, 23 Nov 2023 18:23:55 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36113-4</guid>
+        <source url="https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113.rss">Mitigating Program Tampering and Bypassing AV/EDR Through Blocking Operations on Executable Memory Pages</source>
+      </item>
+      <item>
+        <title>Mitigating Program Tampering and Bypassing AV/EDR Through Blocking Operations on Executable Memory Pages</title>
+        <dc:creator><![CDATA[9xN]]></dc:creator>
+        <description><![CDATA[
+            <p>I do not understand what you are trying to say? Why would anyone post anything here other than a collection of links? If you are trying saying what I think you are I republished this from my website but provided a back-link in order to provide a gateway and possibly gain more attention on my main service as I probably will not be doing the same for future articles as I am working through copyright and licensing issues regarding protecting my research on certain topics.</p>
+<p>Good day.</p>
+          <p><a href="https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113/3</link>
+        <pubDate>Tue, 25 Jul 2023 15:10:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36113-3</guid>
+        <source url="https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113.rss">Mitigating Program Tampering and Bypassing AV/EDR Through Blocking Operations on Executable Memory Pages</source>
+      </item>
+      <item>
+        <title>Mitigating Program Tampering and Bypassing AV/EDR Through Blocking Operations on Executable Memory Pages</title>
+        <dc:creator><![CDATA[9xN]]></dc:creator>
+        <description><![CDATA[
+            <p>This article is a continuation in a multi-part evasion technique series to bypass antivirus (AV) and endpoint detection and response (EDR) systems. This method, unlike the last one discussed <a href="https://44.is-a.dev/posts/Building-A-DLL-Blocker/" rel="noopener nofollow ugc">here</a>, imposes a different strategy that can also help protect against reverse engineering efforts made by blue team analysts. Similarly to other methods discussed in this series, this concept can also apply to aid in protecting legitimate processes againt several different code execution strategies used by modern day state of the art malicious software.<br>
+(This article is copied down from my website which has much better formatting and layout that you can find <a href="https://44.is-a.dev/posts/Blocking-Operations-On-Executable-Memory-Pages/" rel="noopener nofollow ugc">here</a>)</p>
+<hr>
+Table of Contents <a href="https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113/1">(click for more details)</a>
+<h2><a name="introduction-1" class="anchor" href="https://0x00sec.org#introduction-1"></a>Introduction</h2>
+<p>The widespread use of DLL loading/injection in programs, including instances where these DLLs are signed by reputable entities like Microsoft, (the weakness of our <a href="https://44.is-a.dev/posts/Building-A-DLL-Blocker/" rel="noopener nofollow ugc">last approach</a>) highlights the need for more robust and adaptable mitigation strategies. This is particularly important in the context of malware development, where such strategies can serve as potent countermeasures against detection of our meticulously crafted payloads and or target processes. By combining this technique with our <a href="https://44.is-a.dev/posts/Building-A-DLL-Blocker/" rel="noopener nofollow ugc">previous approach</a>, we can effectively protect against a myriad of threat actors rather than just one.</p>
+<p><a href="https://mermaid.live/edit#pako:eNptUl1P6zAM_StRnjoJtvddCals3eVK3UAFxiTCQ25i1mitUyUpHwL-O04zBpPoQ-vY55zaJ37jymrgU_7Y2GdVSxdYWQmsinWx-psJXsETOA-swK1BACdQ8NFQv6ouvwEGt-zG2mZy5ezWyXYA5etiXhEkX08oEMjoyUrZo6rBM4vMB_pf340GdNSr8uW94F8amM0sBmnQs6VsjDK29wtiB2MxG_0h2sOBtvi3yssj7p0J9a886h5a-wR6ct5YtaPvHAKoADopLm5Xs2JTzEjtd3o2t9Q_2sDgBVQfIPHKnIgXsR9iXsfR2MENKvv-P8Vdzaq7DbuPr8sOnAzW-YfkzeAXS3G6gEMcVdNBGwdDK6wqUwZQ73GkeXp69i74rac76aQCdmHtTghcGzJaNnlDE8cZBBZBjcdjwd_Z3sGk8T1ElDqu7Q8_C4PtR9UhQ5AX9uUjP-EtuFYaTWv2FsGChxpaEHxKoZZuJ7jAD8LJPtjrV1R8GlwPJ7zvtAwwNzK6yKePsvGUBW3ItWXa22F9Pz4B0nzmRg" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/f/8/f8a698e0dfb2fa3242396f21bd14c722f65a89b2.png" alt="" data-base62-sha1="ztFlq31pQhWOdip3l3LZuhQA3Yu" role="presentation" width="690" height="237"></a></p>
+<p>In this article, we will explore the technique of using Arbitrary Code Guard (ACG) and breifly touch on Code Integrity Guard (CIG) to block operations on executable memory pages to bypass AVs/EDRs, as well as, some reverse engineering methods and advanced debugger programs (also can be used to prevent malware from hooking onto, and nesting itself inside of legitimate programs as well). Pretty much, our program can effectively prevent the execution of dynamically generated code. By doing so, we not only secure the front door but also the windows, the back door, and even the chimney, making life as difficult as possible for any possible threat actors.<br>
+For our demonstration we will be,</p>
+<ol>
+<li>Attempting to allocate new memory with executable permissions, and</li>
+<li>Attempting to make existing memory with executable permissions writable.<br>
+In order to accomplish these tasks we will use the <code>VirtualAlloc()</code>, as well as, <code>VirtualProtect()</code> functions from the Windows API to simulate a read-write-execute (RWX) operation from an AV/EDR in an example program called <strong>acg_program.exe</strong>. Without wasting anymore time lets get started!</li>
+</ol>
+<blockquote>
+<p>I was originally intending on including CIG as one of the main methods discussed in this article but upon further research the use cases on specific threat actors is partically refined and this can be a very <em>noisy</em> and might break your system as it is not compatible on certain hardware and messes around with Windows Registry settings using virtualization and sandboxing. However, if you are interested in learning more about these topics, I recommend checking out the following articles:</p>
+</blockquote>
+<ul>
+<li><a href="https://learn.microsoft.com/en-us/windows/security/application-security/application-control/introduction-to-device-guard-virtualization-based-security-and-windows-defender-application-control" rel="noopener nofollow ugc">Microsoft Documentation information on what CIG does and can be used for</a></li>
+<li><a href="https://learn.microsoft.com/en-us/windows/security/hardware-security/enable-virtualization-based-protection-of-code-integrity" rel="noopener nofollow ugc">Microsoft Documentation for enabling such protection</a></li>
+</ul>
+<blockquote>
+<p>All of the source code for this article is available on <a href="https://github.com/9xN/Blocking-Operations-On-Executable-Memory-Pages" rel="noopener nofollow ugc">GitHub</a></p>
+</blockquote>
+<h2><a name="overview-2" class="anchor" href="https://0x00sec.org#overview-2"></a>Overview</h2>
+<p>One such technique commonly employed by AV/EDR products is the implementation of userspace hooks around critical functions. However, these hooks often rely on the ability to modify existing executable pages, necessitating the use of functions such as the aforementioned <code>VirtualProtect()</code> to update memory protection. More so, a malicious, or more intrusive threat actor might even try to allocate memory with <code>VirtualAlloc()</code> to then use later on to run arbitrary code. By blocking operations on executable memory pages and restricting the creation of RWX pages, we can potentially render even a Microsoft-signed DLL ineffective.</p>
+<p><a href="https://mermaid.live/edit#pako:eNptksFO4zAQhl_F8ikV0N6LtFIU0oKUFhS2BQlzMPa0sXDGke3ssgLefSdxKSCRQzSe-edz5s-8cuU08DnfWfdXNdJHVtUC63JbrpeZ4DX8AR-Albg3COAFCj4Z6zf19afA4J79ds7Obrzbe9mOonxbXtQkybczCgQyerJK9qgaCMwhC5Hu67vJqB54db56EPyDgSfEKJaz4mopMCscRmkwsJW0RhnXhwWRonGYTc4J8XhELK7WefWVk92Z2PzYJ3CDrdNmZ0AnxmKzLsr7sqD-nxsIZi2DF1B9hNRT5dR0OdxOXbfDUOzoA5VD_0Rx17D67p49DK_rDryMzofH5MroFEtxsv4YD9R00MbD-BmsrlIGUB90xDw7e2Fvgm8C_Y5OKmCXzj0LgVtDHkubW-vUMIDAMqrpdCr4GzsYliCfUxDr1_fa4fC1MLr8rTpmRsmHifyUt-BbaTRt2OsgFjw20ILgcwq19M-CC3wnneyju_2His-j7-GU952WES6MHGzk8520gbKgDdm2Sis7bu77f1H644w" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/8/9/892431cc2ce168ab2eca79ee86e791fe681501bc.png" alt="" data-base62-sha1="jzcXvGIx9g0T4BZ7kecXdjHude4" role="presentation" width="690" height="242"></a></p>
+<h2><a name="a-foreword-on-code-integrity-guard-cig-3" class="anchor" href="https://0x00sec.org#a-foreword-on-code-integrity-guard-cig-3"></a>A foreword on Code Integrity Guard (CIG)</h2>
+<p>As mentioned in the introduction, I was originally going to include CIG in conjuction with ACG but its <em>just not stable enough</em> and <em>not worth the risk</em> of breaking the target system in an attempt to pull this off. <em>Not to mention</em> could have adverse effects on our payload itself and or target process preformance. However, I will still briefly touch on the topic and have provided some resources for further reading if you are interested in learning more about it up above.</p>
+<blockquote>
+<p>Memory integrity is sometimes referred to as hypervisor-protected code integrity (HVCI) or hypervisor enforced code integrity, and was originally released as part of Device Guard. Device Guard is no longer used except to locate memory integrity and VBS settings in Group Policy or the Windows registry.</p>
+</blockquote>
+<p>CIG is a feature that is part of Windows Defender Application Control (WDAC) that uses virtualization-based security to prevent unsigned code from being loaded into the kernel. This is accomplished by using a hypervisor to create a virtualized environment for the kernel to run in. This virtualized environment is known as the hypervisor-enforced code integrity (HVCI) environment.</p>
+<p>The HVCI environment is isolated from the rest of the system and is protected from any unsigned code that may be running on the system. This means that any unsigned code that attempts to run in the kernel will be blocked by the hypervisor.</p>
+<p>This is a very powerful feature that can be used to prevent malicious code from running in the kernel. However, it is not without its drawbacks. For example, CIG is not compatible with all hardware and can cause system instability. Furthermore, it is not compatible with all versions of Windows 10, however it does seem to <em>mostly sorta work</em> on Windows 11.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/1/e/1e9bdba4ab38ae2755d385f604cfe202864138ed.png" data-download-href="/uploads/short-url/4mMfosv8IovOA5vmSIq1cjvz8At.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/1/e/1e9bdba4ab38ae2755d385f604cfe202864138ed_2_690x367.png" alt="" data-base62-sha1="4mMfosv8IovOA5vmSIq1cjvz8At" role="presentation" width="690" height="367" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/1/e/1e9bdba4ab38ae2755d385f604cfe202864138ed_2_690x367.png, https://0x00sec.s3.amazonaws.com/original/3X/1/e/1e9bdba4ab38ae2755d385f604cfe202864138ed.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/1/e/1e9bdba4ab38ae2755d385f604cfe202864138ed.png 2x" data-dominant-color="819DB0"></a></div><br>
+<em>Diagram of the HVCI compartmentalization</em><p></p>
+<h2><a name="rwx-operations-4" class="anchor" href="https://0x00sec.org#rwx-operations-4"></a>RWX Operations</h2>
+<p>In our example program we will use <code>VirtualAlloc()</code> and <code>VirtualProtect()</code>, however, there are several other Windows API functions you could use instead of these two in the code example:</p>
+<ul>
+<li>VirtualAllocEx</li>
+</ul>
+<p>This allocates memory in another process. You can specify executable permissions:</p>
+<pre><code class="lang-c">void* mem = VirtualAllocEx(hProcess, NULL, 1024, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+</code></pre>
+<ul>
+<li>NtAllocateVirtualMemory</li>
+</ul>
+<p>Lower level API to allocate memory with RWX permissions:</p>
+<pre><code class="lang-c">void* mem;
+NtAllocateVirtualMemory(GetCurrentProcess(), &amp;mem, 0, 1024, 
+  MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+</code></pre>
+<ul>
+<li>VirtualProtectEx</li>
+</ul>
+<p>Changes permissions on an existing memory region in another process:</p>
+<pre><code class="lang-c">VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect, &amp;lpflOldProtect);
+</code></pre>
+<ul>
+<li>NtProtectVirtualMemory</li>
+</ul>
+<p>Lower level API to modify protections on a memory region:</p>
+<pre><code class="lang-c">HANDLE hProcess;
+void* baseAddress;
+
+NtProtectVirtualMemory(hProcess, &amp;baseAddress, &amp;size, 
+  newProtection, &amp;oldProtection);
+</code></pre>
+<ul>
+<li>ZwProtectVirtualMemory</li>
+</ul>
+<p>Kernel-mode version of NtProtectVirtualMemory:</p>
+<pre><code class="lang-c">ZwProtectVirtualMemory(hProcess, &amp;baseAddress, &amp;size,
+  newProtection, &amp;oldProtection);
+</code></pre>
+<p>So in summary, the key Windows API options for modifying page protections are VirtualProtect, VirtualAllocEx, and the Nt/Zw variants.</p>
+<blockquote>
+<p>Note: these are just a few of the possible RWX operations that can be used to modify memory protections. There are many more that can be used to accomplish the same task all the way from the high level Windows API, as well as, the lower level Nt/Zw API and its abstractions.</p>
+</blockquote>
+<h2><a name="downsides-of-acg-5" class="anchor" href="https://0x00sec.org#downsides-of-acg-5"></a>Downsides of ACG</h2>
+<p>While Arbitrary Code Guard (ACG) provides strong mitigation against exploits, some may assume it completely prevents injecting arbitrary code into a protected process. This is a common misconception. Now you may be asking yourself, how can this be? How can we still inject arbitrary code into a protected process if ACG prevents making memory executable? Well smart reader, you raise a good point - if ACG prevents making memory executable, how can we still inject arbitrary code into a protected process?</p>
+<p>The key is that ACG only prevents a process from making its own memory executable. It does not restrict a remote process from allocating executable memory in the target process.</p>
+<p>Specifically, ACG allows calls like <code>VirtualAllocEx()</code> from remote processes to allocate memory with executable permissions in the target process. This allows injecting shellcode into the allocated memory region.</p>
+<p>Once allocated, the target process can execute this shellcode, even though ACG prevents it from marking its own memory executable.</p>
+<p>So in summary:</p>
+<ul>
+<li>
+<p>ACG prevents a process from making its own memory executable after-the-fact. Calls like VirtualProtect() will fail.</p>
+</li>
+<li>
+<p>But ACG does not restrict other processes from allocating executable memory in the target process.</p>
+</li>
+<li>
+<p>This allows injecting arbitrary shellcode into the freshly allocated RWX memory.</p>
+</li>
+<li>
+<p>The target process can then execute the injected shellcode, bypassing ACG’s protections on its own memory.</p>
+</li>
+</ul>
+<p>So ACG makes exploitation harder by preventing common techniques like marking stack/heap memory as executable. But it does not prevent the initial allocation of executable memory for shellcode injection.</p>
+<p>The tradeoff is allowing processes to allocate executable memory is required for legitimate functionality like just-in-time (JIT) compilers to work. ACG tries to strike a balance in increasing exploit difficulty while permitting necessary executable allocations.</p>
+<h2><a name="but-what-about-jit-compiled-code-6" class="anchor" href="https://0x00sec.org#but-what-about-jit-compiled-code-6"></a>But what about JIT compiled code?</h2>
+<p>JIT engines need to generate executable code at runtime, which seems incompatible with ACG. Microsoft Edge handles this cleverly with a separate JIT process. The browser content runs in a protected process with ACG enabled. The JIT engine runs in a separate unprotected process called <code>MicrosoftEdgeCP.exe</code>. The JIT process allocates memory pages as read-write to allow generating code. These pages are mapped into the content process as read-execute, allowing the content process to run the JIT code while staying protected by ACG. So in summary, ACG forces attackers to rely on complex ROP techniques for their full shellcode. The separate JIT process pattern allows JIT compiled code while keeping ACG protection intact. These measures significantly raise the bar for exploit reliability and complexity.</p>
+<h2><a name="mitigating-these-downsides-7" class="anchor" href="https://0x00sec.org#mitigating-these-downsides-7"></a>Mitigating these downsides</h2>
+<p>Exploit mitigation techniques like ACG aim to prevent attackers from easily executing arbitrary code during an exploitation attempt.</p>
+<p>A common exploit technique is to inject malicious shellcode into the target process’s memory space. The attacker needs this memory to be writable so they can inject the code. However, they also need it to be executable to actually run the shellcode.</p>
+<p>This is where DEP (Data Execution Prevention) comes in - it prevents code execution from memory regions marked as only writable. So attackers got around this using return-oriented programming (ROP) - chaining together snippets of existing executable code to build their payload. ROP is complex and tedious though.</p>
+<p>An easier method is to change the permissions on the shellcode’s memory page to make it executable after injecting it. The attacker can use API functions like <code>VirtualProtect()</code> to mark the page as executable. ACG blocks these attempts to change permissions. Any call to <code>VirtualProtect()</code> or similar to mark pages as executable will fail. Now the attacker has no choice but to fully ROP their exploit payload.</p>
+<h2><a name="implementation-8" class="anchor" href="https://0x00sec.org#implementation-8"></a>Implementation</h2>
+<p>Ok, so now that we have some background information about how and what RWX is, as well as, a general understanding of ACG, lets get started with our RWX blocker program. We will start off by opening up Visual Studio and creating a new blank template project. I decided to name mine <strong>ACG Program</strong> but you can really put just about anything your heart desires. For this example I decided to use <strong>C</strong> programming language as I am fairly well versed and familiar with it but you can use any programming language you want as long as there is some sort of implementation that allows you to utilize the Windows API.</p>
+<p>Alright, now that we have a blank project open, lets get started with the code.</p>
+<blockquote>
+<p>For the sake of simplicity I will only be importing the windows.h header file and stdio.h for some basic information logging and error printouts. However, if you are planning on using this code in a larger project or in conjuction with other code or evasion techniques I will be covering later on, you may need to import other header files as well.</p>
+</blockquote>
+<h3><a name="h-1-laying-out-the-groundwork-9" class="anchor" href="https://0x00sec.org#h-1-laying-out-the-groundwork-9"></a>1. Laying out the groundwork:</h3>
+<p>In this initial step, we declare a pointer to a function and initialize it with the memory address returned by the <code>malloc()</code> function. This is just a dummy function that will be used later to demonstrate the <code>VirtualProtect()</code> function.</p>
+<pre><code class="lang-c">// Dummy function pointer to use for VirtualProtect demo
+void* dummyFunction = (void*)malloc;
+</code></pre>
+<p>This next function tries to allocate some RWX memory using the <code>VirtualAlloc()</code> function with the <code>MEM_RESERVE | MEM_COMMIT</code> flags set, which reserve and commit the specified memory region. The <code>PAGE_EXECUTE_READWRITE</code> flag is also set to allow the memory to be both readable and writable as well as executable.</p>
+<p>If the allocation is successful, the memory address is printed to the console. The function then tries to update an existing memory page with RWX protection using the <code>VirtualProtect()</code> function. The <code>dummyFunction</code> pointer is used as the memory address to update, and the <code>4096</code> parameter specifies the size of the memory page being updated. If the protection update is successful, the memory address of the function is printed to the console.</p>
+<pre><code class="lang-c">void rwxOperations() {
+    DWORD oldProtection;
+
+    // Let's try to allocate some RWX memory
+    void* mem = VirtualAlloc(0, 1024, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    if (mem == NULL) {
+        printf(" |--- [-] Error allocating RWX memory\n");
+    }
+    else {
+        printf(" |--- [+] RWX memory allocated: %p\n", mem);
+    }
+
+    // Let's also try a VirtualProtect to see if we can update an existing page to RWX
+    if (!VirtualProtect(dummyFunction, 4096, PAGE_EXECUTE_READWRITE, &amp;oldProtection)) {
+        printf(" |--- [-] Error updating dummyFunction [%p] memory to RWX\n\n", dummyFunction);
+    }
+    else {
+        printf(" |--- [+] dummyFunction [%p] memory updated to RWX\n\n", dummyFunction);
+    }
+}
+</code></pre>
+<h3><a name="h-2-program-entry-point-10" class="anchor" href="https://0x00sec.org#h-2-program-entry-point-10"></a>2. Program entry point:</h3>
+<p>We start off the entry point of the program by specifying;</p>
+<pre><code class="lang-c">int main(void) {
+    // ...
+}   
+</code></pre>
+<p>This step defines the <code>main()</code> function the void keyword in the parentheses indicates that the function takes no arguments.</p>
+<blockquote>
+<p>It is important to note that specifying void inside of the main paranthese is a debate that has been going on for a while now and is not required depending on your compiler or C version. However, it is still a good practice to include it as it makes the code more readable and easier to understand. You can read more about this in <a href="https://stackoverflow.com/questions/3156423/why-dont-we-use-void-in-main" rel="noopener nofollow ugc">this</a> StackOverflow post.</p>
+</blockquote>
+<p>We also go ahead and declare a variable <code>c</code> to hold the value returned by the <code>getchar()</code> function. This is used to pause the program execution and wait for the user to make an input on their keyboard before continuing in order to help us demonstrate the process using process hacker.</p>
+<pre><code class="lang-c">int c;
+</code></pre>
+<h3><a name="h-3-configuring-process-mitigation-policy-11" class="anchor" href="https://0x00sec.org#h-3-configuring-process-mitigation-policy-11"></a>3. Configuring Process Mitigation Policy:</h3>
+<p>First off we declare a <code>PROCESS_MITIGATION_DYNAMIC_CODE_POLICY</code> structure named <code>policy</code>.</p>
+<p>Here is what the structure internals look like in the Windows API:</p>
+<pre><code class="lang-c">typedef struct _PROCESS_MITIGATION_DYNAMIC_CODE_POLICY {
+  union {
+    DWORD Flags;
+    struct {
+      DWORD ProhibitDynamicCode : 1;
+      DWORD AllowThreadOptOut : 1;
+      DWORD AllowRemoteDowngrade : 1;
+      DWORD AuditProhibitDynamicCode : 1;
+      DWORD ReservedFlags : 28;
+    } DUMMYSTRUCTNAME;
+  } DUMMYUNIONNAME;
+} PROCESS_MITIGATION_DYNAMIC_CODE_POLICY, *PPROCESS_MITIGATION_DYNAMIC_CODE_POLICY;
+</code></pre>
+<p>And here is what it looks like when we define the policy variable in our program:</p>
+<pre><code class="lang-c">PROCESS_MITIGATION_DYNAMIC_CODE_POLICY policy;
+</code></pre>
+<p>We then use the <code>ZeroMemory()</code> function to zero out the memory allocated for the <code>policy</code> structure. This is necessary because the <code>SetProcessMitigationPolicy()</code> function requires the structure to be initialized to 0.</p>
+<pre><code class="lang-c">ZeroMemory(&amp;policy, sizeof(policy));
+</code></pre>
+<p>After this we set the <code>policy.ProhibitDynamicCode</code> field to 1 to indicate that dynamic code creation should be prohibited and print out a message to the console indicating that the program has started.</p>
+<pre><code class="lang-c">policy.ProhibitDynamicCode = 1;
+
+printf("Program started\n---------------\n");
+</code></pre>
+<h3><a name="h-4-running-the-first-rwx-test-pre-mitigation-policy-12" class="anchor" href="https://0x00sec.org#h-4-running-the-first-rwx-test-pre-mitigation-policy-12"></a>4. Running the first RWX test (pre-mitigation policy):</h3>
+<p>At this point in the program we now want to test out those two RWX functions we were talking about before. We start off by printing a message to the console and wait for the user to press a key before calling the <code>rwxOperations()</code> function to allocate and set RWX memory.</p>
+<pre><code class="lang-c">printf("[*] Press a key to allocate and set RWX memory...\n");
+c = getchar();
+rwxOperations();
+</code></pre>
+<p>The output we get should look something like this:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/5/c/5c08583e13409a6935f3ce33d0996059d0a8fb6c.png" data-download-href="/uploads/short-url/d89NX9RZPDBlbOIZIjTY7ZMOtuA.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/5/c/5c08583e13409a6935f3ce33d0996059d0a8fb6c_2_690x129.png" alt="" data-base62-sha1="d89NX9RZPDBlbOIZIjTY7ZMOtuA" role="presentation" width="690" height="129" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/5/c/5c08583e13409a6935f3ce33d0996059d0a8fb6c_2_690x129.png, https://0x00sec.s3.amazonaws.com/original/3X/5/c/5c08583e13409a6935f3ce33d0996059d0a8fb6c.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/5/c/5c08583e13409a6935f3ce33d0996059d0a8fb6c.png 2x" data-dominant-color="373C43"></a></div><br>
+<em>Terminal Output of the <strong>first</strong> RWX Test</em><p></p>
+<h3><a name="h-5-applying-the-mitigation-policy-13" class="anchor" href="https://0x00sec.org#h-5-applying-the-mitigation-policy-13"></a>5. Applying the mitigation policy:</h3>
+<p>Ok so now we have made it to the part in the article where the actual magic happens, first off, we print a message to the console and wait for the user to make an input with their keyboard before calling the <code>SetProcessMitigationPolicy()</code> function to apply the <code>PROCESS_MITIGATION_DYNAMIC_CODE_POLICY</code> mitigation policy.</p>
+<p>Before we do this however, there is a very easy way to actually check if our policy is applied via an external process managing program called process hacker. Using process hacker. In this image below we can see that the <code>acg_program.exe</code> process has the “DEP” and “ASLR” policies applied that we touched on briefly <a href="https://0x00sec.org#mitigating-these-downsides">here</a> but does <strong>not</strong> have any mitigation policies against dynamic code execution.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/a/2/a25cb36b47d2f92cb5263e158085574a0086ff4e.png" data-download-href="/uploads/short-url/najXzCDUwMfpI267mRWRPJaYl2u.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/a/2/a25cb36b47d2f92cb5263e158085574a0086ff4e.png" alt="" data-base62-sha1="najXzCDUwMfpI267mRWRPJaYl2u" role="presentation" width="690" height="461" data-dominant-color="E9EDE8"></a></div><br>
+<em>ACG Program running with <strong>no</strong> dynamic code prohibited policy</em><p></p>
+<p>Now back to the code:</p>
+<pre><code class="lang-c">printf("[*] Press a key to run SetProcessMitigationPolicy to apply PROCESS_MITIGATION_DYNAMIC_CODE_POLICY...\n");
+c = getchar();
+</code></pre>
+<p>Once the user has made an input we can use the <code>SetProcessMitigationPolicy()</code> function to apply the <code>PROCESS_MITIGATION_DYNAMIC_CODE_POLICY</code> mitigation policy. If the function call fails, an error message is printed to the console and the program returns 1 to indicate failure. If the function call is successful, a message is printed to the console indicating that the policy has been set.</p>
+<pre><code class="lang-c">if (SetProcessMitigationPolicy(ProcessDynamicCodePolicy, &amp;policy, sizeof(policy)) == false) {
+    printf(" |--- [-] SetProcessMitigationPolicy failed\n");
+    return 1; // Return 1 on failure
+}
+else {
+    printf(" |--- [+] Process mitigation policy set\n\n");
+}
+</code></pre>
+<p>The terminal output should look something like this now:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/5/c/5c08583e13409a6935f3ce33d0996059d0a8fb6c.png" data-download-href="/uploads/short-url/d89NX9RZPDBlbOIZIjTY7ZMOtuA.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/5/c/5c08583e13409a6935f3ce33d0996059d0a8fb6c_2_690x129.png" alt="" data-base62-sha1="d89NX9RZPDBlbOIZIjTY7ZMOtuA" role="presentation" width="690" height="129" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/5/c/5c08583e13409a6935f3ce33d0996059d0a8fb6c_2_690x129.png, https://0x00sec.s3.amazonaws.com/original/3X/5/c/5c08583e13409a6935f3ce33d0996059d0a8fb6c.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/5/c/5c08583e13409a6935f3ce33d0996059d0a8fb6c.png 2x" data-dominant-color="373C43"></a></div><br>
+<em>Terminal Output Once we Attempt to Apply the Policy</em><p></p>
+<p>Now if we go back to process hacker and refresh the process list we can see that the <code>acg_program.exe</code> process still has the same “DEP” and “ASLR” policies applied, however, it now also has the <code>PROCESS_MITIGATION_DYNAMIC_CODE_POLICY</code> mitigation policy applied to it.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/9/3/93e034b669df8fce47cc42b3458300eb2bd4704a.png" data-download-href="/uploads/short-url/l6axV36nzlK86NTYnqhL4Mf2yqm.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/3X/9/3/93e034b669df8fce47cc42b3458300eb2bd4704a.png" alt="" data-base62-sha1="l6axV36nzlK86NTYnqhL4Mf2yqm" role="presentation" width="690" height="473" data-dominant-color="EAF0F0"></a></div><br>
+<em>ACG Program running <strong>with</strong> dynamic code prohibited policy</em><p></p>
+<h3><a name="h-6-running-the-second-rwx-test-post-mitigation-policy-14" class="anchor" href="https://0x00sec.org#h-6-running-the-second-rwx-test-post-mitigation-policy-14"></a>6. Running the second RWX test (post-mitigation policy):</h3>
+<p>Now that the policy has been set can print a message to the console and wait for the user to press a key before calling the <code>rwxOperations()</code> function again to try and allocate and set RWX memory again. However, this time the operation should fail due to the dynamic code policy being in effect.</p>
+<pre><code class="lang-c">printf("[*] Press a key to allocate and set RWX memory again (should fail due to the dynamic code policy)...\n");
+c = getchar();
+
+// Allocate and set RWX memory again (should fail due to the dynamic code policy)
+rwxOperations();
+</code></pre>
+<p>The output that we should be getting now should look something like this:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/4/b/4bc271fb227f2208085f3726a3ba2433c45c1438.png" data-download-href="/uploads/short-url/aOcpfBuTIUsfbr4WFjpiMBV2Jni.png?dl=1" title="" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/4/b/4bc271fb227f2208085f3726a3ba2433c45c1438_2_690x220.png" alt="" data-base62-sha1="aOcpfBuTIUsfbr4WFjpiMBV2Jni" role="presentation" width="690" height="220" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/4/b/4bc271fb227f2208085f3726a3ba2433c45c1438_2_690x220.png, https://0x00sec.s3.amazonaws.com/original/3X/4/b/4bc271fb227f2208085f3726a3ba2433c45c1438.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/4/b/4bc271fb227f2208085f3726a3ba2433c45c1438.png 2x" data-dominant-color="353841"></a></div><br>
+<em>Terminal Output of the <strong>Second</strong> RWX Test</em><p></p>
+<h3><a name="h-7-finishing-the-program-and-final-thoughts-15" class="anchor" href="https://0x00sec.org#h-7-finishing-the-program-and-final-thoughts-15"></a>7. Finishing the program and final thoughts:</h3>
+<p>Finally, we can return 0 to indicate success and gracefully exit the program.</p>
+<pre><code class="lang-c">return 0; // Return 0 on success
+</code></pre>
+<p>Now that we have finished our program, lets compile it and see what happens when we try to run it.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/9/d/9dd8ab634154474c71452cb18f7950ad6f42a571.gif" alt="" data-base62-sha1="mwnaR2finco3h4mcsRSmt35Fi5b" role="presentation" width="690" height="356" class="animated"><br>
+<em>Recording of Full Program Usage</em></p>
+<h2><a name="conclusion-16" class="anchor" href="https://0x00sec.org#conclusion-16"></a>Conclusion:</h2>
+<p>In this article, we built a program that demonstrates how to allocate and set RWX memory in Windows using the <code>VirtualAlloc()</code> function and how to apply the <code>PROCESS_MITIGATION_DYNAMIC_CODE_POLICY</code> mitigation policy to prohibit the creation of dynamic code. The <code>dummyFunction</code> pointer and the <code>VirtualProtect()</code> function are used to demonstrate updating the protection of an existing memory page to RWX.<br>
+We learnt about what exactly ACG really is, how it works, its downfalls, and how we can use it to our advantage to protect our programs from malicious threat actors.<br>
+This example program demonstrates just <em>one</em> possible way to help improve your projects evasion level in a secure enviroment and how to implement process creation mitigation policies. However we also discoverd that we can effectively protect a program from more threat actors by conjoining multiple of these policies together.<br>
+As I mentioned multiple times before this is only the beginning. In my next project I will be exploring a more <em>advanced</em> technique known as DLL patching and how we can also use this technique to bypass AV/EDR hooks and evade detection in a much <em>quieter</em> and <em>effective</em> way. I hope you enjoyed this article and I will see you in the next one!<br>
+(This article is copied down from my website which has much better formatting and layout that you can find <a href="https://44.is-a.dev/posts/Blocking-Operations-On-Executable-Memory-Pages/" rel="noopener nofollow ugc">here</a>)</p>
+          <p><a href="https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113/1</link>
+        <pubDate>Tue, 25 Jul 2023 02:23:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36113-1</guid>
+        <source url="https://0x00sec.org/t/mitigating-program-tampering-and-bypassing-av-edr-through-blocking-operations-on-executable-memory-pages/36113.rss">Mitigating Program Tampering and Bypassing AV/EDR Through Blocking Operations on Executable Memory Pages</source>
+      </item>
+  </channel>
+</rss>

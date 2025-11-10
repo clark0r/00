@@ -1,0 +1,410 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>RE guide for beginners : bypassing SIGTRAP</title>
+    <link>https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648</link>
+    <description>Hi fellas, 
+
+Following my last article, [RE for beginners: Methodology and tools](https://0x00sec.org/t/re-guide-for-beginners-methodology-and-tools/2242?u=nitrax), I decided to do this write up in order to present you another common issue that people, exercising in this area, should be quickly confronted to, anti-debugger technologies.
+
+For the sake of this article, I picked a challenge, which will not be disclosed in this paper, to show you how to bypass SIGTRAP anti-debugging technique.
+
+## What is SIGTRAP
+
+Softwares use handlers to intercept signals such as SIGINT, SIGSTOP, SIGTRAP, etc, during their execution flow. This functionality allows them to catch errors, CTRL+C, etc.
+
+&gt; The SIGTRAP signal is sent to a process when an exception (or trap) occurs: a condition that a debugger has requested to be informed of — for example, when a particular function is executed, or when a particular variable changes value.
+&gt; Source: https://en.wikipedia.org/wiki/Unix_signal
+
+Indeed, debuggers use this signal to set their breakpoints. Consequently, it can be used as debugger detection by the software which will exit when triggered.
+
+## How to detect it ?
+
+The first hint of its presence is really obvious. Indeed, by simply running the binary under GDB, the execution flow stop, showing that this behaviour is due to an emitted SIGTRAP signal.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/2/297dac5adc93688cdd59953f791317287c763de1.png&quot; width=&quot;446&quot; height=&quot;500&quot;&gt;
+
+In the other hand, it is possible to guess its presence by looking for handlers within the binary. It could be a hard coded function or a function call. As you can see on the picture below, in this case, **sigaction** is used as a handler and **kill** to emit the signal.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/477af0f33a9fae794b1d2cbb38125cf1d18787d5.png&quot; width=&quot;690&quot; height=&quot;144&quot;&gt;
+
+Once detected, we have to follow the execution flow, break into each function till we know where the signal is emitted. 
+
+&gt; Note: For the relevance of this article, the analysis phase will be not further demonstrated.
+
+## Bypassing methods
+
+So here we are, we know where the signal is triggered but, how can we bypass this security measure? After several hours of reflexion, I came to the assumption that three methods could allow us to work around this type of shielding.
+
+### Method 1: Patching
+
+Well, this method could seem quite trivial but, who cares …?, it works perfectly and this is just what we want. Due to the fact that, according to our prior research, the **strlen** call is the source of our hassles, why simply don’t overwrite it?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/9/921e1eb179ae1b612bac6f1386e3421e02aeb922.png&quot; width=&quot;506&quot; height=&quot;157&quot;&gt;
+
+As you can see on the picture above, the return value of the **strlen** call is compared to 0x15. Consequently, if we override the function by returning the exact same value, we should be able to bypass the SIGTRAP triggering without changing the software behaviour.
+
+Here is the piece of assembly required for the patch:
+
+```assembly
+
+mov eax, 0x15
+ret
+```
+
+Pretty simple right? Now, the execution flow works like a charm within our favourite debugger :)
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/dc880d7af4cb7b651b90486c10cd28fcf80fd12b.png&quot; width=&quot;497&quot; height=&quot;92&quot;&gt;
+
+### Method 2: Registers manipulation
+
+Patching is not the only way to bypass this security measure. Indeed, we can play around the different registers to jump above the **strlen** call, avoiding the SIGTRAP emission. 
+
+First of all, let’s break to the address preceding the function call.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/75f2ccb87e3e355abecb20d37b017d21f598ab9b.png&quot; width=&quot;469&quot; height=&quot;500&quot;&gt;
+
+Now, the following steps are very easy:
+
+1. Increment the **$PC** register to step over the **strlen** call. PC or, Program Counter, represents the next instruction to be executed. By setting this register to 0x8048756, we bypass the intermediary opcodes and consequently, the SIGTRAP emission.
+2. Set the **$EAX** register to 0x15 to validate the comparison.
+3. Break on the comparison instruction at 0x8048756.
+
+That’s all, we continue the execution and ABRACADABRA, the SIGTRAP is shunted.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/054635aab2b00965fa9bd16bf7ec03300228d717.png&quot; width=&quot;500&quot; height=&quot;482&quot;&gt;
+
+**EDIT: The following method is quite shaky. Feel free to read it for your own curiosity.**
+
+[spoiler]
+### Method 3: LD_PRELOAD
+
+Despite the methods above, I was not particularly satisfied with myself and I decided to go further. I wanted to bypass this security measure without having to patch the binary or influencing its execution flow. That is when I thought about LD_PRELOAD.
+
+#### What is it ?
+
+Long story short, softwares use libraries to access functions e.g. printf, strlen, sigaction, kill, etc. Those libraries can be loaded at the compilation time or at runtime. When loading at runtime, we face to dynamic linking. This point of failure is used by a bunch of malware that hooks function calls by replacing legit libraries. This is exactly what we will exploit to bypass this anti-debugging technique.
+
+#### Identify the function responsible of the signal emission
+
+No fancy tools or technique are required to identify potential calls to libraries. The command strings should get you all the information needed.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/9/9da0bd3cb19f2e92dece414fb1c87999971ddd45.png&quot; width=&quot;317&quot; height=&quot;212&quot;&gt;
+
+Now, we have to run our favourite debugger and find which call cause the SIGTRAP.
+
+Binary ninja users:
+
+Click on the right bottom select menu and chose linear disassembly. Afterward, scroll down to reach the last sections and you should see each function call to the libc as well as their address. That information will certainly speed up your recon phase.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/b/b080345057849954cb8f359bac3dd45dfaf90f8a.png&quot; width=&quot;478&quot; height=&quot;179&quot;&gt;
+
+**Investigation results:**
+
+* **Sigaction** is used as handler
+* **Kill** emit the signal
+
+Perfect, now it’s time to override it.
+
+&gt; Note: For the rest of this article, I used a small and easy challenge that I have created for the following POC. Indeed, the binary used above must have another security measure that prevents me to properly exploit this vulnerability. I must be close to finding why and how it works, however, by a lack of time, I chose to demonstrate it on my proper binary, using the same calls to the libc. The sample is available below: 
+
+&gt; cat input.txt | base64 -d | gunzip &gt; preloadMe &amp;&amp; chmod +x preloadMe
+
+&gt; H4sIAJthUlkAA8VafWxb1RW/dr5p4pjSsrRl1OkKSwdx06+QlpXG+XzpkrakLnSj6ePFfolNHds8
+P7dJNbYWkzITwjKpQtUE2yRAGxpI9I9tBbYRlKp8jE2BgVZpMHmDTkkJWjZYlfER79z37rHfu35v
+RdOk3cg+7/zuOeeee+7HO/c6327v7nA6HARLEbmFUO5Ymc43M3x+VU4EsCZSAd+rybWkFPgSgxxP
+FxxmWp5rh5Bi+DQ5dZ6n1xAzdRhoCbEvJ6vMlBBPTo/6ep7h56s8JjrB2j3lNOs5md4805tn8kgz
+zLEM179i9vEzezxtI2ZazOieC2qQPj+yROd5eoCYKerdCnql5PMXN6O9rD27uNQxf5HiOKyPhPsb
+N6+PBOsj4WhyuH64qbG+cbM3EfNu1HxyM9nOXfs0eYyjh/m8jOhzgNY/+dvjpyduVV9+q/1x36M/
+qPhd17sP/MTB9PMz8/OVAYIjV9jfpRb4Zhu81gb32+A9NnidDX6vjZ/LbeS/ZyO/xEb+CRv5lTby
+t8BnjQVOYJwDdFgbiTwcVkk8qSbIoXAkQhKqEkzGKYnIUZIID8pDcXUkIav0WQqo4ViUiGJgWBIH
+wlEpEj4qU9nAUBxQalRMqJKiikNSGOS6/D1iUFbkwXBClRV/T2skFpX9Un9EBunBoViUSYtE3HlY
+7GVyrREpkZATurqlcmd3V0uruNG70btF747T8EcMH1z2Du0vvz6SK8MVtP4FxuO6wHV+jD1kOLyZ
+PdzpNuPIT1frtJSY5/h5A27c5zIGvNyAzxjwKwz4vAGvNOALBtxlwGuYX3TbdxpwjwEvMuB1BrzY
+gDcYcON+1GTAywx4swGvMOCCAV9iwPcY8CqjfGquXBgrqarwEGF0UnVmp4XU2fIpkt2yBqDsdWvh
+u3p1MzxRPkRVZjNZKNetpDwdgtlpjV9KeRqC2UmNv4LytOuzz2i8k/K0y7M/0viPy4GnQzU7ofH/
+oDzt+uwxjb9IeerubFzj7wV+YAL93vBBV/r1g0L6L0Lqvfk9/u7xkm3QljBeNeWkZPsl8Cy73As6
+H1WvbtOg08AI4yWU7BPWLQjpC0JqwXV4OXR/sUzvfkVfNjOgyfdN0V4PeKtX36fHaXz73Zr+lrt0
+/UWq/+JikZCeF16c2SE4zgmvL6o1YOx1ZqxSN6br8/aOba8FOyT5ZSG1/cegACbTF9RKYWy7E/CZ
+KujxjABffedKFqDa8WGhP1IJtJPaQZJLZg+CpO43tN/F2p+lJrPTfbPNUEufQaceojPTsJjNauty
+5sQiq0nNudP3fJq651OnWjJDx3PilSlDBWhWU81Ln6FmN9P0+fcKx+fcxdSjkiwEXUi3Z15qn6NC
+z9Ov93enzzsmHefT7XNj7XPdgYww1p4R0i/NvAq2uraePbwUgWcBSM04dEEhMK3hjunqn7uFwNR3
+TpZkPoH6KUfqk2XfekoYH6UsVXsD1ITjZ6kLd/gO9GluU5/OQOPpX3VnqdTPaAjAwXUaN7pH43SS
+miynVg58loOe0+KbPvcCnZwzV0HF2Cg1A1LTi1Rq+w7o58zFT7PZX1MRPSA3UANjo81oc6xm5m0q
+nf4TNf8BCI9OJl2gvI0qPw38+5XAfZVyPwTujNbq8bOU3tE35bvdd5svnfXt88Hcvm6giM658XpK
+93alL3Wl3+ped0Fbuy9+VjRzE+gLox+ong1/xPnRnb7Ynb7UBhayy94WIGzC1neSF+navqPPd8DX
+5zvoE6cm8vPpwym2F2irn+6t+m62LyENyts83vVxRY7EpGCP7InDy+NITAkSfyzm6ZeCXq/Xs62O
+rUupPxCUBwZD4bsORYaisfjdSkJNHj4yPHK0YcPGTZu3NN7UtFXraSwy4gnEjnhqPXu7Ov29vj2e
+I/B29PTLHlUJDw7COy0IdS2KFJA9I7GkkpAjA55acrsMQkF4T3mGJFWuJV3RQExR5ICad4s4VhXd
+vJ/o+3obzJLHgb4J9DWg7wFVgS6D4XoPqBdoMYxBJ9C1QENA24AuAo0APQtjeBLoZhjXtx16/kWL
+42gvcQy7Hasqy8onHGVuitOcOwT2bzDsr9byhKxl8qc+hrVGBVzuDlfNzuolR8qPkR0rb/7KprVr
+UF/LdcGu8f1FdWkuWwdDT3MT4nO5Tzhbq0oN9d+EzxqoX2Gs94MDrP4R+KyC+loLferfL6kc1D9s
+rN/5YFGq2Hm/bkWXo3F8AOTOGeWEVJHzWZTS+1AJ/a6DuMoUaHG5v+tscdU8VNTu8owXt7jqHiwR
+XA0nSgVXU6qsx9WsuJp8rgafq67F5QE5kG9xlWvx8IOdPWDH+L79XxXMS5rLzbiDo5gbvMwChu/U
+N1kysYLxmPfgMRDNrmQU859ruPp/LmZjlOK5CnMaD0sacJzOsHrMYX7DKL77axhdbu5OPidheQHG
+cpJRnLeYc3wB/Ss14w0lZr/PM4o5CbYP0zdGDKKLjHcz/SzjMb7zjJ9j/f0X44251P+z4DmWL5dY
+fEpZgK5m9HpGGxntYPQ2RgeMyR3J57udra3bPHVtcn9YinoavZu8DfUbmtbpT56NDRtuatiyofEy
+vhZBVJssFksRjLrfEi8iqiVebDjnG/GS3Dw046W5+WrGy3LjasbLc/PBjFfk5pkZvyI3H834kty6
+NOOVJGOJV5F4mRXuyt3nmPHq3Do3426SscSvzN1DmPGlZMESvyq3b5jxZbn9wowvh4zRCr/acp4W
+wWrGc5QZr8ntB2Z8Bdlvia8kIUt8VQFG13Ux+XuWxyu1ukL/6f7phPg/w8V/FcPnOdzLcH7fbtPs
+5/3E/WWv9lwYz6PMzjHOzglNvnBcnrDpl11/n9LqlpKJKjP+HLGOA7Gxo71rwR/e/z9odgrHPcPk
+ef8/1L4L52epg9opnA/XOOg9iItMs3mOy/5Gh/W9ydMaXjh/BIf1fco3bPC7HfRuYUXBfLteky9c
+j8M2dh60wX/K7PN+nrGRf80Gv2ATh48Av9K5IrevY3E4afTz+wZui26ntf01Tj3+dzJ5meFvUB2Y
+53HO/mk2XriPYW66kdl5l83zWoZvc+p2+Dh3MPnvsxf7OYZ/jeHPMDuY19zqtI6DzORfZfKYJx2y
+6e89Tj1uvD9pG/uP2dj5hdP6nu5GTb7wffF75mcx6+/DWBFQVDjRDAx4A0QUd7b2it1de/2iSPK3
+cKI6JAboVVoCJIIxcTAS65ciYlCNKQlRSg6TQGwoHpFVOeht3Nq4yVqIXv6FRUlRpBFRjqrKCBlQ
+pCFZDCaHhkZAxcCJIKmaROndoOZfR6+vp11s39VGLwA1b/HZpBMkYtvXd/l6ulrNNdrdIUCdu/aJ
+7QKzJrT1ErGze3eLr1vc3dGxt90v+n0t3e0i3k8GEknN+/94O0nvQ5ubjdeMudtPMyzKQUmV2HUp
+V8Xfh/LVVJN1Qr9CLWgR7155TfPVqRhMxMSQFA3Sa9Wu3VARDEfFZEIOale6ll7RKNBQEl1PAbw/
+kWDeaJe3SXq0tryXjUtw3NXujXnTEEMcQtu7W/2Cmdc0Xiib6wblqKzAYVrMn6C9iZEhVeoHqio6
+DeFTOArtxYk3GlNlr6+lq16VBhk3GE16+5PhSLA+HCQaF5ISIeINjkTBnk5VRa85LCsJetNtZESo
+U+SIRAXZUzyi0iYhjPTROxiDB1Uehm9thnmVmDY7vHKIrYhQUMlzuqo+mXUNfL4roGj+SEPhAKFm
+9ZZ0YzBOxAuLdAhWk8WW8V8VmrfQnADfl3a/22Hhf7/5EjHfMfO/i3k4eT693sDpY36PdO1l9Gke
+dQnOYKiP54BTnP+YpnPpE9lF9DMp6uN5AWmIdRjv9VEfz4+3Ef3sh/p4rkCK514sfPwOEv2Mifp4
+/kB6Lee/k6OHiH5mRR7PKUg9xNp/LDSvLDbYw/MMUjw38/HD/t/H9FuwvtRMJw36NRb6D5H8b7m0
+4PsOKZ7vsfDjn+b08RyFdIKTd3P0JKeP5y2kfLx4/lFOH/MZpL3cxYDbzJLHOH3MF5FWcPJ8/58k
+5vWL+RrS5y/j/2lO3+73abv2X+D08dyI9BFuwvPtv0L0360wTPnfq63lyzn6FnyqDfp47sh8Tv0/
+M/9RH885M5fRx/JXoo8d6uf/n4D5Y9g/jPo4D05x7eP5d7pa5xsu4//fOP3cuYg1sP8y+gucPp4z
+9rvNfvL6WBYZhvqYD4fc1vL8/lfk0DG+n6h/vY2+kVrdt04w/RBbh1+Ez3pSuP9UGHw3lgW28Vzg
+jPP+X2mj/w47cFRyCvz/P/wbYvJXNbAjAAA=
+
+#### Function overriding
+
+Thanks to our previous researches, we know that the function **kill** is used to emit the signal. We are going to redefine it in order to intercept the function call.
+
+An easy way to get the function prototype is to look on the associated man. In our case:
+
+&gt; int kill(pid_t pid, int sig);
+
+```C
+#define _GNU_SOURCE
+
+#include &lt;dlfcn.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;stdio.h&gt;
+
+/*
+The following lines aim to load the original kill function in order to properly send signals to the software. 
+Signals are a big deal and could mess up the internal behaviours. 
+That is why I chose to only ignore the SIGTRAP signal and pass the others as planned to the binary.
+*/
+int kill(pid_t pid, int sig) {
+
+    int (*org_kill)(pid_t, int);
+
+    org_kill = (int(*)(pid_t, int)) dlsym(RTLD_NEXT, &quot;kill&quot;);
+
+    if (sig == SIGTRAP) {
+        printf(&quot;Get SIGTRAP \tpid: %d\n&quot;, pid);
+    } else {
+        org_kill(pid, sig);
+    }
+
+    return 0;
+}
+```
+
+#### Shared library compilation and testing
+
+&gt; gcc -shared  -ldl -fPIC -o sigtrap.so  sigtrap.c
+
+**Without LD_PRELOAD:**
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/47dbc82ffcceb0d64c8d1080ed41fe2b782b017f.png&quot; width=&quot;341&quot; height=&quot;46&quot;&gt;
+
+**With LD_PRELOAD:**
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/3c9045d558be5676961e1f49bc2149f0c7e20b34.png&quot; width=&quot;512&quot; height=&quot;58&quot;&gt;
+
+Well, it seems to work pretty well. It’s time to fire up gdb.
+
+**Without LD_PRELOAD:**
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/35390248a3a435c84ed245f141b982c7341eb86a.png&quot; width=&quot;477&quot; height=&quot;500&quot;&gt;
+
+**With LD_PRELOAD:**
+
+To set up LD_PRELOAD in gdb, use the following command:
+
+&gt; set exec-wrapper env &quot;LD_PRELOAD=LIBRARY_PATH”
+
+Keep in mind to not use set env LD_PRELOAD cause it will affect gdb too.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/b/b9af822d792403bd03c52beef5492d05989435be.png&quot; width=&quot;338&quot; height=&quot;115&quot;&gt;
+
+Here we are! We have successfully bypassed the SIGTRAP signal without patching or interacting with the binary.
+
+&gt; Note: Feel free to RE the binary provided above :) Nothing complicated :P
+
+**EDIT: Thanks to the @0x00pf feedback&#39;s. I realised why this method didn’t work with the original challenge. Indeed, the binary must check that the signal is well handled by itself and not by a debugger. In fact, when SIGTRAP is emitted under gdb, the debugger will handle the signal instead of the binary, making fail the additional check and stop the execution flow …**
+
+**Consequently, LD_PRELOAD cannot be used to bypass SIGTRAP … sorry for the misinformation. However, the section above is still explaining how LD_PRELOAD work and this method could certainly be used in another scenario.**
+
+**Thanks for your comprehension.**
+
+[/spoiler]
+
+## Conclusion
+
+This paper shows a few methods to bypass SIGTRAP security measure. Some of them are more glamour than others however, they all allow to solve our problem. Keep in mind that, in reverse engineering, all that matter is to pown, whatever how you did it!
+
+[QUOTE]
+As would say my guru @_py
+
+The point is to work smarter, not harder ;)
+[/QUOTE]</description>
+    
+    <lastBuildDate>Wed, 25 Oct 2017 15:12:32 +0000</lastBuildDate>
+    <category>Reverse Engineering</category>
+    <atom:link href="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>RE guide for beginners : bypassing SIGTRAP</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/6</link>
+        <pubDate>Thu, 26 Oct 2017 22:26:20 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2648-6</guid>
+        <source url="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648.rss">RE guide for beginners : bypassing SIGTRAP</source>
+      </item>
+      <item>
+        <title>RE guide for beginners : bypassing SIGTRAP</title>
+        <dc:creator><![CDATA[jame]]></dc:creator>
+        <description><![CDATA[
+            <p>(post withdrawn by author, will be automatically deleted in 24 hours unless flagged)</p>
+          <p><a href="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/4</link>
+        <pubDate>Wed, 25 Oct 2017 15:10:59 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2648-4</guid>
+        <source url="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648.rss">RE guide for beginners : bypassing SIGTRAP</source>
+      </item>
+      <item>
+        <title>RE guide for beginners : bypassing SIGTRAP</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi <a class="mention" href="https://0x00sec.org/u/jame">@jame</a>,</p>
+<p>It seems that you have found the binary that I used as example in this article <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"> You must be able to resolve this challenge by just following the instructions carefully above.</p>
+<aside class="quote no-group" data-username="jame" data-post="2" data-topic="2648">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/letter_avatar_proxy/v4/letter/j/73ab20/40.png" class="avatar"> jame:</div>
+<blockquote>
+<p>I don’t get how you found the code responsible for the raising the signal .</p>
+</blockquote>
+</aside>
+<p>The piece of code, triggering the SIGTRAP signal, could be detected by<br>
+meticulously setting breakpoints on each instruction till the signal is triggered <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"><br>
+Patience is the cornerstone of any decent reverser !</p>
+<aside class="quote no-group" data-username="jame" data-post="2" data-topic="2648">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/letter_avatar_proxy/v4/letter/j/73ab20/40.png" class="avatar"> jame:</div>
+<blockquote>
+<p>This is the IDA part pointing to initial strlen but how is it raising the signal for SIGTRAP , isn’t it normally exiting the program ?</p>
+</blockquote>
+</aside>
+<p>The program will definitely exit when running within a debugger. I can, unfortunately, not get the binary atm. I will try later and give a closer look about how the signal is triggered through the strlen call <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> This answer will be edited once done.</p>
+<h2>My adivse</h2>
+<p>Patch the strlen function and don’t forget to apply your changes on the binary (it seems obvious but it could explain why it didn’t work the first time).</p>
+<p>You can still contact me in PM if needed.</p>
+<p>Hope it helped.</p>
+<p>Best,<br>
+Nitrax</p>
+          <p><a href="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/3</link>
+        <pubDate>Wed, 25 Oct 2017 15:06:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2648-3</guid>
+        <source url="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648.rss">RE guide for beginners : bypassing SIGTRAP</source>
+      </item>
+      <item>
+        <title>RE guide for beginners : bypassing SIGTRAP</title>
+        <dc:creator><![CDATA[jame]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi <a class="mention" href="https://0x00sec.org/u/nitrax">@Nitrax</a> !</p>
+<p>Good writeup .<br>
+I read your previous post too, <a href="https://0x00sec.org/t/re-guide-for-beginners-methodology-and-tools/2242/5">RE guide for beginners methodology and tools </a>.<br>
+However , I don’t get how you found the code responsible for the <strong>raising the signal</strong> .</p>
+<p>I am doing this same question ( I know you haven’t revealed the question name <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"> ) but I don’t understand how you bypassed the SIGTRAP.</p>
+<p>I have tried NOPing the <strong>kill</strong> signal but that didn’t work ( that would be obvious, since I am asking on this post  ).</p>
+<p>Can you please describe as to how to proceed with that ?</p>
+<p>And since both of your methods depend on the knowledge that <strong>strlen</strong> is responsible for <strong>SIGTRAP</strong> , so I am kinda stuck <img src="https://0x00sec.org/images/emoji/twitter/disappointed.png?v=9" title=":disappointed:" class="emoji" alt=":disappointed:"></p>
+<p>This is the IDA part pointing to initial <strong>strlen</strong> but how is it raising the signal for <strong>SIGTRAP</strong> , isn’t it normally exiting the program ?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/f/f7a151dbd333f50460d6a661363ccbf9070a7aa6.png" width="690" height="388"></p>
+          <p><a href="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/2</link>
+        <pubDate>Wed, 25 Oct 2017 13:18:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2648-2</guid>
+        <source url="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648.rss">RE guide for beginners : bypassing SIGTRAP</source>
+      </item>
+      <item>
+        <title>RE guide for beginners : bypassing SIGTRAP</title>
+        <dc:creator><![CDATA[Nitrax]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi fellas,</p>
+<p>Following my last article, <a href="https://0x00sec.org/t/re-guide-for-beginners-methodology-and-tools/2242">RE for beginners: Methodology and tools</a>, I decided to do this write up in order to present you another common issue that people, exercising in this area, should be quickly confronted to, anti-debugger technologies.</p>
+<p>For the sake of this article, I picked a challenge, which will not be disclosed in this paper, to show you how to bypass SIGTRAP anti-debugging technique.</p>
+<h2>What is SIGTRAP</h2>
+<p>Softwares use handlers to intercept signals such as SIGINT, SIGSTOP, SIGTRAP, etc, during their execution flow. This functionality allows them to catch errors, CTRL+C, etc.</p>
+<blockquote>
+<p>The SIGTRAP signal is sent to a process when an exception (or trap) occurs: a condition that a debugger has requested to be informed of — for example, when a particular function is executed, or when a particular variable changes value.<br>
+Source: <a href="https://en.wikipedia.org/wiki/Unix_signal" rel="noopener nofollow ugc">https://en.wikipedia.org/wiki/Unix_signal</a></p>
+</blockquote>
+<p>Indeed, debuggers use this signal to set their breakpoints. Consequently, it can be used as debugger detection by the software which will exit when triggered.</p>
+<h2>How to detect it ?</h2>
+<p>The first hint of its presence is really obvious. Indeed, by simply running the binary under GDB, the execution flow stop, showing that this behaviour is due to an emitted SIGTRAP signal.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/297dac5adc93688cdd59953f791317287c763de1.png" width="446" height="500"></p>
+<p>In the other hand, it is possible to guess its presence by looking for handlers within the binary. It could be a hard coded function or a function call. As you can see on the picture below, in this case, <strong>sigaction</strong> is used as a handler and <strong>kill</strong> to emit the signal.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/4/477af0f33a9fae794b1d2cbb38125cf1d18787d5.png" width="690" height="144"></p>
+<p>Once detected, we have to follow the execution flow, break into each function till we know where the signal is emitted.</p>
+<blockquote>
+<p>Note: For the relevance of this article, the analysis phase will be not further demonstrated.</p>
+</blockquote>
+<h2>Bypassing methods</h2>
+<p>So here we are, we know where the signal is triggered but, how can we bypass this security measure? After several hours of reflexion, I came to the assumption that three methods could allow us to work around this type of shielding.</p>
+<h3>Method 1: Patching</h3>
+<p>Well, this method could seem quite trivial but, who cares …?, it works perfectly and this is just what we want. Due to the fact that, according to our prior research, the <strong>strlen</strong> call is the source of our hassles, why simply don’t overwrite it?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/9/921e1eb179ae1b612bac6f1386e3421e02aeb922.png" width="506" height="157"></p>
+<p>As you can see on the picture above, the return value of the <strong>strlen</strong> call is compared to 0x15. Consequently, if we override the function by returning the exact same value, we should be able to bypass the SIGTRAP triggering without changing the software behaviour.</p>
+<p>Here is the piece of assembly required for the patch:</p>
+<pre><code class="lang-auto">
+mov eax, 0x15
+ret
+</code></pre>
+<p>Pretty simple right? Now, the execution flow works like a charm within our favourite debugger <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/d/dc880d7af4cb7b651b90486c10cd28fcf80fd12b.png" width="497" height="92"></p>
+<h3>Method 2: Registers manipulation</h3>
+<p>Patching is not the only way to bypass this security measure. Indeed, we can play around the different registers to jump above the <strong>strlen</strong> call, avoiding the SIGTRAP emission.</p>
+<p>First of all, let’s break to the address preceding the function call.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/75f2ccb87e3e355abecb20d37b017d21f598ab9b.png" width="469" height="500"></p>
+<p>Now, the following steps are very easy:</p>
+<ol>
+<li>Increment the <strong>$PC</strong> register to step over the <strong>strlen</strong> call. PC or, Program Counter, represents the next instruction to be executed. By setting this register to 0x8048756, we bypass the intermediary opcodes and consequently, the SIGTRAP emission.</li>
+<li>Set the <strong>$EAX</strong> register to 0x15 to validate the comparison.</li>
+<li>Break on the comparison instruction at 0x8048756.</li>
+</ol>
+<p>That’s all, we continue the execution and ABRACADABRA, the SIGTRAP is shunted.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/0/054635aab2b00965fa9bd16bf7ec03300228d717.png" width="500" height="482"></p>
+<p><strong>EDIT: The following method is quite shaky. Feel free to read it for your own curiosity.</strong></p>
+<div class="spoiler"><a href="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/1">spoiler</a></div>
+<h2>Conclusion</h2>
+<p>This paper shows a few methods to bypass SIGTRAP security measure. Some of them are more glamour than others however, they all allow to solve our problem. Keep in mind that, in reverse engineering, all that matter is to pown, whatever how you did it!</p>
+<aside class="quote no-group">
+<blockquote>
+<p>As would say my guru <a class="mention" href="https://0x00sec.org/u/_py">@_py</a></p>
+<p>The point is to work smarter, not harder <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+</blockquote>
+</aside>
+          <p><a href="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648/1</link>
+        <pubDate>Tue, 27 Jun 2017 17:38:17 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-2648-1</guid>
+        <source url="https://0x00sec.org/t/re-guide-for-beginners-bypassing-sigtrap/2648.rss">RE guide for beginners : bypassing SIGTRAP</source>
+      </item>
+  </channel>
+</rss>

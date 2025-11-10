@@ -1,0 +1,1952 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Heap Safari - Thread Local Caching</title>
+    <link>https://d.clarkee.co.uk/t/heap-safari-thread-local-caching/5054</link>
+    <description>### `Introduction`
+
+Hello folks, I hope you&#39;re doing great! Today&#39;s topic will be once again heap exploitation related. In fact, we&#39;ll be going over the recent updates of glibc&#39;s heap allocator, **`(pt)malloc`**, which I&#39;ve researched/reversed lately and decided to present them to you since there is barely any info out there. I emphasize [glibc](https://www.gnu.org/software/libc/) because in reality, heap implementations are libc/OS/hardware/browser specific. **`ptmalloc`** is a pretty common heap allocator on Linux distros (not all) and more importantly in CTFs ;) Specifically, today&#39;s focus will be revolved around the so called **`tcache`** structure, which is  a thread caching mechanism used to speed up malloc/free and is enforced **by default** (i.e Ubuntu 17.10 and up).
+
+---
+
+### `Required Knowledge`
+
+```makefile
+1) Pointer Gymnastics
+2) ELF Loading Process
+3) Linux Memory Organization
+4) Familiarity with Heap Exploitation
+5) Will
+6) Patience
+```
+
+The last two are a must, the rest can be bypassed if there&#39;s enough of the former. The 4th point however, is too hard to be bypassed. As much as I&#39;d love to explain heap&#39;s internals from the very beginning, the following dudes have been in the game long before I joined and I don&#39;t want to take credits for what they&#39;ve contributed.
+
+* [Understanding glibc malloc](https://sploitfun.wordpress.com/2015/02/10/understanding-glibc-malloc/)
+* [Heap Exploitation](https://heap-exploitation.dhavalkapil.com/introduction.html)
+
+* [Understanding the heap by breaking it](http://www.blackhat.com/presentations/bh-usa-07/Ferguson/Whitepaper/bh-usa-07-ferguson-WP.pdf)
+
+They give a pretty decent high level overview of the heap management. However, what they provide can never be enough, you gotta dive into assembly with your debugger and figure it out on your own.
+
+---
+
+### `Setup`
+
+* Ubuntu 17.10 x64 -- I recommend using [vagrant](https://app.vagrantup.com/bento/boxes/ubuntu-17.10). It&#39;s fast, minimal and gets the job done for this kind of research.
+
+* gdb -- No gdb, no fun! I personally use [peda](https://github.com/longld/peda) but you&#39;re free to use whatever flavour pleases you the most.
+
+* Source &amp; Debug symbols -- Even though this isn&#39;t a must, every Reverse Engineer wakes up and goes to bed wishing that there were debug symbols available for whatever he/she might be reversing. That being said, here&#39;s the Linux (user-space) heap debugging starter pack.
+
+```makefile
+sudo apt-get install glibc-source
+sudo apt-get install libc6-dbg
+sudo tar xf /usr/src/glibc/glibc-2.26.tar.xz
+
+```
+
+Inside your gdb prompt type the following:
+
+```makefile
+gdb-peda$ directory /usr/src/glibc/glibc-2.26/
+gdb-peda$ b __libc_malloc
+gdb-peda$ b _int_malloc
+gdb-peda$ b _int_free
+```
+
+The above gdb commands will display the source code of the debugee function while you&#39;re stepping through it. How sweet is that?! If you want to look at the full source code while debugging, open up **`/usr/src/glibc/glibc-2.26/malloc/malloc.c`** in your favorite text editor and join in.
+
+---
+**Note:** _Before, we begin I&#39;d like to note that for the rest of this write-up I won&#39;t be referring to the allocator as **`malloc`**. The reason being the fact that in the glibc world, **`malloc`** isn&#39;t just one function, but a package of functions responsible for handling dynamically allocated chunks. You&#39;ll see what I mean as we go through the reversing process. Even if you have no prior exposure to heap exploitation, I&#39;ll try to make my explanations as visual as possible. Without further ado, let the fun begin!_
+
+---
+
+### `__libc_malloc`
+
+Assuming that you&#39;ve looked up the above resources, but even if you didn&#39;t, you should know that when your program calls **`malloc`**, in reality **`__libc_malloc`** gets invoked. 
+
+```c
+void *
+__libc_malloc (size_t bytes)
+{
+  mstate ar_ptr;
+  void *victim;
+
+  void *(*hook) (size_t, const void *)
+    = atomic_forced_read (__malloc_hook);
+  if (__builtin_expect (hook != NULL, 0))
+    return (*hook)(bytes, RETURN_ADDRESS (0));
+#if USE_TCACHE
+  /* int_free also calls request2size, be careful to not pad twice.  */
+  size_t tbytes;
+  checked_request2size (bytes, tbytes);
+  size_t tc_idx = csize2tidx (tbytes);
+
+  MAYBE_INIT_TCACHE ();
+
+  DIAG_PUSH_NEEDS_COMMENT;
+  if (tc_idx &lt; mp_.tcache_bins
+      /*&amp;&amp; tc_idx &lt; TCACHE_MAX_BINS*/ /* to appease gcc */
+      &amp;&amp; tcache
+      &amp;&amp; tcache-&gt;entries[tc_idx] != NULL)
+    {
+      return tcache_get (tc_idx);
+    }
+  DIAG_POP_NEEDS_COMMENT;
+#endif
+
+  if (SINGLE_THREAD_P)
+    {
+      victim = _int_malloc (&amp;main_arena, bytes);
+      assert (!victim || chunk_is_mmapped (mem2chunk (victim)) ||
+	      &amp;main_arena == arena_for_chunk (mem2chunk (victim)));
+      return victim;
+    }
+
+  arena_get (ar_ptr, bytes);
+
+  victim = _int_malloc (ar_ptr, bytes);
+  /* Retry with another arena only if we were able to find a usable arena
+     before.  */
+  if (!victim &amp;&amp; ar_ptr != NULL)
+    {
+      LIBC_PROBE (memory_malloc_retry, 1, bytes);
+      ar_ptr = arena_get_retry (ar_ptr, bytes);
+      victim = _int_malloc (ar_ptr, bytes);
+    }
+
+  if (ar_ptr != NULL)
+    __libc_lock_unlock (ar_ptr-&gt;mutex);
+
+  assert (!victim || chunk_is_mmapped (mem2chunk (victim)) ||
+          ar_ptr == arena_for_chunk (mem2chunk (victim)));
+  return victim;
+}
+libc_hidden_def (__libc_malloc)
+```
+
+The **very first** call to **`malloc`** will actually go through the following code path:
+
+```c
+if (__builtin_expect (hook != NULL, 0))
+    return (*hook)(bytes, RETURN_ADDRESS (0));
+```
+
+What **`__libc_malloc`** does is to check for the content of the global function pointer variable know as **`__malloc_hook`**. 
+
+```makefile
+gdb-peda$ x/gx &amp;__malloc_hook
+0x7ffff7dcfc10 &lt;__malloc_hook&gt;:	0x00007ffff7a82830
+gdb-peda$ x/5i 0x00007ffff7a82830
+   0x7ffff7a82830 &lt;malloc_hook_ini&gt;:	mov    eax,DWORD PTR [rip+0x34ca0e]        # 0x7ffff7dcf244 &lt;__libc_malloc_initialized&gt;
+   0x7ffff7a82836 &lt;malloc_hook_ini+6&gt;:	push   r12
+   0x7ffff7a82838 &lt;malloc_hook_ini+8&gt;:	push   rbp
+   0x7ffff7a82839 &lt;malloc_hook_ini+9&gt;:	push   rbx
+   0x7ffff7a8283a &lt;malloc_hook_ini+10&gt;:	mov    rbp,rdi
+```
+
+As you can see, the global [hook](https://www.gnu.org/software/libc/manual/html_node/Hooks-for-Malloc.html) is set to the address of **`malloc_hook_ini`**.
+
+```c
+static void *
+malloc_hook_ini (size_t sz, const void *caller)
+{
+  __malloc_hook = NULL;
+  ptmalloc_init ();
+  return __libc_malloc (sz);
+}
+```
+
+**`malloc_hook_ini`** firstly zeros out the global variable so that initialization doesn&#39;t happen again and then triggers a sequence of function calls in order to initialize the **`main arena`** [structure](https://github.com/xerof4ks/heapwn/blob/master/malloc/malloc.c#L1670). You can think of this structure as a roadmap for the heap allocator, which allows it to be able to keep track of free&#39;d chunks and other crucial info. This calling sequence isn&#39;t important to us but I still recommend stepping through them with a debugger and see it happening in front of your eyes.
+
+---
+
+### `Thread Local Cache`
+
+At this point the main arena is set up and ready to serve memory back to the user. Once the initilization phase is over, **`tcache_init`** will take over.
+
+```c
+# define MAYBE_INIT_TCACHE() \
+  if (__glibc_unlikely (tcache == NULL)) \
+    tcache_init();
+
+static void
+tcache_init(void)
+{
+  mstate ar_ptr;
+  void *victim = 0;
+  const size_t bytes = sizeof (tcache_perthread_struct);
+
+  ...
+  victim = _int_malloc (ar_ptr, bytes);
+
+  if (ar_ptr != NULL)
+    __libc_lock_unlock (ar_ptr-&gt;mutex);
+
+  /* In a low memory situation, we may not be able to allocate memory
+     - in which case, we just keep trying later.  However, we
+     typically do this very early, so either there is sufficient
+     memory, or there isn&#39;t enough memory to do non-trivial
+     allocations anyway.  */
+  if (victim)
+    {
+      tcache = (tcache_perthread_struct *) victim;
+      memset (tcache, 0, sizeof (tcache_perthread_struct));
+    }
+
+}
+```
+
+We&#39;ve come to the meat of our discussion, the thread local caching structure. Let&#39;s dissect the above snippet. There are plenty of **`tcache_perthread_struct`** references. What&#39;s that anyway?
+
+```c
+static __thread tcache_perthread_struct *tcache = NULL;
+
+typedef struct tcache_entry
+{
+  struct tcache_entry *next;
+} tcache_entry;
+
+/* There is one of these for each thread, which contains the
+   per-thread cache (hence &quot;tcache_perthread_struct&quot;).  Keeping
+   overall size low is mildly important.  Note that COUNTS and ENTRIES
+   are redundant (we could have just counted the linked list each
+   time), this is for performance reasons.  */
+typedef struct tcache_perthread_struct
+{
+  char counts[TCACHE_MAX_BINS];
+  tcache_entry *entries[TCACHE_MAX_BINS];
+} tcache_perthread_struct;
+```
+So **`tcache_perthread_struct`** consists of two arrays. 
+
+* **`counts`** is a byte array which is used as a fast way to indicate the number of **`tcache_entry*`** in the corresponding index inside the **`entries`** array. 
+
+* **`entries`** is an array of **`tcache_entry*`**, which are **`malloc_chunk*`** casted as **`tcache_entry*`**. Practically, they form a single linked list of free&#39;d chunks. It&#39;s important to note that each linked list can store up to **7** free&#39;d chunks. If that number exceeds, the rest get stored in the &quot;old fashioned&quot; fastbin/smallbin list. Each index corresponds to a **different size** of chunk.
+
+**`TCACHE_MAX_BINS`** is **64** and the `entries` array stores free chunks of sizes ranging from 24, all the way to 1032 bytes on x64. In malloc&#39;s words, **it can store fast and small chunks**.
+ 
+A really interesting fact from an exploit dev perspective is that the **`tcache`** structure is stored on the **heap**!
+
+```c
+victim = _int_malloc (ar_ptr, bytes);
+tcache = (tcache_perthread_struct *) victim;
+```
+
+```makefile
+gdb-peda$ parseheap
+addr                prev                size                 status              fd                bk                
+0x602000            0x0                 0x250                Used                None              None
+```
+
+So whenever **`__libc_malloc`** gets called for the **first time**, it will allocate a **`tcache`** structure at the **very beginning** of the heap segment. This is very eye-opening because in the case of an inexperienced C programmer, he/she&#39;d be blown away by the fact that **one** **`malloc`** invocation led to **two** after all.
+
+---
+
+### `Tcache Internals`
+
+Theory is over, it&#39;s time to get our hands dirty and prove our assumptions right. I&#39;ve written a quick [PoC](https://pastebin.com/CCkZSabB) to test our assumptions (for fast chunks that is). The reader is encouraged to implement a similar PoC but for small chunks and inspect the changes in gdb.
+
+I&#39;ll skip the initial allocations because they will all be taken from the top chunk/wilderness since there is no free chunk at the moment. Here&#39;s the state of the heap **right before** the first call to **`free`**.
+
+```makefile
+gdb-peda$ parse
+           addr                prev                size                                               
+tcache --&gt; 0x602000            0x0                 0x250     
+a      --&gt; 0x602250            0x0                 0x30                  
+b      --&gt; 0x602280            0x0                 0x30        
+c      --&gt; 0x6022b0            0x0                 0x30 
+d      --&gt; 0x6022e0            0x0                 0x30
+e      --&gt; 0x602310            0x0                 0x30      
+f      --&gt; 0x602340            0x0                 0x30  
+g      --&gt; 0x602370            0x0                 0x30  
+h      --&gt; 0x6023a0            0x0                 0x30 
+i      --&gt; 0x6023d0            0x0                 0x30 
+j      --&gt; 0x602400            0x0                 0x30 
+k      --&gt; 0x602430            0x0                 0x30
+```
+
+It&#39;s important to note that **`__libc_malloc`** will firstly try to retrieve a chunk from the **`tcache-&gt;entries[]`** list instead of looking at the fastbin list (for performance reasons of course). Since no chunk has been free&#39;d when the allocations were taking place, **`__libc_malloc`** will invoke **`_int_malloc`** to get its chunk.
+
+```c
+
+/* When &quot;x&quot; is from chunksize().  */
+# define csize2tidx(x) (((x) - MINSIZE + MALLOC_ALIGNMENT - 1) / MALLOC_ALIGNMENT)
+
+void *
+__libc_malloc (size_t bytes)
+{
+  ...
+#if USE_TCACHE
+  /* int_free also calls request2size, be careful to not pad twice.  */
+  size_t tbytes;
+  checked_request2size (bytes, tbytes);
+  size_t tc_idx = csize2tidx (tbytes);
+
+  MAYBE_INIT_TCACHE ();
+
+  DIAG_PUSH_NEEDS_COMMENT;
+  if (tc_idx &lt; mp_.tcache_bins
+      /*&amp;&amp; tc_idx &lt; TCACHE_MAX_BINS*/ /* to appease gcc */
+      &amp;&amp; tcache
+      &amp;&amp; tcache-&gt;entries[tc_idx] != NULL)
+    {
+      return tcache_get (tc_idx);
+    }
+    ...
+
+  victim = _int_malloc (ar_ptr, bytes);
+
+```
+
+Let&#39;s start inspecting the tcache while we free the allocated chunks one-by-one.
+
+```c
+/* Fill in the tcache for size 0x30. */
+free(a);
+free(b);
+free(c);
+free(d);
+free(e);
+free(f);
+free(g);
+/* Place the rest in the corresponding fastbin list. */
+free(h);
+free(i);
+free(j);
+free(k);
+```
+
+**`_int_free`** will try to store the recently free&#39;d chunk in the corresponding **`tcache`** index, as long as the following checks are true:
+
+* **`tcache`** is initialized.
+
+* The index returned by **`csize2tidx(size)`** needs to be below 64. **`csize2tidx()`** is just a macro, whose definition I showed above, which uses a &quot;formula&quot; in order to convert a chunk&#39;s size to an index inside the **`counts`** and **`entries`** array respectively.
+
+* The **`counts`** array is in an entry-to-entry association with **`entries`**. For instance **`counts[0]`** will contain the **number of chunks** (which form a linked list as I mentioned before) inside **`entries[0]`**. That being said, **`counts[idx]`** needs to be **less or equal** to 7 since no more than 7 chunks are allowed to form the free linked list. 
+
+Here&#39;s the corresponding assembly up until the **`tcache_put`** call:
+
+```asm
+// rcx will contain a kernel address
+mov    rcx,QWORD PTR [rip+0x34f744]        # 0x7ffff7dced78
+lea    rdx,[r13-0x11]
+shr    rdx,0x4
+mov    rcx,QWORD PTR fs:[rcx]
+// Check if tcache is initialized
+test   rcx,rcx
+# If it&#39;s not, take the fastbin route
+je     0x7ffff7a7f663 &lt;_int_free+147&gt;
+// Make sure the chunk&#39;s size is within the tcache boundaries
+cmp    rdx,QWORD PTR [rip+0x34fc64]        # 0x7ffff7dcf2b0 &lt;mp_+80&gt;
+jae    0x7ffff7a7f663 &lt;_int_free+147&gt;
+movsx  rdi,BYTE PTR [rcx+rdx*1]
+// Make sure counts[idx] is less than 7
+cmp    rdi,QWORD PTR [rip+0x34fc66]        # 0x7ffff7dcf2c0 &lt;mp_+96&gt;
+mov    rsi,rdi
+jb     0x7ffff7a7f940 &lt;_int_free+880&gt;
+```
+
+```makefile
+gdb-peda$ x/gx 0x7ffff7dcf2b0
+0x7ffff7dcf2b0 &lt;mp_+80&gt;:	0x0000000000000040
+gdb-peda$ x/gx 0x7ffff7dcf2c0
+0x7ffff7dcf2c0 &lt;mp_+96&gt;:	0x0000000000000007
+```
+
+And here&#39;s the high level version:
+
+```c
+static void
+_int_free (mstate av, mchunkptr p, int have_lock)
+{
+ ...
+#if USE_TCACHE
+  {
+    size_t tc_idx = csize2tidx (size);
+
+    if (tcache
+	&amp;&amp; tc_idx &lt; mp_.tcache_bins
+	&amp;&amp; tcache-&gt;counts[tc_idx] &lt; mp_.tcache_count)
+      {
+	tcache_put (p, tc_idx);
+	return;
+      }
+  }
+#endif
+  ...
+```
+
+---
+
+#### `tcache_put`
+
+**`tcache_put`** is responsible for placing the free&#39;d chunk in the corresponding **`entries[]`** index as well as updating the **`counts[idx]`** value.
+
+```asm
+// Make sure the chunk&#39;s size is within the tcache boundaries
+cmp    rdx,0x3f
+// tcache_entry *e = (tcache_entry *) chunk2mem (chunk);
+lea    rdi,[rbx+0x10]
+ja     0x7ffff7a80334
+// &amp;counts[idx]
+lea    rax,[rcx+rdx*8]
+add    esi,0x1
+// tcache-&gt;entries[tc_idx]
+mov    r8,QWORD PTR [rax+0x40]
+// e-&gt;next = tcache-&gt;entries[tc_idx];
+mov    QWORD PTR [rbx+0x10],r8
+// tcache-&gt;entries[tc_idx] = e
+mov    QWORD PTR [rax+0x40],rdi
+// counts[idx]++
+mov    BYTE PTR [rcx+rdx*1],sil
+```
+
+```c
+/* Caller must ensure that we know tc_idx is valid and there&#39;s room
+   for more chunks.  */
+static void
+tcache_put (mchunkptr chunk, size_t tc_idx)
+{
+  tcache_entry *e = (tcache_entry *) chunk2mem (chunk);
+  assert (tc_idx &lt; TCACHE_MAX_BINS);
+  e-&gt;next = tcache-&gt;entries[tc_idx];
+  tcache-&gt;entries[tc_idx] = e;
+  ++(tcache-&gt;counts[tc_idx]);
+}
+```
+
+For the visual readers, including myself, here&#39;s a hopefully not so crappy ascii-art:
+
+```makefile
+Before:
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000000	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000000000 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+                      0x602240:	0x0000000000000000	0x0000000000000000
+                      0x602250:	0x0000000000000000	0x0000000000000031 &lt;-- chunk a
+                                        ...                ...
+
+
+free(a);
+
+tcache-&gt;counts[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+|   0  ||  1   ||  0   | ... |  0   |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+
+tcache-&gt;entries[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+| NULL ||  a   || NULL | ... | NULL |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+           |
+           |
+          NULL
+
+After:
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251 
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000100	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000602260 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+                      0x602240:	0x0000000000000000	0x0000000000000000
+                      0x602250:	0x0000000000000000	0x0000000000000031 &lt;-- chunk a
+                                        ...                ...
+
+```
+
+**``entries[idx]** and **`counts[idx]`** have been updated. Let&#39;s visualize a couple more free&#39;s and I&#39;ll let you figure out the rest.
+
+```makefile
+free(b);
+
+tcache-&gt;counts[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+|   0  ||  2   ||  0   | ... |  0   |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+
+tcache-&gt;entries[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+| NULL ||  b   || NULL | ... | NULL |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+            |
+            |
+        +------+
+        |   a  |
+        |      |
+        +------+
+            |
+            |
+           NULL
+
+After:
+                   gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251 
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000200	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000602290 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+                      0x602240:	0x0000000000000000	0x0000000000000000
+                      0x602250:	0x0000000000000000	0x0000000000000031 &lt;-- chunk a
+                                        ...                ...
+
+gdb-peda$ x/gx 0x0000000000602290 &lt;-- (tcache_entry *)b
+0x602290:	0x0000000000602260
+gdb-peda$ x/gx 0x0000000000602260 &lt;-- a == (tcache_entry *)b-&gt;next
+0x602260:	0x0000000000000000    &lt;-- NULL
+```
+
+It&#39;s worth noting that insertion happens at the **head** of the list. Skipping a few free&#39;s.
+
+```makefile
+...
+free(g);
+
+
+tcache-&gt;counts[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+|   0  ||  7   ||  0   | ... |  0   |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+
+tcache-&gt;entries[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+| NULL ||  g   || NULL | ... | NULL |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+            |
+            |
+        +------+
+        |  f   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  e   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  d   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  c   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  b   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  a   |
+        |      |
+        +------+
+            |
+            |
+           NULL
+```
+
+We&#39;re at the stage where more free&#39;s of size **0x30** would fail the **`tcache`** checks and take the **fastbin** route.
+
+```c
+static void
+_int_free (mstate av, mchunkptr p, int have_lock)
+{
+  ...
+  size = chunksize (p);
+
+  ...
+
+  check_inuse_chunk(av, p);
+
+#if USE_TCACHE
+  {
+    size_t tc_idx = csize2tidx (size);
+
+    if (tcache
+	&amp;&amp; tc_idx &lt; mp_.tcache_bins
+	&amp;&amp; tcache-&gt;counts[tc_idx] &lt; mp_.tcache_count)
+      {
+	tcache_put (p, tc_idx);
+	return;
+      }
+  }
+#endif
+
+  /*
+    If eligible, place chunk on a fastbin so it can be found
+    and used quickly in malloc.
+  */
+
+  if ((unsigned long)(size) &lt;= (unsigned long)(get_max_fast ())
+
+    ...
+
+    atomic_store_relaxed (&amp;av-&gt;have_fastchunks, true);
+    unsigned int idx = fastbin_index(size);
+    fb = &amp;fastbin (av, idx);
+
+    /* Atomically link P to its fastbin: P-&gt;FD = *FB; *FB = P;  */
+    mchunkptr old = *fb, old2;
+
+    ...
+      do
+	{
+	  /* Check that the top of the bin is not the record we are going to
+	     add (i.e., double free).  */
+	  if (__builtin_expect (old == p, 0))
+	    malloc_printerr (&quot;double free or corruption (fasttop)&quot;);
+	  p-&gt;fd = old2 = old;
+	}
+      while ((old = catomic_compare_and_exchange_val_rel (fb, p, old2))
+	     != old2);
+      ...
+```
+
+```makefile
+free(h);
+free(i);
+free(j);
+free(k);
+
+fastbinsY[NFASTBINS]
+
+   0       1       2            
++------++------++------+     
+| NULL ||  k   || NULL | ...
+|      ||      ||      |     
++------++------++------+     
+            |
+            |
+        +------+
+        |  j   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  i   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  h   |
+        |      |
+        +------+
+            |
+            |
+           NULL
+
+gdb-peda$ printfastbin 
+(0x20)     fastbin[0]: 0x0
+(0x30)     fastbin[1]: 0x602430 --&gt; 0x602400 --&gt; 0x6023d0 --&gt; 0x6023a0 --&gt; 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+```
+
+Now let&#39;s suppose we&#39;re feeling a bit crazy and want to make a few more allocations of size **0x20**. That&#39;s where **`tcache_get`** comes into play.
+
+```c
+// Allocate the chunks out of tcache. 
+// returns g
+malloc(0x20);
+// returns f
+malloc(0x20); 
+// returns e
+malloc(0x20); 
+// returns d
+malloc(0x20);
+// returns c
+malloc(0x20);
+// returns b
+malloc(0x20); 
+// returns a
+malloc(0x20); 
+```
+
+---
+
+#### `tcache_get`
+
+As stated before, when a new allocation request occurs, **`__libc_malloc`** will **firstly** check if there is any available chunk of that size inside **`tcache-&gt;entries[idx]`**. If there is, **`tcache_get`** will retrieve a chunk from the **head** of that list.
+
+```asm
+cmp    rbx,0x3f
+ja     0x7ffff7a840c3
+// Remove chunk at the head of the list
+mov    rsi,QWORD PTR [rdx]
+// Place its fd at the head of the list
+mov    QWORD PTR [rcx+0x40],rsi
+// --(tcache-&gt;counts[tc_idx]);
+sub    BYTE PTR [rax+rbx*1],0x1
+```
+
+```c
+static void *
+tcache_get (size_t tc_idx)
+{
+  tcache_entry *e = tcache-&gt;entries[tc_idx];
+  assert (tc_idx &lt; TCACHE_MAX_BINS);
+  assert (tcache-&gt;entries[tc_idx] &gt; 0);
+  tcache-&gt;entries[tc_idx] = e-&gt;next;
+  --(tcache-&gt;counts[tc_idx]);
+  return (void *) e;
+}
+```
+
+```makefile
+Before:
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000700	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000602380 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+
+// returns g
+malloc(0x20);
+
+tcache-&gt;counts[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+|   0  ||  6   ||  0   | ... |  0   |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+
+tcache-&gt;entries[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+| NULL ||  f   || NULL | ... | NULL |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+            |
+            |
+        +------+
+        |  e   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  d   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  c   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  b   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  a   |
+        |      |
+        +------+
+            |
+            |
+           NULL
+
+After:
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000600	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000602350 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+
+```
+
+**`0x602380`** was indeed removed from the list and the counter was updated! One more allocation to solidify the removal mechanism.
+
+```makefile
+// returns f
+malloc(0x20); 
+
+
+tcache-&gt;counts[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+|   0  ||  5   ||  0   | ... |  0   |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+
+tcache-&gt;entries[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+| NULL ||  e   || NULL | ... | NULL |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+            |
+            |
+        +------+
+        |  d   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  c   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  b   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  a   |
+        |      |
+        +------+
+            |
+            |
+           NULL
+
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000500	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000602320 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+
+```
+
+As expected **`0x602350`** is gone. Now after the 7th allocation, the **`tcache`** will be empty and **`__libc_malloc`** will resort to **`_int_malloc`**, which will check for available chunks in the **`fastbin`** array.
+
+```makefile
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000000	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000000000 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+                      0x602240:	0x0000000000000000	0x0000000000000000
+                      0x602250:	0x0000000000000000	0x0000000000000031 &lt;-- chunk a
+                                        ...                ...
+
+gdb-peda$ printfastbin 
+(0x20)     fastbin[0]: 0x0
+(0x30)     fastbin[1]: 0x602430 --&gt; 0x602400 --&gt; 0x6023d0 --&gt; 0x6023a0 --&gt; 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+```
+
+---
+
+
+### `_int_malloc`
+
+There has been a new &quot;feature&quot; added in **`_int_malloc`**. If there is an available chunk in the corresponding fastbin list (same rule applies for [small](https://github.com/xerof4ks/heapwn/blob/master/malloc/_int_malloc.c#L138) and [unsorted](https://github.com/xerof4ks/heapwn/blob/master/malloc/_int_malloc.c#L269) chunks), **`_int_malloc`** will return the chunk at the **head** of the fastbin list and then **allocate** the rest of the chunks **out of the fastbin list** and place them in their corresponding **`tcache-entries[idx]`** entry as long as there&#39;s enough space for 7 or less chunks.
+
+```c
+static void *
+_int_malloc (mstate av, size_t bytes)
+{
+...
+
+#define REMOVE_FB(fb, victim, pp)			\
+  do							\
+    {							\
+      victim = pp;					\
+      if (victim == NULL)				\
+	break;						\
+    }							\
+  while ((pp = catomic_compare_and_exchange_val_acq (fb, victim-&gt;fd, victim)) \
+	 != victim);					\
+
+  if ((unsigned long) (nb) &lt;= (unsigned long) (get_max_fast ()))
+    {
+      idx = fastbin_index (nb);
+      mfastbinptr *fb = &amp;fastbin (av, idx);
+      mchunkptr pp;
+      victim = *fb;
+
+      if (victim != NULL)
+	{
+	  if (SINGLE_THREAD_P)
+	    *fb = victim-&gt;fd;
+	  else
+	    REMOVE_FB (fb, pp, victim);
+          ...
+#if USE_TCACHE
+	      /* While we&#39;re here, if we see other chunks of the same size,
+		 stash them in the tcache.  */
+	      size_t tc_idx = csize2tidx (nb);
+	      if (tcache &amp;&amp; tc_idx &lt; mp_.tcache_bins)
+		{
+		  mchunkptr tc_victim;
+
+		  /* While bin not empty and tcache not full, copy chunks.  */
+		  while (tcache-&gt;counts[tc_idx] &lt; mp_.tcache_count
+			 &amp;&amp; (tc_victim = *fb) != NULL)
+		    {
+		      if (SINGLE_THREAD_P)
+			*fb = tc_victim-&gt;fd;
+		      else
+			{
+			  REMOVE_FB (fb, pp, tc_victim);
+			  if (__glibc_unlikely (tc_victim == NULL))
+			    break;
+			}
+		      tcache_put (tc_victim, tc_idx);
+		    }
+		}
+#endif
+...
+```
+
+Let&#39;s see the magic happening. We expect **`0x602430`** to be returned by **`_int_malloc`** and the remaining chunks to end up in **`tcache-&gt;entries[idx]`**.
+
+```makefile
+/*
+	 Retrieve chunk from fastbin.
+	 The rest of the chunks (h, i, j, k) will be allocated
+	 out of their fastbin list and will be placed back into tcache-&gt;entries[idx].
+*/
+malloc(0x20);
+
+gdb-peda$ printfastbin 
+(0x20)     fastbin[0]: 0x0
+(0x30)     fastbin[1]: 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000300	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x00000000006023b0 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+
+gdb-peda$ x/gx 0x00000000006023b0 &lt;-- head of the linked list
+0x6023b0:	0x00000000006023e0
+gdb-peda$ x/gx 0x00000000006023e0 &lt;-- (tcache_entry *)0x6023b0-&gt;next
+0x6023e0:	0x0000000000602410
+gdb-peda$ x/gx 0x0000000000602410 &lt;-- (tcache_entry *)0x6023e0-&gt;next
+0x602410:	0x0000000000000000
+```
+
+All our assumptions are proven correct! The fastbin list has been emptied out and the corresponding **`tcache`** index is filled with the remaining **`fastbin`** chunks. Because of the fact that **`fastbin`** removal happens at the **head** of the list, you can notice that the chunk at the **tail** became the **head** of **`tcache-&gt;entries[idx]`** since addition to the latter happens at the **head** as well.
+
+---
+
+### `Conclusion`
+
+That was a hopefully short, visual and insightful overview of the recent updates **`glibc malloc`** has pushed. If you were already familiar with the 16.x or even the 17.04 implementation, thread local caching is just a tiny addition in terms of knowledge. However, it does change the state of the art for heap exploitation (for the better) but that&#39;s a story for another time ;) If there is anything I&#39;d take away from this post is to **experiment**! Reverse and break the heap! Finally, I&#39;d like to thank you for taking the time to read my write-up and if you have any questions, feel free to ask them down below or hit me up on IRC/twitter.
+
+Take care...</description>
+    
+    <lastBuildDate>Tue, 23 Jan 2018 23:34:43 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://d.clarkee.co.uk/t/heap-safari-thread-local-caching/5054.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Heap Safari - Thread Local Caching</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/heap-safari-thread-local-caching/5054/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/heap-safari-thread-local-caching/5054/2</link>
+        <pubDate>Wed, 21 Feb 2018 19:43:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5054-2</guid>
+        <source url="https://d.clarkee.co.uk/t/heap-safari-thread-local-caching/5054.rss">Heap Safari - Thread Local Caching</source>
+      </item>
+      <item>
+        <title>Heap Safari - Thread Local Caching</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <h3><code>Introduction</code></h3>
+<p>Hello folks, I hope you’re doing great! Today’s topic will be once again heap exploitation related. In fact, we’ll be going over the recent updates of glibc’s heap allocator, <strong><code>(pt)malloc</code></strong>, which I’ve researched/reversed lately and decided to present them to you since there is barely any info out there. I emphasize <a href="https://www.gnu.org/software/libc/" rel="nofollow noopener">glibc</a> because in reality, heap implementations are libc/OS/hardware/browser specific. <strong><code>ptmalloc</code></strong> is a pretty common heap allocator on Linux distros (not all) and more importantly in CTFs <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"> Specifically, today’s focus will be revolved around the so called <strong><code>tcache</code></strong> structure, which is  a thread caching mechanism used to speed up malloc/free and is enforced <strong>by default</strong> (i.e Ubuntu 17.10 and up).</p>
+<hr>
+<h3><code>Required Knowledge</code></h3>
+<pre><code class="lang-makefile">1) Pointer Gymnastics
+2) ELF Loading Process
+3) Linux Memory Organization
+4) Familiarity with Heap Exploitation
+5) Will
+6) Patience
+</code></pre>
+<p>The last two are a must, the rest can be bypassed if there’s enough of the former. The 4th point however, is too hard to be bypassed. As much as I’d love to explain heap’s internals from the very beginning, the following dudes have been in the game long before I joined and I don’t want to take credits for what they’ve contributed.</p>
+<ul>
+<li>
+<p><a href="https://sploitfun.wordpress.com/2015/02/10/understanding-glibc-malloc/" rel="nofollow noopener">Understanding glibc malloc</a></p>
+</li>
+<li>
+<p><a href="https://heap-exploitation.dhavalkapil.com/introduction.html" rel="nofollow noopener">Heap Exploitation</a></p>
+</li>
+<li>
+<p><a href="http://www.blackhat.com/presentations/bh-usa-07/Ferguson/Whitepaper/bh-usa-07-ferguson-WP.pdf" rel="nofollow noopener">Understanding the heap by breaking it</a></p>
+</li>
+</ul>
+<p>They give a pretty decent high level overview of the heap management. However, what they provide can never be enough, you gotta dive into assembly with your debugger and figure it out on your own.</p>
+<hr>
+<h3><code>Setup</code></h3>
+<ul>
+<li>
+<p>Ubuntu 17.10 x64 – I recommend using <a href="https://app.vagrantup.com/bento/boxes/ubuntu-17.10" rel="nofollow noopener">vagrant</a>. It’s fast, minimal and gets the job done for this kind of research.</p>
+</li>
+<li>
+<p>gdb – No gdb, no fun! I personally use <a href="https://github.com/longld/peda" rel="nofollow noopener">peda</a> but you’re free to use whatever flavour pleases you the most.</p>
+</li>
+<li>
+<p>Source &amp; Debug symbols – Even though this isn’t a must, every Reverse Engineer wakes up and goes to bed wishing that there were debug symbols available for whatever he/she might be reversing. That being said, here’s the Linux (user-space) heap debugging starter pack.</p>
+</li>
+</ul>
+<pre><code class="lang-makefile">sudo apt-get install glibc-source
+sudo apt-get install libc6-dbg
+sudo tar xf /usr/src/glibc/glibc-2.26.tar.xz
+
+</code></pre>
+<p>Inside your gdb prompt type the following:</p>
+<pre><code class="lang-makefile">gdb-peda$ directory /usr/src/glibc/glibc-2.26/
+gdb-peda$ b __libc_malloc
+gdb-peda$ b _int_malloc
+gdb-peda$ b _int_free
+</code></pre>
+<p>The above gdb commands will display the source code of the debugee function while you’re stepping through it. How sweet is that?! If you want to look at the full source code while debugging, open up <strong><code>/usr/src/glibc/glibc-2.26/malloc/malloc.c</code></strong> in your favorite text editor and join in.</p>
+<hr>
+<p><strong>Note:</strong> <em>Before, we begin I’d like to note that for the rest of this write-up I won’t be referring to the allocator as <strong><code>malloc</code></strong>. The reason being the fact that in the glibc world, <strong><code>malloc</code></strong> isn’t just one function, but a package of functions responsible for handling dynamically allocated chunks. You’ll see what I mean as we go through the reversing process. Even if you have no prior exposure to heap exploitation, I’ll try to make my explanations as visual as possible. Without further ado, let the fun begin!</em></p>
+<hr>
+<h3><code>__libc_malloc</code></h3>
+<p>Assuming that you’ve looked up the above resources, but even if you didn’t, you should know that when your program calls <strong><code>malloc</code></strong>, in reality <strong><code>__libc_malloc</code></strong> gets invoked.</p>
+<pre><code class="lang-auto">void *
+__libc_malloc (size_t bytes)
+{
+  mstate ar_ptr;
+  void *victim;
+
+  void *(*hook) (size_t, const void *)
+    = atomic_forced_read (__malloc_hook);
+  if (__builtin_expect (hook != NULL, 0))
+    return (*hook)(bytes, RETURN_ADDRESS (0));
+#if USE_TCACHE
+  /* int_free also calls request2size, be careful to not pad twice.  */
+  size_t tbytes;
+  checked_request2size (bytes, tbytes);
+  size_t tc_idx = csize2tidx (tbytes);
+
+  MAYBE_INIT_TCACHE ();
+
+  DIAG_PUSH_NEEDS_COMMENT;
+  if (tc_idx &lt; mp_.tcache_bins
+      /*&amp;&amp; tc_idx &lt; TCACHE_MAX_BINS*/ /* to appease gcc */
+      &amp;&amp; tcache
+      &amp;&amp; tcache-&gt;entries[tc_idx] != NULL)
+    {
+      return tcache_get (tc_idx);
+    }
+  DIAG_POP_NEEDS_COMMENT;
+#endif
+
+  if (SINGLE_THREAD_P)
+    {
+      victim = _int_malloc (&amp;main_arena, bytes);
+      assert (!victim || chunk_is_mmapped (mem2chunk (victim)) ||
+	      &amp;main_arena == arena_for_chunk (mem2chunk (victim)));
+      return victim;
+    }
+
+  arena_get (ar_ptr, bytes);
+
+  victim = _int_malloc (ar_ptr, bytes);
+  /* Retry with another arena only if we were able to find a usable arena
+     before.  */
+  if (!victim &amp;&amp; ar_ptr != NULL)
+    {
+      LIBC_PROBE (memory_malloc_retry, 1, bytes);
+      ar_ptr = arena_get_retry (ar_ptr, bytes);
+      victim = _int_malloc (ar_ptr, bytes);
+    }
+
+  if (ar_ptr != NULL)
+    __libc_lock_unlock (ar_ptr-&gt;mutex);
+
+  assert (!victim || chunk_is_mmapped (mem2chunk (victim)) ||
+          ar_ptr == arena_for_chunk (mem2chunk (victim)));
+  return victim;
+}
+libc_hidden_def (__libc_malloc)
+</code></pre>
+<p>The <strong>very first</strong> call to <strong><code>malloc</code></strong> will actually go through the following code path:</p>
+<pre><code class="lang-auto">if (__builtin_expect (hook != NULL, 0))
+    return (*hook)(bytes, RETURN_ADDRESS (0));
+</code></pre>
+<p>What <strong><code>__libc_malloc</code></strong> does is to check for the content of the global function pointer variable know as <strong><code>__malloc_hook</code></strong>.</p>
+<pre><code class="lang-makefile">gdb-peda$ x/gx &amp;__malloc_hook
+0x7ffff7dcfc10 &lt;__malloc_hook&gt;:	0x00007ffff7a82830
+gdb-peda$ x/5i 0x00007ffff7a82830
+   0x7ffff7a82830 &lt;malloc_hook_ini&gt;:	mov    eax,DWORD PTR [rip+0x34ca0e]        # 0x7ffff7dcf244 &lt;__libc_malloc_initialized&gt;
+   0x7ffff7a82836 &lt;malloc_hook_ini+6&gt;:	push   r12
+   0x7ffff7a82838 &lt;malloc_hook_ini+8&gt;:	push   rbp
+   0x7ffff7a82839 &lt;malloc_hook_ini+9&gt;:	push   rbx
+   0x7ffff7a8283a &lt;malloc_hook_ini+10&gt;:	mov    rbp,rdi
+</code></pre>
+<p>As you can see, the global <a href="https://www.gnu.org/software/libc/manual/html_node/Hooks-for-Malloc.html" rel="nofollow noopener">hook</a> is set to the address of <strong><code>malloc_hook_ini</code></strong>.</p>
+<pre><code class="lang-auto">static void *
+malloc_hook_ini (size_t sz, const void *caller)
+{
+  __malloc_hook = NULL;
+  ptmalloc_init ();
+  return __libc_malloc (sz);
+}
+</code></pre>
+<p><strong><code>malloc_hook_ini</code></strong> firstly zeros out the global variable so that initialization doesn’t happen again and then triggers a sequence of function calls in order to initialize the <strong><code>main arena</code></strong> <a href="https://github.com/xerof4ks/heapwn/blob/master/malloc/malloc.c#L1670" rel="nofollow noopener">structure</a>. You can think of this structure as a roadmap for the heap allocator, which allows it to be able to keep track of free’d chunks and other crucial info. This calling sequence isn’t important to us but I still recommend stepping through them with a debugger and see it happening in front of your eyes.</p>
+<hr>
+<h3><code>Thread Local Cache</code></h3>
+<p>At this point the main arena is set up and ready to serve memory back to the user. Once the initilization phase is over, <strong><code>tcache_init</code></strong> will take over.</p>
+<pre><code class="lang-auto"># define MAYBE_INIT_TCACHE() \
+  if (__glibc_unlikely (tcache == NULL)) \
+    tcache_init();
+
+static void
+tcache_init(void)
+{
+  mstate ar_ptr;
+  void *victim = 0;
+  const size_t bytes = sizeof (tcache_perthread_struct);
+
+  ...
+  victim = _int_malloc (ar_ptr, bytes);
+
+  if (ar_ptr != NULL)
+    __libc_lock_unlock (ar_ptr-&gt;mutex);
+
+  /* In a low memory situation, we may not be able to allocate memory
+     - in which case, we just keep trying later.  However, we
+     typically do this very early, so either there is sufficient
+     memory, or there isn't enough memory to do non-trivial
+     allocations anyway.  */
+  if (victim)
+    {
+      tcache = (tcache_perthread_struct *) victim;
+      memset (tcache, 0, sizeof (tcache_perthread_struct));
+    }
+
+}
+</code></pre>
+<p>We’ve come to the meat of our discussion, the thread local caching structure. Let’s dissect the above snippet. There are plenty of <strong><code>tcache_perthread_struct</code></strong> references. What’s that anyway?</p>
+<pre><code class="lang-auto">static __thread tcache_perthread_struct *tcache = NULL;
+
+typedef struct tcache_entry
+{
+  struct tcache_entry *next;
+} tcache_entry;
+
+/* There is one of these for each thread, which contains the
+   per-thread cache (hence "tcache_perthread_struct").  Keeping
+   overall size low is mildly important.  Note that COUNTS and ENTRIES
+   are redundant (we could have just counted the linked list each
+   time), this is for performance reasons.  */
+typedef struct tcache_perthread_struct
+{
+  char counts[TCACHE_MAX_BINS];
+  tcache_entry *entries[TCACHE_MAX_BINS];
+} tcache_perthread_struct;
+</code></pre>
+<p>So <strong><code>tcache_perthread_struct</code></strong> consists of two arrays.</p>
+<ul>
+<li>
+<p><strong><code>counts</code></strong> is a byte array which is used as a fast way to indicate the number of <strong><code>tcache_entry*</code></strong> in the corresponding index inside the <strong><code>entries</code></strong> array.</p>
+</li>
+<li>
+<p><strong><code>entries</code></strong> is an array of <strong><code>tcache_entry*</code></strong>, which are <strong><code>malloc_chunk*</code></strong> casted as <strong><code>tcache_entry*</code></strong>. Practically, they form a single linked list of free’d chunks. It’s important to note that each linked list can store up to <strong>7</strong> free’d chunks. If that number exceeds, the rest get stored in the “old fashioned” fastbin/smallbin list. Each index corresponds to a <strong>different size</strong> of chunk.</p>
+</li>
+</ul>
+<p><strong><code>TCACHE_MAX_BINS</code></strong> is <strong>64</strong> and the <code>entries</code> array stores free chunks of sizes ranging from 24, all the way to 1032 bytes on x64. In malloc’s words, <strong>it can store fast and small chunks</strong>.</p>
+<p>A really interesting fact from an exploit dev perspective is that the <strong><code>tcache</code></strong> structure is stored on the <strong>heap</strong>!</p>
+<pre><code class="lang-auto">victim = _int_malloc (ar_ptr, bytes);
+tcache = (tcache_perthread_struct *) victim;
+</code></pre>
+<pre><code class="lang-makefile">gdb-peda$ parseheap
+addr                prev                size                 status              fd                bk                
+0x602000            0x0                 0x250                Used                None              None
+</code></pre>
+<p>So whenever <strong><code>__libc_malloc</code></strong> gets called for the <strong>first time</strong>, it will allocate a <strong><code>tcache</code></strong> structure at the <strong>very beginning</strong> of the heap segment. This is very eye-opening because in the case of an inexperienced C programmer, he/she’d be blown away by the fact that <strong>one</strong> <strong><code>malloc</code></strong> invocation led to <strong>two</strong> after all.</p>
+<hr>
+<h3><code>Tcache Internals</code></h3>
+<p>Theory is over, it’s time to get our hands dirty and prove our assumptions right. I’ve written a quick <a href="https://pastebin.com/CCkZSabB" rel="nofollow noopener">PoC</a> to test our assumptions (for fast chunks that is). The reader is encouraged to implement a similar PoC but for small chunks and inspect the changes in gdb.</p>
+<p>I’ll skip the initial allocations because they will all be taken from the top chunk/wilderness since there is no free chunk at the moment. Here’s the state of the heap <strong>right before</strong> the first call to <strong><code>free</code></strong>.</p>
+<pre><code class="lang-makefile">gdb-peda$ parse
+           addr                prev                size                                               
+tcache --&gt; 0x602000            0x0                 0x250     
+a      --&gt; 0x602250            0x0                 0x30                  
+b      --&gt; 0x602280            0x0                 0x30        
+c      --&gt; 0x6022b0            0x0                 0x30 
+d      --&gt; 0x6022e0            0x0                 0x30
+e      --&gt; 0x602310            0x0                 0x30      
+f      --&gt; 0x602340            0x0                 0x30  
+g      --&gt; 0x602370            0x0                 0x30  
+h      --&gt; 0x6023a0            0x0                 0x30 
+i      --&gt; 0x6023d0            0x0                 0x30 
+j      --&gt; 0x602400            0x0                 0x30 
+k      --&gt; 0x602430            0x0                 0x30
+</code></pre>
+<p>It’s important to note that <strong><code>__libc_malloc</code></strong> will firstly try to retrieve a chunk from the <strong><code>tcache-&gt;entries[]</code></strong> list instead of looking at the fastbin list (for performance reasons of course). Since no chunk has been free’d when the allocations were taking place, <strong><code>__libc_malloc</code></strong> will invoke <strong><code>_int_malloc</code></strong> to get its chunk.</p>
+<pre><code class="lang-auto">
+/* When "x" is from chunksize().  */
+# define csize2tidx(x) (((x) - MINSIZE + MALLOC_ALIGNMENT - 1) / MALLOC_ALIGNMENT)
+
+void *
+__libc_malloc (size_t bytes)
+{
+  ...
+#if USE_TCACHE
+  /* int_free also calls request2size, be careful to not pad twice.  */
+  size_t tbytes;
+  checked_request2size (bytes, tbytes);
+  size_t tc_idx = csize2tidx (tbytes);
+
+  MAYBE_INIT_TCACHE ();
+
+  DIAG_PUSH_NEEDS_COMMENT;
+  if (tc_idx &lt; mp_.tcache_bins
+      /*&amp;&amp; tc_idx &lt; TCACHE_MAX_BINS*/ /* to appease gcc */
+      &amp;&amp; tcache
+      &amp;&amp; tcache-&gt;entries[tc_idx] != NULL)
+    {
+      return tcache_get (tc_idx);
+    }
+    ...
+
+  victim = _int_malloc (ar_ptr, bytes);
+
+</code></pre>
+<p>Let’s start inspecting the tcache while we free the allocated chunks one-by-one.</p>
+<pre><code class="lang-auto">/* Fill in the tcache for size 0x30. */
+free(a);
+free(b);
+free(c);
+free(d);
+free(e);
+free(f);
+free(g);
+/* Place the rest in the corresponding fastbin list. */
+free(h);
+free(i);
+free(j);
+free(k);
+</code></pre>
+<p><strong><code>_int_free</code></strong> will try to store the recently free’d chunk in the corresponding <strong><code>tcache</code></strong> index, as long as the following checks are true:</p>
+<ul>
+<li>
+<p><strong><code>tcache</code></strong> is initialized.</p>
+</li>
+<li>
+<p>The index returned by <strong><code>csize2tidx(size)</code></strong> needs to be below 64. <strong><code>csize2tidx()</code></strong> is just a macro, whose definition I showed above, which uses a “formula” in order to convert a chunk’s size to an index inside the <strong><code>counts</code></strong> and <strong><code>entries</code></strong> array respectively.</p>
+</li>
+<li>
+<p>The <strong><code>counts</code></strong> array is in an entry-to-entry association with <strong><code>entries</code></strong>. For instance <strong><code>counts[0]</code></strong> will contain the <strong>number of chunks</strong> (which form a linked list as I mentioned before) inside <strong><code>entries[0]</code></strong>. That being said, <strong><code>counts[idx]</code></strong> needs to be <strong>less or equal</strong> to 7 since no more than 7 chunks are allowed to form the free linked list.</p>
+</li>
+</ul>
+<p>Here’s the corresponding assembly up until the <strong><code>tcache_put</code></strong> call:</p>
+<pre><code class="lang-auto">// rcx will contain a kernel address
+mov    rcx,QWORD PTR [rip+0x34f744]        # 0x7ffff7dced78
+lea    rdx,[r13-0x11]
+shr    rdx,0x4
+mov    rcx,QWORD PTR fs:[rcx]
+// Check if tcache is initialized
+test   rcx,rcx
+# If it's not, take the fastbin route
+je     0x7ffff7a7f663 &lt;_int_free+147&gt;
+// Make sure the chunk's size is within the tcache boundaries
+cmp    rdx,QWORD PTR [rip+0x34fc64]        # 0x7ffff7dcf2b0 &lt;mp_+80&gt;
+jae    0x7ffff7a7f663 &lt;_int_free+147&gt;
+movsx  rdi,BYTE PTR [rcx+rdx*1]
+// Make sure counts[idx] is less than 7
+cmp    rdi,QWORD PTR [rip+0x34fc66]        # 0x7ffff7dcf2c0 &lt;mp_+96&gt;
+mov    rsi,rdi
+jb     0x7ffff7a7f940 &lt;_int_free+880&gt;
+</code></pre>
+<pre><code class="lang-makefile">gdb-peda$ x/gx 0x7ffff7dcf2b0
+0x7ffff7dcf2b0 &lt;mp_+80&gt;:	0x0000000000000040
+gdb-peda$ x/gx 0x7ffff7dcf2c0
+0x7ffff7dcf2c0 &lt;mp_+96&gt;:	0x0000000000000007
+</code></pre>
+<p>And here’s the high level version:</p>
+<pre><code class="lang-auto">static void
+_int_free (mstate av, mchunkptr p, int have_lock)
+{
+ ...
+#if USE_TCACHE
+  {
+    size_t tc_idx = csize2tidx (size);
+
+    if (tcache
+	&amp;&amp; tc_idx &lt; mp_.tcache_bins
+	&amp;&amp; tcache-&gt;counts[tc_idx] &lt; mp_.tcache_count)
+      {
+	tcache_put (p, tc_idx);
+	return;
+      }
+  }
+#endif
+  ...
+</code></pre>
+<hr>
+<h4><code>tcache_put</code></h4>
+<p><strong><code>tcache_put</code></strong> is responsible for placing the free’d chunk in the corresponding <strong><code>entries[]</code></strong> index as well as updating the <strong><code>counts[idx]</code></strong> value.</p>
+<pre><code class="lang-auto">// Make sure the chunk's size is within the tcache boundaries
+cmp    rdx,0x3f
+// tcache_entry *e = (tcache_entry *) chunk2mem (chunk);
+lea    rdi,[rbx+0x10]
+ja     0x7ffff7a80334
+// &amp;counts[idx]
+lea    rax,[rcx+rdx*8]
+add    esi,0x1
+// tcache-&gt;entries[tc_idx]
+mov    r8,QWORD PTR [rax+0x40]
+// e-&gt;next = tcache-&gt;entries[tc_idx];
+mov    QWORD PTR [rbx+0x10],r8
+// tcache-&gt;entries[tc_idx] = e
+mov    QWORD PTR [rax+0x40],rdi
+// counts[idx]++
+mov    BYTE PTR [rcx+rdx*1],sil
+</code></pre>
+<pre><code class="lang-auto">/* Caller must ensure that we know tc_idx is valid and there's room
+   for more chunks.  */
+static void
+tcache_put (mchunkptr chunk, size_t tc_idx)
+{
+  tcache_entry *e = (tcache_entry *) chunk2mem (chunk);
+  assert (tc_idx &lt; TCACHE_MAX_BINS);
+  e-&gt;next = tcache-&gt;entries[tc_idx];
+  tcache-&gt;entries[tc_idx] = e;
+  ++(tcache-&gt;counts[tc_idx]);
+}
+</code></pre>
+<p>For the visual readers, including myself, here’s a hopefully not so crappy ascii-art:</p>
+<pre><code class="lang-makefile">Before:
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000000	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000000000 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+                      0x602240:	0x0000000000000000	0x0000000000000000
+                      0x602250:	0x0000000000000000	0x0000000000000031 &lt;-- chunk a
+                                        ...                ...
+
+
+free(a);
+
+tcache-&gt;counts[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+|   0  ||  1   ||  0   | ... |  0   |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+
+tcache-&gt;entries[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+| NULL ||  a   || NULL | ... | NULL |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+           |
+           |
+          NULL
+
+After:
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251 
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000100	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000602260 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+                      0x602240:	0x0000000000000000	0x0000000000000000
+                      0x602250:	0x0000000000000000	0x0000000000000031 &lt;-- chunk a
+                                        ...                ...
+
+</code></pre>
+<p><strong>``entries[idx]</strong> and <strong><code>counts[idx]</code></strong> have been updated. Let’s visualize a couple more free’s and I’ll let you figure out the rest.</p>
+<pre><code class="lang-makefile">free(b);
+
+tcache-&gt;counts[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+|   0  ||  2   ||  0   | ... |  0   |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+
+tcache-&gt;entries[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+| NULL ||  b   || NULL | ... | NULL |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+            |
+            |
+        +------+
+        |   a  |
+        |      |
+        +------+
+            |
+            |
+           NULL
+
+After:
+                   gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251 
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000200	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000602290 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+                      0x602240:	0x0000000000000000	0x0000000000000000
+                      0x602250:	0x0000000000000000	0x0000000000000031 &lt;-- chunk a
+                                        ...                ...
+
+gdb-peda$ x/gx 0x0000000000602290 &lt;-- (tcache_entry *)b
+0x602290:	0x0000000000602260
+gdb-peda$ x/gx 0x0000000000602260 &lt;-- a == (tcache_entry *)b-&gt;next
+0x602260:	0x0000000000000000    &lt;-- NULL
+</code></pre>
+<p>It’s worth noting that insertion happens at the <strong>head</strong> of the list. Skipping a few free’s.</p>
+<pre><code class="lang-makefile">...
+free(g);
+
+
+tcache-&gt;counts[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+|   0  ||  7   ||  0   | ... |  0   |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+
+tcache-&gt;entries[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+| NULL ||  g   || NULL | ... | NULL |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+            |
+            |
+        +------+
+        |  f   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  e   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  d   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  c   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  b   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  a   |
+        |      |
+        +------+
+            |
+            |
+           NULL
+</code></pre>
+<p>We’re at the stage where more free’s of size <strong>0x30</strong> would fail the <strong><code>tcache</code></strong> checks and take the <strong>fastbin</strong> route.</p>
+<pre><code class="lang-auto">static void
+_int_free (mstate av, mchunkptr p, int have_lock)
+{
+  ...
+  size = chunksize (p);
+
+  ...
+
+  check_inuse_chunk(av, p);
+
+#if USE_TCACHE
+  {
+    size_t tc_idx = csize2tidx (size);
+
+    if (tcache
+	&amp;&amp; tc_idx &lt; mp_.tcache_bins
+	&amp;&amp; tcache-&gt;counts[tc_idx] &lt; mp_.tcache_count)
+      {
+	tcache_put (p, tc_idx);
+	return;
+      }
+  }
+#endif
+
+  /*
+    If eligible, place chunk on a fastbin so it can be found
+    and used quickly in malloc.
+  */
+
+  if ((unsigned long)(size) &lt;= (unsigned long)(get_max_fast ())
+
+    ...
+
+    atomic_store_relaxed (&amp;av-&gt;have_fastchunks, true);
+    unsigned int idx = fastbin_index(size);
+    fb = &amp;fastbin (av, idx);
+
+    /* Atomically link P to its fastbin: P-&gt;FD = *FB; *FB = P;  */
+    mchunkptr old = *fb, old2;
+
+    ...
+      do
+	{
+	  /* Check that the top of the bin is not the record we are going to
+	     add (i.e., double free).  */
+	  if (__builtin_expect (old == p, 0))
+	    malloc_printerr ("double free or corruption (fasttop)");
+	  p-&gt;fd = old2 = old;
+	}
+      while ((old = catomic_compare_and_exchange_val_rel (fb, p, old2))
+	     != old2);
+      ...
+</code></pre>
+<pre><code class="lang-makefile">free(h);
+free(i);
+free(j);
+free(k);
+
+fastbinsY[NFASTBINS]
+
+   0       1       2            
++------++------++------+     
+| NULL ||  k   || NULL | ...
+|      ||      ||      |     
++------++------++------+     
+            |
+            |
+        +------+
+        |  j   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  i   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  h   |
+        |      |
+        +------+
+            |
+            |
+           NULL
+
+gdb-peda$ printfastbin 
+(0x20)     fastbin[0]: 0x0
+(0x30)     fastbin[1]: 0x602430 --&gt; 0x602400 --&gt; 0x6023d0 --&gt; 0x6023a0 --&gt; 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+</code></pre>
+<p>Now let’s suppose we’re feeling a bit crazy and want to make a few more allocations of size <strong>0x20</strong>. That’s where <strong><code>tcache_get</code></strong> comes into play.</p>
+<pre><code class="lang-auto">// Allocate the chunks out of tcache. 
+// returns g
+malloc(0x20);
+// returns f
+malloc(0x20); 
+// returns e
+malloc(0x20); 
+// returns d
+malloc(0x20);
+// returns c
+malloc(0x20);
+// returns b
+malloc(0x20); 
+// returns a
+malloc(0x20); 
+</code></pre>
+<hr>
+<h4><code>tcache_get</code></h4>
+<p>As stated before, when a new allocation request occurs, <strong><code>__libc_malloc</code></strong> will <strong>firstly</strong> check if there is any available chunk of that size inside <strong><code>tcache-&gt;entries[idx]</code></strong>. If there is, <strong><code>tcache_get</code></strong> will retrieve a chunk from the <strong>head</strong> of that list.</p>
+<pre><code class="lang-auto">cmp    rbx,0x3f
+ja     0x7ffff7a840c3
+// Remove chunk at the head of the list
+mov    rsi,QWORD PTR [rdx]
+// Place its fd at the head of the list
+mov    QWORD PTR [rcx+0x40],rsi
+// --(tcache-&gt;counts[tc_idx]);
+sub    BYTE PTR [rax+rbx*1],0x1
+</code></pre>
+<pre><code class="lang-auto">static void *
+tcache_get (size_t tc_idx)
+{
+  tcache_entry *e = tcache-&gt;entries[tc_idx];
+  assert (tc_idx &lt; TCACHE_MAX_BINS);
+  assert (tcache-&gt;entries[tc_idx] &gt; 0);
+  tcache-&gt;entries[tc_idx] = e-&gt;next;
+  --(tcache-&gt;counts[tc_idx]);
+  return (void *) e;
+}
+</code></pre>
+<pre><code class="lang-makefile">Before:
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000700	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000602380 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+
+// returns g
+malloc(0x20);
+
+tcache-&gt;counts[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+|   0  ||  6   ||  0   | ... |  0   |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+
+tcache-&gt;entries[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+| NULL ||  f   || NULL | ... | NULL |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+            |
+            |
+        +------+
+        |  e   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  d   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  c   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  b   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  a   |
+        |      |
+        +------+
+            |
+            |
+           NULL
+
+After:
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000600	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000602350 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+
+</code></pre>
+<p><strong><code>0x602380</code></strong> was indeed removed from the list and the counter was updated! One more allocation to solidify the removal mechanism.</p>
+<pre><code class="lang-makefile">// returns f
+malloc(0x20); 
+
+
+tcache-&gt;counts[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+|   0  ||  5   ||  0   | ... |  0   |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+
+tcache-&gt;entries[]
+
+   0       1       2            63
++------++------++------+     +------+ 
+| NULL ||  e   || NULL | ... | NULL |
+|      ||      ||      |     |      |
++------++------++------+     +------+
+            |
+            |
+        +------+
+        |  d   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  c   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  b   |
+        |      |
+        +------+
+            |
+            |
+        +------+
+        |  a   |
+        |      |
+        +------+
+            |
+            |
+           NULL
+
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000500	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000602320 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+
+</code></pre>
+<p>As expected <strong><code>0x602350</code></strong> is gone. Now after the 7th allocation, the <strong><code>tcache</code></strong> will be empty and <strong><code>__libc_malloc</code></strong> will resort to <strong><code>_int_malloc</code></strong>, which will check for available chunks in the <strong><code>fastbin</code></strong> array.</p>
+<pre><code class="lang-makefile">                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000000	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x0000000000000000 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+                      0x602240:	0x0000000000000000	0x0000000000000000
+                      0x602250:	0x0000000000000000	0x0000000000000031 &lt;-- chunk a
+                                        ...                ...
+
+gdb-peda$ printfastbin 
+(0x20)     fastbin[0]: 0x0
+(0x30)     fastbin[1]: 0x602430 --&gt; 0x602400 --&gt; 0x6023d0 --&gt; 0x6023a0 --&gt; 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+</code></pre>
+<hr>
+<h3><code>_int_malloc</code></h3>
+<p>There has been a new “feature” added in <strong><code>_int_malloc</code></strong>. If there is an available chunk in the corresponding fastbin list (same rule applies for <a href="https://github.com/xerof4ks/heapwn/blob/master/malloc/_int_malloc.c#L138" rel="nofollow noopener">small</a> and <a href="https://github.com/xerof4ks/heapwn/blob/master/malloc/_int_malloc.c#L269" rel="nofollow noopener">unsorted</a> chunks), <strong><code>_int_malloc</code></strong> will return the chunk at the <strong>head</strong> of the fastbin list and then <strong>allocate</strong> the rest of the chunks <strong>out of the fastbin list</strong> and place them in their corresponding <strong><code>tcache-entries[idx]</code></strong> entry as long as there’s enough space for 7 or less chunks.</p>
+<pre><code class="lang-auto">static void *
+_int_malloc (mstate av, size_t bytes)
+{
+...
+
+#define REMOVE_FB(fb, victim, pp)			\
+  do							\
+    {							\
+      victim = pp;					\
+      if (victim == NULL)				\
+	break;						\
+    }							\
+  while ((pp = catomic_compare_and_exchange_val_acq (fb, victim-&gt;fd, victim)) \
+	 != victim);					\
+
+  if ((unsigned long) (nb) &lt;= (unsigned long) (get_max_fast ()))
+    {
+      idx = fastbin_index (nb);
+      mfastbinptr *fb = &amp;fastbin (av, idx);
+      mchunkptr pp;
+      victim = *fb;
+
+      if (victim != NULL)
+	{
+	  if (SINGLE_THREAD_P)
+	    *fb = victim-&gt;fd;
+	  else
+	    REMOVE_FB (fb, pp, victim);
+          ...
+#if USE_TCACHE
+	      /* While we're here, if we see other chunks of the same size,
+		 stash them in the tcache.  */
+	      size_t tc_idx = csize2tidx (nb);
+	      if (tcache &amp;&amp; tc_idx &lt; mp_.tcache_bins)
+		{
+		  mchunkptr tc_victim;
+
+		  /* While bin not empty and tcache not full, copy chunks.  */
+		  while (tcache-&gt;counts[tc_idx] &lt; mp_.tcache_count
+			 &amp;&amp; (tc_victim = *fb) != NULL)
+		    {
+		      if (SINGLE_THREAD_P)
+			*fb = tc_victim-&gt;fd;
+		      else
+			{
+			  REMOVE_FB (fb, pp, tc_victim);
+			  if (__glibc_unlikely (tc_victim == NULL))
+			    break;
+			}
+		      tcache_put (tc_victim, tc_idx);
+		    }
+		}
+#endif
+...
+</code></pre>
+<p>Let’s see the magic happening. We expect <strong><code>0x602430</code></strong> to be returned by <strong><code>_int_malloc</code></strong> and the remaining chunks to end up in <strong><code>tcache-&gt;entries[idx]</code></strong>.</p>
+<pre><code class="lang-makefile">/*
+	 Retrieve chunk from fastbin.
+	 The rest of the chunks (h, i, j, k) will be allocated
+	 out of their fastbin list and will be placed back into tcache-&gt;entries[idx].
+*/
+malloc(0x20);
+
+gdb-peda$ printfastbin 
+(0x20)     fastbin[0]: 0x0
+(0x30)     fastbin[1]: 0x0
+(0x40)     fastbin[2]: 0x0
+(0x50)     fastbin[3]: 0x0
+(0x60)     fastbin[4]: 0x0
+(0x70)     fastbin[5]: 0x0
+(0x80)     fastbin[6]: 0x0
+
+                  gdb-peda$ x/80gx 0x602000
+                      0x602000:	0x0000000000000000	0x0000000000000251
+tcache--&gt;counts[] --&gt; 0x602010:	0x0000000000000300	0x0000000000000000
+                      0x602020:	0x0000000000000000	0x0000000000000000
+                      0x602030:	0x0000000000000000	0x0000000000000000
+                      0x602040:	0x0000000000000000	0x0000000000000000
+                      0x602050:	0x0000000000000000	0x00000000006023b0 &lt;-- tcache&gt;entries[]
+                      0x602060:	0x0000000000000000	0x0000000000000000
+                                        ...                ...
+
+gdb-peda$ x/gx 0x00000000006023b0 &lt;-- head of the linked list
+0x6023b0:	0x00000000006023e0
+gdb-peda$ x/gx 0x00000000006023e0 &lt;-- (tcache_entry *)0x6023b0-&gt;next
+0x6023e0:	0x0000000000602410
+gdb-peda$ x/gx 0x0000000000602410 &lt;-- (tcache_entry *)0x6023e0-&gt;next
+0x602410:	0x0000000000000000
+</code></pre>
+<p>All our assumptions are proven correct! The fastbin list has been emptied out and the corresponding <strong><code>tcache</code></strong> index is filled with the remaining <strong><code>fastbin</code></strong> chunks. Because of the fact that <strong><code>fastbin</code></strong> removal happens at the <strong>head</strong> of the list, you can notice that the chunk at the <strong>tail</strong> became the <strong>head</strong> of <strong><code>tcache-&gt;entries[idx]</code></strong> since addition to the latter happens at the <strong>head</strong> as well.</p>
+<hr>
+<h3><code>Conclusion</code></h3>
+<p>That was a hopefully short, visual and insightful overview of the recent updates <strong><code>glibc malloc</code></strong> has pushed. If you were already familiar with the 16.x or even the 17.04 implementation, thread local caching is just a tiny addition in terms of knowledge. However, it does change the state of the art for heap exploitation (for the better) but that’s a story for another time <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"> If there is anything I’d take away from this post is to <strong>experiment</strong>! Reverse and break the heap! Finally, I’d like to thank you for taking the time to read my write-up and if you have any questions, feel free to ask them down below or hit me up on IRC/twitter.</p>
+<p>Take care…</p>
+          <p><a href="https://d.clarkee.co.uk/t/heap-safari-thread-local-caching/5054/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/heap-safari-thread-local-caching/5054/1</link>
+        <pubDate>Mon, 22 Jan 2018 19:43:17 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-5054-1</guid>
+        <source url="https://d.clarkee.co.uk/t/heap-safari-thread-local-caching/5054.rss">Heap Safari - Thread Local Caching</source>
+      </item>
+  </channel>
+</rss>

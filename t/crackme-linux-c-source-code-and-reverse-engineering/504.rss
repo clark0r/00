@@ -1,0 +1,781 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Crackme (Linux/C). Source Code and Reverse Engineering</title>
+    <link>https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504</link>
+    <description>Once again @dtm successfully reversed the relevant function in the crackme and found the hidden password. Congrats!. 
+
+To conclude with this series of post regarding this crackme, I will show you the source code, explain why it is a bit messy and give you some basics on how to reverse engineer functions.
+
+To keep it simple we will be using the binary with the symbols. The process should be similar with the stripped version, but just a bit more difficult because that one was also optimized for size and therefore you may find some non-obvious code.
+
+# The Code
+I will first show you the original source code. I think it will help understanding the rest of the post. There you go:
+
+```
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdlib.h&gt;
+
+#include &lt;termios.h&gt;
+#include &lt;unistd.h&gt;
+
+#define KEY_LEN 8
+#define PASS_LEN 32
+char *ipass= &quot;\x23\x89\xf2\xc2\x6d\x3e\xc7\xb2\0&quot;;
+//char *pass=&quot;ABCDEFG\0&quot;;
+char *pass=&quot;\x62\xcb\xb1\x86\x28\x78\x80\xb2\x23\x89\xf2\xc2\x6d\x3e\xc7\xb2\x23\x89\xf2\xc2\x6d\x3e\xc7\xb2\x23\x89\xf2\xc2\x6d\x3e\xc7\xb2&quot;;
+
+
+int
+obfuscate (char *d, char *s, int n)
+{
+  int   i;
+  for (i = 0; i &lt; n; i++)
+    d[i] ^= s[i % KEY_LEN];
+}
+
+void 
+gen_pass (char *p)
+{
+  char *p1 = p + PASS_LEN;
+
+  while (p1 != p) write (1, (--p1) ,1);
+    
+}
+
+/* Form GNU libc documentation */
+/* fd parameter can be removed now */
+ssize_t
+my_getpass (char *lineptr, size_t n, int fd)
+{
+  struct termios old, new;
+  int            nread;
+
+  /* Turn echoing off and fail if we can’t. */
+  if (tcgetattr (0, &amp;old) != 0)
+    return -1;
+  new = old;
+  new.c_lflag &amp;= ~ECHO;
+  if (tcsetattr (0, TCSAFLUSH, &amp;new) != 0)
+    return -1;
+
+  /* Read the password. */
+  nread = read (1, lineptr, n);
+
+  /* Restore terminal. */
+  (void) tcsetattr (0, TCSAFLUSH, &amp;old);
+
+  return nread;
+}
+
+int 
+my_print (char *buf)
+{
+  return write (1, buf, strlen(buf));
+}
+
+int
+main (int argc, char *argv[])
+{
+  char     *p;
+  size_t   len, l, i;
+
+  my_print (&quot;0x00 Challenger\n\n&quot;);
+
+  my_print (&quot;Password:&quot;);
+  len = PASS_LEN;
+  p = malloc (len);
+
+  l = my_getpass (p, len, 0);
+  p[l -1] = 0;
+  obfuscate (p, ipass, PASS_LEN);
+  my_print (&quot;\n+ Checking Password &quot;);
+  /* make brute force attack tediuous :)*/
+  /*for (i = 0; i &lt; 5; i++) { my_print (&quot;.&quot;); sleep (1);}*/
+  if (strncmp (p, pass, PASS_LEN) == 0)
+    {
+      my_print (&quot; OK.\n+ You did it!\n&quot;);
+    }
+  else
+    my_print (&quot; Fail.\n- Try again.\n&quot;);
+  
+  my_print (&quot;+ DONE\n&quot;);
+
+  return 0;
+}
+
+
+```
+
+The program is quite straight forward, but I have to make some comments for you to understand why some things were done a bit weird.
+
+The function `my_getpass` is just a substitution of the `getpass` function. It is like a `gets` but without echoing the characters to the console. Usually for these kind of crackmes, people do not care about hiding the password... Well, I just thought it would be nice to show how to do this. 
+
+Originally I wrote the program to use the `getpass` function. However, if you check the man page for the function, it says it is obsolete. Looking for an alternative I found an alternative provided from the GNU libc documentation. I slightly modify it... more on this in a sec.
+
+The `obfuscate` password is actually performing a basic XOR encoding as @dtm found out (Kudos m8te!). That strange thing with the XOR is a module operator %. We will get to this later. In this case, an `&amp;` will work OK as the length of the password is 8 (a power of 2), but the `%` actually helps to further obfuscate the code :).
+
+If you look in the `main` function, there is a call to `malloc` to allocate a string. Well, that is not really needed, it remains there because of an early implementation and subsequent evolutions of the `my_getpass` function. Anyway, the main function is the typical crackme code. Read a password, do a comparison and print the message.
+
+# Producing the Binary
+You may be wondering why there is a `my_print` function. Why this guy didn&#39;t just used a `printf` in there?. Well the reason is to make the binary very small, so I could paste a base64 text in this forum.
+
+To produce such a small executable I used my beloved, `dietlibc`. This is a wrapper around gcc, that strips down the binaries to ridiculous sizes if you follow some simple rules.
+
+So, to compile our program with `dietlibc` we have to prefix our normal compilation with the command `diet`. Something like this:
+
+`diet gcc -o c1 c1.c`
+
+This will produce a pretty small program. Go and change the source adding a `printf`, anywhere in the code and re-compile it again... You just got 7Kb extra by using that function. Something similar happens with the public GNU libc code to substitute `getpass`. It uses streams and that adds quite some extra Kbs to our static binary. 
+
+This is the GNU libc proposal substitution for the standard `getpass`:
+
+```
+ssize_t
+my_getpass (char **lineptr, size_t *n, FILE *stream)
+{
+  struct termios old, new;
+  int nread;
+
+  /* Turn echoing off and fail if we can’t. */
+  if (tcgetattr (fileno (stream), &amp;old) != 0)
+    return -1;
+  new = old;
+  new.c_lflag &amp;= ~ECHO;
+  if (tcsetattr (fileno (stream), TCSAFLUSH, &amp;new) != 0)
+    return -1;
+
+  /* Read the password. */
+  nread = getline (lineptr, n, stream);
+
+  /* Restore terminal. */
+  (void) tcsetattr (fileno (stream), TCSAFLUSH, &amp;old);
+
+  return nread;
+}
+```
+http://www.gnu.org/software/libc/manual/html_node/getpass.html
+
+So, I got rid of the streams and also the getline. Then, instead of passing the stream object `stdin`, I just hardcoded the file descriptor in the function. 
+
+_NOTE:The original code has a bug, reading from fd 1 (stdout). The program works OK, that&#39;s way I didn&#39;t notice, but at the time of this writing I cannot say why reading from stdout works._
+
+Changing all `printf`s to `write`s let&#39;s libc discard all the formatting code and save us those 7Kb. So at the end, our binary is around 8Kb (static), and compressed with `gzip` it goes down to 3.7Kb. That is because all the symbols (actually strings) are still there, and that kind of data can be compressed very efficiently by `gzip`.
+
+If we remove the symbols (just run `strip -s`), the binary itself goes down to 4.8 Kbs and after gzipping it, the whole thing ends up at just 2.7 Kb.
+
+It is important to make the binary very small, because when we re-encode it to post in the forum we will increase the size. I used base64, as it is a pretty standard way to do this, but you can go for different ways to encode data into ASCII values.
+
+A dynamic linked binary may have worked for most of you. Dynamically linked programs are very small as most of the code they use is provided by the libraries in the system. But you may have troubles running it if you do not share the same libraries in the machine compiling the program and the machine running it. That is why I went for an static binary. This also prevents `LD_PRELOAD`ing your version own version of `strcmp` and not even have to patch the binary. 
+
+_(Take a look to the post about proxies and try yourself)_
+
+# Reverse Engineering
+So, it is time to get our hands dirty and reverse engineer the `obfuscate` function. That is actually the only one we need to understand if we want to decode the password. 
+
+Let&#39;s start with the objdump disassembly... we are going to do this completely by hand!!!. There are tools that will help and also do a bit of decompiling for you, but it is good to look under the hood and this program is simple enough to be analyzed manually... furthermore I do not have much experience with those tools as I do not usually do reverse engineering.
+
+This is the dump with some initial annotations.
+```
+	0x0000000000400163 &lt;+0&gt;:	push   rbp
+	0x0000000000400164 &lt;+1&gt;:	mov    rbp,rsp 			  ; Set rbp to point to the stack
+	0x0000000000400167 &lt;+4&gt;:	mov    QWORD PTR [rbp-0x18],rdi   ; -0x18 -&gt; rdi :: Par1 -&gt; d
+	0x000000000040016b &lt;+8&gt;:	mov    QWORD PTR [rbp-0x20],rsi   ; -0x20 -&gt; rsi :: Par2 -&gt; s
+	0x000000000040016f &lt;+12&gt;:	mov    DWORD PTR [rbp-0x24],edx   ; -0x24 -&gt; edx :: Par3 -&gt; n
+	0x0000000000400172 &lt;+15&gt;:	mov    DWORD PTR [rbp-0x4],0x0    ; -0x4  &lt;- 0 :: Var1 (local var i =0 )
+	0x0000000000400179 &lt;+22&gt;:	jmp    0x4001bc &lt;obfuscate+89&gt;    ; jmp l1
+
+	;; Let&#39;s forgot about this for now :)
+l0:	0x000000000040017b &lt;+24&gt;:	mov    eax,DWORD PTR [rbp-0x4]    
+	0x000000000040017e &lt;+27&gt;:	movsxd rdx,eax                    
+	0x0000000000400181 &lt;+30&gt;:	mov    rax,QWORD PTR [rbp-0x18]	  
+	0x0000000000400185 &lt;+34&gt;:	lea    rcx,[rdx+rax*1]            
+	0x0000000000400189 &lt;+38&gt;:	mov    eax,DWORD PTR [rbp-0x4]    
+	0x000000000040018c &lt;+41&gt;:	movsxd rdx,eax                    
+	0x000000000040018f &lt;+44&gt;:	mov    rax,QWORD PTR [rbp-0x18]   
+	0x0000000000400193 &lt;+48&gt;:	add    rax,rdx                    
+	0x0000000000400196 &lt;+51&gt;:	movzx  esi,BYTE PTR [rax]         
+	0x0000000000400199 &lt;+54&gt;:	mov    eax,DWORD PTR [rbp-0x4]    
+	0x000000000040019c &lt;+57&gt;:	cdq                               
+	0x000000000040019d &lt;+58&gt;:	shr    edx,0x1d	                  
+	0x00000000004001a0 &lt;+61&gt;:	add    eax,edx	                  
+	0x00000000004001a2 &lt;+63&gt;:	and    eax,0x7                    
+	0x00000000004001a5 &lt;+66&gt;:	sub    eax,edx                    
+	0x00000000004001a7 &lt;+68&gt;:	movsxd rdx,eax                    
+	0x00000000004001aa &lt;+71&gt;:	mov    rax,QWORD PTR [rbp-0x20]	  
+	0x00000000004001ae &lt;+75&gt;:	add    rax,rdx                    
+	0x00000000004001b1 &lt;+78&gt;:	movzx  eax,BYTE PTR [rax]         
+	0x00000000004001b4 &lt;+81&gt;:	xor    eax,esi                    
+	0x00000000004001b6 &lt;+83&gt;:	mov    BYTE PTR [rcx],al          
+
+l1:	0x00000000004001b8 &lt;+85&gt;:	add    DWORD PTR [rbp-0x4],0x1    ; Var1++ (i++ )
+	0x00000000004001bc &lt;+89&gt;:	mov    eax,DWORD PTR [rbp-0x4]    ; Read Var1 (i)
+	0x00000000004001bf &lt;+92&gt;:	cmp    eax,DWORD PTR [rbp-0x24]   ; Compare to Par 3 (n)
+	0x00000000004001c2 &lt;+95&gt;:	jl     0x40017b &lt;obfuscate+24&gt;    ; If Var1 (i) &lt; Par3 (n) jump to b0
+	0x00000000004001c4 &lt;+97&gt;:	pop    rbp
+	0x00000000004001c5 &lt;+98&gt;:	ret
+```
+For the time being, let&#39;s obviate the central part of the function, all those instructions between l0 and l1.
+
+I had already mapped some values to the actual names in the source code. Note that, while reverse engineering a program you do not have the source code (otherwise you just change the source code and you recompile it), and you will be referring to variables using generic names until you figure out what they do. I have chose  `Var1` for the local variable, or `Par1-Par3` for the parameters. I will keep both names in the comments so you see how things matches the source code, at the same time that you get a view of what you are going to see in a real case.
+
+The first thing you have to know to start reverse engineering this thing is the &quot;C Function Calling Convention&quot;
+
+## C Function Calling Convention
+When you call a function you have to pass your parameters to it. Traditionally, parameters were passed using the stack (well... that is maybe a simplification...), but that changed with the advent of the 64bits processors. These processors have a lot of registers so, it does not make much sense to push data in the stack when it can easily be passed around using register. Using the registers is also a lot more faster, than accessing memory... even cache memory.
+
+So, for the X86_64 architecture the current convention in GNU/Linux (Microsoft has a different one as far as i remember) is as follows:
+
+* Parameter 1 -&gt; `RDI`
+* Parameter 2 -&gt; `RSI`
+* Parameter 3 -&gt; `RDX`
+* Parameter 4 -&gt; `RCX`
+* Parameter 5 -&gt; `R8`
+* Parameter 6 -&gt; `R9`
+* _From this point on parameters are pushed to the stack_
+
+Well, this is actually a bit more complex but for our current discussion the table above summarises what we are interested on. For the curious, the function calling convention is one of the elements defined by an ABI (Application Binary Interface). To learn more about this, you can check this document ([http://x86-64.org/documentation/abi.pdf](http://x86-64.org/documentation/abi.pdf)).
+
+So, at the beginning of the code, we can see how the function stores the parameters in the stack for later reference.
+
+# Reversing the Loop
+For now, we know that our function takes three parameters and that it runs some code in a loop. The loop will use a counter located at `rbp-0x4`, and it will run from 0 to `Par3` (`rbp-0x24`). These are local variable `i` and parameter `n` in the source code.
+
+Let&#39;s start dissecting the loop code, in blocks. This is the first one:
+
+```
+b0:	0x000000000040017b &lt;+24&gt;:	mov    eax,DWORD PTR [rbp-0x4]    ; eax = Var1 (i)
+	0x000000000040017e &lt;+27&gt;:	movsxd rdx,eax                    ; rdx = eax = Var1 (i)
+	0x0000000000400181 &lt;+30&gt;:	mov    rax,QWORD PTR [rbp-0x18]	  ; rax = Par1 (d)
+	0x0000000000400185 &lt;+34&gt;:	lea    rcx,[rdx+rax*1]            ; rcx = &amp;(rdx + rax) = &amp;Par1[Var1] = &amp;d[i]
+	;; rcx = &amp;Par1[Var1] = &amp;d[i]
+```
+It wasn&#39;t that hard... wasn&#39;t it?. We are storing in register `rcx` the pointer to the `Var1` (aka `i`) element of a char array starting at `Par1`. That matches pretty much the beginning of the code inside the `for` loop. Without the source code, we just know that `rcx` will iterate through the memory pointed by `Par1`.
+
+_NOTE:Why &amp;d[i]?  this is probably the lvalue of the expression, the one we are going to write to (the one on the left, that is what lvalue means), so we need the pointer to know where we will have to write... d[i] = ..._
+
+Let&#39;s go for the next block
+
+```
+	0x0000000000400189 &lt;+38&gt;:	mov    eax,DWORD PTR [rbp-0x4]    ; eax = Var1 (i)
+	0x000000000040018c &lt;+41&gt;:	movsxd rdx,eax                    ; rdx = eax = Var1 (i)
+	0x000000000040018f &lt;+44&gt;:	mov    rax,QWORD PTR [rbp-0x18]   ; rax = Par1 (d)
+	0x0000000000400193 &lt;+48&gt;:	add    rax,rdx                    ; rax = rax + rdx = Par1 + Var1 (d + i)
+	0x0000000000400196 &lt;+51&gt;:	movzx  esi,BYTE PTR [rax]         ; esi = *rax = *(Par1 + Var1) = * (d + i)
+	;; esi =Par1[Var1] = d[i]
+```
+So, this looks like the beginning of our `rvalue`. let&#39;s check the code for a sec:
+
+```
+ d[i] ^= s[i % KEY_LEN];	
+```
+
+This is actually equivalent to 
+
+```
+ d[i] = d[i] ^s[i % KEY_LEN]
+```
+The second `d[i]` is a read operation, while the first `d[i]` is a write operation. I believe that is why the compiler had produced this two blocks so far.
+
+
+# Skipping the Tricky Part for a Sec
+So, now it comes the tricky part. By now, as you already have the source code, you know what the code does. We will see it in detail in the next section. But to finish with the easy part, let&#39;s  jump to offset 71
+
+```
+	0x00000000004001aa &lt;+71&gt;:	mov    rax,QWORD PTR [rbp-0x20]	  ; rax = Par2 (s)
+	0x00000000004001ae &lt;+75&gt;:	add    rax,rdx                    ; rax = rax +rdx = Par2 +rdx  = (s + rdx)
+	0x00000000004001b1 &lt;+78&gt;:	movzx  eax,BYTE PTR [rax]         ; eax = *(rax) = *(s+rdx) = s[rdx]
+	;; eax = *(par2 + rdx) = Par2[rdx] = Par2[Var1 % 8]
+	0x00000000004001b4 &lt;+81&gt;:	xor    eax,esi                    ; eax = eax xor esi = s[rdx] ^ d[i]
+	;; Do the xor
+	0x00000000004001b6 &lt;+83&gt;:	mov    BYTE PTR [rcx],al          ; *(rcx) = al =&gt; d[i] = s[rdx] ^d[i]
+```
+
+So, this part of the code, is the one that does the actual calculation. The XOR encoding. It takes a byte from the indexed `s` parameter, a byte from the indexed `d` parameter (that we calculated earlier in the code, rcx was not modified at all), and stores the result of the xor operation in `d`.
+
+This one was pretty simple. So the only missing part is how to calculate the index in the `s` array. 
+
+# The Tricky Code
+So, this is the code. I will try my best, but this is also hard for me.
+
+
+```
+	0x0000000000400199 &lt;+54&gt;:	mov    eax,DWORD PTR [rbp-0x4]    ; eax = Var1  (i)
+	0x000000000040019c &lt;+57&gt;:	cdq                               ; Convert DoubleWord to Qword
+	0x000000000040019d &lt;+58&gt;:	shr    edx,0x1d	                  ; edx= Shift right 0x1d (29) Keep high 3 bits
+	;; edx = Var1 % 8 (right shift 29 bits... the top 3 bits stay)
+	0x00000000004001a0 &lt;+61&gt;:	add    eax,edx	                  ; eax = eax + edx = Var1 + edx = i+edx
+	0x00000000004001a2 &lt;+63&gt;:	and    eax,0x7                    ; eax = eax &amp; 0x7 = (Var1 + edx) &amp; 0x7
+	0x00000000004001a5 &lt;+66&gt;:	sub    eax,edx                    ; eax = eax -edx = (Var1 + edx) &amp; 0x7 - edx
+	;; eax = eax - edx = (Var1 + Var1 % 8) % 0x7 - (Var1 % 8)
+        ;; As edx =0 for positive indexes -&gt; eax = i &amp; 0x7 ~ i % 8
+	0x00000000004001a7 &lt;+68&gt;:	movsxd rdx,eax                    ; rdx = eax
+	;; rdx = Var1 % 8 :P
+```
+
+The code starts retrieving our `i` variable (`rbp-0x4`). Then it runs a `cdq`, this instruction basically copies the upper bit of `EAX` (that for signed values represents the sign), into EDX making the combination EDX:EAX a signed quad word version of the word stored in EAX. For us, and for the current loop size , `edx` will always be 0 (as `eax` is never negative/overflowed), and all the instructions involving `edx` could be safely ignored. 
+
+This code manipulating `edx` seems to be intended to make the module operation work with 2-complemented numbers (negatives). My binary arithmetic is pretty rusty and to be honest there is not real advantage on refreshing it, so I will leave this to the young ones :) 
+
+In our case, as our index is always positive, the only instruction that actually has an impact on the result is the `and eax,0x7`, that effectively performs the `i % KEY_LEN`, when `KEY_LEN` is a power of 2.
+
+# Retrieving the Password
+I think this is the last point standing, how to retrieve the password.
+
+We know that the program crypts the keys using a simple XOR crypter. That makes things pretty easy, because the XOR crypter is also the decrypter. So we just need to run the obfuscated string in the code through the `obfuscate` function to retrieve the original password, or alternatively, perform the operation by hand. It is probably the same effort to do one thing or the other for this simple case.
+
+By now, you should be able to find the internal XOR password and the crypted program password and do the decoding, or change some memory position using your debugger to make the `obfuscate` function run on the cyoted program password, instead of on the user provided one.
+
+However, I would like to bring to your attention some remarks.
+
+In a real world case, it is pretty unlikely that anybody will use a XOR crypt. The reason is that this function is trivially invertible. Actually the inverse is itself. Using a more sophisticated cryptographic solution will make very difficult to retrieve the key by analytic means.
+
+If that is the case, retrieving the crackme password, becomes a password cracking problem and patching the binary is the easiest solution to get rid of the protection. You will never know what the password was, but you had rendered it useless. So, when proper cryptographic algorithms are used, you will have to:
+
+* Crack the binary, so the passwords becomes useless. What if the password is used in other places in the program, at random???
+* Crack the password, using traditional techniques (brute force, dictionary attack,...)
+* Patch the binary to change the password. If you have managed to identify the algorithm used to encrypt the key or you have isolated the function from the application itself, you could chose your password, re-encrypt it and patch the binary with this value. This will actually depend on how the program is written.
+
+As far as I can think, those are the main options for non networked protected software. 
+
+In our simple crackme example you could, just change the internal password to all zeros, and the program password to any plain text string. Just find in the file the `ipass` and `pass` sequences and change it... 
+
+# THE END
+OK, I think this completely finish all what this crackme can offer. I have done my best to make this interesting and try to explain as much as I can. I&#39;m not an expert myself and actually I haven&#39;t done this stuff for many years... but it is still good fun.
+
+I have been pretty surprises and happy to see how this small program have generated that much content. It have been fun for me and I hope you have also enjoyed the challenger and maybe learn something.
+
+Ar you ready for the next step?... It won&#39;t be that easy :P</description>
+    
+    <lastBuildDate>Sat, 28 May 2016 08:29:07 +0000</lastBuildDate>
+    <category>Challenges</category>
+    <atom:link href="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Crackme (Linux/C). Source Code and Reverse Engineering</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>The idea is that when you solve this (you break the password and you can run the program), you get a password for the next level. I thought about generating the password dynamically so you cannot find it with a simple <code>strings</code>. You actually have to crack the program to get the password for the next level.</p>
+          <p><a href="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/7</link>
+        <pubDate>Sat, 28 May 2016 08:29:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-504-7</guid>
+        <source url="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504.rss">Crackme (Linux/C). Source Code and Reverse Engineering</source>
+      </item>
+      <item>
+        <title>Crackme (Linux/C). Source Code and Reverse Engineering</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>I was trying my best not to read your solution. Now that I can see the pass variable, is the repeated bytes a result from the side project?</p>
+          <p><a href="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/6</link>
+        <pubDate>Sat, 28 May 2016 08:14:16 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-504-6</guid>
+        <source url="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504.rss">Crackme (Linux/C). Source Code and Reverse Engineering</source>
+      </item>
+      <item>
+        <title>Crackme (Linux/C). Source Code and Reverse Engineering</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>yes, the whole thing… including original bugs and unused code <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/5</link>
+        <pubDate>Sat, 28 May 2016 08:10:35 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-504-5</guid>
+        <source url="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504.rss">Crackme (Linux/C). Source Code and Reverse Engineering</source>
+      </item>
+      <item>
+        <title>Crackme (Linux/C). Source Code and Reverse Engineering</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Ohh, I actually just realized that you put up your entire source code. Heh…</p>
+          <p><a href="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/4</link>
+        <pubDate>Sat, 28 May 2016 08:06:51 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-504-4</guid>
+        <source url="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504.rss">Crackme (Linux/C). Source Code and Reverse Engineering</source>
+      </item>
+      <item>
+        <title>Crackme (Linux/C). Source Code and Reverse Engineering</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>I think I mentioned, this is part of a side project. I should have removed from the crackme… as it is not used at all.</p>
+<p>The <code>gen_pass</code> just reverses a string. The idea was to generate a challenger where the password/token you have to get is not the program password, but something else the program generates once the right password is entered…</p>
+          <p><a href="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/3</link>
+        <pubDate>Sat, 28 May 2016 07:49:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-504-3</guid>
+        <source url="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504.rss">Crackme (Linux/C). Source Code and Reverse Engineering</source>
+      </item>
+      <item>
+        <title>Crackme (Linux/C). Source Code and Reverse Engineering</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Here’s my reversed version of your code. I had to assume the XOR modulo was <code>8</code> from the information on Stack Overflow but I referenced from your solution as well. I still need to figure out what’s happening with all the modulus optimizations from compilers…</p>
+<pre><code class="lang-auto">ipass[] = {0x23, 0x89, 0xF2, 0xC2, 0x6D, 0x3E, 0xC7, 0xB2, 0x00};
+
+pass[] = {0x62, 0xCB, 0xB1, 0x86, 0x28, 0x78, 0x80, 0xB2, 
+          0x23, 0x89, 0xF2, 0xC2, 0x6D, 0x3E, 0xC7, 0xB2, 
+          0x23, 0x89, 0xF2, 0xC2, 0x6D, 0x3E, 0xC7, 0xB2, 
+          0x23, 0x89, 0xF2, 0xC2, 0x6D, 0x3E, 0xC7, 0xB2, 
+          0x00};    // not sure why it's repeated
+
+int obfuscate(arg1, arg2, arg3) {
+    var1;
+    for (var1 = 0; var1 &lt; arg3; var1++) {
+        *(arg1 + var1) ^= (arg2[var1 % 8]);
+    }
+    return var1;
+}
+
+int my_getpass(arg1, arg2, arg3) {
+    var1;
+    if (tcgetattr(0x0, &amp;var1) != 0) {
+        return -1;
+    }
+
+    var2 = var1;
+    var2.memberX &amp;= 0xFFFFFFF7;   // not sure which member
+    
+    if (tcsetattr(0x0, 0x2, &amp;var2) != 0) {
+        return -1;
+    }
+
+    var3 = read(0x1, arg1, arg2);
+    tcsetattr(0x0, 0x2, &amp;var1);
+
+    return var3;
+}
+
+void my_print(arg1) {
+    write(0x1, arg1, strlen(arg1)); 
+}
+
+int main(int argc, char *argv[]) {
+    my_print("0x00 Challenger\n\n");
+    my_print("Password:");
+
+    var1 = 0x20;
+    var2 = malloc(var1);
+    my_getpass(var2, var1, 0);
+
+    obfuscate(var2, ipass, var1);
+
+    my_print("\n+ Checking password ");
+    if (strncmp(var2, pass, var1) == 0)
+        my_print(" OK.\n+ You did it!\n");
+    else
+        my_print(" Fail.\n- Try again.\n");
+
+    my_print("+ DONE\n");
+
+    return 0;    
+}
+</code></pre>
+<p>Also, one last thing, I didn’t reverse it because I couldn’t be bothered but what is the <code>gen_pass</code> function?<br>
+<img src="//0x00sec.s3.amazonaws.com/original/1X/9de92c3f1189b1d6f80d56cda7f964402ac44914.png" width="602" height="420"></p>
+          <p><a href="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/2</link>
+        <pubDate>Sat, 28 May 2016 05:45:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-504-2</guid>
+        <source url="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504.rss">Crackme (Linux/C). Source Code and Reverse Engineering</source>
+      </item>
+      <item>
+        <title>Crackme (Linux/C). Source Code and Reverse Engineering</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Once again <a class="mention" href="https://d.clarkee.co.uk/u/dtm">@dtm</a> successfully reversed the relevant function in the crackme and found the hidden password. Congrats!.</p>
+<p>To conclude with this series of post regarding this crackme, I will show you the source code, explain why it is a bit messy and give you some basics on how to reverse engineer functions.</p>
+<p>To keep it simple we will be using the binary with the symbols. The process should be similar with the stripped version, but just a bit more difficult because that one was also optimized for size and therefore you may find some non-obvious code.</p>
+<h1>The Code</h1>
+<p>I will first show you the original source code. I think it will help understanding the rest of the post. There you go:</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdlib.h&gt;
+
+#include &lt;termios.h&gt;
+#include &lt;unistd.h&gt;
+
+#define KEY_LEN 8
+#define PASS_LEN 32
+char *ipass= "\x23\x89\xf2\xc2\x6d\x3e\xc7\xb2\0";
+//char *pass="ABCDEFG\0";
+char *pass="\x62\xcb\xb1\x86\x28\x78\x80\xb2\x23\x89\xf2\xc2\x6d\x3e\xc7\xb2\x23\x89\xf2\xc2\x6d\x3e\xc7\xb2\x23\x89\xf2\xc2\x6d\x3e\xc7\xb2";
+
+
+int
+obfuscate (char *d, char *s, int n)
+{
+  int   i;
+  for (i = 0; i &lt; n; i++)
+    d[i] ^= s[i % KEY_LEN];
+}
+
+void 
+gen_pass (char *p)
+{
+  char *p1 = p + PASS_LEN;
+
+  while (p1 != p) write (1, (--p1) ,1);
+    
+}
+
+/* Form GNU libc documentation */
+/* fd parameter can be removed now */
+ssize_t
+my_getpass (char *lineptr, size_t n, int fd)
+{
+  struct termios old, new;
+  int            nread;
+
+  /* Turn echoing off and fail if we can’t. */
+  if (tcgetattr (0, &amp;old) != 0)
+    return -1;
+  new = old;
+  new.c_lflag &amp;= ~ECHO;
+  if (tcsetattr (0, TCSAFLUSH, &amp;new) != 0)
+    return -1;
+
+  /* Read the password. */
+  nread = read (1, lineptr, n);
+
+  /* Restore terminal. */
+  (void) tcsetattr (0, TCSAFLUSH, &amp;old);
+
+  return nread;
+}
+
+int 
+my_print (char *buf)
+{
+  return write (1, buf, strlen(buf));
+}
+
+int
+main (int argc, char *argv[])
+{
+  char     *p;
+  size_t   len, l, i;
+
+  my_print ("0x00 Challenger\n\n");
+
+  my_print ("Password:");
+  len = PASS_LEN;
+  p = malloc (len);
+
+  l = my_getpass (p, len, 0);
+  p[l -1] = 0;
+  obfuscate (p, ipass, PASS_LEN);
+  my_print ("\n+ Checking Password ");
+  /* make brute force attack tediuous :)*/
+  /*for (i = 0; i &lt; 5; i++) { my_print ("."); sleep (1);}*/
+  if (strncmp (p, pass, PASS_LEN) == 0)
+    {
+      my_print (" OK.\n+ You did it!\n");
+    }
+  else
+    my_print (" Fail.\n- Try again.\n");
+  
+  my_print ("+ DONE\n");
+
+  return 0;
+}
+
+
+</code></pre>
+<p>The program is quite straight forward, but I have to make some comments for you to understand why some things were done a bit weird.</p>
+<p>The function <code>my_getpass</code> is just a substitution of the <code>getpass</code> function. It is like a <code>gets</code> but without echoing the characters to the console. Usually for these kind of crackmes, people do not care about hiding the password… Well, I just thought it would be nice to show how to do this.</p>
+<p>Originally I wrote the program to use the <code>getpass</code> function. However, if you check the man page for the function, it says it is obsolete. Looking for an alternative I found an alternative provided from the GNU libc documentation. I slightly modify it… more on this in a sec.</p>
+<p>The <code>obfuscate</code> password is actually performing a basic XOR encoding as <a class="mention" href="https://d.clarkee.co.uk/u/dtm">@dtm</a> found out (Kudos m8te!). That strange thing with the XOR is a module operator %. We will get to this later. In this case, an <code>&amp;</code> will work OK as the length of the password is 8 (a power of 2), but the <code>%</code> actually helps to further obfuscate the code :).</p>
+<p>If you look in the <code>main</code> function, there is a call to <code>malloc</code> to allocate a string. Well, that is not really needed, it remains there because of an early implementation and subsequent evolutions of the <code>my_getpass</code> function. Anyway, the main function is the typical crackme code. Read a password, do a comparison and print the message.</p>
+<h1>Producing the Binary</h1>
+<p>You may be wondering why there is a <code>my_print</code> function. Why this guy didn’t just used a <code>printf</code> in there?. Well the reason is to make the binary very small, so I could paste a base64 text in this forum.</p>
+<p>To produce such a small executable I used my beloved, <code>dietlibc</code>. This is a wrapper around gcc, that strips down the binaries to ridiculous sizes if you follow some simple rules.</p>
+<p>So, to compile our program with <code>dietlibc</code> we have to prefix our normal compilation with the command <code>diet</code>. Something like this:</p>
+<p><code>diet gcc -o c1 c1.c</code></p>
+<p>This will produce a pretty small program. Go and change the source adding a <code>printf</code>, anywhere in the code and re-compile it again… You just got 7Kb extra by using that function. Something similar happens with the public GNU libc code to substitute <code>getpass</code>. It uses streams and that adds quite some extra Kbs to our static binary.</p>
+<p>This is the GNU libc proposal substitution for the standard <code>getpass</code>:</p>
+<pre><code class="lang-auto">ssize_t
+my_getpass (char **lineptr, size_t *n, FILE *stream)
+{
+  struct termios old, new;
+  int nread;
+
+  /* Turn echoing off and fail if we can’t. */
+  if (tcgetattr (fileno (stream), &amp;old) != 0)
+    return -1;
+  new = old;
+  new.c_lflag &amp;= ~ECHO;
+  if (tcsetattr (fileno (stream), TCSAFLUSH, &amp;new) != 0)
+    return -1;
+
+  /* Read the password. */
+  nread = getline (lineptr, n, stream);
+
+  /* Restore terminal. */
+  (void) tcsetattr (fileno (stream), TCSAFLUSH, &amp;old);
+
+  return nread;
+}
+</code></pre>
+<p><a href="http://www.gnu.org/software/libc/manual/html_node/getpass.html" class="onebox" target="_blank" rel="nofollow noopener">http://www.gnu.org/software/libc/manual/html_node/getpass.html</a></p>
+<p>So, I got rid of the streams and also the getline. Then, instead of passing the stream object <code>stdin</code>, I just hardcoded the file descriptor in the function.</p>
+<p><em>NOTE:The original code has a bug, reading from fd 1 (stdout). The program works OK, that’s way I didn’t notice, but at the time of this writing I cannot say why reading from stdout works.</em></p>
+<p>Changing all <code>printf</code>s to <code>write</code>s let’s libc discard all the formatting code and save us those 7Kb. So at the end, our binary is around 8Kb (static), and compressed with <code>gzip</code> it goes down to 3.7Kb. That is because all the symbols (actually strings) are still there, and that kind of data can be compressed very efficiently by <code>gzip</code>.</p>
+<p>If we remove the symbols (just run <code>strip -s</code>), the binary itself goes down to 4.8 Kbs and after gzipping it, the whole thing ends up at just 2.7 Kb.</p>
+<p>It is important to make the binary very small, because when we re-encode it to post in the forum we will increase the size. I used base64, as it is a pretty standard way to do this, but you can go for different ways to encode data into ASCII values.</p>
+<p>A dynamic linked binary may have worked for most of you. Dynamically linked programs are very small as most of the code they use is provided by the libraries in the system. But you may have troubles running it if you do not share the same libraries in the machine compiling the program and the machine running it. That is why I went for an static binary. This also prevents <code>LD_PRELOAD</code>ing your version own version of <code>strcmp</code> and not even have to patch the binary.</p>
+<p><em>(Take a look to the post about proxies and try yourself)</em></p>
+<h1>Reverse Engineering</h1>
+<p>So, it is time to get our hands dirty and reverse engineer the <code>obfuscate</code> function. That is actually the only one we need to understand if we want to decode the password.</p>
+<p>Let’s start with the objdump disassembly… we are going to do this completely by hand!!!. There are tools that will help and also do a bit of decompiling for you, but it is good to look under the hood and this program is simple enough to be analyzed manually… furthermore I do not have much experience with those tools as I do not usually do reverse engineering.</p>
+<p>This is the dump with some initial annotations.</p>
+<pre><code class="lang-auto">	0x0000000000400163 &lt;+0&gt;:	push   rbp
+	0x0000000000400164 &lt;+1&gt;:	mov    rbp,rsp 			  ; Set rbp to point to the stack
+	0x0000000000400167 &lt;+4&gt;:	mov    QWORD PTR [rbp-0x18],rdi   ; -0x18 -&gt; rdi :: Par1 -&gt; d
+	0x000000000040016b &lt;+8&gt;:	mov    QWORD PTR [rbp-0x20],rsi   ; -0x20 -&gt; rsi :: Par2 -&gt; s
+	0x000000000040016f &lt;+12&gt;:	mov    DWORD PTR [rbp-0x24],edx   ; -0x24 -&gt; edx :: Par3 -&gt; n
+	0x0000000000400172 &lt;+15&gt;:	mov    DWORD PTR [rbp-0x4],0x0    ; -0x4  &lt;- 0 :: Var1 (local var i =0 )
+	0x0000000000400179 &lt;+22&gt;:	jmp    0x4001bc &lt;obfuscate+89&gt;    ; jmp l1
+
+	;; Let's forgot about this for now :)
+l0:	0x000000000040017b &lt;+24&gt;:	mov    eax,DWORD PTR [rbp-0x4]    
+	0x000000000040017e &lt;+27&gt;:	movsxd rdx,eax                    
+	0x0000000000400181 &lt;+30&gt;:	mov    rax,QWORD PTR [rbp-0x18]	  
+	0x0000000000400185 &lt;+34&gt;:	lea    rcx,[rdx+rax*1]            
+	0x0000000000400189 &lt;+38&gt;:	mov    eax,DWORD PTR [rbp-0x4]    
+	0x000000000040018c &lt;+41&gt;:	movsxd rdx,eax                    
+	0x000000000040018f &lt;+44&gt;:	mov    rax,QWORD PTR [rbp-0x18]   
+	0x0000000000400193 &lt;+48&gt;:	add    rax,rdx                    
+	0x0000000000400196 &lt;+51&gt;:	movzx  esi,BYTE PTR [rax]         
+	0x0000000000400199 &lt;+54&gt;:	mov    eax,DWORD PTR [rbp-0x4]    
+	0x000000000040019c &lt;+57&gt;:	cdq                               
+	0x000000000040019d &lt;+58&gt;:	shr    edx,0x1d	                  
+	0x00000000004001a0 &lt;+61&gt;:	add    eax,edx	                  
+	0x00000000004001a2 &lt;+63&gt;:	and    eax,0x7                    
+	0x00000000004001a5 &lt;+66&gt;:	sub    eax,edx                    
+	0x00000000004001a7 &lt;+68&gt;:	movsxd rdx,eax                    
+	0x00000000004001aa &lt;+71&gt;:	mov    rax,QWORD PTR [rbp-0x20]	  
+	0x00000000004001ae &lt;+75&gt;:	add    rax,rdx                    
+	0x00000000004001b1 &lt;+78&gt;:	movzx  eax,BYTE PTR [rax]         
+	0x00000000004001b4 &lt;+81&gt;:	xor    eax,esi                    
+	0x00000000004001b6 &lt;+83&gt;:	mov    BYTE PTR [rcx],al          
+
+l1:	0x00000000004001b8 &lt;+85&gt;:	add    DWORD PTR [rbp-0x4],0x1    ; Var1++ (i++ )
+	0x00000000004001bc &lt;+89&gt;:	mov    eax,DWORD PTR [rbp-0x4]    ; Read Var1 (i)
+	0x00000000004001bf &lt;+92&gt;:	cmp    eax,DWORD PTR [rbp-0x24]   ; Compare to Par 3 (n)
+	0x00000000004001c2 &lt;+95&gt;:	jl     0x40017b &lt;obfuscate+24&gt;    ; If Var1 (i) &lt; Par3 (n) jump to b0
+	0x00000000004001c4 &lt;+97&gt;:	pop    rbp
+	0x00000000004001c5 &lt;+98&gt;:	ret
+</code></pre>
+<p>For the time being, let’s obviate the central part of the function, all those instructions between l0 and l1.</p>
+<p>I had already mapped some values to the actual names in the source code. Note that, while reverse engineering a program you do not have the source code (otherwise you just change the source code and you recompile it), and you will be referring to variables using generic names until you figure out what they do. I have chose  <code>Var1</code> for the local variable, or <code>Par1-Par3</code> for the parameters. I will keep both names in the comments so you see how things matches the source code, at the same time that you get a view of what you are going to see in a real case.</p>
+<p>The first thing you have to know to start reverse engineering this thing is the “C Function Calling Convention”</p>
+<h2>C Function Calling Convention</h2>
+<p>When you call a function you have to pass your parameters to it. Traditionally, parameters were passed using the stack (well… that is maybe a simplification…), but that changed with the advent of the 64bits processors. These processors have a lot of registers so, it does not make much sense to push data in the stack when it can easily be passed around using register. Using the registers is also a lot more faster, than accessing memory… even cache memory.</p>
+<p>So, for the X86_64 architecture the current convention in GNU/Linux (Microsoft has a different one as far as i remember) is as follows:</p>
+<ul>
+<li>Parameter 1 -&gt; <code>RDI</code>
+</li>
+<li>Parameter 2 -&gt; <code>RSI</code>
+</li>
+<li>Parameter 3 -&gt; <code>RDX</code>
+</li>
+<li>Parameter 4 -&gt; <code>RCX</code>
+</li>
+<li>Parameter 5 -&gt; <code>R8</code>
+</li>
+<li>Parameter 6 -&gt; <code>R9</code>
+</li>
+<li><em>From this point on parameters are pushed to the stack</em></li>
+</ul>
+<p>Well, this is actually a bit more complex but for our current discussion the table above summarises what we are interested on. For the curious, the function calling convention is one of the elements defined by an ABI (Application Binary Interface). To learn more about this, you can check this document (<a href="http://x86-64.org/documentation/abi.pdf" rel="nofollow noopener">http://x86-64.org/documentation/abi.pdf</a>).</p>
+<p>So, at the beginning of the code, we can see how the function stores the parameters in the stack for later reference.</p>
+<h1>Reversing the Loop</h1>
+<p>For now, we know that our function takes three parameters and that it runs some code in a loop. The loop will use a counter located at <code>rbp-0x4</code>, and it will run from 0 to <code>Par3</code> (<code>rbp-0x24</code>). These are local variable <code>i</code> and parameter <code>n</code> in the source code.</p>
+<p>Let’s start dissecting the loop code, in blocks. This is the first one:</p>
+<pre><code class="lang-auto">b0:	0x000000000040017b &lt;+24&gt;:	mov    eax,DWORD PTR [rbp-0x4]    ; eax = Var1 (i)
+	0x000000000040017e &lt;+27&gt;:	movsxd rdx,eax                    ; rdx = eax = Var1 (i)
+	0x0000000000400181 &lt;+30&gt;:	mov    rax,QWORD PTR [rbp-0x18]	  ; rax = Par1 (d)
+	0x0000000000400185 &lt;+34&gt;:	lea    rcx,[rdx+rax*1]            ; rcx = &amp;(rdx + rax) = &amp;Par1[Var1] = &amp;d[i]
+	;; rcx = &amp;Par1[Var1] = &amp;d[i]
+</code></pre>
+<p>It wasn’t that hard… wasn’t it?. We are storing in register <code>rcx</code> the pointer to the <code>Var1</code> (aka <code>i</code>) element of a char array starting at <code>Par1</code>. That matches pretty much the beginning of the code inside the <code>for</code> loop. Without the source code, we just know that <code>rcx</code> will iterate through the memory pointed by <code>Par1</code>.</p>
+<p><em>NOTE:Why &amp;d[i]?  this is probably the lvalue of the expression, the one we are going to write to (the one on the left, that is what lvalue means), so we need the pointer to know where we will have to write… d[i] = …</em></p>
+<p>Let’s go for the next block</p>
+<pre><code class="lang-auto">	0x0000000000400189 &lt;+38&gt;:	mov    eax,DWORD PTR [rbp-0x4]    ; eax = Var1 (i)
+	0x000000000040018c &lt;+41&gt;:	movsxd rdx,eax                    ; rdx = eax = Var1 (i)
+	0x000000000040018f &lt;+44&gt;:	mov    rax,QWORD PTR [rbp-0x18]   ; rax = Par1 (d)
+	0x0000000000400193 &lt;+48&gt;:	add    rax,rdx                    ; rax = rax + rdx = Par1 + Var1 (d + i)
+	0x0000000000400196 &lt;+51&gt;:	movzx  esi,BYTE PTR [rax]         ; esi = *rax = *(Par1 + Var1) = * (d + i)
+	;; esi =Par1[Var1] = d[i]
+</code></pre>
+<p>So, this looks like the beginning of our <code>rvalue</code>. let’s check the code for a sec:</p>
+<pre><code class="lang-auto"> d[i] ^= s[i % KEY_LEN];	
+</code></pre>
+<p>This is actually equivalent to</p>
+<pre><code class="lang-auto"> d[i] = d[i] ^s[i % KEY_LEN]
+</code></pre>
+<p>The second <code>d[i]</code> is a read operation, while the first <code>d[i]</code> is a write operation. I believe that is why the compiler had produced this two blocks so far.</p>
+<h1>Skipping the Tricky Part for a Sec</h1>
+<p>So, now it comes the tricky part. By now, as you already have the source code, you know what the code does. We will see it in detail in the next section. But to finish with the easy part, let’s  jump to offset 71</p>
+<pre><code class="lang-auto">	0x00000000004001aa &lt;+71&gt;:	mov    rax,QWORD PTR [rbp-0x20]	  ; rax = Par2 (s)
+	0x00000000004001ae &lt;+75&gt;:	add    rax,rdx                    ; rax = rax +rdx = Par2 +rdx  = (s + rdx)
+	0x00000000004001b1 &lt;+78&gt;:	movzx  eax,BYTE PTR [rax]         ; eax = *(rax) = *(s+rdx) = s[rdx]
+	;; eax = *(par2 + rdx) = Par2[rdx] = Par2[Var1 % 8]
+	0x00000000004001b4 &lt;+81&gt;:	xor    eax,esi                    ; eax = eax xor esi = s[rdx] ^ d[i]
+	;; Do the xor
+	0x00000000004001b6 &lt;+83&gt;:	mov    BYTE PTR [rcx],al          ; *(rcx) = al =&gt; d[i] = s[rdx] ^d[i]
+</code></pre>
+<p>So, this part of the code, is the one that does the actual calculation. The XOR encoding. It takes a byte from the indexed <code>s</code> parameter, a byte from the indexed <code>d</code> parameter (that we calculated earlier in the code, rcx was not modified at all), and stores the result of the xor operation in <code>d</code>.</p>
+<p>This one was pretty simple. So the only missing part is how to calculate the index in the <code>s</code> array.</p>
+<h1>The Tricky Code</h1>
+<p>So, this is the code. I will try my best, but this is also hard for me.</p>
+<pre><code class="lang-auto">	0x0000000000400199 &lt;+54&gt;:	mov    eax,DWORD PTR [rbp-0x4]    ; eax = Var1  (i)
+	0x000000000040019c &lt;+57&gt;:	cdq                               ; Convert DoubleWord to Qword
+	0x000000000040019d &lt;+58&gt;:	shr    edx,0x1d	                  ; edx= Shift right 0x1d (29) Keep high 3 bits
+	;; edx = Var1 % 8 (right shift 29 bits... the top 3 bits stay)
+	0x00000000004001a0 &lt;+61&gt;:	add    eax,edx	                  ; eax = eax + edx = Var1 + edx = i+edx
+	0x00000000004001a2 &lt;+63&gt;:	and    eax,0x7                    ; eax = eax &amp; 0x7 = (Var1 + edx) &amp; 0x7
+	0x00000000004001a5 &lt;+66&gt;:	sub    eax,edx                    ; eax = eax -edx = (Var1 + edx) &amp; 0x7 - edx
+	;; eax = eax - edx = (Var1 + Var1 % 8) % 0x7 - (Var1 % 8)
+        ;; As edx =0 for positive indexes -&gt; eax = i &amp; 0x7 ~ i % 8
+	0x00000000004001a7 &lt;+68&gt;:	movsxd rdx,eax                    ; rdx = eax
+	;; rdx = Var1 % 8 :P
+</code></pre>
+<p>The code starts retrieving our <code>i</code> variable (<code>rbp-0x4</code>). Then it runs a <code>cdq</code>, this instruction basically copies the upper bit of <code>EAX</code> (that for signed values represents the sign), into EDX making the combination EDX:EAX a signed quad word version of the word stored in EAX. For us, and for the current loop size , <code>edx</code> will always be 0 (as <code>eax</code> is never negative/overflowed), and all the instructions involving <code>edx</code> could be safely ignored.</p>
+<p>This code manipulating <code>edx</code> seems to be intended to make the module operation work with 2-complemented numbers (negatives). My binary arithmetic is pretty rusty and to be honest there is not real advantage on refreshing it, so I will leave this to the young ones <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>In our case, as our index is always positive, the only instruction that actually has an impact on the result is the <code>and eax,0x7</code>, that effectively performs the <code>i % KEY_LEN</code>, when <code>KEY_LEN</code> is a power of 2.</p>
+<h1>Retrieving the Password</h1>
+<p>I think this is the last point standing, how to retrieve the password.</p>
+<p>We know that the program crypts the keys using a simple XOR crypter. That makes things pretty easy, because the XOR crypter is also the decrypter. So we just need to run the obfuscated string in the code through the <code>obfuscate</code> function to retrieve the original password, or alternatively, perform the operation by hand. It is probably the same effort to do one thing or the other for this simple case.</p>
+<p>By now, you should be able to find the internal XOR password and the crypted program password and do the decoding, or change some memory position using your debugger to make the <code>obfuscate</code> function run on the cyoted program password, instead of on the user provided one.</p>
+<p>However, I would like to bring to your attention some remarks.</p>
+<p>In a real world case, it is pretty unlikely that anybody will use a XOR crypt. The reason is that this function is trivially invertible. Actually the inverse is itself. Using a more sophisticated cryptographic solution will make very difficult to retrieve the key by analytic means.</p>
+<p>If that is the case, retrieving the crackme password, becomes a password cracking problem and patching the binary is the easiest solution to get rid of the protection. You will never know what the password was, but you had rendered it useless. So, when proper cryptographic algorithms are used, you will have to:</p>
+<ul>
+<li>Crack the binary, so the passwords becomes useless. What if the password is used in other places in the program, at random???</li>
+<li>Crack the password, using traditional techniques (brute force, dictionary attack,…)</li>
+<li>Patch the binary to change the password. If you have managed to identify the algorithm used to encrypt the key or you have isolated the function from the application itself, you could chose your password, re-encrypt it and patch the binary with this value. This will actually depend on how the program is written.</li>
+</ul>
+<p>As far as I can think, those are the main options for non networked protected software.</p>
+<p>In our simple crackme example you could, just change the internal password to all zeros, and the program password to any plain text string. Just find in the file the <code>ipass</code> and <code>pass</code> sequences and change it…</p>
+<h1>THE END</h1>
+<p>OK, I think this completely finish all what this crackme can offer. I have done my best to make this interesting and try to explain as much as I can. I’m not an expert myself and actually I haven’t done this stuff for many years… but it is still good fun.</p>
+<p>I have been pretty surprises and happy to see how this small program have generated that much content. It have been fun for me and I hope you have also enjoyed the challenger and maybe learn something.</p>
+<p>Ar you ready for the next step?.. It won’t be that easy <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504/1</link>
+        <pubDate>Fri, 27 May 2016 22:49:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-504-1</guid>
+        <source url="https://d.clarkee.co.uk/t/crackme-linux-c-source-code-and-reverse-engineering/504.rss">Crackme (Linux/C). Source Code and Reverse Engineering</source>
+      </item>
+  </channel>
+</rss>

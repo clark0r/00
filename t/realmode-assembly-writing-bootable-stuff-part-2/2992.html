@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!-- Added by HTTrack --><meta http-equiv="content-type" content="text/html;charset=utf-8" /><!-- /Added by HTTrack -->
+<head>
+    <meta charset="utf-8">
+    <title>Realmode Assembly - Writing bootable stuff - Part 2 - Programming - 0x00sec - The Home of the Hacker</title>
+    <meta name="description" content="Realmode Assembly - Writing bootable stuff - Part 2
+Part 2: Hello World Bootloader
+
+What is this?
+This is going to be a walk-through in writing an Operation System in assembly which operates purely in Realmode. 
+Goal wil&amp;hellip;">
+    <meta name="generator" content="Discourse 3.6.0.beta2-latest - https://github.com/discourse/discourse version 3b1964f3ed8bdc2f181e2abccb1b116e4b814db5">
+<link rel="icon" type="image/png" href="../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.html">
+<link rel="apple-touch-icon" type="image/png" href="../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.html">
+<meta name="theme-color" media="all" content="#171616">
+
+<meta name="color-scheme" content="dark">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, viewport-fit=cover">
+<link rel="canonical" href="2992.html" />
+
+<link rel="search" type="application/opensearchdescription+xml" href="../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+
+    
+    <link href="../../stylesheets/color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4.css_%3b%20filename_%3dUTF-8%27%27color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" class="light-scheme" data-scheme-id="15"/>
+
+<link href="../../stylesheets/common_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27common_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common"  />
+
+  <link href="../../stylesheets/mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile"  />
+  <link href="../../stylesheets/desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop"  />
+
+
+
+    <link href="../../stylesheets/chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="chat"  />
+    <link href="../../stylesheets/checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="checklist"  />
+    <link href="../../stylesheets/discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-cakeday"  />
+    <link href="../../stylesheets/discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-details"  />
+    <link href="../../stylesheets/discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-lazy-videos"  />
+    <link href="../../stylesheets/discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-local-dates"  />
+    <link href="../../stylesheets/discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-narrative-bot"  />
+    <link href="../../stylesheets/discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-presence"  />
+    <link href="../../stylesheets/discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-solved"  />
+    <link href="../../stylesheets/discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-templates"  />
+    <link href="../../stylesheets/discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-topic-voting"  />
+    <link href="../../stylesheets/docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="docker_manager"  />
+    <link href="../../stylesheets/footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="footnote"  />
+    <link href="../../stylesheets/poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="poll"  />
+    <link href="../../stylesheets/spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="spoiler-alert"  />
+    <link href="../../stylesheets/chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="chat_mobile"  />
+    <link href="../../stylesheets/discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-solved_mobile"  />
+    <link href="../../stylesheets/discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-topic-voting_mobile"  />
+    <link href="../../stylesheets/chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="chat_desktop"  />
+    <link href="../../stylesheets/discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="discourse-topic-voting_desktop"  />
+    <link href="../../stylesheets/poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="poll_desktop"  />
+
+  <link href="../../stylesheets/common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960db.css_%3b%20filename_%3dUTF-8%27%27common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960dba97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common_theme" data-theme-id="57" data-theme-name="0x00sec-v2"/>
+    <link href="../../stylesheets/mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38.css_%3b%20filename_%3dUTF-8%27%27mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile_theme" data-theme-id="4" data-theme-name="mobile chrome"/>
+    <link href="../../stylesheets/desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96.css_%3b%20filename_%3dUTF-8%27%27desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2"/>
+
+    <link rel="stylesheet" href="../../../external.html?link=https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="../../../external.html?link=https://s3.amazonaws.com/0x00sec/highlight.pack.js" nonce="BoW6SckCMQ6rxC7O2lEpnxp3E"></script>
+<script defer="" src="../../theme-javascripts/05954ff525aceb8daa8b585f92d758d311ae7077.js_%3b%20filename_%3dUTF-8%27%2705954ff525aceb8daa8b585f92d758d311ae7077a97f.js?__ws=d.clarkee.co.uk" data-theme-id="40" nonce="BoW6SckCMQ6rxC7O2lEpnxp3E"></script>
+    
+        <link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;Realmode Assembly - Writing bootable stuff - Part 2&#39;" href="2992.rss" />
+    <meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:image" content="https://0x00sec.s3.amazonaws.com/original/2X/2/2768b6a80245cdc90c4e65ad8af6fdda8c51e4bc.png" />
+<meta property="og:image" content="https://0x00sec.s3.amazonaws.com/original/2X/2/2768b6a80245cdc90c4e65ad8af6fdda8c51e4bc.png" />
+<meta property="og:url" content="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992" />
+<meta name="twitter:url" content="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992" />
+<meta property="og:title" content="Realmode Assembly - Writing bootable stuff - Part 2" />
+<meta name="twitter:title" content="Realmode Assembly - Writing bootable stuff - Part 2" />
+<meta property="og:description" content="Realmode Assembly - Writing bootable stuff - Part 2 Part 2: Hello World Bootloader  What is this? This is going to be a walk-through in writing an Operation System in assembly which operates purely in Realmode.  Goal will be writing different kernels from a simple “Hello World” over small terminal programs to  graphically displayed games.  Requirements:  Being able to read x86 Intel Assembly Being tolerant enough to accept my assembly code even though it might not be perfect Reading the previous..." />
+<meta name="twitter:description" content="Realmode Assembly - Writing bootable stuff - Part 2 Part 2: Hello World Bootloader  What is this? This is going to be a walk-through in writing an Operation System in assembly which operates purely in Realmode.  Goal will be writing different kernels from a simple “Hello World” over small terminal programs to  graphically displayed games.  Requirements:  Being able to read x86 Intel Assembly Being tolerant enough to accept my assembly code even though it might not be perfect Reading the previous..." />
+<meta property="og:article:section" content="Programming" />
+<meta property="og:article:section:color" content="92278F" />
+<meta property="og:article:tag" content="assembly" />
+<meta property="og:article:tag" content="programming" />
+<meta name="twitter:label1" value="Reading time" />
+<meta name="twitter:data1" value="5 mins 🕑" />
+<meta name="twitter:label2" value="Likes" />
+<meta name="twitter:data2" value="54 ❤" />
+<meta property="article:published_time" content="2017-07-20T23:58:32+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+
+
+    
+  </head>
+  <body class="crawler ">
+    <div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+  <!--<a href="https://git.0x00sec.org" class="dow-menu">GitLab</a>  
+  <a href="https://blog.0x00sec.org/irc" class="dow-menu">IRC</a>!-->
+  <a href="../../../external.html?link=https://init.0x00sec.org/" class="dow-menu">Init</a>
+  <a href="../../../external.html?link=https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+  <a href="../../../external.html?link=https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+    <header>
+  <a href="../../index.html">0x00sec - The Home of the Hacker</a>
+</header>
+
+    <div id="main-outlet" class="wrap" role="main">
+        <div id="topic-title">
+    <h1>
+      <a href="2992.html">Realmode Assembly - Writing bootable stuff - Part 2</a>
+    </h1>
+
+      <div class="topic-category" itemscope itemtype="../../../external.html?link=http://schema.org/BreadcrumbList">
+          <span itemprop="itemListElement" itemscope itemtype="../../../external.html?link=http://schema.org/ListItem">
+            <a href="../../c/programming/61.html" class="badge-wrapper bullet" itemprop="item">
+              <span class='badge-category-bg' style='background-color: #92278F'></span>
+              <span class='badge-category clear-badge'>
+                <span class='category-name' itemprop='name'>Programming</span>
+              </span>
+            </a>
+            <meta itemprop="position" content="1" />
+          </span>
+      </div>
+
+      <div class="topic-category">
+        <div class='discourse-tags list-tags'>
+            <a href='../../tag/assembly.html' class='discourse-tag' rel="tag">assembly</a>, 
+            <a href='../../tag/programming.html' class='discourse-tag' rel="tag">programming</a>
+        </div>
+      </div>
+  </div>
+
+  
+
+    <div itemscope itemtype='../../../external.html?link=http://schema.org/DiscussionForumPosting'>
+      <meta itemprop='headline' content='Realmode Assembly - Writing bootable stuff - Part 2'>
+      <link itemprop='url' href='2992.html'>
+      <meta itemprop='datePublished' content='2017-07-20T23:58:32Z'>
+        <meta itemprop='articleSection' content='Programming'>
+      <meta itemprop='keywords' content='assembly, programming'>
+      <div itemprop='publisher' itemscope itemtype="../../../external.html?link=http://schema.org/Organization">
+        <meta itemprop='name' content='0x00sec - The Home of the Hacker'>
+          <div itemprop='logo' itemscope itemtype="../../../external.html?link=http://schema.org/ImageObject">
+            <meta itemprop='url' content='../../uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.html'>
+          </div>
+      </div>
+
+
+          <div id='post_1'  class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/Leeky.html'><span itemprop='name'>Leeky</span></a>
+                
+              </span>
+
+                <link itemprop="mainEntityOfPage" href="2992.html">
+
+                <link itemprop="image" href="../../../0x00sec.s3.amazonaws.com/original/2X/2/2768b6a80245cdc90c4e65ad8af6fdda8c51e4bc.png">
+
+              <span class="crawler-post-infos">
+                  <time  datetime='2017-07-20T23:58:32Z' class='post-time'>
+                    July 20, 2017, 11:58pm
+                  </time>
+                  <meta itemprop='dateModified' content='2020-07-12T13:14:00Z'>
+              <span itemprop='position'>1</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <h1>Realmode Assembly - Writing bootable stuff - Part 2</h1>
+<h2>Part 2: Hello World Bootloader</h2>
+<hr>
+<h2>What is this?</h2>
+<p>This is going to be a walk-through in writing an Operation System in assembly which operates purely in Realmode.<br>
+Goal will be writing different kernels from a simple “Hello World” over small terminal programs to<br>
+graphically displayed games.</p>
+<h2>Requirements:</h2>
+<ul>
+<li>Being able to read x86 Intel Assembly</li>
+<li>Being tolerant enough to accept my assembly code even though it might not be perfect</li>
+<li>Reading the previous article</li>
+</ul>
+<h2>Notes</h2>
+<ul>
+<li>This information is the result of my research and own programming, everything said here might be wrong, correct me if you spot mistakes though!</li>
+<li>I will try to list my sources at the bottom but I can’t guarantee that these are all of them.</li>
+<li>I’M NOT RESPONSIBLE IF YOU BREAK SOMETHING USING INFORMATION I PROVIDED HERE.</li>
+</ul>
+<h2>Content of this Article:</h2>
+<p>This article will be about writing a Master Boot Record that loads a small<br>
+kernel into memory that then prints out a “Hello World” message</p>
+<h2>Tools used:</h2>
+<ul>
+<li>NASM for compiling assembly code to raw binary</li>
+<li>A text editor to write the code in</li>
+</ul>
+<hr>
+<h2>Writing a loader for the kernel:</h2>
+<p>So to start we are going to write a minimalistic bootloader that just loads the kernel and then gives control to it. We will improve the bootloader later and make it more abstract and reliable but for the explanation this will be enough.</p>
+<p>Let’s go:<br>
+We will need to execute two interrupts, one to reset the disk system which will ensure we will read the right partand one to read the kernel from hard drive to RAM. As already explained in the last article we will use the interrupt 0x13 which decides which disk operation to execute based on the ah register (higher byte of ax, which is the lower word of eax).</p>
+<p>For the disk resetting we will use the first function of the interrupt 0x13, so ah will be set to 0. I will use the syntax int 0x13,0 to refer to this interrupt to make my life a bit easier. Int 0x13,0 takes two parameters ah = 0 and dl = drive number (a number representing a specific drive. for example: 0x80 = drive 0). Luckily the BIOS (or better said almost every BIOS) puts the drive number of the device currently booting from (in our case the hard drive the kernel is on or an emulated device) into dl before giving control to the MBR, so we will assume that the drive number is already in dl which will be the case most of the time.</p>
+<pre><code class="lang-makefile">|----int----|--ah--|------dl------|------Description------|
+|  int 0x13 |   0  | drive number | Resetting Disk System |
+|-----------|------|--------------|-----------------------|
+</code></pre>
+<p>As already explained previously the bootloader will be loaded into 0st segment at address 0x7c00 so we also have to tell NASM to calculate offsets starting from that address. Also let’s tell NASM that we are in 16bit mode so it tells us when we use illegal instructions for this mode and knows how to correctly refer to memory.</p>
+<pre><code class="lang-auto">org 0x7C00 ;NASM now calculated everything with the right offset
+bits 16
+mov ah, 0
+int 0x13 ;  int 0x13,0  dl = drive number
+..
+</code></pre>
+<p>Now that the disk system is reset we can start reading from the correct offset of the hard drive we boot from. For that we will use int 0x13,2. It takes an address within the RAM to write in as argument into bx, we will just write it to 0x8000 as it’s free space. The al register will contain the amount of sectors to read, this will be the size of our kernel and as our HelloWorld Kernel will be small we just write a 1 into al (1 sector = 512 bytes, size of kernel has to be multiple of 512 bytes). If we increase the size of our kernel we have to increase this number as well and because it’s pretty annoying to change this every time we make the kernel bigger so we will later look at ways to make this easier for us. The address to read from is in the Cylinder-Head-Sector (CHS) format (which is a pretty old format for addresses on hard drives) so we have to do some converting (also knowing the math behind those numbers helps reading from other segments):</p>
+<p>(Following values are true for 1.44 MB 3.5" Floppy Disks , the theory applies for every hard drive. Obviously this memory layout doesn’t make sense for USB-Devices and similar but as it’s the way the BIOS works we will later add a Standard BIOS Parameter Block which will define the following values for the BIOS)</p>
+<p>Each Sector has a size of 512 (BytesPerSector) bytes. Sectors start with 1.<br>
+Each Head contains 18 (SectorsPerTrack) sectors.<br>
+Each Cylinder (also called Track) contains 2(Sides) Heads. There are 2(Sides) Cylinders.</p>
+<p>Using this we can calculate the CHS-Values for the logical segment(continuous numeration starting from 0) we want to read from. The bootloader is at logical segment 0 (as it’s the first segment on the hard drive). After that the kernel follows at logical segment 1 (as it’s directly after the bootloader on the hard drive and the bootloader is exactly 512 bytes (1 segment) in size.)</p>
+<pre><code class="lang-makefile">|----int----|--ah--|------dl------|-------ch------|------dh------|------cl--------|------Description------|
+|  int 0x13 |   2  | drive number | Reading Track | Reading Head | Reading Sector | Read from Hard drive  |
+|-----------|------|--------------|---------------|--------------|----------------|-----------------------|
+</code></pre>
+<pre><code class="lang-makefile">Logical segment ls = 1
+=&gt;
+Cylinder is saved in ch
+ch = Cylinder/Track = (ls/SectorsPerTrack)/Sides = 0
+Head is saved in dh
+dh = Head =(ls/SectorsPerTrack)%Sides = 0
+Sector is saved in cl
+cl = Sector = (ls%SectorsPerTrack)+1 = 2
+</code></pre>
+<p>Our new code now looks like this:</p>
+<pre><code class="lang-auto">..
+mov bx, 0x8000     ; bx = address to write the kernel to
+mov al, 1 		   ; al = amount of sectors to read
+mov ch, 0          ; cylinder/track = 0
+mov dh, 0          ; head           = 0
+mov cl, 2          ; sector         = 2
+mov ah, 2          ; ah = 2: read from drive
+int 0x13   		   ; =&gt; ah = status, al = amount read
+</code></pre>
+<p>Ok next let’s add the remaining parts to make this bootloader work:</p>
+<pre><code class="lang-auto">..
+; pass execution to kernel	
+jmp 0x8000
+;$ = address of current position, $$ = address for start of segment, so ($-$$) = amount of already filled bytes of this segment
+;pads everything from here up to 510 with 0's, also gives compiler errors if not possible which
+;might happen if we already wrote more than 510 bytes in this segment and thus causes ($-$$) to be negative
+;this is very useful as it makes sure that the resulting binary has a size multiple of 512 which is required to make everything work
+times 510-($-$$) db 0
+;Begin MBR Signature
+db 0x55 ;byte 511 = 0x55
+db 0xAA ;byte 512 = 0xAA
+</code></pre>
+<p>Ok now our bootloader is finally done but as we don’t have a kernel yet we can’t test it.</p>
+<p>Complete MBR Code:</p>
+<pre><code class="lang-auto">org 0x7C00
+;Reset disk system
+mov ah, 0
+int 0x13 ; 0x13 ah=0 dl = drive number
+
+;Read from harddrive and write to RAM
+mov bx, 0x8000     ; bx = address to write the kernel to
+mov al, 1 		   ; al = amount of sectors to read
+mov ch, 0          ; cylinder/track = 0
+mov dh, 0          ; head           = 0
+mov cl, 2          ; sector         = 2
+mov ah, 2          ; ah = 2: read from drive
+int 0x13   		   ; =&gt; ah = status, al = amount read
+jmp 0x8000
+times 510-($-$$) db 0
+;Begin MBR Signature
+db 0x55 ;byte 511 = 0x55
+db 0xAA ;byte 512 = 0xAA
+</code></pre>
+<h2>Writing a kernel for the loader:</h2>
+<p>Now that we have a bootloader that loads our kernel let’s start writing our kernel. The kernel is supposed to print out a “Hello World” message and then halt/stop everything.</p>
+<p>Printing something to the display means we need a way to interact with it. BIOS Interrupt 0x10 will help us here as it’s responsible for all kinds of video services (printing characters, drawing pixels, …). We will print the string “Hello World” character after character using int 0x10,0xE which takes a single character (ASCII) in register al, the page to write to in bh (there is enough memory to have a few text pages for quick swapping, default is page 0) and color attributes in bl (but this is only displayed if we are in a graphical mode with which we will mess later).</p>
+<pre><code class="lang-makefile">|----int----|--ah--|------------al------------|---------bh-------|-------bl-------|-----------Description-----------|
+|  int 0x10 | 0xE  | ASCII Character to print | Page to write to | Color Attribute| Print a character to the screen |
+|-----------|------|--------------------------|------------------|----------------|---------------------------------|
+</code></pre>
+<p>So our print character functions should look like this:</p>
+<pre><code class="lang-auto">printCharacter:
+	;before calling this function al must be set to the character to print
+	mov bh, 0x00 ;page to write to, page 0 is displayed by default
+	mov bl, 0x00 ;color attribute, doesn't matter for now
+	mov ah, 0x0E 
+	int 0x10 ; int 0x10, 0x0E = print character in al
+	ret	
+</code></pre>
+<p>Given how to print a single character the remaining code for printing a string is pretty simple:</p>
+<pre><code class="lang-auto">printNullTerminatedString:
+	pusha ;save all registers to be able to call this from where every we want
+	.loop:
+		lodsb ;loads byte from si into al and increases si
+		test al, al ;test if al is 0 which would mean the string reached it's end
+		jz .end
+		call printCharacter ;print character in al
+	jmp .loop ;print next character
+	.end:
+	popa ;restore registers to original state
+	ret
+</code></pre>
+<p>Now we just have to put it together by telling NASM the right offset and instruction size and actually calling the printNullTerminatedString function. Note that I added a padding again to ensure that the final kernel has a size multiple of 512 as it might result in problems reading from the hard drive if  the size isn’t correct.</p>
+<pre><code class="lang-auto">org 0x8000 
+bits 16
+mov si, msg
+call printNullTerminatedString
+
+jmp $   ; this freezes the system, best for testing
+hlt		;this makes a real system halt
+ret     ;this makes qemu halt, to ensure everything works we add both
+
+printCharacter:
+	;before calling this function al must be set to the character to print
+	mov bh, 0x00 ;page to write to, page 0 is displayed by default
+	mov bl, 0x00 ;color attribute, doesn't matter for now
+	mov ah, 0x0E 
+	int 0x10 ; int 0x10, 0x0E = print character in al
+	ret	
+printNullTerminatedString:
+	pusha ;save all registers to be able to call this from where every we want
+	.loop:
+		lodsb ;loads byte from si into al and increases si
+		test al, al ;test if al is 0 which would mean the string reached it's end
+		jz .end
+		call printCharacter ;print character in al
+	jmp .loop ;print next character
+	.end:
+	popa ;restore registers to original state
+	ret
+msg db "Hello World!"
+times 512-($-$$) db 0 ;kernel must have size multiple of 512 so let's pad it to the correct size
+</code></pre>
+<h2>How to build and run this?</h2>
+<p>You can build it with the following commands:</p>
+<pre><code class="lang-bash">nasm -fbin bootloader.asm -o bootloader.bin
+nasm -fbin kernel.asm -o kernel.bin
+cat bootloader.bin kernel.bin &gt; result.bin
+</code></pre>
+<p>And run it with this:</p>
+<pre><code class="lang-bash">qemu-system-i386 result.bin
+</code></pre>
+<p>          <a href="../../../raw.githubusercontent.com/Pusty/realmode-assembly/master/part2/doc/part2_img1.png" target="_blank" rel="noopener nofollow ugc" class="onebox">
+            <img src="../../../0x00sec.s3.amazonaws.com/original/2X/2/2768b6a80245cdc90c4e65ad8af6fdda8c51e4bc.png" width="690" height="411">
+          </a>
+</p>
+<h2>Conclusion:</h2>
+<p>We now have a working bootloader and kernel. This concludes the HelloWorld kernel and bootloader part. The next part will be about how to build and run it in more detail also it will contain information on how to load the self written kernel binary to an USB-Drive and actually test it on your computer. I hope this part contained information useful to you. If I wrote something wrong just point it out and I will correct it. Feedback is appreciated.</p>
+<h2><a href="../../../external.html?link=https://0x00sec.org/t/realmode-assembly-writing-bootable-stuff-part-3/3116/">Next Part</a></h2>
+<h2><a href="../../../external.html?link=https://0x00sec.org/t/realmode-assembly-writing-bootable-stuff-part-1/2901/">Previous Part</a></h2>
+<hr>
+<h2>Link to source files:</h2>
+<ul>
+<li><a href="../../../external.html?link=https://github.com/Pusty/realmode-assembly/tree/master/part2" rel="noopener nofollow ugc">https://github.com/Pusty/realmode-assembly/tree/master/part2</a></li>
+</ul>
+<h2>Other Hello World bootloaders (both don’t load a kernel but are interesting anyways):</h2>
+<ul>
+<li><a href="../../../external.html?link=http://viralpatel.net/taj/tutorial/hello_world_bootloader.php" rel="noopener nofollow ugc">http://viralpatel.net/taj/tutorial/hello_world_bootloader.php</a></li>
+<li><a href="../../../external.html?link=http://blog.ackx.net/asm-hello-world-bootloader.html" rel="noopener nofollow ugc">http://blog.ackx.net/asm-hello-world-bootloader.html</a></li>
+</ul>
+<h2>Sources:</h2>
+<ul>
+<li><a href="../../../external.html?link=http://www.nasm.us/" rel="noopener nofollow ugc">http://www.nasm.us/</a></li>
+<li><a href="../../../external.html?link=http://stanislavs.org/helppc/int_13-0.html" rel="noopener nofollow ugc">http://stanislavs.org/helppc/int_13-0.html</a></li>
+<li><a href="../../../external.html?link=https://en.wikipedia.org/wiki/Cylinder-head-sector" rel="noopener nofollow ugc">https://en.wikipedia.org/wiki/Cylinder-head-sector</a></li>
+<li><a href="../../../external.html?link=http://www.pcguide.com/ref/fdd/mediaGeometry-c.html" rel="noopener nofollow ugc">http://www.pcguide.com/ref/fdd/mediaGeometry-c.html</a></li>
+<li><a href="../../../external.html?link=http://mikeos.sourceforge.net/" rel="noopener nofollow ugc">http://mikeos.sourceforge.net/</a></li>
+<li><a href="../../../external.html?link=http://stanislavs.org/helppc/int_13-2.html´" rel="noopener nofollow ugc">http://stanislavs.org/helppc/int_13-2.html´</a></li>
+<li><a href="../../../external.html?link=http://www.delorie.com/djgpp/doc/rbinter/id/11/1.html" rel="noopener nofollow ugc">http://www.delorie.com/djgpp/doc/rbinter/id/11/1.html</a></li>
+</ul>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="30" />
+              <span class='post-likes'>30 Likes</span>
+            </div>
+
+                <div class='crawler-linkback-list' itemscope itemtype='../../../external.html?link=http://schema.org/ItemList'>
+                      <div itemprop='itemListElement' itemscope itemtype='../../../external.html?link=http://schema.org/ListItem'>
+                        <a itemprop='url' href="../../../external.html?link=https://0x00sec.org/t/realmode-assembly-writing-bootable-stuff-part-3/3116">Realmode Assembly - Writing bootable stuff - Part 3</a>
+                        <meta itemprop='position' content='13'>
+                      </div>
+                </div>
+
+            
+          </div>
+          <div id='post_2' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/BO41.html'><span itemprop='name'>BO41</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-21T11:44:40Z' class='post-time'>
+                    July 21, 2017, 11:44am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-21T11:44:40Z'>
+              <span itemprop='position'>2</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <aside class="quote group-VIP" data-username="Leeky" data-post="1" data-topic="2992">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="../../user_avatar/d.clarkee.co.uk/leeky/48/41432_2.png" class="avatar"> Leeky:</div>
+<blockquote>
+<p>The next part will be about how to build and run it in more detail</p>
+</blockquote>
+</aside>
+<p>I really like this series. Extremely interesting. <img src="../../images/emoji/twitter/slight_smile8e5e.png?v=15" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
+<p>I hope you can keep the requirements low, so that I can follow.</p>
+<p>Can you use those assembler  interrupts and commands in your normal OS?<br>
+Maybe to halt the system or reset the disk like you did before booting?</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="2" />
+              <span class='post-likes'>2 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_3' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/0x00pf.html'><span itemprop='name'>0x00pf</span></a>
+                (pico)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-21T17:23:18Z' class='post-time'>
+                    July 21, 2017,  5:23pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-21T17:23:18Z'>
+              <span itemprop='position'>3</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Great post <a class="mention" href="../../u/leeky-2.html">@Leeky</a>!</p>
+<p>As discussed yesterday on IRC… this is slight modification poking the video memory instead of using the slow BIOS <img src="../../../0x00sec.org/images/emoji/twitter/winkc164.html?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<pre><code class="lang-auto">org 0x8000
+bits 16
+	push  0xb800
+	pop   es     		; Set ES to the Video Memory
+	;; Clear screen
+	mov ax, 0x1000    	; Clean screen blue background
+	call  cls
+	;; Print message
+	mov   si, msg
+	call  print
+	;; Done!
+	jmp $   ; this freezes the system, best for testing
+	hlt	;this makes a real system halt
+	ret     ;this makes qemu halt, to ensure everything works we add both
+
+cls:
+	xor   di,di
+	mov   cx, 80*24		;Default console size
+	repnz stosw
+	ret
+
+print:
+	xor   di, di
+	mov   ah, 0x1e		; Text Color :)
+
+.loop:
+	lodsb       ;loads byte from si into al and increases si
+	test  al, al ;tests end of string
+	jz    .end
+        stosw	    ; Stores AX (char + color)
+	jmp   .loop ;print next character
+
+.end:
+	ret
+
+
+msg   db "Hello World!"
+times 512-($-$$) db 0 ; Make it a disk sector
+
+</code></pre>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="7" />
+              <span class='post-likes'>7 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_4' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/Leeky.html'><span itemprop='name'>Leeky</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-21T20:58:41Z' class='post-time'>
+                    July 21, 2017,  8:58pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-21T20:58:41Z'>
+              <span itemprop='position'>4</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <aside class="quote no-group" data-username="BO41" data-post="2" data-topic="2992">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="../../letter_avatar_proxy/v4/letter/b/59ef9b/48.png" class="avatar"> BO41:</div>
+<blockquote>
+<p>Can you use those assembler  interrupts and commands in your normal OS?<br>
+Maybe to halt the system or reset the disk like you did before booting?</p>
+</blockquote>
+</aside>
+<p>Let’s start with the interrupts. As they are only available in realmode you need to switch from your current mode (Long Mode / Protected Mode) to it and that’s nothing normal user programs can do (nor do I recommend that, didn’t try it myself though). But if you are running DOS you can use them freely as far as I know.<br>
+The command thing is a bit different as it’s not using the BIOS. For example the hlt instruction is only available from ring 0 (kernel mode) so again nothing a user program can do but nothing impossible either.</p>
+<p>Hope this helped.</p>
+<p>##<span class="hashtag-raw">#Sources:</span></p>
+<ul>
+<li><a href="../../../external.html?link=http://www.shsu.edu/~csc_tjm/spring2001/cs272/interrupt.html" rel="noopener nofollow ugc">http://www.shsu.edu/~csc_tjm/spring2001/cs272/interrupt.html</a></li>
+<li><a href="../../../external.html?link=https://en.wikipedia.org/wiki/Protection_ring" class="inline-onebox" rel="noopener nofollow ugc">Protection ring - Wikipedia</a></li>
+<li><a href="../../../external.html?link=https://en.wikipedia.org/wiki/HLT_(x86_instruction)" class="inline-onebox" rel="noopener nofollow ugc">HLT (x86 instruction) - Wikipedia</a></li>
+</ul>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="3" />
+              <span class='post-likes'>3 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_5' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/BO41.html'><span itemprop='name'>BO41</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-22T08:57:59Z' class='post-time'>
+                    July 22, 2017,  8:57am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-22T08:57:59Z'>
+              <span itemprop='position'>5</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>ok, thank you for explaining <img src="../../../0x00sec.org/images/emoji/twitter/slightly_smiling_facec164.html?v=9" title=":slightly_smiling_face:" class="emoji" alt=":slightly_smiling_face:"></p>
+<p>Would have been too easy and powerful</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_6' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/hkh4cks.html'><span itemprop='name'>hkh4cks</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-22T17:58:37Z' class='post-time'>
+                    July 22, 2017,  5:58pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-22T17:58:37Z'>
+              <span itemprop='position'>6</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Great tutorial.<br>
+I’ve completed this part.  Also I’ve implemented ISR and IRQ. I would like to know what’s next!</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_7' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/Leeky.html'><span itemprop='name'>Leeky</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-24T14:09:20Z' class='post-time'>
+                    July 24, 2017,  2:09pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-24T14:09:20Z'>
+              <span itemprop='position'>7</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>I’m happy that you enjoyed it!<br>
+The next parts that I’ve planned will be about How to Run/Build it and Writing a small input/output console kernel.<br>
+I haven’t messed with the Interrupt Service Routines that much yet, only ever written a custom keyboard handler with it, I’m very interested in your code if you are willing to share it! <img src="../../../0x00sec.org/images/emoji/twitter/smileyc164.html?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_8' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/hkh4cks.html'><span itemprop='name'>hkh4cks</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-25T03:56:41Z' class='post-time'>
+                    July 25, 2017,  3:56am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-25T03:56:41Z'>
+              <span itemprop='position'>8</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>I’m happy to share my code and open to any improvements.<br>
+<a href="../../../external.html?link=https://github.com/HrushikeshK/miniOS" rel="nofollow noopener">miniOS</a></p>
+<p>Feel free to contribute <img src="../../../0x00sec.org/images/emoji/twitter/slight_smilec164.html?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="3" />
+              <span class='post-likes'>3 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_9' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/Leeky.html'><span itemprop='name'>Leeky</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-25T04:33:55Z' class='post-time'>
+                    July 25, 2017,  4:33am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-25T04:40:49Z'>
+              <span itemprop='position'>9</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Interesting stuff there!<br>
+I never messed with protected mode before but I see lots of familiar code. <img src="../../../0x00sec.org/images/emoji/twitter/smileyc164.html?v=9" title=":smiley:" class="emoji" alt=":smiley:">  I also see that you are working with both C and Assembly which is apparently quite common but I’ve never messed with that either (as I mainly did real mode assembly to get into x86 assembly). Is that something people are interested in for further walk-throughs ( I mean this is a assembly article but I could still show some c/asm code)? The resources also look excellent, will read through them (but I have lots of other stuff to read first).Loading the OS to GDB is very interesting as well, my debugging was more of a trial and error approach, need to experiment with that for the next part!</p>
+<p>Thank you for comment.<br>
+I also see that you haven’t messed with graphical modes yet so this might get interesting for you as well!</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="2" />
+              <span class='post-likes'>2 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_10' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/hkh4cks.html'><span itemprop='name'>hkh4cks</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-25T12:40:10Z' class='post-time'>
+                    July 25, 2017, 12:40pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-25T12:40:10Z'>
+              <span itemprop='position'>10</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>I want to extend it further. But it’s just difficult and time consuming for me to do it alone</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_11' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/ricksanchez.html'><span itemprop='name'>ricksanchez</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-25T19:23:55Z' class='post-time'>
+                    July 25, 2017,  7:23pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-25T19:23:55Z'>
+              <span itemprop='position'>11</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Nice series <a class="mention" href="../../u/leeky-2.html">@Leeky</a> . Looking forward to the next parts to extend my knowledge on more low level stuff other than asm for reversing <img src="../../../0x00sec.org/images/emoji/twitter/smileyc164.html?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_12' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/g3troot.html'><span itemprop='name'>g3troot</span></a>
+                (g3troot)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-26T02:15:28Z' class='post-time'>
+                    July 26, 2017,  2:15am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-26T02:15:28Z'>
+              <span itemprop='position'>12</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>HI all, you can find a basic OS made by me. See here <a href="../../../external.html?link=https://github.com/ashishhacker/TinuOS" rel="nofollow noopener">https://github.com/ashishhacker/TinuOS</a></p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_13' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/febri.html'><span itemprop='name'>febri</span></a>
+                (Febriyanto Nugroho)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-27T05:30:35Z' class='post-time'>
+                    July 27, 2017,  5:30am
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-27T05:30:35Z'>
+              <span itemprop='position'>13</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>yeay ! <img src="../../../0x00sec.org/images/emoji/twitter/grinc164.html?v=9" title=":grin:" class="emoji" alt=":grin:"> Is there part 3 ?</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_14' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/Bowlslaw.html'><span itemprop='name'>Bowlslaw</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2017-07-30T13:43:17Z' class='post-time'>
+                    July 30, 2017,  1:43pm
+                  </time>
+                  <meta itemprop='dateModified' content='2017-07-30T13:43:17Z'>
+              <span itemprop='position'>14</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Fret not! Part 3 is being worked on.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+    </div>
+
+
+    
+
+
+
+
+    </div>
+    <footer class="container wrap">
+  <nav class='crawler-nav'>
+    <ul>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../index.html' itemprop="url">Home </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../categories.html' itemprop="url">Categories </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../guidelines.html' itemprop="url">Guidelines </a>
+        </span>
+      </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../tos.html' itemprop="url">Terms of Service </a>
+          </span>
+        </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../privacy.html' itemprop="url">Privacy Policy </a>
+          </span>
+        </li>
+    </ul>
+  </nav>
+  <p class='powered-by-link'>Powered by <a href="../../../external.html?link=https://www.discourse.org/">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+
+    
+    <script src="../../../external.html?link=http://instant.page/3.0.0" type="module" defer="" integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1" nonce="BoW6SckCMQ6rxC7O2lEpnxp3E"></script>
+  </body>
+  
+</html>

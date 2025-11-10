@@ -1,0 +1,426 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Game Hacking: 3D Pinball - Space Cadet</title>
+    <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232</link>
+    <description>When someone has too much time on their hands (and usually also has a lot of work to do), their productivity sometimes slips... and by &quot;slips&quot;, I mean it completely collapses into itself and implodes.
+
+ANYWAY, back to the focus of this thread, I decided to have some fun with my newly installed Windows XP OS on my VM, and by fun, I mean screwing around with this wonderful game which brings me back so many memories: 3D Pinball - Space Cadet. I&#39;ve been getting more into reverse engineering these few days and I thought I&#39;d give my skills a shot at a real application and see how far I could go. 
+
+This write up is motivational material for other reverse engineers out there and just lulz for everybody else who is interested. Enjoy!
+
+# Hacking 3D Pinball - Space Cadet
+
+## Hacking the In-game Score
+
+What we&#39;re going to do first is exploring how one could go about and change their game score. Well, it&#39;s actually pretty easy if you have the right tool and the relevent skills (obviously). The tool we are going to use is the classic Cheat Engine (I&#39;ll be using version 6.6), infamous (especially around kids) for being used to hack game scores on their favourite games. For those who aren&#39;t familiar with Cheat Engine, it&#39;s basically a memory-hacking tool which accesses another process&#39;s memory space for disassembling and debugging... and causing mayhem by changing values everywhere. For those who do know and have used Cheat Engine before (as a kid), the first couple of steps might be familiar.
+
+First, we&#39;ll open up the game and Cheat Engine, then proceed to load the `pinball.exe` process like so:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/2/24ce1f52bed074b56b872661c3c78cb7d66740e9.PNG&quot; width=&quot;690&quot; height=&quot;347&quot;&gt;
+
+In the value box, we need to do a `First Scan` to find the value we want in memory, i.e. we want to scan for our score so we can edit its value in memory.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/4ce57d977778ac778c12219e1d04f078f8953cfb.PNG&quot; width=&quot;358&quot; height=&quot;124&quot;&gt;
+
+Since our score is currently `0` and there are more than likely a billion `0`s in memory, we will start off the game and get a number which is less likely to already exist in memory. Like so:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/9/9ffaf87faef50d270510e13579b3acf14aee6334.PNG&quot; width=&quot;690&quot; height=&quot;205&quot;&gt;
+
+After typing in `6000` as our value and clicking `First Scan`, CE instantly finds a corresponding value and its address. Now, we can try editing this value to see what happens to our score.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/092c7745808b7d2bdec146805e92b726045df800.PNG&quot; width=&quot;314&quot; height=&quot;53&quot;&gt;
+
+We&#39;ll continue playing the game and...
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/8/8a6c8494fd6a2bef3a638e86edd715b7a7cddc72.PNG&quot; width=&quot;230&quot; height=&quot;123&quot;&gt;
+
+Oops? Well that didn&#39;t work as we hoped?
+
+Okay, it&#39;s not as easy in this scenario because it probably works differently than we expected, so let&#39;s see what&#39;s actually happening in the code.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/fe0a34cb40bece7090f2638ebb9d6e69c43ada11.PNG&quot; width=&quot;690&quot; height=&quot;259&quot;&gt;
+
+Right here, we can see that the score value that we captured from the scan was not what we wanted. In the bottom right window, we see the address of `eax` which is the same one from the scan but `eax` doesn&#39;t actually keep track of the value. Instead, the score being passed to `ecx` is moved to the location to where `eax` points. So how do we get to a score of `696969` then? Well, let&#39;s try injecting some code to constantly set `ecx` to our desired value in Tools -&gt; Auto Assemble. We&#39;ll then need a `Code Injection` template in the new Auto Assemble window in Template -&gt; Code Injection, then the address to inject is the blue-highlighted line.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/a/a1dac452349e549314ff21ec62f319555a844690.PNG&quot; width=&quot;591&quot; height=&quot;457&quot;&gt;
+
+Enter in our assembly code to change `ecx` and then press execute.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/0f336de040340857eaa550ff322a845af0bd018a.PNG&quot; width=&quot;606&quot; height=&quot;464&quot;&gt;
+
+Easy! But what&#39;s this? Our ball number has also changed to exactly the same value? Okay, because I&#39;m lazy and I can&#39;t be bothered taking too many screenshots, basically, what happens if we scan for the address of the ball (like we did for our score), we end up at the same piece of code but with `eax` holding the value of the ball number (instead of the score). How we can patch this is by only setting `ecx` if `eax` is equal to the score&#39;s address. We&#39;ll restart the entire game and then use this code in the injection instead:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/dcaea2ca4804f30e8749430857db801e4d97d07c.PNG&quot; width=&quot;589&quot; height=&quot;452&quot;&gt;
+
+We press Execute again, run the game, and...
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/123c3d59ba123a793a088687ba8bf58232ffaf44.PNG&quot; width=&quot;604&quot; height=&quot;463&quot;&gt;
+
+Done! Simple, right? The issue here is that it&#39;s now only a static value, but we can essentially do whatever we want to the score with the right code. Now we just enter in our name on the high score...
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/a/a6e653ee3c6f756f32cbca841e32a68d4fed93d8.PNG&quot; width=&quot;414&quot; height=&quot;260&quot;&gt;
+
+Hmm... high score...
+
+## Hacking the Scoreboard
+
+Okay, this is probably a lot more difficult compared to what we did above and probably longer as well, so I&#39;ll try to keep it brief. Since the high scores should be a persistent thing, the data needs to be cached somewhere, most likely on disk. If we were to find where the high scores are located, we could try looking around for a data file in its own directory, but that&#39;s not always a guaranteed method. So let&#39;s try something else. Fire up your debuggers (I&#39;ll be explaining with Ollydbg) and let&#39;s get to it.
+
+The first thing we want to do is to reach the high score window, then pause the debugger there while the game waits for us to provide input.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/c6f2949cc84ebefd3964ff1bd9eff76b00519bde.PNG&quot; width=&quot;690&quot; height=&quot;375&quot;&gt;
+
+At this point, we&#39;d want to navigate the call stack to find out what happened on the journey to the score board. To do this in Ollydbg, open up the call stack (`Alt+K`) and then start at the very bottom (the bottom is the first traced call and the top is the most recent call) like so:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/2/2b1d7d65d41bdd5b2d8c6a54f3d35e5a84e9d1a3.PNG&quot; width=&quot;594&quot; height=&quot;376&quot;&gt;
+
+From there, we&#39;ll navigate through all the instructions, including jumping into function calls and see if we find anything interesting... So, to skip the boring and unnecessary parts, here is something that I found after a few calls:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/33ebb98894f56750ef947cd5d0c8fedcecb73ba5.PNG&quot; width=&quot;690&quot; height=&quot;275&quot;&gt;
+
+That looks like a registry subkey but we are lacking the key from which it stems. If we scroll down a bit, we will see that one possible key is `HKEY_CURRENT_USER`. 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/f55ece9eda87e7e324fadd0877cbeaf7cb3d7ea6.PNG&quot; width=&quot;569&quot; height=&quot;143&quot;&gt;
+
+So let&#39;s dive into the registry and follow it.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/cd8e6f640c43a372b1387a587b5c30bfac05f38e.PNG&quot; width=&quot;690&quot; height=&quot;351&quot;&gt;
+
+Looks like we hit the jackpot! The scores from the previous section is there but what are these `-999` values? Well, they&#39;re just default values to fill in the spaces. Back to the game, let&#39;s register our score on the scoreboard and see if it pops up in the registry. Hit the run key (`F9`) to continue the game. And if you&#39;re actually doing this (I highly doubt it), you&#39;ll realise that the registry doesn&#39;t change _until_ you exit the game.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/6/607fe134b62eaad8575f86e69e2507cf610b4657.PNG&quot; width=&quot;516&quot; height=&quot;288&quot;&gt;
+
+So let&#39;s try screwing over the scoreboard and then launch the game to see our ever-so genius plan to take over the world of pinball gaming! Heheheh...
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/14882fdf97793ef21976ca576431bde8064697e3.PNG&quot; width=&quot;499&quot; height=&quot;291&quot;&gt;
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/72caacd8eab56d784ff96e9052527ddd91495668.PNG&quot; width=&quot;605&quot; height=&quot;466&quot;&gt;
+
+Hey, what gives? Everything&#39;s gone! Okay, so Billy Gates wasn&#39;t as stupid as we thought and he has foiled our plans... Drats! That conniving... little... devil... Anyway! There was something that we missed. Did you find it? Let me show you:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/48154ed8293c8dcdd456ebde8a3c3b9a71b01a1d.PNG&quot; width=&quot;347&quot; height=&quot;298&quot;&gt;
+
+There it is. This is our _previous_ record. Let&#39;s take a look at our new (empty) scoreboard after exiting the game.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/8/8ea2c720348176ee0be60de38cc1fb52ff464509.PNG&quot; width=&quot;357&quot; height=&quot;284&quot;&gt;
+
+Okay, that is very different. Seems like this is some sort of hashing method. If we take the value `-4995` and divide it by `-999`, we get `5`, which is the number of players on the scoreboard. Aha! That must be the algorithm! Simply add up all the scores! Right?! Well, no. If we take a look back at the previous, legitimate  record, we get `696969 + 30000 + 2500 - 999 - 999  = 727471 != 727926`. Well, we were close, actually. We&#39;re almost there. If we try to do a strings analysis, we can actually find that the program access the string `Verification` two times: once during start up and once after exiting. You can probably guess that the start up access reads the scores from the registry while the last access writes the scores back. What we want to know is how the `Verification` value is generated, so I&#39;ll skip all the gory reversing details and jump straight to where the algorithm is located. Here is the entire algorithm:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/1a5ed9849db1b305bfc4557aca967aa8ef5b64db.PNG&quot; width=&quot;487&quot; height=&quot;500&quot;&gt;
+
+I added in a few comments at the last arrow there. Basically, what this algorithm does is it retrieves the name of the player and the score. Each letter of the player is summed together and then added with their score (yes, this also includes the filler players with `-999` scores as we&#39;ve concluded from before). This is repeated until all of the players and their scores have been added together. So, back to our previous legitimate example, let&#39;s try and calculate the `Verification` value:
+`(100 (d) + 116 (t) + 109 (m) + 696969) + (65 (A) + 30000) + (65 (A) + 2500) + (0 - 999) + (0 - 999) = 727926 == 727926`
+Hey, it worked! NOW LET&#39;S UNLEASH OUR POWER!
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/0a9ae78069712179b5e73f9a9393e7a5b8d0adf4.PNG&quot; width=&quot;690&quot; height=&quot;233&quot;&gt;
+
+
+# Conclusion
+So yeah, good stuff. Had some fun. If anyone would like to know any specifics (whatever I cut out to keep this short), feel free to leave a comment or throw a message into my inbox.
+
+## Dank Memes
+
+&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/e/ef2aece61fa0899087bd8bc23bdb09cf1e2a5873.jpg&#39;&gt;
+
+Using Ollydbg be like:
+&lt;img src=&#39;//0x00sec.s3.amazonaws.com/original/2X/2/23cdd2aa1288f9d14d734a73d1e1cddebcfbdf4a.jpg&#39;&gt;
+
+_-- dtm_</description>
+    
+    <lastBuildDate>Thu, 20 Jun 2019 20:04:23 +0000</lastBuildDate>
+    <category>Reverse Engineering</category>
+    <atom:link href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 2 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/20">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/20</link>
+        <pubDate>Sat, 22 Jun 2019 17:00:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-20</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[0xf00f77]]></dc:creator>
+        <description><![CDATA[
+            <p>Cheatengine is great, you can build all sorts of tools using it. Endless health, speedhacks, currency, etc. I might do a lua scripting write up sometime if people are interested. I’d like to see some non-gaming applications as well for cheatengine.</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/19">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/19</link>
+        <pubDate>Thu, 20 Jun 2019 20:04:23 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-19</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[c0wm1lk]]></dc:creator>
+        <description><![CDATA[
+            <p><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5caab6d3d93d5bea94f8f573defdffabbebe4043.jpeg" alt="image" data-base62-sha1="ddLGcCMhw9dqWhoSgmyt3L5DoTp" width="474" height="266"><br>
+RIP PC - Pinball was too resource intensive</p>
+<p>No but seriously, why would a game like pinball have an verification system for the high score? Why would Microsoft try to prevent pinball cheaters?</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/18</link>
+        <pubDate>Thu, 20 Jun 2019 18:33:43 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-18</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[cuckkoo]]></dc:creator>
+        <description><![CDATA[
+            <p>good old cheat engine, savvy.</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/17</link>
+        <pubDate>Thu, 20 Jun 2019 17:33:32 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-17</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/15</link>
+        <pubDate>Thu, 20 Jun 2019 09:11:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-15</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[fraq]]></dc:creator>
+        <description><![CDATA[
+            <p>Why have I not seen this tut before? This was awesome!</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/13</link>
+        <pubDate>Fri, 24 Feb 2017 22:04:59 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-13</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[adwead]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey, I am really intrested in your topic and the interim stages to follow through your topic. Would be really cool if you could shoot them to me as a pm or whatever <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"><br>
+greets adwead</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/12</link>
+        <pubDate>Fri, 24 Feb 2017 15:56:53 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-12</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[Valentine]]></dc:creator>
+        <description><![CDATA[
+            <p>Ice == Fire</p>
+<p>Water == mudkipz.</p>
+<p><img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji only-emoji" alt=":smiley:"></p>
+<p>Cheers.</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/11</link>
+        <pubDate>Mon, 07 Nov 2016 16:28:14 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-11</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Everybody knows. Fire == Cool.</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/10</link>
+        <pubDate>Sat, 05 Nov 2016 21:58:28 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-10</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[anon79434934]]></dc:creator>
+        <description><![CDATA[
+            <p>When <a class="mention" href="https://0x00sec.org/u/dtm">@dtm</a> has too much time on his hands, he hacks games.</p>
+<p>When I have too much time on my hands…</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/c/c3608274fcac03419bd206545e048187ee62055b.jpg" width="" height=""></p>
+<p>EDIT: No this isn’t my speaker burning, but I’ve done similar things, if not worse.</p>
+<p>EDIT 2: For those crazy enough to try this (or those who have lost their will to live): you can achieve this by replacing the ring magnet of the speaker with a more powerful one and run a strong triangle or sawtooth signal through it.</p>
+<p>-Phoenix750</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/9</link>
+        <pubDate>Sat, 05 Nov 2016 15:00:26 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-9</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[Valentine]]></dc:creator>
+        <description><![CDATA[
+            <p>Could you please do a tutorial? I’m interested.</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/8</link>
+        <pubDate>Tue, 25 Oct 2016 13:42:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-8</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[Valentine]]></dc:creator>
+        <description><![CDATA[
+            <p>Pinball? Pinball!!! I love that game.</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/7</link>
+        <pubDate>Tue, 25 Oct 2016 13:20:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-7</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Ahhahaaa this comment made me die XD</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/6</link>
+        <pubDate>Tue, 25 Oct 2016 12:29:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-6</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Yee boii, I had that nostalgic moment too. RIP WinXP, my old friend…</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/5</link>
+        <pubDate>Tue, 25 Oct 2016 09:33:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-5</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>You are bringing back a lot of childhood memories with that pic.</p>
+<p>(No, I wasn’t reversing games. I’m talking about Pinball.)</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/4</link>
+        <pubDate>Tue, 25 Oct 2016 09:31:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-4</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Indeed it is. Underrated tool tarnished by skids.</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/3</link>
+        <pubDate>Tue, 25 Oct 2016 06:15:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-3</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Is this the so called cheat engine?</p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/2</link>
+        <pubDate>Tue, 25 Oct 2016 06:14:11 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-2</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+      <item>
+        <title>Game Hacking: 3D Pinball - Space Cadet</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>When someone has too much time on their hands (and usually also has a lot of work to do), their productivity sometimes slips… and by “slips”, I mean it completely collapses into itself and implodes.</p>
+<p>ANYWAY, back to the focus of this thread, I decided to have some fun with my newly installed Windows XP OS on my VM, and by fun, I mean screwing around with this wonderful game which brings me back so many memories: 3D Pinball - Space Cadet. I’ve been getting more into reverse engineering these few days and I thought I’d give my skills a shot at a real application and see how far I could go.</p>
+<p>This write up is motivational material for other reverse engineers out there and just lulz for everybody else who is interested. Enjoy!</p>
+<h1>Hacking 3D Pinball - Space Cadet</h1>
+<h2>Hacking the In-game Score</h2>
+<p>What we’re going to do first is exploring how one could go about and change their game score. Well, it’s actually pretty easy if you have the right tool and the relevent skills (obviously). The tool we are going to use is the classic Cheat Engine (I’ll be using version 6.6), infamous (especially around kids) for being used to hack game scores on their favourite games. For those who aren’t familiar with Cheat Engine, it’s basically a memory-hacking tool which accesses another process’s memory space for disassembling and debugging… and causing mayhem by changing values everywhere. For those who do know and have used Cheat Engine before (as a kid), the first couple of steps might be familiar.</p>
+<p>First, we’ll open up the game and Cheat Engine, then proceed to load the <code>pinball.exe</code> process like so:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/24ce1f52bed074b56b872661c3c78cb7d66740e9.PNG" width="690" height="347"></p>
+<p>In the value box, we need to do a <code>First Scan</code> to find the value we want in memory, i.e. we want to scan for our score so we can edit its value in memory.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/4/4ce57d977778ac778c12219e1d04f078f8953cfb.PNG" width="358" height="124"></p>
+<p>Since our score is currently <code>0</code> and there are more than likely a billion <code>0</code>s in memory, we will start off the game and get a number which is less likely to already exist in memory. Like so:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/9/9ffaf87faef50d270510e13579b3acf14aee6334.PNG" width="690" height="205"></p>
+<p>After typing in <code>6000</code> as our value and clicking <code>First Scan</code>, CE instantly finds a corresponding value and its address. Now, we can try editing this value to see what happens to our score.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/0/092c7745808b7d2bdec146805e92b726045df800.PNG" width="314" height="53"></p>
+<p>We’ll continue playing the game and…</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/8/8a6c8494fd6a2bef3a638e86edd715b7a7cddc72.PNG" width="230" height="123"></p>
+<p>Oops? Well that didn’t work as we hoped?</p>
+<p>Okay, it’s not as easy in this scenario because it probably works differently than we expected, so let’s see what’s actually happening in the code.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/f/fe0a34cb40bece7090f2638ebb9d6e69c43ada11.PNG" width="690" height="259"></p>
+<p>Right here, we can see that the score value that we captured from the scan was not what we wanted. In the bottom right window, we see the address of <code>eax</code> which is the same one from the scan but <code>eax</code> doesn’t actually keep track of the value. Instead, the score being passed to <code>ecx</code> is moved to the location to where <code>eax</code> points. So how do we get to a score of <code>696969</code> then? Well, let’s try injecting some code to constantly set <code>ecx</code> to our desired value in Tools -&gt; Auto Assemble. We’ll then need a <code>Code Injection</code> template in the new Auto Assemble window in Template -&gt; Code Injection, then the address to inject is the blue-highlighted line.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a1dac452349e549314ff21ec62f319555a844690.PNG" width="591" height="457"></p>
+<p>Enter in our assembly code to change <code>ecx</code> and then press execute.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/0/0f336de040340857eaa550ff322a845af0bd018a.PNG" width="606" height="464"></p>
+<p>Easy! But what’s this? Our ball number has also changed to exactly the same value? Okay, because I’m lazy and I can’t be bothered taking too many screenshots, basically, what happens if we scan for the address of the ball (like we did for our score), we end up at the same piece of code but with <code>eax</code> holding the value of the ball number (instead of the score). How we can patch this is by only setting <code>ecx</code> if <code>eax</code> is equal to the score’s address. We’ll restart the entire game and then use this code in the injection instead:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/d/dcaea2ca4804f30e8749430857db801e4d97d07c.PNG" width="589" height="452"></p>
+<p>We press Execute again, run the game, and…</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/1/123c3d59ba123a793a088687ba8bf58232ffaf44.PNG" width="604" height="463"></p>
+<p>Done! Simple, right? The issue here is that it’s now only a static value, but we can essentially do whatever we want to the score with the right code. Now we just enter in our name on the high score…</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a6e653ee3c6f756f32cbca841e32a68d4fed93d8.PNG" width="414" height="260"></p>
+<p>Hmm… high score…</p>
+<h2>Hacking the Scoreboard</h2>
+<p>Okay, this is probably a lot more difficult compared to what we did above and probably longer as well, so I’ll try to keep it brief. Since the high scores should be a persistent thing, the data needs to be cached somewhere, most likely on disk. If we were to find where the high scores are located, we could try looking around for a data file in its own directory, but that’s not always a guaranteed method. So let’s try something else. Fire up your debuggers (I’ll be explaining with Ollydbg) and let’s get to it.</p>
+<p>The first thing we want to do is to reach the high score window, then pause the debugger there while the game waits for us to provide input.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/c/c6f2949cc84ebefd3964ff1bd9eff76b00519bde.PNG" width="690" height="375"></p>
+<p>At this point, we’d want to navigate the call stack to find out what happened on the journey to the score board. To do this in Ollydbg, open up the call stack (<code>Alt+K</code>) and then start at the very bottom (the bottom is the first traced call and the top is the most recent call) like so:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/2b1d7d65d41bdd5b2d8c6a54f3d35e5a84e9d1a3.PNG" width="594" height="376"></p>
+<p>From there, we’ll navigate through all the instructions, including jumping into function calls and see if we find anything interesting… So, to skip the boring and unnecessary parts, here is something that I found after a few calls:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/3/33ebb98894f56750ef947cd5d0c8fedcecb73ba5.PNG" width="690" height="275"></p>
+<p>That looks like a registry subkey but we are lacking the key from which it stems. If we scroll down a bit, we will see that one possible key is <code>HKEY_CURRENT_USER</code>.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/f/f55ece9eda87e7e324fadd0877cbeaf7cb3d7ea6.PNG" width="569" height="143"></p>
+<p>So let’s dive into the registry and follow it.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/c/cd8e6f640c43a372b1387a587b5c30bfac05f38e.PNG" width="690" height="351"></p>
+<p>Looks like we hit the jackpot! The scores from the previous section is there but what are these <code>-999</code> values? Well, they’re just default values to fill in the spaces. Back to the game, let’s register our score on the scoreboard and see if it pops up in the registry. Hit the run key (<code>F9</code>) to continue the game. And if you’re actually doing this (I highly doubt it), you’ll realise that the registry doesn’t change <em>until</em> you exit the game.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/6/607fe134b62eaad8575f86e69e2507cf610b4657.PNG" width="516" height="288"></p>
+<p>So let’s try screwing over the scoreboard and then launch the game to see our ever-so genius plan to take over the world of pinball gaming! Heheheh…</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/1/14882fdf97793ef21976ca576431bde8064697e3.PNG" width="499" height="291"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/72caacd8eab56d784ff96e9052527ddd91495668.PNG" width="605" height="466"></p>
+<p>Hey, what gives? Everything’s gone! Okay, so Billy Gates wasn’t as stupid as we thought and he has foiled our plans… Drats! That conniving… little… devil… Anyway! There was something that we missed. Did you find it? Let me show you:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/4/48154ed8293c8dcdd456ebde8a3c3b9a71b01a1d.PNG" width="347" height="298"></p>
+<p>There it is. This is our <em>previous</em> record. Let’s take a look at our new (empty) scoreboard after exiting the game.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/8/8ea2c720348176ee0be60de38cc1fb52ff464509.PNG" width="357" height="284"></p>
+<p>Okay, that is very different. Seems like this is some sort of hashing method. If we take the value <code>-4995</code> and divide it by <code>-999</code>, we get <code>5</code>, which is the number of players on the scoreboard. Aha! That must be the algorithm! Simply add up all the scores! Right?! Well, no. If we take a look back at the previous, legitimate  record, we get <code>696969 + 30000 + 2500 - 999 - 999  = 727471 != 727926</code>. Well, we were close, actually. We’re almost there. If we try to do a strings analysis, we can actually find that the program access the string <code>Verification</code> two times: once during start up and once after exiting. You can probably guess that the start up access reads the scores from the registry while the last access writes the scores back. What we want to know is how the <code>Verification</code> value is generated, so I’ll skip all the gory reversing details and jump straight to where the algorithm is located. Here is the entire algorithm:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/1/1a5ed9849db1b305bfc4557aca967aa8ef5b64db.PNG" width="487" height="500"></p>
+<p>I added in a few comments at the last arrow there. Basically, what this algorithm does is it retrieves the name of the player and the score. Each letter of the player is summed together and then added with their score (yes, this also includes the filler players with <code>-999</code> scores as we’ve concluded from before). This is repeated until all of the players and their scores have been added together. So, back to our previous legitimate example, let’s try and calculate the <code>Verification</code> value:<br>
+<code>(100 (d) + 116 (t) + 109 (m) + 696969) + (65 (A) + 30000) + (65 (A) + 2500) + (0 - 999) + (0 - 999) = 727926 == 727926</code><br>
+Hey, it worked! NOW LET’S UNLEASH OUR POWER!</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/0/0a9ae78069712179b5e73f9a9393e7a5b8d0adf4.PNG" width="690" height="233"></p>
+<h1>Conclusion</h1>
+<p>So yeah, good stuff. Had some fun. If anyone would like to know any specifics (whatever I cut out to keep this short), feel free to leave a comment or throw a message into my inbox.</p>
+<h2>Dank Memes</h2>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/ef2aece61fa0899087bd8bc23bdb09cf1e2a5873.jpg" width="" height=""></p>
+<p>Using Ollydbg be like:<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/2/23cdd2aa1288f9d14d734a73d1e1cddebcfbdf4a.jpg" width="" height=""></p>
+<p><em>– dtm</em></p>
+          <p><a href="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232/1</link>
+        <pubDate>Tue, 25 Oct 2016 04:52:33 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1232-1</guid>
+        <source url="https://0x00sec.org/t/game-hacking-3d-pinball-space-cadet/1232.rss">Game Hacking: 3D Pinball - Space Cadet</source>
+      </item>
+  </channel>
+</rss>

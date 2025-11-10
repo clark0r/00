@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Routing Protocols ~ OSPF ~ Part II</title>
+    <link>https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658</link>
+    <description>Hello homies and homettes. I hope you are all having a great day so far. Welcome to Part 2 of the routing protocols series regarding OSPF. This time we are going to dig deeper in OSPF and try to visualize the &quot;low-level&quot; detail behind it. Allow me to take your hand and walk you through OSPF once again, but this time there is a lot more coming at you so hold my hand tight. I hope the OSPF [introduction](https://0x00sec.org/t/routing-protocols-ospf/647/7)  part made you curious and you can&#39;t wait to learn more about this bad boy. No rant or personal opinion this time, let&#39;s get straight to the topic. Get ready to get bombarded with more theory lads. I will try to add as many pictures as possible so it can be entertaining and fun to read. The topics that will be covered in this article are:
+
+* The OSPF big picture
+* Metric
+* Neighbor Relationships
+
+Let&#39;s start off with the picture behind OSPF. In the previous article, we talked about areas but we didn&#39;t get into enough detail. We were mainly focused on one and the most important one in order to get OSPF working, the area 0. Let&#39;s have a look at the picture below.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/16809e913ffe55f4942fefe79328def15cdc2814.png&quot; width=&quot;478&quot; height=&quot;327&quot;&gt;
+
+This is our topology for now. R1, R2, R3 are routers as you may have guessed and they belong to area 0. However, area 0 has its limitations. The routers in a single area have to have the same link state database. What do I mean by that? You can either see it as a topology table or as the information the routers use in order to generate their routing table. Imagine those 3 routers being connected to 300 different networks. So R1 is gonna send all 300 networks to R3, R3 is going to send all 600 networks to R2(his and R1&#39;s) and R2 is going to send his 300 networks to R3. In the end, each of these blue mofos will have 900 networks in their routing table. If you don&#39;t understand why, the key is &quot;link state.&quot; I have a [link](http://packetlife.net/blog/2008/oct/2/distance-vector-versus-link-state/)  for you to read in case you are confused, which will make you understand why each router has added to its routing table the networks of the others as well.  Don&#39;t hesitate, give it a shot.
+
+Single area OSPF does not support the key concept I mentioned in my previous article which is _**summarization**_. Summarization will allow us to take a bunch of networks and sum them up in fewer advertisements. The goal is to use one advertisement. So let&#39;s say we have the networks `192.168.1`, `192.168.2`, `192.168.3` etc. We could sum all these up into 192.168.0.0/16. If you don&#39;t understand why /16, then you need some subnetting revision my friends, but don&#39;t worry because I got your back. You can either have a look at my subnetting [article](https://0x00sec.org/t/a-dive-into-subnetting/468/4), or if my article makes no sense, you can google!
+
+What that says to the router who did the summarization is &quot;Hey, I have every single network that starts with 192.168.&quot; So practically we replaced a routing table with a huge number of subnets with a routing table of just one. Much smarter and more efficient, right? That manoeuvre makes 2 things possible:
+
+1. The router is faster because the less routes his friends gets to know, the faster he is able to route the packets.
+
+2. Fault Containment. What do I mean by that? If one of the networks R1 is connected went down, he would have to send an update about it to the rest of the routers. Why? Because all the routers in the area have to have the same routing information. It&#39;s the requirement of a Link State protocol. And since you may not know this, but, OSPF is a Link State routing protocol. Assume R2 goes offline. Then 300 networks would disappear. R1 and R3 would be like &quot;oh crap they are down, I repeat they are down. Mark them as unreachable.&quot; Now assume R2 is back again. R1 and R3 back at it again saying &quot;Wow wow they are back they are back. They are actually reachable.&quot; and then boom, the routers blow up. Ok they don&#39;t blow up but they are definitely being confused because they are constantly processing these routing updates and they end up dropping the traffic because there is no way of containment.  Imagine that situation happening, because it&#39;s possible. It&#39;s an infinite loop. 
+
+**WELCOME TO PART 2** 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/6b677a1a88aa4834388f79489228a385236792e0.png&quot; width=&quot;556&quot; height=&quot;500&quot;&gt;
+
+I know what you are thinkng. This is a magnificent piece of art and it&#39;s also so confusing. I know, I know but have no fear. I promise I will do my best to explain it to you as simply as possible.
+
+Let me introduce you to a key term, known as Area Border Router. Where does the name come from? They sit on the border of the area. I know, it still does not make sense so let&#39;s &quot;zoom in&quot; a little bit in the picture. Specifically I&#39;m going to zoom in the part of the picture where R &quot;sits&quot; on the border between Area 0 and Area 1. This is what it actually looks like.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/71b136c292a322cf2517c6d478a9b886ab7cafe1.png&quot; width=&quot;690&quot; height=&quot;353&quot;&gt;
+
+By putting an interface in more than one area, we make R1 an Area Border Router, aka ABR. What is an ABR able to do?
+
+Summarize - Fewer advertisements as I mentioned before.
+
+Fault Containment - For example, if a router dies in Area 0, what&#39;s going to happen? I want your full attention now. Focus! **Fault containment is depending 100% on summarization**. And since I love examples, let me give you one.
+
+Looking at the picture above, let&#39;s assume Area 1 has a bunch of routers belonging to the `192.168.1`, `192.168.2`, `192.168.3`, `192.168.4`, `192.168.etc` networks. In other words, we have all the 192.168 networks in that area. First of all let me tell you this. Fyi, you can set up an ABR that does not do summarization. So he can take all those networks and pass them through from Area 1 to Area 0. That would totally defeat the purpose of having areas but that&#39;s the default setting when configuring OSPF. 
+
+Back to our example. If something goes wrong with the 192.168.1 network, then the router would send a message to all the routers including ABR and ABR would pass it on Area 0. But if we implement summarization by summing all those networks up to 192.168.0.0/16, ABR would think &quot;Hmm, fair enough, the networks on my left are all in the 192.168 network.&quot; 
+
+Then what&#39;s going to happen if the 192.168.3 network goes down in Area 0? As soon as the info about the router going offline reaches the ABR he is going to think &quot;I know he is down, but I&#39;m not going to pass that on because frankly nobody on my right(Area 0) even knows that the 192.168.3 exists. Think about it for a second. The routers in Area 0 have no clue about the 192.168.3 network. All they know about is the 192.168.0.0 network. So even if the ABR passes on the info that a network went down from Area 1 to Area 0, the cheeky mofos on the right would think &quot;Well, ok but, we don&#39;t have any 192.168.3 network in our routing table anyway. Why would we care?&quot; It kinda supresses the update if you can tell. 
+
+Something tells me you have a question though. &quot;What if computer B from Area 0, wants to send a message to a computer X in Area 1?&quot; What&#39;s going to happen? The message is going to travel through each node of Area 0 thinking that X is alive but once it reaches ABR (ABR has the specific information. He knows everything that is going on in Area 1) he is going to say &quot;Sorry mate, that network is down, I&#39;m going to drop your packet. Good luck next time.&quot;
+
+Do you see how convenient this is? Do you see how much more efficient this is than sending messages all the time from Area to Area when someone goes offline? An area could have 500 routers. I cringe just by thinking about it. So that&#39;s the job of an Area Border Router.
+
+Moving on, looking at the first picture, there is a term standing on the right side named as &quot;Autonomous System Boundary Router&quot;. Confusing term isn&#39;t it? Autonomous System Boundary Router connects you to networks outside of your own, such as the Internet. You can see it as a boundary of the OSPF network as a whole. Big concept is about to be thrown at you.
+
+**~ ABR and ASBR are the only routers in OSPF that can summarize. ~**
+
+The rest of the routers inside an area can&#39;t summarize. They don&#39;t have this ability. The only places they can summarize are on the border of an area (ABR) and on the border of the OSPF network as a whole (ASBR). I hope it makes sense. Keep in mind they don&#39;t become ABR and ASBR by themselves. We, as network admins, configure them that way.
+
+Two more design rules worth mentioning:
+
+1. Area 0 is always the first area you create. When you first start building your area, you have to start with area 0, aka Backbone Area which goes along with the second rule.
+
+2. All others areas have to connect directly to the backbone. Meaning (have a look at the second picture), Area 2 has to have a router that has an interface in the backbone and one interface in area 2. Same goes for area 1&#39;s router.
+
+In conclusion, OSPF multi area environment is created solely for the reason of summarization. You would not want to break your network into multiple areas if you didn&#39;t have the need for summarization. I know I&#39;m repeating the word &quot;summarization&quot; quite a lot but it&#39;s an important term to grasp, that&#39;s why. 
+
+____
+
+**Solidifying The  OSPF Neighbor Relationship**
+
+Let&#39;s talk about neighbor relationships now. This is the key in order to understand how OSPF works and how to troubleshoot it if something goes wrong. More than 95% of the time, OSPF troubleshooting deals with the neighbor relationship because if 2 routers can form neighbors, then there is a high chance of them exchanging routes. The are a couple of steps before that happens though.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/de51b7a5a1cda4a8f2338f6acfa2af9ec3ee18da.png&quot; width=&quot;431&quot; height=&quot;96&quot;&gt;
+
+**STEP 1**
+
+* Determine their Router-ID
+
+If you remember from the last article, R1 is going to send a hello message in order to form a neighbor. Before it ever does that, it has to identify itself by picking it&#39;s router ID. I know, confusing sentence once again but I&#39;m here to explain it to you. What is the router ID? It&#39;s the router&#39;s name in the OSPF process. Think of yourself, while saying hello to somebody, most of the time you say &quot;Hello, my name is x1337x.&quot; The router&#39;s name can even be an IP address. The command in order to configure the ID in a Cisco device at least is `Router-ID name`. However, if you don&#39;t type in a router ID, the default option (talking again about Cisco devices) is either the loopback address or the highest active interface when OSPF starts. What do I mean by the second part of the last sentence? If your router&#39;s interfaces are assigned with the IPs 10.0.0.1, 172.20.0.3, 192.168.1.4, it&#39;s going to pick the 192.168.1.4 as its router ID.
+
+**STEP 2**
+
+* Add interfaces to the Link State database. [spoiler] network command [/spoiler]
+
+Let me refresh your memory about the cisco &quot;network&quot; command.
+
+1. Identifies which interface(s) to use to send hello packets.
+2. Identifies which network(s) to advertise.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/872cf74bfa64b874b426871e3ebdae32ae17e1ad.png&quot; width=&quot;690&quot; height=&quot;459&quot;&gt;
+
+So if I want to send hello packets on the 172.168.1 interface and at the same time advertise it on other interfaces I have to type in the Cisco IOS `network 172.168.1.0 0.0.0.255 area 0`. And in case we want to advertise the 10.0.1 network to R2, we would have to type  `network 10.0.1.0 0.0.0.255 area 0`. 
+
+**STEP 3**
+
+* Send hello messages on chosen interfaces.
+
+This step includes quite a lot of info and I mentioned some of them in the previous article. But here is a bigger list:
+
+1. Router ID
+2. Hello and Dead Timers *
+3. Network Mask *
+4. Area ID *
+5. Neighbors 
+6. Router Priority
+7. DR / BRD IP Address
+8. Authentication Password *
+
+That&#39;s all I can remember right now. The asterisks mean that those MUST match between the routers.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/68b22a918ee45c22fa7791e99086d72af0c69833.png&quot; width=&quot;435&quot; height=&quot;341&quot;&gt;
+
+Think of the hello message as an envelope and when the router receives it, it pulls out the piece of paper that is inside the envelope and reads all the info. Let&#39;s focus on the DR / BDR right now because there is a tiny theory behind those. Those? Yes those! DR / BDR are the designated and backup designated router respectively. Let&#39;s say we have the 0x00sec company that looks like this:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/6177d92d9d883dca1ecb9741556e72a29dc69dee.png&quot; width=&quot;690&quot; height=&quot;494&quot;&gt;
+
+Imagine all those routers representing difference offices in different cities and they are connected to the central building of 0x00sec. Of course, there will be a bunch of routers in the 0x00sec office as well. Let&#39;s have a closer look, shall we?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/1X/9017eabf69fd680f8c6b303a86caebd988eda072.png&quot; width=&quot;690&quot; height=&quot;385&quot;&gt;
+
+Imagine those lines that are drawn on the routers representing the interfaces for the external 0x00sec offices. There is a problem though. All these routers without the DR / BDR concept will form neighbor relationship. You may be asking &quot;Isn&#39;t that what we want?&quot; Well, sure, but what if one of the links goes down? The router is going to send an update to all of his neighbors &quot;Dude, office here in freaking Iceland, I&#39;m down!&quot;. When the routers receive this message will update their neighbors and so on. You can see where I&#39;m going with this. All of them are going to be like &quot;aaah office down&quot; &quot;aaah office down&quot;. C-h-a-o-s.
+
+In order to prevent, there is this DR / BDR concept, where one router will be elected as the designated router and the other one will be the backup designated router. This way, when something goes wrong, the routers are going to send their updates ONLY to the DR and BDR. Thus, the rest of the routers won&#39;t be full neighbors with the router that went down. They will see him but they will think &quot;you know what? there is a DR.&quot; Meaning, everybody will form full neighbor relationship only with the DR. So when a router goes down, he will send his update to the DR and then DR will get that message out to the rest of peeps, therefore, stopping the chaos I mentioned before. So the router priority that was in the list above identifies who is going to the DR and BDR. The one with the highest priority becomes the DR. 
+
+If you are still confused about this concept don&#39;t worry, it&#39;s advanced, Just focus on the high level view of it.
+
+**STEP 4**
+
+* Receive Hello
+
+The router will receive the hello message and does a check of his compatibility with this these fields below:
+
+1. Check hello / dead timers
+2. Check subnet masks
+3. Check authentication
+4. Check area ID
+
+IF AND ONLY IF they are compatible he will move to the next step.
+
+**STEP 5**
+
+* Send Hello Reply
+
+Specifically, the router is going to think &quot;Am I listed already as your neighbor in your hello packet? If yes, then I will reset your dead timer. If no, I will add you as my new neighbor.&quot; (Remember, each hello packet includes the neighbors of the router). So what do I mean with the reset dead timer part? Let&#39;s say the router who sends the message sends hello every 10 seconds and its dead timer is 30 seconds. So if the neighbor router has already formed a relationship with the one who sent the hello message is going to say &quot;I will reset your dead timer back to 30 seconds and I will wait for your next hello in 10 seconds so you can prove me you are still reachable.&quot;
+
+Wow, this is insane. I&#39;m looking back to what I wrote and there is so much more new info thrown at you. I think it&#39;s already too much to handle so I will stop the steps here or maybe add them later if I see that you guys can take it. Either way, as you can see OSPF is huge but it&#39;s also quite awesome and secure. I hope when you read that sentence you have understood a bit of what I&#39;m saying at least if not all. I hope this article has been informative and I thank you for taking the time to read it. As always post your questions down below or PM me. 
+
+_P.S The article is quite lengthy and I did my best to correct as many syntax mistakes as possible. If you find any, don&#39;t hesitate to let me know. English isn&#39;t my main language.Thank you._
+
+Later...</description>
+    
+    <lastBuildDate>Sat, 25 Jun 2016 08:19:59 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Routing Protocols ~ OSPF ~ Part II</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658/4</link>
+        <pubDate>Tue, 09 Jan 2018 11:28:04 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-658-4</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658.rss">Routing Protocols ~ OSPF ~ Part II</source>
+      </item>
+      <item>
+        <title>Routing Protocols ~ OSPF ~ Part II</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Fantastic <span class="mention">@airth</span>. Congrats!</p>
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658/3</link>
+        <pubDate>Sat, 25 Jun 2016 08:19:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-658-3</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658.rss">Routing Protocols ~ OSPF ~ Part II</source>
+      </item>
+      <item>
+        <title>Routing Protocols ~ OSPF ~ Part II</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Great job. Well written, and frankly one of the best articles I’ve seen on the subject. Keep the great work up!</p>
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658/2</link>
+        <pubDate>Sat, 25 Jun 2016 05:27:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-658-2</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658.rss">Routing Protocols ~ OSPF ~ Part II</source>
+      </item>
+      <item>
+        <title>Routing Protocols ~ OSPF ~ Part II</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello homies and homettes. I hope you are all having a great day so far. Welcome to Part 2 of the routing protocols series regarding OSPF. This time we are going to dig deeper in OSPF and try to visualize the “low-level” detail behind it. Allow me to take your hand and walk you through OSPF once again, but this time there is a lot more coming at you so hold my hand tight. I hope the OSPF <a href="https://0x00sec.org/t/routing-protocols-ospf/647/7">introduction</a>  part made you curious and you can’t wait to learn more about this bad boy. No rant or personal opinion this time, let’s get straight to the topic. Get ready to get bombarded with more theory lads. I will try to add as many pictures as possible so it can be entertaining and fun to read. The topics that will be covered in this article are:</p>
+<ul>
+<li>The OSPF big picture</li>
+<li>Metric</li>
+<li>Neighbor Relationships</li>
+</ul>
+<p>Let’s start off with the picture behind OSPF. In the previous article, we talked about areas but we didn’t get into enough detail. We were mainly focused on one and the most important one in order to get OSPF working, the area 0. Let’s have a look at the picture below.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/16809e913ffe55f4942fefe79328def15cdc2814.png" width="478" height="327"></p>
+<p>This is our topology for now. R1, R2, R3 are routers as you may have guessed and they belong to area 0. However, area 0 has its limitations. The routers in a single area have to have the same link state database. What do I mean by that? You can either see it as a topology table or as the information the routers use in order to generate their routing table. Imagine those 3 routers being connected to 300 different networks. So R1 is gonna send all 300 networks to R3, R3 is going to send all 600 networks to R2(his and R1’s) and R2 is going to send his 300 networks to R3. In the end, each of these blue mofos will have 900 networks in their routing table. If you don’t understand why, the key is “link state.” I have a <a href="http://packetlife.net/blog/2008/oct/2/distance-vector-versus-link-state/" rel="noopener nofollow ugc">link</a>  for you to read in case you are confused, which will make you understand why each router has added to its routing table the networks of the others as well.  Don’t hesitate, give it a shot.</p>
+<p>Single area OSPF does not support the key concept I mentioned in my previous article which is <em><strong>summarization</strong></em>. Summarization will allow us to take a bunch of networks and sum them up in fewer advertisements. The goal is to use one advertisement. So let’s say we have the networks <code>192.168.1</code>, <code>192.168.2</code>, <code>192.168.3</code> etc. We could sum all these up into 192.168.0.0/16. If you don’t understand why /16, then you need some subnetting revision my friends, but don’t worry because I got your back. You can either have a look at my subnetting <a href="https://0x00sec.org/t/a-dive-into-subnetting/468/4">article</a>, or if my article makes no sense, you can google!</p>
+<p>What that says to the router who did the summarization is “Hey, I have every single network that starts with 192.168.” So practically we replaced a routing table with a huge number of subnets with a routing table of just one. Much smarter and more efficient, right? That manoeuvre makes 2 things possible:</p>
+<ol>
+<li>
+<p>The router is faster because the less routes his friends gets to know, the faster he is able to route the packets.</p>
+</li>
+<li>
+<p>Fault Containment. What do I mean by that? If one of the networks R1 is connected went down, he would have to send an update about it to the rest of the routers. Why? Because all the routers in the area have to have the same routing information. It’s the requirement of a Link State protocol. And since you may not know this, but, OSPF is a Link State routing protocol. Assume R2 goes offline. Then 300 networks would disappear. R1 and R3 would be like “oh crap they are down, I repeat they are down. Mark them as unreachable.” Now assume R2 is back again. R1 and R3 back at it again saying “Wow wow they are back they are back. They are actually reachable.” and then boom, the routers blow up. Ok they don’t blow up but they are definitely being confused because they are constantly processing these routing updates and they end up dropping the traffic because there is no way of containment.  Imagine that situation happening, because it’s possible. It’s an infinite loop.</p>
+</li>
+</ol>
+<p><strong>WELCOME TO PART 2</strong></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/6b677a1a88aa4834388f79489228a385236792e0.png" width="556" height="500"></p>
+<p>I know what you are thinkng. This is a magnificent piece of art and it’s also so confusing. I know, I know but have no fear. I promise I will do my best to explain it to you as simply as possible.</p>
+<p>Let me introduce you to a key term, known as Area Border Router. Where does the name come from? They sit on the border of the area. I know, it still does not make sense so let’s “zoom in” a little bit in the picture. Specifically I’m going to zoom in the part of the picture where R “sits” on the border between Area 0 and Area 1. This is what it actually looks like.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/71b136c292a322cf2517c6d478a9b886ab7cafe1.png" width="690" height="353"></p>
+<p>By putting an interface in more than one area, we make R1 an Area Border Router, aka ABR. What is an ABR able to do?</p>
+<p>Summarize - Fewer advertisements as I mentioned before.</p>
+<p>Fault Containment - For example, if a router dies in Area 0, what’s going to happen? I want your full attention now. Focus! <strong>Fault containment is depending 100% on summarization</strong>. And since I love examples, let me give you one.</p>
+<p>Looking at the picture above, let’s assume Area 1 has a bunch of routers belonging to the <code>192.168.1</code>, <code>192.168.2</code>, <code>192.168.3</code>, <code>192.168.4</code>, <code>192.168.etc</code> networks. In other words, we have all the 192.168 networks in that area. First of all let me tell you this. Fyi, you can set up an ABR that does not do summarization. So he can take all those networks and pass them through from Area 1 to Area 0. That would totally defeat the purpose of having areas but that’s the default setting when configuring OSPF.</p>
+<p>Back to our example. If something goes wrong with the 192.168.1 network, then the router would send a message to all the routers including ABR and ABR would pass it on Area 0. But if we implement summarization by summing all those networks up to 192.168.0.0/16, ABR would think “Hmm, fair enough, the networks on my left are all in the 192.168 network.”</p>
+<p>Then what’s going to happen if the 192.168.3 network goes down in Area 0? As soon as the info about the router going offline reaches the ABR he is going to think "I know he is down, but I’m not going to pass that on because frankly nobody on my right(Area 0) even knows that the 192.168.3 exists. Think about it for a second. The routers in Area 0 have no clue about the 192.168.3 network. All they know about is the 192.168.0.0 network. So even if the ABR passes on the info that a network went down from Area 1 to Area 0, the cheeky mofos on the right would think “Well, ok but, we don’t have any 192.168.3 network in our routing table anyway. Why would we care?” It kinda supresses the update if you can tell.</p>
+<p>Something tells me you have a question though. “What if computer B from Area 0, wants to send a message to a computer X in Area 1?” What’s going to happen? The message is going to travel through each node of Area 0 thinking that X is alive but once it reaches ABR (ABR has the specific information. He knows everything that is going on in Area 1) he is going to say “Sorry mate, that network is down, I’m going to drop your packet. Good luck next time.”</p>
+<p>Do you see how convenient this is? Do you see how much more efficient this is than sending messages all the time from Area to Area when someone goes offline? An area could have 500 routers. I cringe just by thinking about it. So that’s the job of an Area Border Router.</p>
+<p>Moving on, looking at the first picture, there is a term standing on the right side named as “Autonomous System Boundary Router”. Confusing term isn’t it? Autonomous System Boundary Router connects you to networks outside of your own, such as the Internet. You can see it as a boundary of the OSPF network as a whole. Big concept is about to be thrown at you.</p>
+<p><strong>~ ABR and ASBR are the only routers in OSPF that can summarize. ~</strong></p>
+<p>The rest of the routers inside an area can’t summarize. They don’t have this ability. The only places they can summarize are on the border of an area (ABR) and on the border of the OSPF network as a whole (ASBR). I hope it makes sense. Keep in mind they don’t become ABR and ASBR by themselves. We, as network admins, configure them that way.</p>
+<p>Two more design rules worth mentioning:</p>
+<ol>
+<li>
+<p>Area 0 is always the first area you create. When you first start building your area, you have to start with area 0, aka Backbone Area which goes along with the second rule.</p>
+</li>
+<li>
+<p>All others areas have to connect directly to the backbone. Meaning (have a look at the second picture), Area 2 has to have a router that has an interface in the backbone and one interface in area 2. Same goes for area 1’s router.</p>
+</li>
+</ol>
+<p>In conclusion, OSPF multi area environment is created solely for the reason of summarization. You would not want to break your network into multiple areas if you didn’t have the need for summarization. I know I’m repeating the word “summarization” quite a lot but it’s an important term to grasp, that’s why.</p>
+<hr>
+<p><strong>Solidifying The  OSPF Neighbor Relationship</strong></p>
+<p>Let’s talk about neighbor relationships now. This is the key in order to understand how OSPF works and how to troubleshoot it if something goes wrong. More than 95% of the time, OSPF troubleshooting deals with the neighbor relationship because if 2 routers can form neighbors, then there is a high chance of them exchanging routes. The are a couple of steps before that happens though.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/de51b7a5a1cda4a8f2338f6acfa2af9ec3ee18da.png" width="431" height="96"></p>
+<p><strong>STEP 1</strong></p>
+<ul>
+<li>Determine their Router-ID</li>
+</ul>
+<p>If you remember from the last article, R1 is going to send a hello message in order to form a neighbor. Before it ever does that, it has to identify itself by picking it’s router ID. I know, confusing sentence once again but I’m here to explain it to you. What is the router ID? It’s the router’s name in the OSPF process. Think of yourself, while saying hello to somebody, most of the time you say “Hello, my name is x1337x.” The router’s name can even be an IP address. The command in order to configure the ID in a Cisco device at least is <code>Router-ID name</code>. However, if you don’t type in a router ID, the default option (talking again about Cisco devices) is either the loopback address or the highest active interface when OSPF starts. What do I mean by the second part of the last sentence? If your router’s interfaces are assigned with the IPs 10.0.0.1, 172.20.0.3, 192.168.1.4, it’s going to pick the 192.168.1.4 as its router ID.</p>
+<p><strong>STEP 2</strong></p>
+<ul>
+<li>Add interfaces to the Link State database. <span class="spoiler"><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658/1">spoiler</a></span>
+</li>
+</ul>
+<p>Let me refresh your memory about the cisco “network” command.</p>
+<ol>
+<li>Identifies which interface(s) to use to send hello packets.</li>
+<li>Identifies which network(s) to advertise.</li>
+</ol>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/872cf74bfa64b874b426871e3ebdae32ae17e1ad.png" width="690" height="459"></p>
+<p>So if I want to send hello packets on the 172.168.1 interface and at the same time advertise it on other interfaces I have to type in the Cisco IOS <code>network 172.168.1.0 0.0.0.255 area 0</code>. And in case we want to advertise the 10.0.1 network to R2, we would have to type  <code>network 10.0.1.0 0.0.0.255 area 0</code>.</p>
+<p><strong>STEP 3</strong></p>
+<ul>
+<li>Send hello messages on chosen interfaces.</li>
+</ul>
+<p>This step includes quite a lot of info and I mentioned some of them in the previous article. But here is a bigger list:</p>
+<ol>
+<li>Router ID</li>
+<li>Hello and Dead Timers *</li>
+<li>Network Mask *</li>
+<li>Area ID *</li>
+<li>Neighbors</li>
+<li>Router Priority</li>
+<li>DR / BRD IP Address</li>
+<li>Authentication Password *</li>
+</ol>
+<p>That’s all I can remember right now. The asterisks mean that those MUST match between the routers.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/68b22a918ee45c22fa7791e99086d72af0c69833.png" width="435" height="341"></p>
+<p>Think of the hello message as an envelope and when the router receives it, it pulls out the piece of paper that is inside the envelope and reads all the info. Let’s focus on the DR / BDR right now because there is a tiny theory behind those. Those? Yes those! DR / BDR are the designated and backup designated router respectively. Let’s say we have the 0x00sec company that looks like this:</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/6177d92d9d883dca1ecb9741556e72a29dc69dee.png" width="690" height="494"></p>
+<p>Imagine all those routers representing difference offices in different cities and they are connected to the central building of 0x00sec. Of course, there will be a bunch of routers in the 0x00sec office as well. Let’s have a closer look, shall we?</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/9017eabf69fd680f8c6b303a86caebd988eda072.png" width="690" height="385"></p>
+<p>Imagine those lines that are drawn on the routers representing the interfaces for the external 0x00sec offices. There is a problem though. All these routers without the DR / BDR concept will form neighbor relationship. You may be asking “Isn’t that what we want?” Well, sure, but what if one of the links goes down? The router is going to send an update to all of his neighbors “Dude, office here in freaking Iceland, I’m down!”. When the routers receive this message will update their neighbors and so on. You can see where I’m going with this. All of them are going to be like “aaah office down” “aaah office down”. C-h-a-o-s.</p>
+<p>In order to prevent, there is this DR / BDR concept, where one router will be elected as the designated router and the other one will be the backup designated router. This way, when something goes wrong, the routers are going to send their updates ONLY to the DR and BDR. Thus, the rest of the routers won’t be full neighbors with the router that went down. They will see him but they will think “you know what? there is a DR.” Meaning, everybody will form full neighbor relationship only with the DR. So when a router goes down, he will send his update to the DR and then DR will get that message out to the rest of peeps, therefore, stopping the chaos I mentioned before. So the router priority that was in the list above identifies who is going to the DR and BDR. The one with the highest priority becomes the DR.</p>
+<p>If you are still confused about this concept don’t worry, it’s advanced, Just focus on the high level view of it.</p>
+<p><strong>STEP 4</strong></p>
+<ul>
+<li>Receive Hello</li>
+</ul>
+<p>The router will receive the hello message and does a check of his compatibility with this these fields below:</p>
+<ol>
+<li>Check hello / dead timers</li>
+<li>Check subnet masks</li>
+<li>Check authentication</li>
+<li>Check area ID</li>
+</ol>
+<p>IF AND ONLY IF they are compatible he will move to the next step.</p>
+<p><strong>STEP 5</strong></p>
+<ul>
+<li>Send Hello Reply</li>
+</ul>
+<p>Specifically, the router is going to think “Am I listed already as your neighbor in your hello packet? If yes, then I will reset your dead timer. If no, I will add you as my new neighbor.” (Remember, each hello packet includes the neighbors of the router). So what do I mean with the reset dead timer part? Let’s say the router who sends the message sends hello every 10 seconds and its dead timer is 30 seconds. So if the neighbor router has already formed a relationship with the one who sent the hello message is going to say “I will reset your dead timer back to 30 seconds and I will wait for your next hello in 10 seconds so you can prove me you are still reachable.”</p>
+<p>Wow, this is insane. I’m looking back to what I wrote and there is so much more new info thrown at you. I think it’s already too much to handle so I will stop the steps here or maybe add them later if I see that you guys can take it. Either way, as you can see OSPF is huge but it’s also quite awesome and secure. I hope when you read that sentence you have understood a bit of what I’m saying at least if not all. I hope this article has been informative and I thank you for taking the time to read it. As always post your questions down below or PM me.</p>
+<p><em>P.S The article is quite lengthy and I did my best to correct as many syntax mistakes as possible. If you find any, don’t hesitate to let me know. English isn’t my main language.Thank you.</em></p>
+<p>Later…</p>
+          <p><a href="https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658/1</link>
+        <pubDate>Fri, 24 Jun 2016 22:58:18 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-658-1</guid>
+        <source url="https://d.clarkee.co.uk/t/routing-protocols-ospf-part-ii/658.rss">Routing Protocols ~ OSPF ~ Part II</source>
+      </item>
+  </channel>
+</rss>

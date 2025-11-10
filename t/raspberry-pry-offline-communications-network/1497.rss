@@ -1,0 +1,384 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Raspberry Pry - Offline Communications Network</title>
+    <link>https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497</link>
+    <description>Picture the moment. It&#39;s 2057, technology has barely progressed, and the earth is under harsh censorship and surveillance. Humanity has reverted to the Hitler days. 
+
+Don&#39;t get depressed! Let&#39;s build a mesh net!
+
+In your manic mindset, you quickly through together your portable phone re-charger, your Raspberry Pi Model B &lt;small&gt; (YES I AM USING A MODEL B @Suser)&lt;/small&gt;, and your Alfa AWUS036NH Network Card. You stuff it in a folder and admire your hardware 1337&#39;ness. &lt;small&gt;@anon79434934&lt;/small&gt;. 
+
+![](upload://w0Vw5VjQGYEEfG3tgLFDneDiHHk.jpeg)
+
+&quot;Sweet!&quot; - You remark.
+
+Don&#39;t get too excited, it may look awesome but it doesn&#39;t actually do anything yet...
+
+You fire up dd and write that SD card with raspbian, then you boot up and SSH in. After the usual, and updates, you install the packages you will need.
+
+```
+sudo apt-get install isc-dhcp-server dnsmasq hostapd inspircd
+```
+
+First you check your network device is recognised
+
+```
+lsusb | grep &#39;Wireless&#39;
+```
+
+```
+&gt;&gt; Bus 001 Device 005: ID 148f:3070 Ralink Technology, Corp. RT2870/RT3070 Wireless Adapter
+
+```
+
+
+## Interfaces
+
+`sudo nano /etc/network/interfaces`
+```text
+auto lo
+iface lo inet loopback
+
+auto eth0
+allow-hotplug eth0
+iface eth0 inet dhcp
+
+allow-hotplug wlan0
+iface wlan0 inet static
+  address 10.0.1.2
+  netmask 255.255.255.0
+```
+
+## Hostapd
+
+`sudo nano /etc/hostapd/hostapd.conf`
+```text
+interface=wlan0
+ssid=0x00sec
+channel=6
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+wpa=3
+wpa_passphrase=0x00secIsBae
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP
+rsn_pairwise=CCMP
+```
+
+
+## DHCP
+
+`sudo nano /etc/dhcp/dhcp.conf`
+```text
+ddns-update-style none;
+
+default-lease-time 600;
+max-lease-time 7200;
+
+authoritative;
+
+log-facility local7;
+
+subnet 10.0.1.0 netmask 255.255.255.0 {
+ range 10.0.1.10 10.0.1.254;
+ option broadcast-address 10.0.1.255;
+ option routers 10.0.1.2;
+ default-lease-time 600;
+ max-lease-time 7200;
+ option domain-name-servers 10.0.1.2;
+}
+
+```
+
+Enable your services
+
+```
+sudo systemctl enable hostapd
+sudo systemctl enable isc-dhcp-server
+sudo systemctl enable dnsmsq
+```
+
+Do a cheeky reboot and then we can get to configuring the exciting things! If you check your wifi networks, there should be a network called 0x00sec protected by WPA2. Connect to it and hopefully you should get an IP. You will notice though that even if your PI is plugged in via ethernet, you aren&#39;t getting any connection. 
+
+This is because you haven&#39;t configured iptables to route your data, and you don&#39;t have a DNS server! Remember how we installed dnsmasq earlier? Lets Configure that baby!
+
+## Dnsmasq
+
+`sudo nano /etc/dnsmasq.conf`
+```text
+domain-needed
+interface=wlan0
+no-dhcp-interface=wlan0
+```
+
+`sudo systemctl restart dnsmasq`
+
+## Routing
+
+Enable IP Forwarding
+
+```
+sudo sh -c &quot;echo 1 &gt; /proc/sys/net/ipv4/ip_forward&quot;
+```
+
+Now iptables routing
+ 
+```
+sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+sudo iptables -A FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -i wlan0 -o eth0 -j ACCEPT
+```
+
+On your network now, you should get both an IP, and be able to access the internet on your device. But these rules won&#39;t persist cross boot, so lets fix that. 
+
+```
+sudo sh -c &quot;iptables-save &gt; /etc/iptables.ipv4.nat&quot;
+```
+
+Now let&#39;s open up that interfaces file again
+
+```
+sudo nano /etc/network/interfaces
+```
+and append this line
+```text
+up iptables-restore &lt; /etc/iptables.ipv4.nat
+```
+
+Cool, now we can configure IRC, or whatever else we want on the Pi, in my case I configured IRC and KiwiIRC.  You can equally set up a tor proxy, or some sort of message board. The beauty of this is that it is completely offline, and you will instantly share any ethernet internet connection over wifi. 
+
+People can set up repeaters for this network, and this starts as a beautiful beginning for a mesh network. The other ideal part of this is that it is portable, you can take it anywhere, and allow people to connect. Now you have successfully thrawted the evil opressors, and saved humanity! 
+
+Personally I find this is very useful for hotels that only provide a single ethernet port. Heck, you could even connect a harddrive and install plexmediaserver on this baby. Portable Media Streamer! The possibilities are endless!
+
+I hope this helped! FIGHT THE POWER. 
+
+Make sure to tell me what you thought about it, and what you would do or have done with a raspberry pi in the past? I am really interested to hear about your projects!
+
+\- pry0cc</description>
+    
+    <lastBuildDate>Tue, 31 Jan 2017 21:47:33 +0000</lastBuildDate>
+    <category>Linux</category>
+    <atom:link href="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Raspberry Pry - Offline Communications Network</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/9</link>
+        <pubDate>Sun, 21 Jan 2018 00:36:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1497-9</guid>
+        <source url="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497.rss">Raspberry Pry - Offline Communications Network</source>
+      </item>
+      <item>
+        <title>Raspberry Pry - Offline Communications Network</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>I wish I could take the credit. But I’m not a complete dick. It was 100% <a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a>’s suggestion for this write-up and the name.  I just, you know, did the work <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/8</link>
+        <pubDate>Tue, 31 Jan 2017 21:47:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1497-8</guid>
+        <source url="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497.rss">Raspberry Pry - Offline Communications Network</source>
+      </item>
+      <item>
+        <title>Raspberry Pry - Offline Communications Network</title>
+        <dc:creator><![CDATA[anon79434934]]></dc:creator>
+        <description><![CDATA[
+            <p>10/10 just for the name “raspberry pry”</p>
+<p>-Phoenix750</p>
+          <p><a href="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/7</link>
+        <pubDate>Tue, 31 Jan 2017 21:39:53 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1497-7</guid>
+        <source url="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497.rss">Raspberry Pry - Offline Communications Network</source>
+      </item>
+      <item>
+        <title>Raspberry Pry - Offline Communications Network</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>Yes, this is exactly what i meant. Somehow, I didn’t really manage to find a implementation of it. It would be a nice project, though very complex <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/6</link>
+        <pubDate>Mon, 30 Jan 2017 16:30:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1497-6</guid>
+        <source url="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497.rss">Raspberry Pry - Offline Communications Network</source>
+      </item>
+      <item>
+        <title>Raspberry Pry - Offline Communications Network</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group">
+<blockquote>
+<p>In wireless networking, Ad-Hoc is one of the modes of operation for an 802.11 radio. It happens at OSI layer 1, the physical layer, and it basically means that all devices can communicate directly to any other device that is within radio range. Normally, in Infrastructure mode, wireless devices can only communicate with a central Access Point or Router and that device is responsible for re-transmitting packets from one client device to another client device (even if they are right next to each other). Ad-Hoc networks get rid of the middle-man that is the AP, however they don’t have any inherent capability for multi-hop. That means, if device A can reach device B, and device B can reach device C, but A cannot reach C, then A and C cannot communicate because B will not re-transmit any packets.</p>
+<p>Mesh Networking, also know as Mesh Routing happens at OSI layer 3, the network layer. Mesh Routing allows each device on a network (also called nodes) to act as a router and re-transmit packets on behalf of any other devices. Mesh Routing provide the multi-hop facility that Ad-Hoc mode lacks. By combining Ad-Hoc mode at layer 1 and Mesh Routing at layer 3 we can create wireless mesh networks purely between client devices without any need for centralized Access Points or Routers.</p>
+<p>P2P or Peer-to-Peer simply means that clients talk directly to each other without the use of a central server. Both Ad-Hoc and Mesh Routing can be described as P2P as they are both instances of clients-to-client communication, just at different layers of the OSI model</p>
+</blockquote>
+</aside>
+<p>Straight outta superuser, It seems that a mesh network is what we would be looking at.</p>
+          <p><a href="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/5</link>
+        <pubDate>Mon, 30 Jan 2017 13:15:47 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1497-5</guid>
+        <source url="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497.rss">Raspberry Pry - Offline Communications Network</source>
+      </item>
+      <item>
+        <title>Raspberry Pry - Offline Communications Network</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Perhaps you could develop a dhcp system that creates an address based off of a hash of the mac address.  That way verification is trivial on all hosts.  As for DNS it could operate exactly the same.</p>
+          <p><a href="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/4</link>
+        <pubDate>Mon, 30 Jan 2017 13:09:28 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1497-4</guid>
+        <source url="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497.rss">Raspberry Pry - Offline Communications Network</source>
+      </item>
+      <item>
+        <title>Raspberry Pry - Offline Communications Network</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Hm interesting. P2P WiFi? I’d like to know how that would work…  Decentralized DHCP…</p>
+          <p><a href="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/3</link>
+        <pubDate>Mon, 30 Jan 2017 13:07:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1497-3</guid>
+        <source url="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497.rss">Raspberry Pry - Offline Communications Network</source>
+      </item>
+      <item>
+        <title>Raspberry Pry - Offline Communications Network</title>
+        <dc:creator><![CDATA[SmartOne]]></dc:creator>
+        <description><![CDATA[
+            <p>Sweet article and nice storytelling! <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"> In the case of your story, it would be interesting to do an ad-hoc network that doesn’t rely on one single router. Would be interesting how to do this…<br>
+SmartOne</p>
+          <p><a href="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/2</link>
+        <pubDate>Sun, 29 Jan 2017 21:17:32 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1497-2</guid>
+        <source url="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497.rss">Raspberry Pry - Offline Communications Network</source>
+      </item>
+      <item>
+        <title>Raspberry Pry - Offline Communications Network</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Picture the moment. It’s 2057, technology has barely progressed, and the earth is under harsh censorship and surveillance. Humanity has reverted to the Hitler days.</p>
+<p>Don’t get depressed! Let’s build a mesh net!</p>
+<p>In your manic mindset, you quickly through together your portable phone re-charger, your Raspberry Pi Model B <small> (YES I AM USING A MODEL B <a class="mention" href="https://d.clarkee.co.uk/u/suser">@Suser</a>)</small>, and your Alfa AWUS036NH Network Card. You stuff it in a folder and admire your hardware 1337’ness. <small><a class="mention" href="https://d.clarkee.co.uk/u/anon79434934">@anon79434934</a></small>.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/e/e06069c64af83112270184284d170743c159ab8a.jpeg" data-download-href="/uploads/short-url/w0Vw5VjQGYEEfG3tgLFDneDiHHk.jpeg?dl=1" title=""><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/e/e06069c64af83112270184284d170743c159ab8a_2_389x500.jpeg" alt="" data-base62-sha1="w0Vw5VjQGYEEfG3tgLFDneDiHHk" width="389" height="500" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/e/e06069c64af83112270184284d170743c159ab8a_2_389x500.jpeg, https://0x00sec.s3.amazonaws.com/optimized/2X/e/e06069c64af83112270184284d170743c159ab8a_2_583x750.jpeg 1.5x, https://0x00sec.s3.amazonaws.com/optimized/2X/e/e06069c64af83112270184284d170743c159ab8a_2_778x1000.jpeg 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/e/e06069c64af83112270184284d170743c159ab8a_2_10x10.png"></a></div><p></p>
+<p>“Sweet!” - You remark.</p>
+<p>Don’t get too excited, it may look awesome but it doesn’t actually do anything yet…</p>
+<p>You fire up dd and write that SD card with raspbian, then you boot up and SSH in. After the usual, and updates, you install the packages you will need.</p>
+<pre><code class="lang-auto">sudo apt-get install isc-dhcp-server dnsmasq hostapd inspircd
+</code></pre>
+<p>First you check your network device is recognised</p>
+<pre><code class="lang-auto">lsusb | grep 'Wireless'
+</code></pre>
+<pre><code class="lang-auto">&gt;&gt; Bus 001 Device 005: ID 148f:3070 Ralink Technology, Corp. RT2870/RT3070 Wireless Adapter
+
+</code></pre>
+<h2>Interfaces</h2>
+<p><code>sudo nano /etc/network/interfaces</code></p>
+<pre><code class="lang-nohighlight">auto lo
+iface lo inet loopback
+
+auto eth0
+allow-hotplug eth0
+iface eth0 inet dhcp
+
+allow-hotplug wlan0
+iface wlan0 inet static
+  address 10.0.1.2
+  netmask 255.255.255.0
+</code></pre>
+<h2>Hostapd</h2>
+<p><code>sudo nano /etc/hostapd/hostapd.conf</code></p>
+<pre><code class="lang-nohighlight">interface=wlan0
+ssid=0x00sec
+channel=6
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+wpa=3
+wpa_passphrase=0x00secIsBae
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP
+rsn_pairwise=CCMP
+</code></pre>
+<h2>DHCP</h2>
+<p><code>sudo nano /etc/dhcp/dhcp.conf</code></p>
+<pre><code class="lang-nohighlight">ddns-update-style none;
+
+default-lease-time 600;
+max-lease-time 7200;
+
+authoritative;
+
+log-facility local7;
+
+subnet 10.0.1.0 netmask 255.255.255.0 {
+ range 10.0.1.10 10.0.1.254;
+ option broadcast-address 10.0.1.255;
+ option routers 10.0.1.2;
+ default-lease-time 600;
+ max-lease-time 7200;
+ option domain-name-servers 10.0.1.2;
+}
+
+</code></pre>
+<p>Enable your services</p>
+<pre><code class="lang-auto">sudo systemctl enable hostapd
+sudo systemctl enable isc-dhcp-server
+sudo systemctl enable dnsmsq
+</code></pre>
+<p>Do a cheeky reboot and then we can get to configuring the exciting things! If you check your wifi networks, there should be a network called 0x00sec protected by WPA2. Connect to it and hopefully you should get an IP. You will notice though that even if your PI is plugged in via ethernet, you aren’t getting any connection.</p>
+<p>This is because you haven’t configured iptables to route your data, and you don’t have a DNS server! Remember how we installed dnsmasq earlier? Lets Configure that baby!</p>
+<h2>Dnsmasq</h2>
+<p><code>sudo nano /etc/dnsmasq.conf</code></p>
+<pre><code class="lang-nohighlight">domain-needed
+interface=wlan0
+no-dhcp-interface=wlan0
+</code></pre>
+<p><code>sudo systemctl restart dnsmasq</code></p>
+<h2>Routing</h2>
+<p>Enable IP Forwarding</p>
+<pre><code class="lang-auto">sudo sh -c "echo 1 &gt; /proc/sys/net/ipv4/ip_forward"
+</code></pre>
+<p>Now iptables routing</p>
+<pre><code class="lang-auto">sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+sudo iptables -A FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -i wlan0 -o eth0 -j ACCEPT
+</code></pre>
+<p>On your network now, you should get both an IP, and be able to access the internet on your device. But these rules won’t persist cross boot, so lets fix that.</p>
+<pre><code class="lang-auto">sudo sh -c "iptables-save &gt; /etc/iptables.ipv4.nat"
+</code></pre>
+<p>Now let’s open up that interfaces file again</p>
+<pre><code class="lang-auto">sudo nano /etc/network/interfaces
+</code></pre>
+<p>and append this line</p>
+<pre><code class="lang-nohighlight">up iptables-restore &lt; /etc/iptables.ipv4.nat
+</code></pre>
+<p>Cool, now we can configure IRC, or whatever else we want on the Pi, in my case I configured IRC and KiwiIRC.  You can equally set up a tor proxy, or some sort of message board. The beauty of this is that it is completely offline, and you will instantly share any ethernet internet connection over wifi.</p>
+<p>People can set up repeaters for this network, and this starts as a beautiful beginning for a mesh network. The other ideal part of this is that it is portable, you can take it anywhere, and allow people to connect. Now you have successfully thrawted the evil opressors, and saved humanity!</p>
+<p>Personally I find this is very useful for hotels that only provide a single ethernet port. Heck, you could even connect a harddrive and install plexmediaserver on this baby. Portable Media Streamer! The possibilities are endless!</p>
+<p>I hope this helped! FIGHT THE POWER.</p>
+<p>Make sure to tell me what you thought about it, and what you would do or have done with a raspberry pi in the past? I am really interested to hear about your projects!</p>
+<p>- pry0cc</p>
+          <p><a href="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497/1</link>
+        <pubDate>Sun, 29 Jan 2017 18:47:42 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1497-1</guid>
+        <source url="https://d.clarkee.co.uk/t/raspberry-pry-offline-communications-network/1497.rss">Raspberry Pry - Offline Communications Network</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,457 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Extracting Go Embeds</title>
+    <link>https://0x00sec.org/t/extracting-go-embeds/34885</link>
+    <description>
+
+## Backdrop
+I was recently working on a go based web app which used a golang feature called embeds,
+So what exactly is go-embed / what does it do ?, imagine you had to distribute/share a application
+which consists of a executable and multiple auxiliary files (say images, language support files, etc.), how would you distribute such a application ? 
+```
+	Typical App Folder :
+			app-executable		--&gt; Run by user
+			image0.png			|
+			image1.png			|-&gt; Never Directly accessed by the user, but must be shipped 
+			audio.mp3			|	with the app
+```
+the most obvious solution is to zip/tar the executable along with all the necessary files
+and then hand it out to users, but extracting files would be an additional effort on the users end (especially when the user is never going to directly access all those files). Go&#39;s embed feature saves us from this fate by providing a pseudo file system which can hold necessary files while enabling programmatic access to them, also the entire pseudo file system resides within the binary.
+```
+	App Folder while using Go Embed :
+			app-executable		--&gt; One binary which has all necessary files embedded
+									within it.
+	
+
+		ELF-structure of app-executable
+	|===================================|
+	|.data    .....						|
+	|===================================|
+	|.rodata							|
+	| &lt;	Pesudo  Filesystem &gt;			|
+	|===================================|
+	|.text    .....						|
+	|===================================|
+```
+Note that files embedded using Go embed are read only.
+
+Now you must wonder whats the big deal,  just run strings on the binary and the view content, yea sure you can do that if want to spend the rest of you day reading through clobbered output, but our aim in this paper is to explore how we can extract embedded files from any arbitrary go executable, while preserving the original directory structure.
+
+## But why ?
+All right i&#39;ll throw you a carrot,
+1.  People think embeds are a way to &quot;secure their application files&quot; - BooHoo! - have to prove them wrong.
+2. Anyone with some mal-dev experience would immediately see the potential of using embeds
+		as a packer, and yes it is being used that way in the wild.
+3. Golang is becoming popular, so i guess this is a part of the community&#39;s effort to better understand it.
+
+
+## Understanding how embeds work
+Lets start with an example, Our apps folder structure looks something like this.
+```
+AppFolder:
+	misc:
+		another_dir:
+			- sample.txt
+		- text1.txt
+		- text2.txt
+		- text3.txt
+	main.go
+```
+we&#39;ll now write a simple go program to embed all files within the misc directory
+
+Lets start with `main.go`
+```
+package main
+
+import (
+	&quot;embed&quot;
+	&quot;fmt&quot;
+	&quot;log&quot;
+)
+
+//go:embed misc
+var embedFiles embed.FS  // 1
+
+func main() {
+	content, err := embedFiles.ReadFile(&quot;misc/text.txt&quot;) // 2
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(string(content))
+}
+```
+1) we declare a variable of type emebed.FS this is essentially our container of files
+embed.FS structure looks something like this:
+	```
+	type FS struct{
+		files *files[]
+	}
+
+	type file struct{
+		name string
+		data string
+		hash [16]byte
+	}
+	```
+	it holds a array of file structures, which in-turn holds the name of a file, its content(data) and a SHA-256 hash of the file content truncated to 16 bytes, data and hash are nil for a directory, name holds the full path to a file in the embedded folder.
+A directory entry would look like this:
+	```
+	file{
+		name  = &quot;another_dir/&quot;    // note the &#39;/&#39; suffix
+		data  = nil
+		hash  = nil
+	}
+	```
+	A file entry would look like this:
+	```
+	file{
+		name  = &quot;another_dir/sample.txt&quot;
+		data  = [10,10,10,10,10...]  // files bytes
+		hash  = [1,2,3,4,5,6..]		 // file hash
+	}
+	```
+2)  ReadFile, ReadDir are methods that operate on the embed variable.
+
+3. Now you must have noticed the peculiar comment `//go:embed` well its not just a comment, its a special go directive which during compilation (yes go parses certain comments :-) ) asks the go compiler to bind all files within the misc folder to the `emebedFiles` variable. The Go compilers source has a function called `WriteEmbed`  at &lt;a href=&quot;https://github.com/golang/go/blob/master/src/cmd/compile/internal/staticdata/embed.go#L107&quot;&gt;`src/cmd/compile/internal/staticdata/embed.go`&lt;/a&gt;  which performs this magic.
+
+Lets quickly compile the program we wrote above by running `go build main.go` and run it `./main`, this should print the contents of the `misc/text.txt` file.
+
+There you go, now we have successfully embedded files within a single executable.
+
+
+## The Embed Structure In A Compiled Binary
+Now that we have compiled our app, lets throw it against a decompiler and look at how the embed structure looks once compiled.
+
+We know that our main function references the embed structure(see main.go above), so it should give us a clue about where the structure lies within the binary:
+
+![Scr1|690x199](upload://ctx1Wc7EsjQOnfdUDDWu8VkZ2sm.png)
+
+
+We notice the `ReadFile` call and `embedFiles` being passed to it as a argument, thats our embed structure lets take a look at it.
+
+![Scr3|690x429](upload://lm3AkD5ahvppxzTN885hDHlCak2.png)
+
+
+we see a chunk of bytes, but its not immediately clear what it is, but we know that the Go compilers `WriteEmbed` function has something to do with this, lets take a look at `WriteEmbed`, (don&#39;t panic, ill explain it line by line)
+![Scr2|520x500](upload://9dFGeh75dZve5mzstp63N5yUggl.png)
+
+
+- Line 8 looks like a pointer, comments indicate that its a pointer to []files, which means it is a pointer to first file in the embed structure (pointer to array and pointer to first element of array are the same thing!).
+- Line 9 and 10 indicate the no of files
+- Line 19 iterates over files to be embedded
+- Line 20 is a pointer to the file name (full path of file)
+- Line 21 seems to represent the length of the filename
+- Line 22 determines if the file is actually a directory, if it is, the file content pointer and hash is nulled out, otherwise the else block in Line 27 fills them appropriately.
+
+Lets take a look at that chunk of data again
+![Scr4|690x435](upload://36984ROhYFBvzEypJD4VjitcZp5.png)
+
+it starts to make sense,
+- The Red block is pointer to the first file entry (i.e the green block), since we are dealing with little endian architecture we have to reverse the red blocks contents to obtain the actual pointer which would be `0x004ca138`.
+- The two Blue blocks represent the no of files in the Go embed entry
+- The Green block is a file entry
+	-	Its first 8 bytes are a pointer to the file name (underlined in blue)
+	-   Subsequent 8+8 bytes represent length of the file name (underlined in blue)
+	-   Next 8 bytes are a pointer to the file contents (underlined in red)
+	-   Subsequent 8 bytes represent length of the file contents (underlined in red)
+	- 	Last 16 bytes are the truncated sha256 hash of the file contents (underlined in yellow)
+
+if you were paying close attention you&#39;d notice that, file contents pointer and hash in the above case was nulled out, that&#39;s because its a directory, entries for regular files will have a appropriate pointer values, like in the following example:
+
+![Scr5|640x500](upload://zKTI1hBWp0cClnX6IgeX8Pjf7qo.png)
+
+- File content pointer is highlighted in yellow
+- File hash is highlighted in blue
+
+&gt;Note: From the above information we can deduce that each file entry is 54 bytes long (for a 64 bit binary), for a 32 bit binary it&#39;ll be 32 bytes long, this information will be useful in navigating the embed structure and building automated solutions for extraction.
+
+## Extracting file names and content
+
+Lets put together what we have learned so far and try extracting a file, (for now lets do this manually to understand the process, a python based solution is made available at the end this paper).
+
+We know the layout of the embed structure and we have the filename and file content pointers, these pointers are mere offsets in the binary where the file contents are located, but we cannot use these pointers as-is, we must subtract it from the  &lt;a href=&quot;https://duckduckgo.com/?q=elf+base+address&quot;&gt;ELF base address&lt;/a&gt;  to obtain the actual offsets where the filename and file content are located.
+
+&gt;Note: ELF base address is dependent on arch bits, for 64 bits its `0x400000`, for 32 bits its `0x08048000`
+
+So for this demonstration ill be picking the third entry in the embed struct.
+
+![Scr6|690x454](upload://gPHidVvz79nFtcXIcfw24wQErZP.png)
+
+Reading the filename:
+
+- First 8 bytes are the pointer to file name (underlined in red), it can be read as `0x004a9f09` (its little endian remember)
+- Next 8 bytes represent the length of the file name (underlined in blue), it can be read as `0x0e` which is 14 in decimal.
+- Extracting the name :
+  ![Scr7|690x167](upload://eFJ2twSAhlBeaxpLo6yvjiK8UXm.png)
+
+- To calculate the actual offset in file we subtract the address from the ELF base address, once we obtain the offset we use dd to read 14 bytes(length of the filename) starting from the said offset.
+
+Lets do the same thing for file contents: 
+- Pointer to file contents is `0x004a89ef` (underlined in pink).
+- Length of the file contents is `0x06` (underlined in yellow).
+- Extracting contents :
+  ![Scr8|690x120](upload://cyPFPiPnJoG8CeNrFIvCkbs2yUJ.png)
+
+- and now we have the file contents as well.
+
+For obvious reasons this is a tedious process to perform manually, so i wrote a tool called  &lt;a href=&quot;https://github.com/messede-degod/Gembe&quot;&gt;Gembe&lt;/a&gt; which automates the extraction process, you only have to supply the embed structures address. 
+
+
+## Closing Thoughts 
+We discussed the structure of the go embed structure and how we can identify the offsets of the embedded files and extract them. Its also worth noting that the embed stucture is go specific it won&#39;t change across different platforms, so any extraction tooling that we build can be easily adopted to many platforms. The extraction utility i mentioned above(Gembe) requires some manual effort (i.e finding the address of the embed structure with a decompiler), it is possible to automate this process as well, my best guess is that something like  &lt;a href=&quot;https://www.capstone-engine.org&quot;&gt;capstone&lt;/a&gt; could be used to achieve this.    
+
+## References
+1. https://pkg.go.dev/embed
+2. https://github.com/golang/go/blob/master/src/cmd/compile/internal/staticdata/embed.go#L107
+
+## Resources
+1. https://github.com/messede-degod/Gembe</description>
+    
+    <lastBuildDate>Wed, 23 Aug 2023 11:27:34 +0000</lastBuildDate>
+    <category>Reverse Engineering</category>
+    <atom:link href="https://0x00sec.org/t/extracting-go-embeds/34885.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Extracting Go Embeds</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/extracting-go-embeds/34885/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/extracting-go-embeds/34885/4</link>
+        <pubDate>Sun, 03 Sep 2023 01:50:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34885-4</guid>
+        <source url="https://0x00sec.org/t/extracting-go-embeds/34885.rss">Extracting Go Embeds</source>
+      </item>
+      <item>
+        <title>Extracting Go Embeds</title>
+        <dc:creator><![CDATA[admasterpark]]></dc:creator>
+        <description><![CDATA[
+            <p>hello. I have a question regarding a previous post. Is there a way I can send you a DM? Please.</p>
+          <p><a href="https://0x00sec.org/t/extracting-go-embeds/34885/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/extracting-go-embeds/34885/3</link>
+        <pubDate>Wed, 23 Aug 2023 11:27:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34885-3</guid>
+        <source url="https://0x00sec.org/t/extracting-go-embeds/34885.rss">Extracting Go Embeds</source>
+      </item>
+      <item>
+        <title>Extracting Go Embeds</title>
+        <dc:creator><![CDATA[crimsonRain]]></dc:creator>
+        <description><![CDATA[
+            <p>Great post on my favorite language!</p>
+          <p><a href="https://0x00sec.org/t/extracting-go-embeds/34885/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/extracting-go-embeds/34885/2</link>
+        <pubDate>Fri, 05 May 2023 15:19:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34885-2</guid>
+        <source url="https://0x00sec.org/t/extracting-go-embeds/34885.rss">Extracting Go Embeds</source>
+      </item>
+      <item>
+        <title>Extracting Go Embeds</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <h2><a name="backdrop-1" class="anchor" href="https://0x00sec.org#backdrop-1"></a>Backdrop</h2>
+<p>I was recently working on a go based web app which used a golang feature called embeds,<br>
+So what exactly is go-embed / what does it do ?, imagine you had to distribute/share a application<br>
+which consists of a executable and multiple auxiliary files (say images, language support files, etc.), how would you distribute such a application ?</p>
+<pre><code class="lang-auto">	Typical App Folder :
+			app-executable		--&gt; Run by user
+			image0.png			|
+			image1.png			|-&gt; Never Directly accessed by the user, but must be shipped 
+			audio.mp3			|	with the app
+</code></pre>
+<p>the most obvious solution is to zip/tar the executable along with all the necessary files<br>
+and then hand it out to users, but extracting files would be an additional effort on the users end (especially when the user is never going to directly access all those files). Go’s embed feature saves us from this fate by providing a pseudo file system which can hold necessary files while enabling programmatic access to them, also the entire pseudo file system resides within the binary.</p>
+<pre><code class="lang-auto">	App Folder while using Go Embed :
+			app-executable		--&gt; One binary which has all necessary files embedded
+									within it.
+	
+
+		ELF-structure of app-executable
+	|===================================|
+	|.data    .....						|
+	|===================================|
+	|.rodata							|
+	| &lt;	Pesudo  Filesystem &gt;			|
+	|===================================|
+	|.text    .....						|
+	|===================================|
+</code></pre>
+<p>Note that files embedded using Go embed are read only.</p>
+<p>Now you must wonder whats the big deal,  just run strings on the binary and the view content, yea sure you can do that if want to spend the rest of you day reading through clobbered output, but our aim in this paper is to explore how we can extract embedded files from any arbitrary go executable, while preserving the original directory structure.</p>
+<h2><a name="but-why-2" class="anchor" href="https://0x00sec.org#but-why-2"></a>But why ?</h2>
+<p>All right i’ll throw you a carrot,</p>
+<ol>
+<li>People think embeds are a way to “secure their application files” - BooHoo! - have to prove them wrong.</li>
+<li>Anyone with some mal-dev experience would immediately see the potential of using embeds<br>
+as a packer, and yes it is being used that way in the wild.</li>
+<li>Golang is becoming popular, so i guess this is a part of the community’s effort to better understand it.</li>
+</ol>
+<h2><a name="understanding-how-embeds-work-3" class="anchor" href="https://0x00sec.org#understanding-how-embeds-work-3"></a>Understanding how embeds work</h2>
+<p>Lets start with an example, Our apps folder structure looks something like this.</p>
+<pre><code class="lang-auto">AppFolder:
+	misc:
+		another_dir:
+			- sample.txt
+		- text1.txt
+		- text2.txt
+		- text3.txt
+	main.go
+</code></pre>
+<p>we’ll now write a simple go program to embed all files within the misc directory</p>
+<p>Lets start with <code>main.go</code></p>
+<pre><code class="lang-auto">package main
+
+import (
+	"embed"
+	"fmt"
+	"log"
+)
+
+//go:embed misc
+var embedFiles embed.FS  // 1
+
+func main() {
+	content, err := embedFiles.ReadFile("misc/text.txt") // 2
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(string(content))
+}
+</code></pre>
+<ol>
+<li>we declare a variable of type emebed.FS this is essentially our container of files<br>
+embed.FS structure looks something like this:<pre><code class="lang-auto">type FS struct{
+	files *files[]
+}
+
+type file struct{
+	name string
+	data string
+	hash [16]byte
+}
+</code></pre>
+it holds a array of file structures, which in-turn holds the name of a file, its content(data) and a SHA-256 hash of the file content truncated to 16 bytes, data and hash are nil for a directory, name holds the full path to a file in the embedded folder.<br>
+A directory entry would look like this:<pre><code class="lang-auto">file{
+	name  = "another_dir/"    // note the '/' suffix
+	data  = nil
+	hash  = nil
+}
+</code></pre>
+A file entry would look like this:<pre><code class="lang-auto">file{
+	name  = "another_dir/sample.txt"
+	data  = [10,10,10,10,10...]  // files bytes
+	hash  = [1,2,3,4,5,6..]		 // file hash
+}
+</code></pre>
+</li>
+<li>ReadFile, ReadDir are methods that operate on the embed variable.</li>
+</ol>
+<ol start="3">
+<li>Now you must have noticed the peculiar comment <code>//go:embed</code> well its not just a comment, its a special go directive which during compilation (yes go parses certain comments <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> ) asks the go compiler to bind all files within the misc folder to the <code>emebedFiles</code> variable. The Go compilers source has a function called <code>WriteEmbed</code>  at <a href="https://github.com/golang/go/blob/master/src/cmd/compile/internal/staticdata/embed.go#L107"><code>src/cmd/compile/internal/staticdata/embed.go</code></a>  which performs this magic.</li>
+</ol>
+<p>Lets quickly compile the program we wrote above by running <code>go build main.go</code> and run it <code>./main</code>, this should print the contents of the <code>misc/text.txt</code> file.</p>
+<p>There you go, now we have successfully embedded files within a single executable.</p>
+<h2><a name="the-embed-structure-in-a-compiled-binary-4" class="anchor" href="https://0x00sec.org#the-embed-structure-in-a-compiled-binary-4"></a>The Embed Structure In A Compiled Binary</h2>
+<p>Now that we have compiled our app, lets throw it against a decompiler and look at how the embed structure looks once compiled.</p>
+<p>We know that our main function references the embed structure(see main.go above), so it should give us a clue about where the structure lies within the binary:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/5/7/5770b71b89e9824b7125d8304241f259a609931e.png" data-download-href="/uploads/short-url/ctx1Wc7EsjQOnfdUDDWu8VkZ2sm.png?dl=1" title="Scr1"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/5/7/5770b71b89e9824b7125d8304241f259a609931e_2_690x199.png" alt="Scr1" data-base62-sha1="ctx1Wc7EsjQOnfdUDDWu8VkZ2sm" width="690" height="199" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/5/7/5770b71b89e9824b7125d8304241f259a609931e_2_690x199.png, https://0x00sec.s3.amazonaws.com/optimized/3X/5/7/5770b71b89e9824b7125d8304241f259a609931e_2_1035x298.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/5/7/5770b71b89e9824b7125d8304241f259a609931e.png 2x" data-dominant-color="323333"></a></div><p></p>
+<p>We notice the <code>ReadFile</code> call and <code>embedFiles</code> being passed to it as a argument, thats our embed structure lets take a look at it.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/9/5/95abf82ff2beb75b2b498423318cc44145117a02.png" data-download-href="/uploads/short-url/lm3AkD5ahvppxzTN885hDHlCak2.png?dl=1" title="Scr3"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/9/5/95abf82ff2beb75b2b498423318cc44145117a02_2_690x429.png" alt="Scr3" data-base62-sha1="lm3AkD5ahvppxzTN885hDHlCak2" width="690" height="429" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/9/5/95abf82ff2beb75b2b498423318cc44145117a02_2_690x429.png, https://0x00sec.s3.amazonaws.com/original/3X/9/5/95abf82ff2beb75b2b498423318cc44145117a02.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/9/5/95abf82ff2beb75b2b498423318cc44145117a02.png 2x" data-dominant-color="1F1F1F"></a></div><p></p>
+<p>we see a chunk of bytes, but its not immediately clear what it is, but we know that the Go compilers <code>WriteEmbed</code> function has something to do with this, lets take a look at <code>WriteEmbed</code>, (don’t panic, ill explain it line by line)<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/4/0/409f37cfd9351906fe75da82ac029a3f039e72b5.png" data-download-href="/uploads/short-url/9dFGeh75dZve5mzstp63N5yUggl.png?dl=1" title="Scr2"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/4/0/409f37cfd9351906fe75da82ac029a3f039e72b5_2_520x500.png" alt="Scr2" data-base62-sha1="9dFGeh75dZve5mzstp63N5yUggl" width="520" height="500" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/4/0/409f37cfd9351906fe75da82ac029a3f039e72b5_2_520x500.png, https://0x00sec.s3.amazonaws.com/optimized/3X/4/0/409f37cfd9351906fe75da82ac029a3f039e72b5_2_780x750.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/4/0/409f37cfd9351906fe75da82ac029a3f039e72b5_2_1040x1000.png 2x" data-dominant-color="181C1E"></a></div><p></p>
+<ul>
+<li>Line 8 looks like a pointer, comments indicate that its a pointer to []files, which means it is a pointer to first file in the embed structure (pointer to array and pointer to first element of array are the same thing!).</li>
+<li>Line 9 and 10 indicate the no of files</li>
+<li>Line 19 iterates over files to be embedded</li>
+<li>Line 20 is a pointer to the file name (full path of file)</li>
+<li>Line 21 seems to represent the length of the filename</li>
+<li>Line 22 determines if the file is actually a directory, if it is, the file content pointer and hash is nulled out, otherwise the else block in Line 27 fills them appropriately.</li>
+</ul>
+<p>Lets take a look at that chunk of data again<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/1/5/15b869c64382aab2403bf6a5363ce3ebe1704777.png" data-download-href="/uploads/short-url/36984ROhYFBvzEypJD4VjitcZp5.png?dl=1" title="Scr4"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/1/5/15b869c64382aab2403bf6a5363ce3ebe1704777_2_690x435.png" alt="Scr4" data-base62-sha1="36984ROhYFBvzEypJD4VjitcZp5" width="690" height="435" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/1/5/15b869c64382aab2403bf6a5363ce3ebe1704777_2_690x435.png, https://0x00sec.s3.amazonaws.com/original/3X/1/5/15b869c64382aab2403bf6a5363ce3ebe1704777.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/1/5/15b869c64382aab2403bf6a5363ce3ebe1704777.png 2x" data-dominant-color="212422"></a></div><p></p>
+<p>it starts to make sense,</p>
+<ul>
+<li>The Red block is pointer to the first file entry (i.e the green block), since we are dealing with little endian architecture we have to reverse the red blocks contents to obtain the actual pointer which would be <code>0x004ca138</code>.</li>
+<li>The two Blue blocks represent the no of files in the Go embed entry</li>
+<li>The Green block is a file entry
+<ul>
+<li>Its first 8 bytes are a pointer to the file name (underlined in blue)</li>
+<li>Subsequent 8+8 bytes represent length of the file name (underlined in blue)</li>
+<li>Next 8 bytes are a pointer to the file contents (underlined in red)</li>
+<li>Subsequent 8 bytes represent length of the file contents (underlined in red)</li>
+<li>Last 16 bytes are the truncated sha256 hash of the file contents (underlined in yellow)</li>
+</ul>
+</li>
+</ul>
+<p>if you were paying close attention you’d notice that, file contents pointer and hash in the above case was nulled out, that’s because its a directory, entries for regular files will have a appropriate pointer values, like in the following example:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/f/a/fa9940b10fd69ca167a2e0f592ab1e53a92d8d58.png" data-download-href="/uploads/short-url/zKTI1hBWp0cClnX6IgeX8Pjf7qo.png?dl=1" title="Scr5"><img src="https://0x00sec.s3.amazonaws.com/original/3X/f/a/fa9940b10fd69ca167a2e0f592ab1e53a92d8d58.png" alt="Scr5" data-base62-sha1="zKTI1hBWp0cClnX6IgeX8Pjf7qo" width="640" height="500" data-dominant-color="212622"></a></div><p></p>
+<ul>
+<li>File content pointer is highlighted in yellow</li>
+<li>File hash is highlighted in blue</li>
+</ul>
+<blockquote>
+<p>Note: From the above information we can deduce that each file entry is 54 bytes long (for a 64 bit binary), for a 32 bit binary it’ll be 32 bytes long, this information will be useful in navigating the embed structure and building automated solutions for extraction.</p>
+</blockquote>
+<h2><a name="extracting-file-names-and-content-5" class="anchor" href="https://0x00sec.org#extracting-file-names-and-content-5"></a>Extracting file names and content</h2>
+<p>Lets put together what we have learned so far and try extracting a file, (for now lets do this manually to understand the process, a python based solution is made available at the end this paper).</p>
+<p>We know the layout of the embed structure and we have the filename and file content pointers, these pointers are mere offsets in the binary where the file contents are located, but we cannot use these pointers as-is, we must subtract it from the  <a href="https://duckduckgo.com/?q=elf+base+address">ELF base address</a>  to obtain the actual offsets where the filename and file content are located.</p>
+<blockquote>
+<p>Note: ELF base address is dependent on arch bits, for 64 bits its <code>0x400000</code>, for 32 bits its <code>0x08048000</code></p>
+</blockquote>
+<p>So for this demonstration ill be picking the third entry in the embed struct.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/7/5/75fad7f53765be8b3f7df4549d1b560dfba89c65.png" data-download-href="/uploads/short-url/gPHidVvz79nFtcXIcfw24wQErZP.png?dl=1" title="Scr6"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/7/5/75fad7f53765be8b3f7df4549d1b560dfba89c65_2_690x454.png" alt="Scr6" data-base62-sha1="gPHidVvz79nFtcXIcfw24wQErZP" width="690" height="454" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/7/5/75fad7f53765be8b3f7df4549d1b560dfba89c65_2_690x454.png, https://0x00sec.s3.amazonaws.com/original/3X/7/5/75fad7f53765be8b3f7df4549d1b560dfba89c65.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/7/5/75fad7f53765be8b3f7df4549d1b560dfba89c65.png 2x" data-dominant-color="212421"></a></div><p></p>
+<p>Reading the filename:</p>
+<ul>
+<li>
+<p>First 8 bytes are the pointer to file name (underlined in red), it can be read as <code>0x004a9f09</code> (its little endian remember)</p>
+</li>
+<li>
+<p>Next 8 bytes represent the length of the file name (underlined in blue), it can be read as <code>0x0e</code> which is 14 in decimal.</p>
+</li>
+<li>
+<p>Extracting the name :<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/6/6/66d5ed7cdc6f18287bdb34503728f4817be7cae0.png" data-download-href="/uploads/short-url/eFJ2twSAhlBeaxpLo6yvjiK8UXm.png?dl=1" title="Scr7"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/6/6/66d5ed7cdc6f18287bdb34503728f4817be7cae0_2_690x167.png" alt="Scr7" data-base62-sha1="eFJ2twSAhlBeaxpLo6yvjiK8UXm" width="690" height="167" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/6/6/66d5ed7cdc6f18287bdb34503728f4817be7cae0_2_690x167.png, https://0x00sec.s3.amazonaws.com/original/3X/6/6/66d5ed7cdc6f18287bdb34503728f4817be7cae0.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/6/6/66d5ed7cdc6f18287bdb34503728f4817be7cae0.png 2x" data-dominant-color="2C2C3B"></a></div><p></p>
+</li>
+<li>
+<p>To calculate the actual offset in file we subtract the address from the ELF base address, once we obtain the offset we use dd to read 14 bytes(length of the filename) starting from the said offset.</p>
+</li>
+</ul>
+<p>Lets do the same thing for file contents:</p>
+<ul>
+<li>
+<p>Pointer to file contents is <code>0x004a89ef</code> (underlined in pink).</p>
+</li>
+<li>
+<p>Length of the file contents is <code>0x06</code> (underlined in yellow).</p>
+</li>
+<li>
+<p>Extracting contents :<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/5/8/580a1bc2dbeccf084874fe50959a7adc6d058395.png" data-download-href="/uploads/short-url/cyPFPiPnJoG8CeNrFIvCkbs2yUJ.png?dl=1" title="Scr8"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/5/8/580a1bc2dbeccf084874fe50959a7adc6d058395_2_690x120.png" alt="Scr8" data-base62-sha1="cyPFPiPnJoG8CeNrFIvCkbs2yUJ" width="690" height="120" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/5/8/580a1bc2dbeccf084874fe50959a7adc6d058395_2_690x120.png, https://0x00sec.s3.amazonaws.com/original/3X/5/8/580a1bc2dbeccf084874fe50959a7adc6d058395.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/5/8/580a1bc2dbeccf084874fe50959a7adc6d058395.png 2x" data-dominant-color="2E2E3E"></a></div><p></p>
+</li>
+<li>
+<p>and now we have the file contents as well.</p>
+</li>
+</ul>
+<p>For obvious reasons this is a tedious process to perform manually, so i wrote a tool called  <a href="https://github.com/messede-degod/Gembe">Gembe</a> which automates the extraction process, you only have to supply the embed structures address.</p>
+<h2><a name="closing-thoughts-6" class="anchor" href="https://0x00sec.org#closing-thoughts-6"></a>Closing Thoughts</h2>
+<p>We discussed the structure of the go embed structure and how we can identify the offsets of the embedded files and extract them. Its also worth noting that the embed stucture is go specific it won’t change across different platforms, so any extraction tooling that we build can be easily adopted to many platforms. The extraction utility i mentioned above(Gembe) requires some manual effort (i.e finding the address of the embed structure with a decompiler), it is possible to automate this process as well, my best guess is that something like  <a href="https://www.capstone-engine.org">capstone</a> could be used to achieve this.</p>
+<h2><a name="references-7" class="anchor" href="https://0x00sec.org#references-7"></a>References</h2>
+<ol>
+<li><a href="https://pkg.go.dev/embed" class="inline-onebox">embed package - embed - Go Packages</a></li>
+<li><a href="https://github.com/golang/go/blob/master/src/cmd/compile/internal/staticdata/embed.go#L107">https://github.com/golang/go/blob/master/src/cmd/compile/internal/staticdata/embed.go#L107</a></li>
+</ol>
+<h2><a name="resources-8" class="anchor" href="https://0x00sec.org#resources-8"></a>Resources</h2>
+<ol>
+<li><a href="https://github.com/messede-degod/Gembe" class="inline-onebox">GitHub - messede-degod/Gembe: Tool to extract Go Embeds</a></li>
+</ol>
+          <p><a href="https://0x00sec.org/t/extracting-go-embeds/34885/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/extracting-go-embeds/34885/1</link>
+        <pubDate>Thu, 04 May 2023 09:49:53 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34885-1</guid>
+        <source url="https://0x00sec.org/t/extracting-go-embeds/34885.rss">Extracting Go Embeds</source>
+      </item>
+  </channel>
+</rss>

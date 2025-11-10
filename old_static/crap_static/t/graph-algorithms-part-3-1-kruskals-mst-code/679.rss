@@ -1,0 +1,473 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Graph Algorithms (Part 3.1): Kruskal&#39;s MST [Code]</title>
+    <link>https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679</link>
+    <description>In this tutorial, I&#39;ll be walking you through the code-implementation of [Kruskal&#39;s Algorithm](https://en.wikipedia.org/wiki/Kruskal%27s_algorithm).
+
+To restate myself:
+[quote=&quot;oaktree, post:1, topic:637&quot;]
+Kruskal&#39;s Algorithm is one of a few algorithms (we&#39;ll get to the rest later) for finding an undirected graph&#39;s Minimum Spanning Tree (MST).
+
+A Minimum Spanning Tree is a tree connecting all nodes of a graph. Any node is reachable from any other node, and the total cost of traveling from one node in this MST to another is minimized.
+[/quote]
+
+---
+First, let&#39;s get a few `typedef`s and function prototypes out of the way:
+
+```c
+#include &lt;iostream&gt;
+#include &lt;vector&gt;
+#include &lt;utility&gt;
+#include &lt;algorithm&gt;
+ 
+/* Define an edge struct to handle edges more easily.*/
+struct edge {
+    int first, second, weight;
+};
+ 
+/* Needed to typedef to reduce keystrokes or copy/paste */
+typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list;
+ 
+std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph);
+int get_pred(int vertex, const std::vector&lt;int&gt;&amp; pred);
+
+```
+Like in my [Bellman Ford](https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570) program, we will use an __adjacency list__ to to manage graph data. 
+```c
+typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list
+```
+The above simply reduces the keystrokes necessary and allows our code to be more readable and expressive (for us dumb humans, that is).
+
+Next, you&#39;ll see two function declarations:
+```c
+std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph);
+int get_pred(int vertex, const std::vector&lt;int&gt;&amp; pred);
+```
+The former will contain the actual algorithm, and the latter is a helper/subroutine (fancy word!). `kruskal(...)` will return a `vector` of `edge`s (see struct declaration above), because we are looking for all the _edges_ in the __Minimum Spanning Tree__.
+
+---
+# Input
+
+```c
+int main() {
+    int n,m; std::cin &gt;&gt; n &gt;&gt; m;
+   
+    adj_list graph(n);
+    int f,s,w;
+    while (m-- &gt; 0) {
+        std::cin &gt;&gt; f &gt;&gt; s &gt;&gt; w;
+        if (f == s) continue; /* avoid loops */
+        graph[ f-1 ].push_back( std::make_pair( s-1 , w ) );
+    }
+
+    //...
+}
+```
+
+`n` is the number of nodes, or vertices, and `m` is the number of edges. We declare an `adj_list` called `graph` and then proceed to fill it up with the `m` edges. We&#39;re going to treat our graph as if it were directed, because redundant edges (used in an undirected graph) would only serve as clutter (here).
+
+---
+# Find MST
+The next step is to find the MST:
+
+```c
+int main() {
+    
+    //...
+ 
+    std::vector&lt;edge&gt; result = kruskal(graph);
+ 
+    std::cout &lt;&lt; &quot;Here is the minimal tree:\n&quot;;
+    for (auto&amp; _edge : result) {
+        std::cout &lt;&lt; char(_edge.first+65) &lt;&lt; &quot; connects to &quot; &lt;&lt; char(_edge.second+65) &lt;&lt; std::endl;
+    }
+ 
+    return 0;
+}
+```
+Above is the rest of `main()`. I&#39;m tossing it there now so you can see our expectations. Now, we&#39;ll jump into the `kruskal(...)` function.
+
+---
+# Kruskal Function
+
+```c
+std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph) {
+    std::vector&lt;edge&gt; edges, minimum_spanning_tree;
+ 
+    /*
+        `pred` will represent our Disjointed sets by naming a set head.
+        In the beginning, each node is its own head in its own set.
+        We merge sets in the while loop.
+    */
+    std::vector&lt;int&gt; pred(graph.size());
+ 
+    for (int i = 0, n = graph.size(); i &lt; n; i++) {
+        for (auto&amp; _edge : graph[i])
+            edges.push_back( { i, _edge.first, _edge.second } );
+        pred[i] = i;
+    }
+
+    //...
+}
+```
+First, we declare two `edge` `vector`s, `edges` to hold all of the edges, and `minimum_spanning_tree` to be returned as the result. 
+
+We also declare an `int` `vector` called `pred`, which we do not need to worry about just yet. For now, just know that `pred` helps us keep track of what is already in the MST, or a subset of the MST.
+
+In the `for` loop, we populate our `edges` array/`vector`. Additionally, `pred[i] = i` assures that each vertex belongs to its own [disjoint set](https://en.wikipedia.org/wiki/Disjoint-set_data_structure). At this point of the graph, each vertex is its own subset of the final MST (yet to be discovered). Each of these subsets currently has no edges, so no subset is connected to any other subset. Next, we have to find the lowest-weight/least-costly edges that will connect all the subsets _without cycles_.
+
+```c
+std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph) {
+    
+    //...
+ 
+    /*
+        Let&#39;s reverse-sort our edge vector
+        so that we can just pop off the last (smallest)
+        element.
+    */
+    auto comp = [&amp;](edge left, edge right) { return left.weight &gt; right.weight; };
+    std::sort(edges.begin(), edges.end(), comp);
+
+    //...
+}
+```
+The next step is to sort the edges in descending order. We want the smallest edge to be at the end of the array so that we can just pop (`std::vector::pop_back()`) it off.
+
+```c
+std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph) {
+
+   //...
+ 
+    while( !edges.empty() ) {
+ 
+        /* get shortest/least-heavy edge */
+        edge shortest = edges.back();
+        edges.pop_back();
+ 
+ 
+        int f_head,s_head; /* first_head, second... */
+        f_head = get_pred(shortest.first, pred);
+        s_head = get_pred(shortest.second, pred);
+ 
+ 
+        /*
+            If the nodes making up a certain edge are
+            not already in the same set...
+        */
+        if (f_head != s_head) {
+            /* Add that edge to the Min. Span. Tree*/
+            minimum_spanning_tree.push_back(shortest);
+ 
+            /*
+                Merge the sets by setting
+                the head of one set to the head
+                of the other set.
+ 
+                If the head of one set is A and the other is C,
+                as long as we point C to A, all nodes part of the
+                set once headed by C will find A in linear time.
+            */
+            if (f_head &lt; s_head)
+                pred[s_head] = f_head;
+            else
+                pred[f_head] = s_head;
+        }
+    }
+ 
+    return minimum_spanning_tree;
+}
+```
+Now the real fun happens! We&#39;re going to pop off the shortest edge from the `edges` array (as promised) and see if we need it in our MST. The logic is rather trivial:
+
+* If the two vertices connected by a given edge belong to the same _disjoint set_, the edge would create a _cycle_ and is, thus, unneeded.
+* If the two vertices are members of two different _disjoint sets_, the edge should be added to the MST, since it is the smallest edge connecting the two particular vertices (because we sorted the edges). The sets of the vertices are _joined_.
+
+Let&#39;s walk through the process of joining two sets. `pred` keeps track of which set a vertex belongs to by pointing to a vertex&#39;s predecessor, a vertex in the same set, which was added to the set before this vertex. 
+
+Here&#39;s an example. If we join the sets of vertex `F` and vertex `C`, we need to find the set to which each belongs _first_ and join those. If vertex `F` belongs to the set headed by `A`, and vertex `C` belongs to the set headed by `D`, we take set `D` and tack it on to `A`. We can&#39;t just add `C` to `A`, because there might be other vertexes attached to `D` that would get lost, and this would cause extra edges to be added or failure in finding a correct MST. To solve this, we just add `D` to `A`, and then all the vertexes with `D` as their head will point to `D` and then follow `D` to `A`.
+
+To better understand this, let&#39;s take a look at `get_pred(...)`:
+
+```c
+int get_pred(int vertex, const std::vector&lt;int&gt;&amp; pred) {
+    /*
+        We stop when a node/vertex is its own predecessor.
+        This means we have found the head of the set.
+    */
+    while(pred[vertex] != vertex)
+        vertex = pred[vertex];
+    return vertex;
+}
+```
+It is looking for the vertex with itself as it&#39;s predecessor. This means that this particular vertex is the head of its own set. If we join the head of a set to another set, all vertices under a particular head will find their way to the new head in the next iteration of the big `while` loop in `kruskal(...)`, if necessary.
+
+The algorithm is done when all the vertexes belong to the same set. If we run out of edges to evaluate before this happens, then one or more vertices is unreachable, meaning that we haven&#39;t found the MST, but a _minimum spanning forest_ instead, a subset of the undiscoverable MST.
+
+---
+# Conclusion
+
+I know that this concept of _disjoint sets_ may cause some confusion, but rest assured that it will come to you soon. [This video](https://www.youtube.com/watch?v=fAuF0EuZVCk) will be helpful to you (it&#39;s different from the one I showed you in [Part 3.0](https://0x00sec.org/t/graph-algorithms-part-3-0-kruskals-mst-concept/637).
+
+Also, note that ___there can be multiple correct MSTs in a particular graph.___
+
+That&#39;s it for this tutorial! I&#39;m happy to answer any questions, whether below or on IRC (##0x00sec on freenode). Additionally, if you have any concerns or suggestions relating to how I can better explain some concepts/techniques, PM me.
+
+Full source: 
+
+http://pastebin.com/dLrywcs3
+
+Later...
+@oaktree
+
+![dos equis man](//0x00sec.s3.amazonaws.com/original/1X/bdb2ce20c799ef05fcaf5970ba9a681ced06d502.jpg)</description>
+    
+    <lastBuildDate>Thu, 07 Jul 2016 02:49:08 +0000</lastBuildDate>
+    <category>Algorithms</category>
+    <atom:link href="https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Graph Algorithms (Part 3.1): Kruskal&#39;s MST [Code]</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679/3</link>
+        <pubDate>Sun, 21 Jan 2018 00:37:39 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-679-3</guid>
+        <source url="https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679.rss">Graph Algorithms (Part 3.1): Kruskal&#39;s MST [Code]</source>
+      </item>
+      <item>
+        <title>Graph Algorithms (Part 3.1): Kruskal&#39;s MST [Code]</title>
+        <dc:creator><![CDATA[Cromical]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome post! I’ll look into MST as a whole more when I deal with Traverse Graphs (don’t know too much about them, so I’ll go back and read this series really carefully). Good job! Loved the meme at the end though. Nothing beats a meme like a cyber security meme. <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679/2</link>
+        <pubDate>Thu, 07 Jul 2016 02:49:08 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-679-2</guid>
+        <source url="https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679.rss">Graph Algorithms (Part 3.1): Kruskal&#39;s MST [Code]</source>
+      </item>
+      <item>
+        <title>Graph Algorithms (Part 3.1): Kruskal&#39;s MST [Code]</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>In this tutorial, I’ll be walking you through the code-implementation of <a href="https://en.wikipedia.org/wiki/Kruskal%27s_algorithm" rel="noopener nofollow ugc">Kruskal’s Algorithm</a>.</p>
+<p>To restate myself:</p>
+<aside class="quote no-group" data-username="oaktree" data-post="1" data-topic="637">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/oaktree/40/4077_2.png" class="avatar"><a href="https://0x00sec.org/t/graph-algorithms-part-3-0-kruskals-mst-concept/637/1">Graph Algorithms (Part 3.0): Kruskal's MST [Concept]</a>
+</div>
+<blockquote>
+<p>Kruskal’s Algorithm is one of a few algorithms (we’ll get to the rest later) for finding an undirected graph’s Minimum Spanning Tree (MST).</p>
+<p>A Minimum Spanning Tree is a tree connecting all nodes of a graph. Any node is reachable from any other node, and the total cost of traveling from one node in this MST to another is minimized.</p>
+</blockquote>
+</aside>
+<hr>
+<p>First, let’s get a few <code>typedef</code>s and function prototypes out of the way:</p>
+<pre><code class="lang-auto">#include &lt;iostream&gt;
+#include &lt;vector&gt;
+#include &lt;utility&gt;
+#include &lt;algorithm&gt;
+ 
+/* Define an edge struct to handle edges more easily.*/
+struct edge {
+    int first, second, weight;
+};
+ 
+/* Needed to typedef to reduce keystrokes or copy/paste */
+typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list;
+ 
+std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph);
+int get_pred(int vertex, const std::vector&lt;int&gt;&amp; pred);
+
+</code></pre>
+<p>Like in my <a href="https://0x00sec.org/t/graph-algorithms-part-2-1-bellman-ford-implementation/570">Bellman Ford</a> program, we will use an <strong>adjacency list</strong> to to manage graph data.</p>
+<pre><code class="lang-auto">typedef std::vector&lt; std::vector&lt; std::pair&lt;int,int&gt; &gt; &gt; adj_list
+</code></pre>
+<p>The above simply reduces the keystrokes necessary and allows our code to be more readable and expressive (for us dumb humans, that is).</p>
+<p>Next, you’ll see two function declarations:</p>
+<pre><code class="lang-auto">std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph);
+int get_pred(int vertex, const std::vector&lt;int&gt;&amp; pred);
+</code></pre>
+<p>The former will contain the actual algorithm, and the latter is a helper/subroutine (fancy word!). <code>kruskal(...)</code> will return a <code>vector</code> of <code>edge</code>s (see struct declaration above), because we are looking for all the <em>edges</em> in the <strong>Minimum Spanning Tree</strong>.</p>
+<hr>
+<h1>Input</h1>
+<pre><code class="lang-auto">int main() {
+    int n,m; std::cin &gt;&gt; n &gt;&gt; m;
+   
+    adj_list graph(n);
+    int f,s,w;
+    while (m-- &gt; 0) {
+        std::cin &gt;&gt; f &gt;&gt; s &gt;&gt; w;
+        if (f == s) continue; /* avoid loops */
+        graph[ f-1 ].push_back( std::make_pair( s-1 , w ) );
+    }
+
+    //...
+}
+</code></pre>
+<p><code>n</code> is the number of nodes, or vertices, and <code>m</code> is the number of edges. We declare an <code>adj_list</code> called <code>graph</code> and then proceed to fill it up with the <code>m</code> edges. We’re going to treat our graph as if it were directed, because redundant edges (used in an undirected graph) would only serve as clutter (here).</p>
+<hr>
+<h1>Find MST</h1>
+<p>The next step is to find the MST:</p>
+<pre><code class="lang-auto">int main() {
+    
+    //...
+ 
+    std::vector&lt;edge&gt; result = kruskal(graph);
+ 
+    std::cout &lt;&lt; "Here is the minimal tree:\n";
+    for (auto&amp; _edge : result) {
+        std::cout &lt;&lt; char(_edge.first+65) &lt;&lt; " connects to " &lt;&lt; char(_edge.second+65) &lt;&lt; std::endl;
+    }
+ 
+    return 0;
+}
+</code></pre>
+<p>Above is the rest of <code>main()</code>. I’m tossing it there now so you can see our expectations. Now, we’ll jump into the <code>kruskal(...)</code> function.</p>
+<hr>
+<h1>Kruskal Function</h1>
+<pre><code class="lang-auto">std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph) {
+    std::vector&lt;edge&gt; edges, minimum_spanning_tree;
+ 
+    /*
+        `pred` will represent our Disjointed sets by naming a set head.
+        In the beginning, each node is its own head in its own set.
+        We merge sets in the while loop.
+    */
+    std::vector&lt;int&gt; pred(graph.size());
+ 
+    for (int i = 0, n = graph.size(); i &lt; n; i++) {
+        for (auto&amp; _edge : graph[i])
+            edges.push_back( { i, _edge.first, _edge.second } );
+        pred[i] = i;
+    }
+
+    //...
+}
+</code></pre>
+<p>First, we declare two <code>edge</code> <code>vector</code>s, <code>edges</code> to hold all of the edges, and <code>minimum_spanning_tree</code> to be returned as the result.</p>
+<p>We also declare an <code>int</code> <code>vector</code> called <code>pred</code>, which we do not need to worry about just yet. For now, just know that <code>pred</code> helps us keep track of what is already in the MST, or a subset of the MST.</p>
+<p>In the <code>for</code> loop, we populate our <code>edges</code> array/<code>vector</code>. Additionally, <code>pred[i] = i</code> assures that each vertex belongs to its own <a href="https://en.wikipedia.org/wiki/Disjoint-set_data_structure" rel="noopener nofollow ugc">disjoint set</a>. At this point of the graph, each vertex is its own subset of the final MST (yet to be discovered). Each of these subsets currently has no edges, so no subset is connected to any other subset. Next, we have to find the lowest-weight/least-costly edges that will connect all the subsets <em>without cycles</em>.</p>
+<pre><code class="lang-auto">std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph) {
+    
+    //...
+ 
+    /*
+        Let's reverse-sort our edge vector
+        so that we can just pop off the last (smallest)
+        element.
+    */
+    auto comp = [&amp;](edge left, edge right) { return left.weight &gt; right.weight; };
+    std::sort(edges.begin(), edges.end(), comp);
+
+    //...
+}
+</code></pre>
+<p>The next step is to sort the edges in descending order. We want the smallest edge to be at the end of the array so that we can just pop (<code>std::vector::pop_back()</code>) it off.</p>
+<pre><code class="lang-auto">std::vector&lt;edge&gt; kruskal(const adj_list&amp; graph) {
+
+   //...
+ 
+    while( !edges.empty() ) {
+ 
+        /* get shortest/least-heavy edge */
+        edge shortest = edges.back();
+        edges.pop_back();
+ 
+ 
+        int f_head,s_head; /* first_head, second... */
+        f_head = get_pred(shortest.first, pred);
+        s_head = get_pred(shortest.second, pred);
+ 
+ 
+        /*
+            If the nodes making up a certain edge are
+            not already in the same set...
+        */
+        if (f_head != s_head) {
+            /* Add that edge to the Min. Span. Tree*/
+            minimum_spanning_tree.push_back(shortest);
+ 
+            /*
+                Merge the sets by setting
+                the head of one set to the head
+                of the other set.
+ 
+                If the head of one set is A and the other is C,
+                as long as we point C to A, all nodes part of the
+                set once headed by C will find A in linear time.
+            */
+            if (f_head &lt; s_head)
+                pred[s_head] = f_head;
+            else
+                pred[f_head] = s_head;
+        }
+    }
+ 
+    return minimum_spanning_tree;
+}
+</code></pre>
+<p>Now the real fun happens! We’re going to pop off the shortest edge from the <code>edges</code> array (as promised) and see if we need it in our MST. The logic is rather trivial:</p>
+<ul>
+<li>If the two vertices connected by a given edge belong to the same <em>disjoint set</em>, the edge would create a <em>cycle</em> and is, thus, unneeded.</li>
+<li>If the two vertices are members of two different <em>disjoint sets</em>, the edge should be added to the MST, since it is the smallest edge connecting the two particular vertices (because we sorted the edges). The sets of the vertices are <em>joined</em>.</li>
+</ul>
+<p>Let’s walk through the process of joining two sets. <code>pred</code> keeps track of which set a vertex belongs to by pointing to a vertex’s predecessor, a vertex in the same set, which was added to the set before this vertex.</p>
+<p>Here’s an example. If we join the sets of vertex <code>F</code> and vertex <code>C</code>, we need to find the set to which each belongs <em>first</em> and join those. If vertex <code>F</code> belongs to the set headed by <code>A</code>, and vertex <code>C</code> belongs to the set headed by <code>D</code>, we take set <code>D</code> and tack it on to <code>A</code>. We can’t just add <code>C</code> to <code>A</code>, because there might be other vertexes attached to <code>D</code> that would get lost, and this would cause extra edges to be added or failure in finding a correct MST. To solve this, we just add <code>D</code> to <code>A</code>, and then all the vertexes with <code>D</code> as their head will point to <code>D</code> and then follow <code>D</code> to <code>A</code>.</p>
+<p>To better understand this, let’s take a look at <code>get_pred(...)</code>:</p>
+<pre><code class="lang-auto">int get_pred(int vertex, const std::vector&lt;int&gt;&amp; pred) {
+    /*
+        We stop when a node/vertex is its own predecessor.
+        This means we have found the head of the set.
+    */
+    while(pred[vertex] != vertex)
+        vertex = pred[vertex];
+    return vertex;
+}
+</code></pre>
+<p>It is looking for the vertex with itself as it’s predecessor. This means that this particular vertex is the head of its own set. If we join the head of a set to another set, all vertices under a particular head will find their way to the new head in the next iteration of the big <code>while</code> loop in <code>kruskal(...)</code>, if necessary.</p>
+<p>The algorithm is done when all the vertexes belong to the same set. If we run out of edges to evaluate before this happens, then one or more vertices is unreachable, meaning that we haven’t found the MST, but a <em>minimum spanning forest</em> instead, a subset of the undiscoverable MST.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>I know that this concept of <em>disjoint sets</em> may cause some confusion, but rest assured that it will come to you soon. <a href="https://www.youtube.com/watch?v=fAuF0EuZVCk" rel="noopener nofollow ugc">This video</a> will be helpful to you (it’s different from the one I showed you in <a href="https://0x00sec.org/t/graph-algorithms-part-3-0-kruskals-mst-concept/637">Part 3.0</a>.</p>
+<p>Also, note that <em><strong>there can be multiple correct MSTs in a particular graph.</strong></em></p>
+<p>That’s it for this tutorial! I’m happy to answer any questions, whether below or on IRC (#<a class="hashtag" href="https://0x00sec.org/tag/0x00sec">#<span>0x00sec</span></a> on freenode). Additionally, if you have any concerns or suggestions relating to how I can better explain some concepts/techniques, PM me.</p>
+<p>Full source:</p>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://pastebin.com/favicon.ico" class="site-icon" width="16" height="16">
+      <a href="https://pastebin.com/dLrywcs3" target="_blank" rel="noopener nofollow ugc">Pastebin</a>
+  </header>
+  <article class="onebox-body">
+    
+
+<h3><a href="https://pastebin.com/dLrywcs3" target="_blank" rel="noopener nofollow ugc">kruskal.cpp (rough) - Pastebin.com</a></h3>
+
+<p>Pastebin.com is the number one paste tool since 2002. Pastebin is a website where you can store text online for a set period of time.</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p>Later…<br>
+<a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/1X/bdb2ce20c799ef05fcaf5970ba9a681ced06d502.jpg" alt="dos equis man" width="" height=""></p>
+          <p><a href="https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679/1</link>
+        <pubDate>Thu, 30 Jun 2016 18:53:37 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-679-1</guid>
+        <source url="https://0x00sec.org/t/graph-algorithms-part-3-1-kruskals-mst-code/679.rss">Graph Algorithms (Part 3.1): Kruskal&#39;s MST [Code]</source>
+      </item>
+  </channel>
+</rss>

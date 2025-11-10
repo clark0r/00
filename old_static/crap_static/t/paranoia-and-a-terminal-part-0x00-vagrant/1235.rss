@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+    <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235</link>
+    <description>Hello, my 0x00&#39;ers! You may have noticed @0x00pf&#39;s awesome reverse engineering content, and you may have noticed he has posted raw binaries (without source), now, of course, it&#39;s reverse engineering, the challenge is about not knowing the source.
+
+But how do you and I know that @0x00pf is not a mad 1337 h4x0r waiting to launch shells and &#39;sploit us? We don&#39;t; unless we are a 1337 reverse engineering badass. Of course, we can be sure Pico is real, and not trying to take over our machine. But once again the Hacker Spirit prevails, and Paranoia takes over. This leads me into this series; where I will cover &quot;Paranoia and a Terminal&quot;, things we can do to stay safe, anonymous, and otherwise make ourselves sleep better at night.
+
+## So what can we do about it?
+As @oaktree has elegantly pointed out, we shouldn&#39;t run unknown binaries regardless of who it is, because we don&#39;t know what they could be doing. 
+
+https://0x00sec.s3.amazonaws.com/original/2X/d/d2cd5342c795e6ab66d9eb56588b790c16c6d717.jpg
+
+What we need to do, is run our binary in a VM. But that takes a lot of effort right? I got to figure out what OS I wanna virtualise, I gotta go find the downloads, sift through them till I get the version + edition I want; then eventually I have to download it; which on my 9600 baud dial-up connection is gonna take forever! Once I&#39;ve done that, I gotta run through the installation, and then eventually sort out folder mounting, and ssh, it&#39;s just a pain. Fear not! There is light! Say hello to **Vagrant**. 
+
+Vagrant is a really cool virtualization package that uses the virtualbox backend. It allows me to 
+
+- Download a prebuilt ready-made VM image
+- Initialise it
+- Mount the current working directory
+- SSH into it
+
+All in 3 commands. It&#39;s super slick for this kind of quick paranoia investigations.
+
+# Installation
+If you&#39;re running Windows, OS X, Centos, or Debian, you can download the download files [here](https://www.vagrantup.com/downloads.html), otherwise if you&#39;re running some other distro (like me), You&#39;ll also need to install virtualbox, I&#39;m sure your OS&#39;s package manager has it, for me, I just ran 
+
+`sudo pacman -S virtualbox`
+`sudo pacman -S vagrant` 
+
+If you are on Ubuntu run:
+
+`sudo apt-get install virtualbox`
+`sudo apt-get install vagrant`
+
+# Usage
+Now you are up and running, usage is **super** simple. Navigate to a folder you want to access the files in, and run 
+
+```
+vagrant init hashicorp/precise32
+```
+
+This will make a file called &quot;Vagrantfile&quot; in the current directory, these files are sharable to other people, (another thing which makes vagrant rock). 
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/f339c85606c7f427653b0ebd69ab3931cab7698b.jpg&quot; width=&quot;670&quot; height=&quot;403&quot;&gt;
+
+You can open this file up, and notice its just a config file for setting up the VM, since you haven&#39;t actually initialized it yet, you&#39;ve just configured it.
+
+Now you need to get your VM up and running! This is again, **super** simple, just run:
+
+```
+vagrant up
+```
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/9/9426c3fd632ba163a063ceb3c204ead099d55e7c.jpg&quot; width=&quot;663&quot; height=&quot;402&quot;&gt;
+
+This will set up your VM using the config, and download the image if you do not already have it. If this is your first time using vagrant, you will not have the image already; but vagrant rocks, it will download it for you, this shouldn&#39;t take too long, as its fairly small.
+
+Now your VM is running; man, that was simple ay? This command has configured networking, configured SSH, configured private key auth, and mounted the current directory to it. To access your newfound VM run:
+
+```
+vagrant ssh
+```
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/3f5e23d0df2ffaa6a4455aa0e4ae70c2220ce4e3.jpg&quot; width=&quot;670&quot; height=&quot;409&quot;&gt;
+
+Now you have access to your VM, in your terminal, no hassle. To access your files in your current directory:
+
+```
+cd /vagrant/
+```
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/5/55a81e3a6b0eddba8b9d1d9b3611f04819812501.jpg&quot; width=&quot;279&quot; height=&quot;89&quot;&gt;
+
+You&#39;ll see the file &quot;scaryfile.txt&quot;, is in there; this is your current working directory mounted, if you delete `scaryfile.txt`, it will also delete on the real machine, make note of this. Any commands run however in this prompt will only execute on the VM, you could run `sudo rm -rf /` and of course, it would break the VM, but it wouldn&#39;t touch your real machine. 
+
+Keep in mind that vagrant will use your existing network stack, so if you were to run a malicious script that would send your IP to the attacker, this would not protect against that, you&#39;d need to [configure a proxy](http://digitaldrummerj.me/vagrant-behind-proxy-server/), all of which is entirely possible with vagrant. 
+
+## Exiting + Destroying
+So, you&#39;ve examed the big scary files, you&#39;ve determined they are dirty as &lt;small&gt;(@0x00pf, I&#39;m looking at you)&lt;/small&gt; and you&#39;ve decided to rid your machine of the now borked VM.  
+
+You can exit your VM SSH connection with `exit`, however, that will only kill the connection, it&#39;s still running in the background, to see a list of the currently running machines and their states, run:
+
+```
+vagrant status
+```
+ 
+In our example, we have our current machine running. To stop it, run 
+
+```
+vagrant halt
+```
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/9/92dd00ceedad9702844a95988b7b22cadd4d0746.jpg&quot; width=&quot;676&quot; height=&quot;416&quot;&gt;
+
+Since we are in our current working directory, it knows what VM we are talking about, and thus is able to stop it with no specification. 
+
+Now we have completed that, we can either start it up again by running `vagrant up`, or we can destroy it completely, since we know the file is dirty, and ridden with malware, we can destroy the box with 
+
+```
+vagrant destroy
+```
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/73febe1d1603e7eae07860a35e71b157c5b0382c.jpg&quot; width=&quot;675&quot; height=&quot;422&quot;&gt;
+
+This will leave our files intact, however, but our virtual machine is gone. 
+
+## Conclusion
+We have seen that sometimes we need to just check something out, but don&#39;t want to have the headache of setting up yet another VM. Vagrant makes that easy; and once a software used entirely by developers and sysadmins for transportation of software, and a powerful precursor to Docker, it is still relevant in the security world; and continues to make my life a lot easier
+- pry0cc</description>
+    
+    <lastBuildDate>Thu, 02 Mar 2017 23:59:27 +0000</lastBuildDate>
+    <category>Linux</category>
+    <atom:link href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/10</link>
+        <pubDate>Sun, 21 Jan 2018 00:36:55 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1235-10</guid>
+        <source url="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss">Paranoia and a Terminal - Part 0x00 - Vagrant</source>
+      </item>
+      <item>
+        <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Are you able to virtualize alternate dimensions of computation in vagrant?</p>
+          <p><a href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/9</link>
+        <pubDate>Thu, 02 Mar 2017 23:59:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1235-9</guid>
+        <source url="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss">Paranoia and a Terminal - Part 0x00 - Vagrant</source>
+      </item>
+      <item>
+        <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://0x00sec.org/u/pry0cc">@pry0cc</a> good tutorial  for the folks who didn’t know vagrant yet. Already using it for all my virtual shenanigans.</p>
+          <p><a href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/8</link>
+        <pubDate>Thu, 02 Mar 2017 20:42:58 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1235-8</guid>
+        <source url="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss">Paranoia and a Terminal - Part 0x00 - Vagrant</source>
+      </item>
+      <item>
+        <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+        <dc:creator><![CDATA[Kage]]></dc:creator>
+        <description><![CDATA[
+            <p>Great tutorials, I’ll keep reading this series. I’m sad that I didn’t notice them before…</p>
+          <p><a href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/7</link>
+        <pubDate>Thu, 02 Mar 2017 17:57:23 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1235-7</guid>
+        <source url="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss">Paranoia and a Terminal - Part 0x00 - Vagrant</source>
+      </item>
+      <item>
+        <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>My issues were resolved by:</p>
+<ul>
+<li>reinstall <code>virtualbox</code>
+</li>
+<li><code>$ sudo dpkg-reconfigure virtualbox-dkms</code></li>
+<li><code>$ sudo dpkg-reconfigure virtualbox</code></li>
+</ul>
+          <p><a href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/6</link>
+        <pubDate>Sun, 30 Oct 2016 20:23:12 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1235-6</guid>
+        <source url="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss">Paranoia and a Terminal - Part 0x00 - Vagrant</source>
+      </item>
+      <item>
+        <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>I’ll be on IRC tonight. Let’s try and figure this out.</p>
+          <p><a href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/5</link>
+        <pubDate>Fri, 28 Oct 2016 14:34:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1235-5</guid>
+        <source url="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss">Paranoia and a Terminal - Part 0x00 - Vagrant</source>
+      </item>
+      <item>
+        <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Cheers! Glad you liked it <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/4</link>
+        <pubDate>Fri, 28 Oct 2016 14:34:24 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1235-4</guid>
+        <source url="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss">Paranoia and a Terminal - Part 0x00 - Vagrant</source>
+      </item>
+      <item>
+        <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Still getting mad issues on Ubuntu 15.10. Going to try to resolve at some point…</p>
+          <p><a href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/3</link>
+        <pubDate>Fri, 28 Oct 2016 12:41:35 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1235-3</guid>
+        <source url="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss">Paranoia and a Terminal - Part 0x00 - Vagrant</source>
+      </item>
+      <item>
+        <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+        <dc:creator><![CDATA[Valentine]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice job man. I love the cheery attitude in it. Cheers. <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/2</link>
+        <pubDate>Fri, 28 Oct 2016 12:27:53 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1235-2</guid>
+        <source url="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss">Paranoia and a Terminal - Part 0x00 - Vagrant</source>
+      </item>
+      <item>
+        <title>Paranoia and a Terminal - Part 0x00 - Vagrant</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello, my 0x00’ers! You may have noticed <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a>’s awesome reverse engineering content, and you may have noticed he has posted raw binaries (without source), now, of course, it’s reverse engineering, the challenge is about not knowing the source.</p>
+<p>But how do you and I know that <a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a> is not a mad 1337 h4x0r waiting to launch shells and 'sploit us? We don’t; unless we are a 1337 reverse engineering badass. Of course, we can be sure Pico is real, and not trying to take over our machine. But once again the Hacker Spirit prevails, and Paranoia takes over. This leads me into this series; where I will cover “Paranoia and a Terminal”, things we can do to stay safe, anonymous, and otherwise make ourselves sleep better at night.</p>
+<h2>So what can we do about it?</h2>
+<p>As <a class="mention" href="https://0x00sec.org/u/oaktree">@oaktree</a> has elegantly pointed out, we shouldn’t run unknown binaries regardless of who it is, because we don’t know what they could be doing.</p>
+<p><a href="https://0x00sec.s3.amazonaws.com/original/2X/d/d2cd5342c795e6ab66d9eb56588b790c16c6d717.jpg" class="onebox" target="_blank" rel="noopener">https://0x00sec.s3.amazonaws.com/original/2X/d/d2cd5342c795e6ab66d9eb56588b790c16c6d717.jpg</a></p>
+<p>What we need to do, is run our binary in a VM. But that takes a lot of effort right? I got to figure out what OS I wanna virtualise, I gotta go find the downloads, sift through them till I get the version + edition I want; then eventually I have to download it; which on my 9600 baud dial-up connection is gonna take forever! Once I’ve done that, I gotta run through the installation, and then eventually sort out folder mounting, and ssh, it’s just a pain. Fear not! There is light! Say hello to <strong>Vagrant</strong>.</p>
+<p>Vagrant is a really cool virtualization package that uses the virtualbox backend. It allows me to</p>
+<ul>
+<li>Download a prebuilt ready-made VM image</li>
+<li>Initialise it</li>
+<li>Mount the current working directory</li>
+<li>SSH into it</li>
+</ul>
+<p>All in 3 commands. It’s super slick for this kind of quick paranoia investigations.</p>
+<h1>Installation</h1>
+<p>If you’re running Windows, OS X, Centos, or Debian, you can download the download files <a href="https://www.vagrantup.com/downloads.html">here</a>, otherwise if you’re running some other distro (like me), You’ll also need to install virtualbox, I’m sure your OS’s package manager has it, for me, I just ran</p>
+<p><code>sudo pacman -S virtualbox</code><br>
+<code>sudo pacman -S vagrant</code></p>
+<p>If you are on Ubuntu run:</p>
+<p><code>sudo apt-get install virtualbox</code><br>
+<code>sudo apt-get install vagrant</code></p>
+<h1>Usage</h1>
+<p>Now you are up and running, usage is <strong>super</strong> simple. Navigate to a folder you want to access the files in, and run</p>
+<pre><code class="lang-auto">vagrant init hashicorp/precise32
+</code></pre>
+<p>This will make a file called “Vagrantfile” in the current directory, these files are sharable to other people, (another thing which makes vagrant rock).</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/f/f339c85606c7f427653b0ebd69ab3931cab7698b.jpg" width="670" height="403"></p>
+<p>You can open this file up, and notice its just a config file for setting up the VM, since you haven’t actually initialized it yet, you’ve just configured it.</p>
+<p>Now you need to get your VM up and running! This is again, <strong>super</strong> simple, just run:</p>
+<pre><code class="lang-auto">vagrant up
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/9/9426c3fd632ba163a063ceb3c204ead099d55e7c.jpg" width="663" height="402"></p>
+<p>This will set up your VM using the config, and download the image if you do not already have it. If this is your first time using vagrant, you will not have the image already; but vagrant rocks, it will download it for you, this shouldn’t take too long, as its fairly small.</p>
+<p>Now your VM is running; man, that was simple ay? This command has configured networking, configured SSH, configured private key auth, and mounted the current directory to it. To access your newfound VM run:</p>
+<pre><code class="lang-auto">vagrant ssh
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/3/3f5e23d0df2ffaa6a4455aa0e4ae70c2220ce4e3.jpg" width="670" height="409"></p>
+<p>Now you have access to your VM, in your terminal, no hassle. To access your files in your current directory:</p>
+<pre><code class="lang-auto">cd /vagrant/
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/5/55a81e3a6b0eddba8b9d1d9b3611f04819812501.jpg" width="279" height="89"></p>
+<p>You’ll see the file “scaryfile.txt”, is in there; this is your current working directory mounted, if you delete <code>scaryfile.txt</code>, it will also delete on the real machine, make note of this. Any commands run however in this prompt will only execute on the VM, you could run <code>sudo rm -rf /</code> and of course, it would break the VM, but it wouldn’t touch your real machine.</p>
+<p>Keep in mind that vagrant will use your existing network stack, so if you were to run a malicious script that would send your IP to the attacker, this would not protect against that, you’d need to <a href="http://digitaldrummerj.me/vagrant-behind-proxy-server/">configure a proxy</a>, all of which is entirely possible with vagrant.</p>
+<h2>Exiting + Destroying</h2>
+<p>So, you’ve examed the big scary files, you’ve determined they are dirty as <small>(<a class="mention" href="https://0x00sec.org/u/0x00pf">@0x00pf</a>, I’m looking at you)</small> and you’ve decided to rid your machine of the now borked VM.</p>
+<p>You can exit your VM SSH connection with <code>exit</code>, however, that will only kill the connection, it’s still running in the background, to see a list of the currently running machines and their states, run:</p>
+<pre><code class="lang-auto">vagrant status
+</code></pre>
+<p>In our example, we have our current machine running. To stop it, run</p>
+<pre><code class="lang-auto">vagrant halt
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/9/92dd00ceedad9702844a95988b7b22cadd4d0746.jpg" width="676" height="416"></p>
+<p>Since we are in our current working directory, it knows what VM we are talking about, and thus is able to stop it with no specification.</p>
+<p>Now we have completed that, we can either start it up again by running <code>vagrant up</code>, or we can destroy it completely, since we know the file is dirty, and ridden with malware, we can destroy the box with</p>
+<pre><code class="lang-auto">vagrant destroy
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/73febe1d1603e7eae07860a35e71b157c5b0382c.jpg" width="675" height="422"></p>
+<p>This will leave our files intact, however, but our virtual machine is gone.</p>
+<h2>Conclusion</h2>
+<p>We have seen that sometimes we need to just check something out, but don’t want to have the headache of setting up yet another VM. Vagrant makes that easy; and once a software used entirely by developers and sysadmins for transportation of software, and a powerful precursor to Docker, it is still relevant in the security world; and continues to make my life a lot easier</p>
+<ul>
+<li>pry0cc</li>
+</ul>
+          <p><a href="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235/1</link>
+        <pubDate>Thu, 27 Oct 2016 22:40:40 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1235-1</guid>
+        <source url="https://0x00sec.org/t/paranoia-and-a-terminal-part-0x00-vagrant/1235.rss">Paranoia and a Terminal - Part 0x00 - Vagrant</source>
+      </item>
+  </channel>
+</rss>

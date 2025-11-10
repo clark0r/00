@@ -1,0 +1,368 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Virtual Private Server Setup For Fun and Profit! (General Overview)</title>
+    <link>https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986</link>
+    <description># Introduction
+This article serves to showcase a few ways a Virtual Private Server (VPS) can be utilized. This is a general level overview and is intended to spark interest. For help obtaining your own VPS I suggest you drop on by the #0x00sec IRC channel.
+
+In this post you will learn:
+
+* What a Virtual Private Server is.
+    * How to access a VPS
+    * How to create a non-root user on the VPS
+* How to host a Flask Website on your VPS
+    * Install and Setup Flask (Python Web Framework)
+    * Create a **basic** webpage
+    * Serve the web page publicly
+    * Configure DNS for your VPS
+* Why VPSs are awesome.
+
+It seems like a lot because it is.
+
+AND THAT&#39;S OKAY! Because you&#39;re smart and here at 0x00sec for a reason. I can tell these things about you. 
+
+#### Required Skills
+Yes, okay, this is a general overview, but I still expect you to know some things:
+
+* How to use SSH (or equivalent)
+* What a Domain Name is 
+
+This example assumes you own the domain `mywebsite.com`.
+
+#### Author Assigned Level: Wannabe
+#### Community Assigned Level:
+[poll type=regular]
+* Newbie
+* Wannabe
+* Hacker
+* Wizard
+* Guru
+[/poll]
+
+-----
+# VPS Setup for Fun and Profit
+-A General Overview of Virtual Private Servers
+
+##Warning:
+All code is based on a Linux machine running Ubuntu. If you&#39;re using something different, you might need to use different code.
+
+##Basics
+A VPS is a your own personal computer in --*The Cloud*-- that you can do whatever you want with. VPSs can be loaded with whatever Operating System you fancy and you can install whatever software you deem necessary. In most cases, VPSs use minimal OS installations to save space and memory. This means most of the work done on a VPS is through a terminal, so let&#39;s check out what that&#39;s all about.
+
+####Connecting to VPS
+To connect to your VPS you will need to know either its IP address or its Domain name. Once ascertained, you can use SSH to connect your workstation (a laptop in my case) to your VPS. Obviously you will need an internet connection so make sure you&#39;re online. In my case, I was given a root user and password along with a domain name. To initially connect to my VPS I entered the following command.
+
+    ssh root@[VPS_domain_name].net
+
+After entering your root password, you should be logged into your VPS. Now, let&#39;s configure ourselves a non-root user to work with. 
+
+    adduser --ingroup sudo myuser
+
+This will then ask you to enter some information about the user (which you can leave blank) and then ask you to set the password. Once that&#39;s done, we can switch user to our newly created myuser.
+
+    su myuser
+
+Great! Now we have a non-root user with sudo privileges. Let&#39;s make this VPS do something for use.
+
+##Hosting a Webpage
+I will be using Flask for this. Flask is a web framework written in Python. I like it because it is small, extensible, and easy to work with. Many plugins exist online along with numerous tutorials and helpful resources. If you don&#39;t want to use Flask for your VPS you might look into LAMP servers. Anyway, onward.
+
+####Installing Flask
+We&#39;re going to be running a lot of commands here. Check the comments (after the # symbol) for a description.
+
+    sudo apt-get install libapache2-mod-wsgi python-dev  #install mod_wsgi and python stuff
+    sudo a2enmod wsgi  #enable wsgi
+    
+Now lets change directory into where we will build our website.
+
+    cd /var/www  #apache default directory
+    sudo mkdir mywebsite  #make a folder for website
+    cd mywebsite  #enter folder
+    sudo mkdir mywebsite  #make a folder for flask application
+    cd mywebsite  #enter second folder
+
+Great. We have our folders created. But, before we start building our site we need to set up a virtual environment for Flask. This let&#39;s setup individual python invironments for each project rather than muddle up the system environment. 
+
+    sudo apt-get install python-pip  #install pip
+    sudo pip install virtualenv  #install virtual env to system environment
+    sudo virtualenv -P /usr/bin/python3.4 flask  #see below
+
+Okay. That last command is a little tricky. We call virtualenv with the -P argument to specify which version of python (3.4 here) we want to use in our new virtual environment named `flask`. With the environment created, all that&#39;s left is to activate it. 
+
+    source flask/bin/activate
+
+Awesome! Now, as long as we&#39;ve activated our virtual environment, anything installed with pip will only be installed into the `flask` virtual environment. 
+
+    sudo pip install Flask  #install Flask to flask
+    vim __init__.py  #edit __init__.py file
+
+This file, __init__.py, is where we will define our Flask application and create our first route. This application is purposefully minimal. For more information on Flask, see the end of this article.
+
+/var/www/mywebsite/mywebsite/__init__.py:
+
+    from flask import Flask
+    app = Flask(__name__)
+    @app.route(&quot;/&quot;)
+    def hello():
+        return &quot;Hello, World!&quot;
+    if __name__ == &quot;__main__&quot;:
+        app.run() 
+
+##Serving the Application
+
+With that done, we need to set up our Virtual Host for Apache. Let&#39;s first deactive our virtual environment.
+
+    deactivate
+
+then:
+
+    sudo vim /etc/apache2/sites-available/mywebsite.conf
+
+Edit the file to look like this:
+
+    
+    &lt;VirtualHost *:80&gt;
+                ServerName mywebsite.com
+                ServerAdmin admin@mywebsite.com
+                WSGIScriptAlias / /var/www/mywebsite/mywebsite.wsgi
+                &lt;Directory /var/www/mywebsite/mywebsite&gt;
+                        Require all granted
+                &lt;/Directory&gt;
+                ErrorLog ${APACHE_LOG_DIR}/error.log
+                LogLevel warn
+                CustomLog ${APACHE_LOG_DIR}/access.log combined
+    &lt;/VirtualHost&gt;
+
+Enable the virtual host with
+
+    sudo a2ensite mywebsite
+
+then change to the higher directory with
+
+    cd ..  #go up a directory
+
+Now we create the wsgi configuration file for our website.
+
+    sudo vim mywebsite.conf
+
+/var/www/mywebsite/mywebsite.wsgi:
+
+    #!usr/bin/python
+    import sys
+    import logging
+    logging.basicConfig(stream=sys.stderr)
+    sys.bath.insert(0, &quot;/var/www/mywebsite&quot;)
+    
+    from mywebsite import app as application
+
+now add `WSGIRestrictStdout Off` to the bottom of `/etc/apache2/apache2.conf`
+
+So we have our site setup and ready to go. Now we should remove the default Apache website and restart the Apache service.
+
+    sudo a2dissite default
+    sudo apachectl restart
+
+## DNS, the Final Step
+Okay. So, now we have a website built on our server and our server is ready to serve the website through Apache. All that&#39;s left is to link our Domain Name to our VPS. That way, anyone can use their web browser, type in your domain name, and pull up your webpage. In my case, I purchased skidd0.com through godaddy. Using their DNS management system all you need to do is create (or edit an existing) A record so it points to the IP address of your VPS. 
+
+Now you&#39;re done! Congrats. You should be able to open mywebsite.com in a browser and pull up your Hello World webpage.
+
+# Conclusions
+
+You now have a server in the cloud that you can log into from anywhere. Not only that, you&#39;ve got your server hosting a web app!
+
+For more information about Flask, check out:
+
+[The Documentation](http://flask.pocoo.org/docs/0.12/)
+[The Mega Tutorial](https://blog.miguelgrinberg.com/post/the-flask-mega-tutorial-part-i-hello-world) by Miguel Grinberg
+[The Flask Tag](https://stackoverflow.com/questions/tagged/flask?sort=newest) on Stack Overflow
+
+If you&#39;re looking for more to do onn your VPS, I suggest looking into hosting a gitolite server. A gitolite server is your own private git repository where you can privately host your code.
+
+Thanks a bunch, hope this article was useful. If you have any questions feel free to ask me. 
+
+Have Fun!</description>
+    
+    <lastBuildDate>Sun, 07 May 2017 16:21:58 +0000</lastBuildDate>
+    <category>Beginner Guides</category>
+    <atom:link href="https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Virtual Private Server Setup For Fun and Profit! (General Overview)</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>It’s the Sinatra of Python.</p>
+          <p><a href="https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986/3</link>
+        <pubDate>Sun, 07 May 2017 16:21:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1986-3</guid>
+        <source url="https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986.rss">Virtual Private Server Setup For Fun and Profit! (General Overview)</source>
+      </item>
+      <item>
+        <title>Virtual Private Server Setup For Fun and Profit! (General Overview)</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice little tutorial you’ve got here!</p>
+<p>I must say, I’ve never heard of Flask before this…</p>
+          <p><a href="https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986/2</link>
+        <pubDate>Sun, 07 May 2017 15:53:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1986-2</guid>
+        <source url="https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986.rss">Virtual Private Server Setup For Fun and Profit! (General Overview)</source>
+      </item>
+      <item>
+        <title>Virtual Private Server Setup For Fun and Profit! (General Overview)</title>
+        <dc:creator><![CDATA[skidd0]]></dc:creator>
+        <description><![CDATA[
+            <h1>Introduction</h1>
+<p>This article serves to showcase a few ways a Virtual Private Server (VPS) can be utilized. This is a general level overview and is intended to spark interest. For help obtaining your own VPS I suggest you drop on by the <a class="hashtag" href="https://0x00sec.org/tag/0x00sec">#<span>0x00sec</span></a> IRC channel.</p>
+<p>In this post you will learn:</p>
+<ul>
+<li>What a Virtual Private Server is.
+<ul>
+<li>How to access a VPS</li>
+<li>How to create a non-root user on the VPS</li>
+</ul>
+</li>
+<li>How to host a Flask Website on your VPS
+<ul>
+<li>Install and Setup Flask (Python Web Framework)</li>
+<li>Create a <strong>basic</strong> webpage</li>
+<li>Serve the web page publicly</li>
+<li>Configure DNS for your VPS</li>
+</ul>
+</li>
+<li>Why VPSs are awesome.</li>
+</ul>
+<p>It seems like a lot because it is.</p>
+<p>AND THAT’S OKAY! Because you’re smart and here at 0x00sec for a reason. I can tell these things about you.</p>
+<h4>Required Skills</h4>
+<p>Yes, okay, this is a general overview, but I still expect you to know some things:</p>
+<ul>
+<li>How to use SSH (or equivalent)</li>
+<li>What a Domain Name is</li>
+</ul>
+<p>This example assumes you own the domain <code>mywebsite.com</code>.</p>
+<h4>Author Assigned Level: Wannabe</h4>
+<h4>Community Assigned Level:</h4>
+<p><a href="https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986/1">Click to view the poll.</a></p>
+<hr>
+<h1>VPS Setup for Fun and Profit</h1>
+<p>-A General Overview of Virtual Private Servers</p>
+<p>#<span class="hashtag">#Warning:</span><br>
+All code is based on a Linux machine running Ubuntu. If you’re using something different, you might need to use different code.</p>
+<p>#<span class="hashtag">#Basics</span><br>
+A VPS is a your own personal computer in –<em>The Cloud</em>– that you can do whatever you want with. VPSs can be loaded with whatever Operating System you fancy and you can install whatever software you deem necessary. In most cases, VPSs use minimal OS installations to save space and memory. This means most of the work done on a VPS is through a terminal, so let’s check out what that’s all about.</p>
+<p>###<span class="hashtag">#Connecting</span> to VPS<br>
+To connect to your VPS you will need to know either its IP address or its Domain name. Once ascertained, you can use SSH to connect your workstation (a laptop in my case) to your VPS. Obviously you will need an internet connection so make sure you’re online. In my case, I was given a root user and password along with a domain name. To initially connect to my VPS I entered the following command.</p>
+<pre><code>ssh root@[VPS_domain_name].net
+</code></pre>
+<p>After entering your root password, you should be logged into your VPS. Now, let’s configure ourselves a non-root user to work with.</p>
+<pre><code>adduser --ingroup sudo myuser
+</code></pre>
+<p>This will then ask you to enter some information about the user (which you can leave blank) and then ask you to set the password. Once that’s done, we can switch user to our newly created myuser.</p>
+<pre><code>su myuser
+</code></pre>
+<p>Great! Now we have a non-root user with sudo privileges. Let’s make this VPS do something for use.</p>
+<p>#<span class="hashtag">#Hosting</span> a Webpage<br>
+I will be using Flask for this. Flask is a web framework written in Python. I like it because it is small, extensible, and easy to work with. Many plugins exist online along with numerous tutorials and helpful resources. If you don’t want to use Flask for your VPS you might look into LAMP servers. Anyway, onward.</p>
+<p>###<span class="hashtag">#Installing</span> Flask<br>
+We’re going to be running a lot of commands here. Check the comments (after the # symbol) for a description.</p>
+<pre><code>sudo apt-get install libapache2-mod-wsgi python-dev  #install mod_wsgi and python stuff
+sudo a2enmod wsgi  #enable wsgi
+</code></pre>
+<p>Now lets change directory into where we will build our website.</p>
+<pre><code>cd /var/www  #apache default directory
+sudo mkdir mywebsite  #make a folder for website
+cd mywebsite  #enter folder
+sudo mkdir mywebsite  #make a folder for flask application
+cd mywebsite  #enter second folder
+</code></pre>
+<p>Great. We have our folders created. But, before we start building our site we need to set up a virtual environment for Flask. This let’s setup individual python invironments for each project rather than muddle up the system environment.</p>
+<pre><code>sudo apt-get install python-pip  #install pip
+sudo pip install virtualenv  #install virtual env to system environment
+sudo virtualenv -P /usr/bin/python3.4 flask  #see below
+</code></pre>
+<p>Okay. That last command is a little tricky. We call virtualenv with the -P argument to specify which version of python (3.4 here) we want to use in our new virtual environment named <code>flask</code>. With the environment created, all that’s left is to activate it.</p>
+<pre><code>source flask/bin/activate
+</code></pre>
+<p>Awesome! Now, as long as we’ve activated our virtual environment, anything installed with pip will only be installed into the <code>flask</code> virtual environment.</p>
+<pre><code>sudo pip install Flask  #install Flask to flask
+vim __init__.py  #edit __init__.py file
+</code></pre>
+<p>This file, <strong>init</strong>.py, is where we will define our Flask application and create our first route. This application is purposefully minimal. For more information on Flask, see the end of this article.</p>
+<p>/var/www/mywebsite/mywebsite/<strong>init</strong>.py:</p>
+<pre><code>from flask import Flask
+app = Flask(__name__)
+@app.route("/")
+def hello():
+    return "Hello, World!"
+if __name__ == "__main__":
+    app.run() 
+</code></pre>
+<p>#<span class="hashtag">#Serving</span> the Application</p>
+<p>With that done, we need to set up our Virtual Host for Apache. Let’s first deactive our virtual environment.</p>
+<pre><code>deactivate
+</code></pre>
+<p>then:</p>
+<pre><code>sudo vim /etc/apache2/sites-available/mywebsite.conf
+</code></pre>
+<p>Edit the file to look like this:</p>
+<pre><code>&lt;VirtualHost *:80&gt;
+            ServerName mywebsite.com
+            ServerAdmin admin@mywebsite.com
+            WSGIScriptAlias / /var/www/mywebsite/mywebsite.wsgi
+            &lt;Directory /var/www/mywebsite/mywebsite&gt;
+                    Require all granted
+            &lt;/Directory&gt;
+            ErrorLog ${APACHE_LOG_DIR}/error.log
+            LogLevel warn
+            CustomLog ${APACHE_LOG_DIR}/access.log combined
+&lt;/VirtualHost&gt;
+</code></pre>
+<p>Enable the virtual host with</p>
+<pre><code>sudo a2ensite mywebsite
+</code></pre>
+<p>then change to the higher directory with</p>
+<pre><code>cd ..  #go up a directory
+</code></pre>
+<p>Now we create the wsgi configuration file for our website.</p>
+<pre><code>sudo vim mywebsite.conf
+</code></pre>
+<p>/var/www/mywebsite/mywebsite.wsgi:</p>
+<pre><code>#!usr/bin/python
+import sys
+import logging
+logging.basicConfig(stream=sys.stderr)
+sys.bath.insert(0, "/var/www/mywebsite")
+
+from mywebsite import app as application
+</code></pre>
+<p>now add <code>WSGIRestrictStdout Off</code> to the bottom of <code>/etc/apache2/apache2.conf</code></p>
+<p>So we have our site setup and ready to go. Now we should remove the default Apache website and restart the Apache service.</p>
+<pre><code>sudo a2dissite default
+sudo apachectl restart
+</code></pre>
+<h2>DNS, the Final Step</h2>
+<p>Okay. So, now we have a website built on our server and our server is ready to serve the website through Apache. All that’s left is to link our Domain Name to our VPS. That way, anyone can use their web browser, type in your domain name, and pull up your webpage. In my case, I purchased <a href="http://skidd0.com" rel="nofollow noopener">skidd0.com</a> through godaddy. Using their DNS management system all you need to do is create (or edit an existing) A record so it points to the IP address of your VPS.</p>
+<p>Now you’re done! Congrats. You should be able to open <a href="http://mywebsite.com" rel="nofollow noopener">mywebsite.com</a> in a browser and pull up your Hello World webpage.</p>
+<h1>Conclusions</h1>
+<p>You now have a server in the cloud that you can log into from anywhere. Not only that, you’ve got your server hosting a web app!</p>
+<p>For more information about Flask, check out:</p>
+<p><a href="http://flask.pocoo.org/docs/0.12/" rel="nofollow noopener">The Documentation</a><br>
+<a href="https://blog.miguelgrinberg.com/post/the-flask-mega-tutorial-part-i-hello-world" rel="nofollow noopener">The Mega Tutorial</a> by Miguel Grinberg<br>
+<a href="https://stackoverflow.com/questions/tagged/flask?sort=newest" rel="nofollow noopener">The Flask Tag</a> on Stack Overflow</p>
+<p>If you’re looking for more to do onn your VPS, I suggest looking into hosting a gitolite server. A gitolite server is your own private git repository where you can privately host your code.</p>
+<p>Thanks a bunch, hope this article was useful. If you have any questions feel free to ask me.</p>
+<p>Have Fun!</p>
+          <p><a href="https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986/1</link>
+        <pubDate>Sun, 07 May 2017 03:47:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1986-1</guid>
+        <source url="https://d.clarkee.co.uk/t/virtual-private-server-setup-for-fun-and-profit-general-overview/1986.rss">Virtual Private Server Setup For Fun and Profit! (General Overview)</source>
+      </item>
+  </channel>
+</rss>

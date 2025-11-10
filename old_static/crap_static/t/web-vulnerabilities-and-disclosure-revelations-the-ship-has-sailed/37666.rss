@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+    <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666</link>
+    <description>![hackersbyrez0.com|690x386, 100%](upload://8P7b6Mh5Ugj2YPq3w8eD8UL0DxM.jpeg)
+
+*This is the first article of the series. A pretty cool bug, in my opinion, with a little twist at the end. As we progress, there will be more high- (and low-) profile exposures and issues.* 
+
+Lately, I&#39;ve given a lot of focus on APIs. I&#39;ve been researching ways one can exploit them, discover them, and techniques for better recon. Also, a large amount of my free (and working) hours goes into scanning the Internet for exposed APIs. This writeup is about an API vulnerability (or more like an exposure) I encountered when scanning using Shodan.
+
+The organization is a big European shipping company (and one of the largest in the world) based in Switzerland. The company was hit with an unnamed ransomware some years ago that &quot;brought down its data center for days.&quot; As we will see later, they are still not quite there when it comes to security.
+
+The vulnerable API was (or is?) an exposed internal endpoint that allowed any unauthenticated user to download internal documents regarding the schedules of ships leaving and arriving at ports of a certain European country, as well as the ships&#39; information, along with documents sent to clients. These documents also exposed email and physical addresses. Also, the API was used for sign-in and signup purposes. Although it was possible to do both, I was unable to find the web application that was utilizing it.
+
+## Discovery
+
+Although I usually scan for APIs and I then look for vulnerable ones, this time I went specifically after this company. I was sailing one day, when I saw one of their ships and I got intrigued, thinking how cool it would be to be able to say that I reported a vulnerability to this company.
+
+The first thing I usually do is go to Shodan and look for hosts related to a specific target. I once wrote an article on [using search engines for bug bounties and pentesting](https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832). To this day, I use the same techniques for passive recon.
+
+A simple-looking Shodan query `ssl:&quot;domain.tld&quot; &quot;200 OK&quot;` will return all hosts that return a 200 HTTP code and whose SSL certificates are issued for or even just include `domain.tld`. The results were not that many, so I decided to go through them manually using Shodan&#39;s website.
+
+When manually inspecting hosts, the ones that catch my eye are weird/interesting-looking ones. That means hosts with default front pages, specific products, VPN appliances, test/dev/staging apps, etc. After visiting each interesting-looking host, I encountered one that looked really simple: it included two empty lists to select from and two buttons: &quot;View&quot; and &quot;Download&quot;. The &quot;View&quot; was useless. But the &quot;Download&quot; button was redirecting me to an API endpoint, namely `https://blah.domain.tld/api/document/get/download/undefined/0`.
+
+![api-undefined|690x461, 100%](upload://9EtweEla3yoNnV6LOumMaz5lGil.png)
+
+
+## Internal documents, authentication, and surprises.
+
+The undefined part of the URL was causing the API to throw this error. Fuzzing the word `undefined` with a simple wordlist using `ffuf`, endpoints with certain numbers were returning some data, e.g.
+
+* `https://blah.domain.tld/api/document/get/download/10/0`
+* `https://blah.domain.tld/api/document/get/download/31/0`
+* `https://blah.domain.tld/api/document/get/download/44/0`
+
+etc.
+
+The specific endpoints were returning exactly what the URL says: documents. Each number represented a port and as you can note at the bottom of the PDF, their scope/sensitivity is limited to internal knowledge.
+
+![pdf-sample|653x500](upload://9mFIqugajPt6tj9vRZlvxkvr2cS.png)
+
+
+As mentioned, the information in those documents were not credentials or any high-value secrets, but ship schedule and information. That alone doesn&#39;t seem much of a big revelation and maybe it&#39;s not. But you have to take into consideration the nature of the company and what the company itself values as important.
+
+It also appears that the documents are being updated regularly. Three weeks after I discovered the API, the same endpoints were returning different documents. So, after the initial ~30 documents, I ended up with ~60 after one month.
+
+### Uknown authentication
+
+Continuing my API enumeration, I fuzzed for endpoints and found `/login` and `/signup`. Of course, those are POST endpoints which required parameters I didn&#39;t have. From my experience, such endpoints require minimum two parameters: username and password. And that was the case for `/login`. For `/signup` I had to fuzz for JSON parameters to succeed. For this task, I used BurpSuite&#39;s param-miner and good ol&#39; ffuf. The ffuf syntax for it was the following (yes, you can fuzz for literally anything with ffuf):
+
+```
+ffuf -u &quot;https://blah.domain.tld/api/auth/register&quot; -XPOST -H &quot;Content-type: application/json&quot; -d {&quot;username&quot;:&quot;testUser&quot;,&quot;password&quot;:&quot;testPassword&quot;,&quot;FUZZ&quot;:&quot;blah&quot;}&#39; -w parameter-wordlist.txt&quot;
+```
+
+Through the error messages thrown, the size of the response, and some manual inspection the scan yielded the third parameter `confirmpassword` (which made sense for a signup page tbh).
+
+The signup and login endpoints worked just fine. The login function returned even a JWT signed with the none(!) algorithm. This means that anyone who had a JWT of this app could forge the token and impersonate any registered user. Unfortunately, I was unable to find the web application that was utilizing this API. But this still remains an issue to address internally.
+
+### I am not alone here
+
+While browsing some of the documents I downloaded from the API, I came across some non-PDF files. I displayed them on my terminal
+
+![webshell|690x397](upload://6cmbTzkvbvgp3vYlJUhfGhyM3xb.png)
+
+
+and it appears I am not alone here on this quest...
+
+What surprised me (and kind of intruiged me, ngl) the most was the fact that, apparently, there were other, malicious and non-malicious hackers around, poking and exploiting this API. I can assume that other people have notified the company about this issue. Do you think they did something about it?
+
+## Vulnerability Disclosure
+
+With the help of colleagues, I found the email address of their CISO. Also, the PDFs the API was leaking were signed with the name of the author (thank you forensics CTF challenges)
+
+![pdfinfo|509x366](upload://e1xwIIaFS9T95HthlenlaIsmhTO.png)
+
+
+I found as many authors I could on LinkedIn and CC&#39;d them to the email I sent to their CISO. The email contained everything I found, i.e. the exposed internal API that:
+
+* leaks internal documents
+* allows anyone to login through the API and register into their user database
+* was already exploited with webshells
+
+Two months later, there is still no response to the emails me and my colleagues sent, even though we know they opened theme emails. One would think that after the ransomware hit they would take things like this more seriously and respond. But hey, if they did, I&#39;d be unemployed and/or bored.</description>
+    
+    <lastBuildDate>Mon, 04 Dec 2023 12:22:50 +0000</lastBuildDate>
+    <category>Web Hacking</category>
+    <atom:link href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/15</link>
+        <pubDate>Fri, 01 Mar 2024 09:49:21 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-15</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[IntenseFrank]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s odd that people don’t want to seem to address the reality of vulnerability. Keep us posted!</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/14</link>
+        <pubDate>Mon, 04 Dec 2023 12:22:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-14</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>aha got you mate ,thank you for answering looking forward for your next article</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/12</link>
+        <pubDate>Fri, 01 Dec 2023 23:14:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-12</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[phpio]]></dc:creator>
+        <description><![CDATA[
+            <p>Hope, it’ll be helpful if i share here my previous <a href="https://0x00sec.org/t/i-was-wondering-if-anyone-would-like-to-give-their-thoughts-on-a-php-vulnerability-scanner/37932">post</a>. My team and I have developed a free scanner to detect security vulnerabilities in PHP code. Check how it finds vulnerabilities.</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/11</link>
+        <pubDate>Fri, 01 Dec 2023 19:13:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-11</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[Blasphemy]]></dc:creator>
+        <description><![CDATA[
+            <p>Great &amp; very useful!</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/10</link>
+        <pubDate>Sun, 26 Nov 2023 05:52:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-10</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[vict0ni]]></dc:creator>
+        <description><![CDATA[
+            <p>The webshells were found in the same place were the normal internal documents were found. I’ve no idea how others went in, they probably found the web service that was utilizing the API that I couldn’t find.<br>
+The shells are not working because they are not executed by a server, you can only download them. At least from the API point of view, I don’t know if internally they are executed.</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/9</link>
+        <pubDate>Thu, 23 Nov 2023 10:04:51 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-9</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[NedeljkoElek]]></dc:creator>
+        <description><![CDATA[
+            <p>Whoa, impressive find!  Your detailed discovery of the API vulnerability is crucial. It’s concerning that the company hasn’t responded yet. Patience is key, though. Keep us posted!</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/8</link>
+        <pubDate>Tue, 21 Nov 2023 15:58:53 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-8</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[hatecomputers]]></dc:creator>
+        <description><![CDATA[
+            <p>Pretty nice one, buddy. keep it up <img src="https://0x00sec.org/images/emoji/twitter/rocket.png?v=12" title=":rocket:" class="emoji" alt=":rocket:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/7</link>
+        <pubDate>Mon, 20 Nov 2023 12:26:45 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-7</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[Morpheus]]></dc:creator>
+        <description><![CDATA[
+            <p>I enjoyed reading this topic ,it is well explained every step of the way.<br>
+I have some questions though if you’re willing to answer them for me. where did you find exactly the webshell ?<br>
+and how this anonymous hacker managed to upload it to the server ?<br>
+and is it working?<br>
+mind my questions if they are stupid I am new to the web hacking field and I’m just curious.</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/6</link>
+        <pubDate>Fri, 17 Nov 2023 15:33:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-6</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[phpio]]></dc:creator>
+        <description><![CDATA[
+            <p>wooow just in time for the spooky month fr</p>
+<p>you’re really good at this, you know that?</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/5</link>
+        <pubDate>Thu, 16 Nov 2023 17:22:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-5</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[vict0ni]]></dc:creator>
+        <description><![CDATA[
+            <p>to be honest, I just thought it would be a funny title <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=12" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:" loading="lazy" width="20" height="20"> but it’s also that “the ship has sailed” as in that they had the time to respond and fix the issue. I won’t be naming the target, because my intention is not to cause harm. But it is a shame to not take things seriously</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/4</link>
+        <pubDate>Thu, 02 Nov 2023 11:29:42 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-4</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[bankTansferHacker]]></dc:creator>
+        <description><![CDATA[
+            <p>n the realm of web security, the saying ‘The Ship Has Sailed’ reflects the realization that critical vulnerabilities in a system have been uncovered or disclosed. Once this information is out, it underscores the urgency for prompt action to address and rectify the issues. It also implies that the consequences of these vulnerabilities are now in motion, and it’s crucial for stakeholders to respond swiftly to mitigate any potential risks or fallout</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/2</link>
+        <pubDate>Thu, 02 Nov 2023 11:25:40 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-2</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+      <item>
+        <title>Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</title>
+        <dc:creator><![CDATA[vict0ni]]></dc:creator>
+        <description><![CDATA[
+            <p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/3/d/3dd8986b8e50f7fc31a9bd3ba066c537520ada3a.jpeg" data-download-href="/uploads/short-url/8P7b6Mh5Ugj2YPq3w8eD8UL0DxM.jpeg?dl=1" title="hackersbyrez0.com"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/3/d/3dd8986b8e50f7fc31a9bd3ba066c537520ada3a_2_690x386.jpeg" alt="hackersbyrez0.com" data-base62-sha1="8P7b6Mh5Ugj2YPq3w8eD8UL0DxM" width="690" height="386" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/3/d/3dd8986b8e50f7fc31a9bd3ba066c537520ada3a_2_690x386.jpeg, https://0x00sec.s3.amazonaws.com/optimized/3X/3/d/3dd8986b8e50f7fc31a9bd3ba066c537520ada3a_2_1035x579.jpeg 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/3/d/3dd8986b8e50f7fc31a9bd3ba066c537520ada3a_2_1380x772.jpeg 2x" data-dominant-color="294F70"></a></div><p></p>
+<p><em>This is the first article of the series. A pretty cool bug, in my opinion, with a little twist at the end. As we progress, there will be more high- (and low-) profile exposures and issues.</em></p>
+<p>Lately, I’ve given a lot of focus on APIs. I’ve been researching ways one can exploit them, discover them, and techniques for better recon. Also, a large amount of my free (and working) hours goes into scanning the Internet for exposed APIs. This writeup is about an API vulnerability (or more like an exposure) I encountered when scanning using Shodan.</p>
+<p>The organization is a big European shipping company (and one of the largest in the world) based in Switzerland. The company was hit with an unnamed ransomware some years ago that “brought down its data center for days.” As we will see later, they are still not quite there when it comes to security.</p>
+<p>The vulnerable API was (or is?) an exposed internal endpoint that allowed any unauthenticated user to download internal documents regarding the schedules of ships leaving and arriving at ports of a certain European country, as well as the ships’ information, along with documents sent to clients. These documents also exposed email and physical addresses. Also, the API was used for sign-in and signup purposes. Although it was possible to do both, I was unable to find the web application that was utilizing it.</p>
+<h2><a name="discovery-1" class="anchor" href="https://0x00sec.org#discovery-1"></a>Discovery</h2>
+<p>Although I usually scan for APIs and I then look for vulnerable ones, this time I went specifically after this company. I was sailing one day, when I saw one of their ships and I got intrigued, thinking how cool it would be to be able to say that I reported a vulnerability to this company.</p>
+<p>The first thing I usually do is go to Shodan and look for hosts related to a specific target. I once wrote an article on <a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832">using search engines for bug bounties and pentesting</a>. To this day, I use the same techniques for passive recon.</p>
+<p>A simple-looking Shodan query <code>ssl:"domain.tld" "200 OK"</code> will return all hosts that return a 200 HTTP code and whose SSL certificates are issued for or even just include <code>domain.tld</code>. The results were not that many, so I decided to go through them manually using Shodan’s website.</p>
+<p>When manually inspecting hosts, the ones that catch my eye are weird/interesting-looking ones. That means hosts with default front pages, specific products, VPN appliances, test/dev/staging apps, etc. After visiting each interesting-looking host, I encountered one that looked really simple: it included two empty lists to select from and two buttons: “View” and “Download”. The “View” was useless. But the “Download” button was redirecting me to an API endpoint, namely <code>https://blah.domain.tld/api/document/get/download/undefined/0</code>.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/4/3/43a6e02a43566be74169651d83b808004ff51de1.png" data-download-href="/uploads/short-url/9EtweEla3yoNnV6LOumMaz5lGil.png?dl=1" title="api-undefined"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/4/3/43a6e02a43566be74169651d83b808004ff51de1_2_690x461.png" alt="api-undefined" data-base62-sha1="9EtweEla3yoNnV6LOumMaz5lGil" width="690" height="461" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/4/3/43a6e02a43566be74169651d83b808004ff51de1_2_690x461.png, https://0x00sec.s3.amazonaws.com/original/3X/4/3/43a6e02a43566be74169651d83b808004ff51de1.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/4/3/43a6e02a43566be74169651d83b808004ff51de1.png 2x" data-dominant-color="1C1B1E"></a></div><p></p>
+<h2><a name="internal-documents-authentication-and-surprises-2" class="anchor" href="https://0x00sec.org#internal-documents-authentication-and-surprises-2"></a>Internal documents, authentication, and surprises.</h2>
+<p>The undefined part of the URL was causing the API to throw this error. Fuzzing the word <code>undefined</code> with a simple wordlist using <code>ffuf</code>, endpoints with certain numbers were returning some data, e.g.</p>
+<ul>
+<li><code>https://blah.domain.tld/api/document/get/download/10/0</code></li>
+<li><code>https://blah.domain.tld/api/document/get/download/31/0</code></li>
+<li><code>https://blah.domain.tld/api/document/get/download/44/0</code></li>
+</ul>
+<p>etc.</p>
+<p>The specific endpoints were returning exactly what the URL says: documents. Each number represented a port and as you can note at the bottom of the PDF, their scope/sensitivity is limited to internal knowledge.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/4/1/41a3addd9d1ac600ab37066c6ffb31ba5d56e87e.png" data-download-href="/uploads/short-url/9mFIqugajPt6tj9vRZlvxkvr2cS.png?dl=1" title="pdf-sample"><img src="https://0x00sec.s3.amazonaws.com/original/3X/4/1/41a3addd9d1ac600ab37066c6ffb31ba5d56e87e.png" alt="pdf-sample" data-base62-sha1="9mFIqugajPt6tj9vRZlvxkvr2cS" width="653" height="500" data-dominant-color="DCD8A2"></a></div><p></p>
+<p>As mentioned, the information in those documents were not credentials or any high-value secrets, but ship schedule and information. That alone doesn’t seem much of a big revelation and maybe it’s not. But you have to take into consideration the nature of the company and what the company itself values as important.</p>
+<p>It also appears that the documents are being updated regularly. Three weeks after I discovered the API, the same endpoints were returning different documents. So, after the initial ~30 documents, I ended up with ~60 after one month.</p>
+<h3><a name="uknown-authentication-3" class="anchor" href="https://0x00sec.org#uknown-authentication-3"></a>Uknown authentication</h3>
+<p>Continuing my API enumeration, I fuzzed for endpoints and found <code>/login</code> and <code>/signup</code>. Of course, those are POST endpoints which required parameters I didn’t have. From my experience, such endpoints require minimum two parameters: username and password. And that was the case for <code>/login</code>. For <code>/signup</code> I had to fuzz for JSON parameters to succeed. For this task, I used BurpSuite’s param-miner and good ol’ ffuf. The ffuf syntax for it was the following (yes, you can fuzz for literally anything with ffuf):</p>
+<pre><code class="lang-auto">ffuf -u "https://blah.domain.tld/api/auth/register" -XPOST -H "Content-type: application/json" -d {"username":"testUser","password":"testPassword","FUZZ":"blah"}' -w parameter-wordlist.txt"
+</code></pre>
+<p>Through the error messages thrown, the size of the response, and some manual inspection the scan yielded the third parameter <code>confirmpassword</code> (which made sense for a signup page tbh).</p>
+<p>The signup and login endpoints worked just fine. The login function returned even a JWT signed with the none(!) algorithm. This means that anyone who had a JWT of this app could forge the token and impersonate any registered user. Unfortunately, I was unable to find the web application that was utilizing this API. But this still remains an issue to address internally.</p>
+<h3><a name="i-am-not-alone-here-4" class="anchor" href="https://0x00sec.org#i-am-not-alone-here-4"></a>I am not alone here</h3>
+<p>While browsing some of the documents I downloaded from the API, I came across some non-PDF files. I displayed them on my terminal</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/2/b/2b72a9493ea203c796dffeed654ea22996e48795.png" data-download-href="/uploads/short-url/6cmbTzkvbvgp3vYlJUhfGhyM3xb.png?dl=1" title="webshell"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/2/b/2b72a9493ea203c796dffeed654ea22996e48795_2_690x397.png" alt="webshell" data-base62-sha1="6cmbTzkvbvgp3vYlJUhfGhyM3xb" width="690" height="397" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/2/b/2b72a9493ea203c796dffeed654ea22996e48795_2_690x397.png, https://0x00sec.s3.amazonaws.com/original/3X/2/b/2b72a9493ea203c796dffeed654ea22996e48795.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/2/b/2b72a9493ea203c796dffeed654ea22996e48795.png 2x" data-dominant-color="2E2E2E"></a></div><p></p>
+<p>and it appears I am not alone here on this quest…</p>
+<p>What surprised me (and kind of intruiged me, ngl) the most was the fact that, apparently, there were other, malicious and non-malicious hackers around, poking and exploiting this API. I can assume that other people have notified the company about this issue. Do you think they did something about it?</p>
+<h2><a name="vulnerability-disclosure-5" class="anchor" href="https://0x00sec.org#vulnerability-disclosure-5"></a>Vulnerability Disclosure</h2>
+<p>With the help of colleagues, I found the email address of their CISO. Also, the PDFs the API was leaking were signed with the name of the author (thank you forensics CTF challenges)</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/3X/6/2/624b05d7b8de91dcff38e9ab0516b43f3d395958.png" alt="pdfinfo" data-base62-sha1="e1xwIIaFS9T95HthlenlaIsmhTO" width="509" height="366"></p>
+<p>I found as many authors I could on LinkedIn and CC’d them to the email I sent to their CISO. The email contained everything I found, i.e. the exposed internal API that:</p>
+<ul>
+<li>leaks internal documents</li>
+<li>allows anyone to login through the API and register into their user database</li>
+<li>was already exploited with webshells</li>
+</ul>
+<p>Two months later, there is still no response to the emails me and my colleagues sent, even though we know they opened theme emails. One would think that after the ransomware hit they would take things like this more seriously and respond. But hey, if they did, I’d be unemployed and/or bored.</p>
+          <p><a href="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666/1</link>
+        <pubDate>Tue, 31 Oct 2023 17:49:12 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-37666-1</guid>
+        <source url="https://0x00sec.org/t/web-vulnerabilities-and-disclosure-revelations-the-ship-has-sailed/37666.rss">Web Vulnerabilities and Disclosure Revelations: The Ship Has Sailed</source>
+      </item>
+  </channel>
+</rss>

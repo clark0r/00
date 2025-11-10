@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>HTS.org R8 challenge</title>
+    <link>https://d.clarkee.co.uk/t/hts-org-r8-challenge/2337</link>
+    <description># Preface
+####As always:
+I stated my reasoning behind this article series in the first article which can be found [here](https://0x00sec.org/t/hts-org-r1-challenge/). 
+To avoid redundancy please check out the preface over there and let&#39;s get right into action!
+
+_**note:**_ If I write non sense in this and the next following articles please correct me for the sake of me and others not getting confused and mixed up with things :) . 
+
+#### Author Assigned Level: Wannabe
+#### Community Assigned Level:
+[poll type=regular]
+* Newbie
+* Wannabe
+* Hacker
+* Wizard
+* Guru
+[/poll]
+
+#### Required Skills
+Since we&#39;re starting at the beginning not much knowledge is required at the moment. 
+
+* knowledge about html
+* knowledge about web page structure
+* cookies
+* SQL injection
+* javascript injection 
+
+#### Disclaimer
+These write ups are only my 2 cents on the challenges. So don&#39;t take them too seriously. ;)
+
+-----
+# HTS.org realistic challenges
+
+### [Realistic challenge 8](https://www.hackthissite.org/missions/realistic/8/)
+
+#### Message:
+&gt;Hey man, you gotta help me out, Gary Hunter, one of the richest men in America, has just deposited $10,000,000 into his bank account at the United Banks Of America and plans to donate that money to a campaign to hunt down and lock up all hackers. Now I&#39;ve tried hacking their site but I&#39;m just not good enough. That&#39;s why I need your help, Here&#39;s a list of your objectives:
+1. Find the account of Gary Hunter (I don&#39;t know his account name).
+2. Move the $10,000,000 into the account dropCash.
+3. Clear The Logs, They&#39;re held in the folder &#39;logFiles&#39;.
+I really hope you can do this, because if you can&#39;t we&#39;re all screwed
+
+
+
+#### What can we extract from the message?
+Well this time the message was so nice to format the objectives nicely already, so for the sake of completion:
+
+* Find the account of Gary Hunter (I don&#39;t know his account name).
+* Move the $10,000,000 into the account dropCash.
+* Clear The Logs, They&#39;re held in the folder &#39;logFiles&#39;.
+
+
+### The site:
+
+Another simple interface with a few functions implemented.
+Also some pictures..
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/42b4c5725700ef5b5e7cdb62f7f9bd1da1969ba1.png&quot; width=&quot;690&quot; height=&quot;432&quot;&gt;
+
+### The source
+
+When looking at the source we can easily identify important .php scripts like
+the **login.php** and the **register.php** as well as what they expect in terms 
+of input..
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/8/8281073f88c1dda5f8bd4dedd8cd449d12b5cd95.png&quot; width=&quot;690&quot; height=&quot;175&quot;&gt;
+
+
+
+### The &#39;hack&#39;
+[spoiler]
+
+Okay first let&#39;s try registering a new account to find out more about the internals.
+
+Look at this we got access and directly can see the other functions we have to use
+
+* transfer money -&gt; **movemoney.php**
+* delete logs -&gt;  **cleardir.php**
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/9/9d537c158903b405fcd7034d6b65c338b814207a.png&quot; width=&quot;483&quot; height=&quot;75&quot;&gt;
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/c6a12118e1fcab54cff437728f1e682f9eec7890.png&quot; width=&quot;492&quot; height=&quot;69&quot;&gt;
+
+Anyway the &#39;hack&#39; here now includes [cookie forgery](https://paladion.net/cookie-forgery-part-1/). 
+We can look at our cookies in the developer tools in our browser..
+
+Okay let&#39;s check if we can get this cookie as an output through javascript injection.
+Let&#39;s try this in our browser:
+
+    javascript:alert(document.cookie);
+
+
+And voilá.. The site is vulnerable to this..
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/8/8306407e8c8531cbf8b59395add0fd5fc38c4984.png&quot; width=&quot;690&quot; height=&quot;94&quot;&gt;
+
+
+Okay let&#39;s look for the account in question here. Let&#39;s use the search:
+Just looking for Gary Hunter didn&#39;t reveal any users so let&#39;s try to dump the whole userbase.
+Time for some SQL injection in the search field:
+
+    &#39; or &#39;1=1&#39; 
+
+
+And voilá again.. We can find GaryWilliamHunter here as a user. So what now?
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/a/ab0f5da90dd7cb0f546dbd4baa9ec4d31a1b91c4.png&quot; width=&quot;635&quot; height=&quot;499&quot;&gt;
+
+
+But hey! Remember the cookie thing?
+Let&#39;s edit our own cookie with the credentials from our bro Gary.
+Now let&#39;s try to move cash with our forged cookie..
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/044f7e4ddd0741daf4f6f37ca233d68f1a4e7b04.png&quot; width=&quot;690&quot; height=&quot;257&quot;&gt;
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/e/ea58e27f9c9c33c4adc83e29e1d78f0f7bc086ab.png&quot; width=&quot;549&quot; height=&quot;146&quot;&gt;
+
+Works like a charme :O
+
+
+Time to delete the logfiles for part 2 of the task!
+Login again. Check the &quot;Clear Files in Personal Folder&quot; code.
+
+We can see that the value here is **not** logfiles but our username+SQLFiles..
+This is not what we want.. let&#39;s change this value to logfiles:
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/70d5098500082313158f4705ea33b44cbcc838f3.png&quot; width=&quot;464&quot; height=&quot;92&quot;&gt;
+
+
+And done! Just hit &#39;Clear Files in Personal Folder&#39; and the challenge is solved..
+
+
+
+### Bonus time 
+
+Solving these tasks in javascript:
+
+#### Stage 1
+
+    javascript:void(document.write(&#39;&lt;form name=the_form action=movemoney.php method=post&gt;&lt;input type=hidden name=FROM value=GaryWilliamHunter&gt;&lt;input type=hidden name=TO value=dropCash&gt;&lt;input type=hidden name=AMOUNT value=10000000&gt; &lt;input type=submit value=&quot;move money&quot; &gt;&lt;/form&#39;))
+
+#### Stage 2
+
+    javascript:void(document.write(&#39;&lt;form action=cleardir.php method=post&gt;&lt;input type=hidden name=dir value=LogFiles&gt;&lt;input type=submit value=&quot;clear files&quot;&gt;&lt;/form&#39;))
+
+
+[further reading to javascript:void](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/void)
+
+
+
+[/spoiler]
+
+
+# Conclusions
+Another small fun challenge for testing out some methods.
+We already learned these briefly in the past challenges.
+This time we had to combine some of these to solve the challenge. Still not a problem.  
+The next article of the series can be found [here](https://0x00sec.org/t/hts-org-r9-challenge/) once it&#39;s up!!
+ 
+Stay tuned ;)</description>
+    
+    <lastBuildDate>Tue, 13 Jun 2017 08:57:11 +0000</lastBuildDate>
+    <category>Web Hacking</category>
+    <atom:link href="https://d.clarkee.co.uk/t/hts-org-r8-challenge/2337.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>HTS.org R8 challenge</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <h1><a name="p-10572-preface-1" class="anchor" href="https://d.clarkee.co.uk#p-10572-preface-1"></a>Preface</h1>
+<p>###<span class="hashtag-raw">#As</span> always:<br>
+I stated my reasoning behind this article series in the first article which can be found <a href="https://0x00sec.org/t/hts-org-r1-challenge/">here</a>.<br>
+To avoid redundancy please check out the preface over there and let’s get right into action!</p>
+<p><em><strong>note:</strong></em> If I write non sense in this and the next following articles please correct me for the sake of me and others not getting confused and mixed up with things <img src="https://d.clarkee.co.uk/images/emoji/twitter/slight_smile.png?v=15" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> .</p>
+<h4><a name="p-10572-author-assigned-level-wannabe-2" class="anchor" href="https://d.clarkee.co.uk#p-10572-author-assigned-level-wannabe-2"></a>Author Assigned Level: Wannabe</h4>
+<h4><a name="p-10572-community-assigned-level-3" class="anchor" href="https://d.clarkee.co.uk#p-10572-community-assigned-level-3"></a>Community Assigned Level:</h4>
+<p><a href="https://d.clarkee.co.uk/t/hts-org-r8-challenge/2337/1">Click to view the poll.</a></p>
+<h4><a name="p-10572-required-skills-4" class="anchor" href="https://d.clarkee.co.uk#p-10572-required-skills-4"></a>Required Skills</h4>
+<p>Since we’re starting at the beginning not much knowledge is required at the moment.</p>
+<ul>
+<li>knowledge about html</li>
+<li>knowledge about web page structure</li>
+<li>cookies</li>
+<li>SQL injection</li>
+<li>javascript injection</li>
+</ul>
+<h4><a name="p-10572-disclaimer-5" class="anchor" href="https://d.clarkee.co.uk#p-10572-disclaimer-5"></a>Disclaimer</h4>
+<p>These write ups are only my 2 cents on the challenges. So don’t take them too seriously. <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+<hr>
+<h1><a name="p-10572-htsorg-realistic-challenges-6" class="anchor" href="https://d.clarkee.co.uk#p-10572-htsorg-realistic-challenges-6"></a><a href="http://HTS.org">HTS.org</a> realistic challenges</h1>
+<h3><a name="p-10572-realistic-challenge-8httpswwwhackthissiteorgmissionsrealistic8-7" class="anchor" href="https://d.clarkee.co.uk#p-10572-realistic-challenge-8httpswwwhackthissiteorgmissionsrealistic8-7"></a><a href="https://www.hackthissite.org/missions/realistic/8/">Realistic challenge 8</a></h3>
+<h4><a name="p-10572-message-8" class="anchor" href="https://d.clarkee.co.uk#p-10572-message-8"></a>Message:</h4>
+<blockquote>
+<p>Hey man, you gotta help me out, Gary Hunter, one of the richest men in America, has just deposited $10,000,000 into his bank account at the United Banks Of America and plans to donate that money to a campaign to hunt down and lock up all hackers. Now I’ve tried hacking their site but I’m just not good enough. That’s why I need your help, Here’s a list of your objectives:</p>
+</blockquote>
+<ol>
+<li>Find the account of Gary Hunter (I don’t know his account name).</li>
+<li>Move the $10,000,000 into the account dropCash.</li>
+<li>Clear The Logs, They’re held in the folder ‘logFiles’.<br>
+I really hope you can do this, because if you can’t we’re all screwed</li>
+</ol>
+<h4><a name="p-10572-what-can-we-extract-from-the-message-9" class="anchor" href="https://d.clarkee.co.uk#p-10572-what-can-we-extract-from-the-message-9"></a>What can we extract from the message?</h4>
+<p>Well this time the message was so nice to format the objectives nicely already, so for the sake of completion:</p>
+<ul>
+<li>Find the account of Gary Hunter (I don’t know his account name).</li>
+<li>Move the $10,000,000 into the account dropCash.</li>
+<li>Clear The Logs, They’re held in the folder ‘logFiles’.</li>
+</ul>
+<h3><a name="p-10572-the-site-10" class="anchor" href="https://d.clarkee.co.uk#p-10572-the-site-10"></a>The site:</h3>
+<p>Another simple interface with a few functions implemented.<br>
+Also some pictures..<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/4/42b4c5725700ef5b5e7cdb62f7f9bd1da1969ba1.png" data-download-href="/uploads/short-url/9w6OrWLuFOUGXaxBe721RiqVvAl.png?dl=1" title="Screenshot at 2017-06-13 09-42-53.png"><img src="//0x00sec.s3.amazonaws.com/original/2X/4/42b4c5725700ef5b5e7cdb62f7f9bd1da1969ba1.png" width="690" height="432"></a></div><p></p>
+<h3><a name="p-10572-the-source-11" class="anchor" href="https://d.clarkee.co.uk#p-10572-the-source-11"></a>The source</h3>
+<p>When looking at the source we can easily identify important .php scripts like<br>
+the <strong>login.php</strong> and the <strong>register.php</strong> as well as what they expect in terms<br>
+of input..</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/8/8281073f88c1dda5f8bd4dedd8cd449d12b5cd95.png" data-download-href="/uploads/short-url/iCuvO8REEP9FWEDIZl9klLGyf1H.png?dl=1" title="Screenshot at 2017-06-13 10-50-17.png"><img src="//0x00sec.s3.amazonaws.com/original/2X/8/8281073f88c1dda5f8bd4dedd8cd449d12b5cd95.png" width="690" height="175"></a></div><p></p>
+<h3><a name="p-10572-the-hack-12" class="anchor" href="https://d.clarkee.co.uk#p-10572-the-hack-12"></a>The ‘hack’</h3>
+<div class="spoiler"><a href="https://d.clarkee.co.uk/t/hts-org-r8-challenge/2337/1">spoiler</a></div>
+<h1><a name="p-10572-conclusions-16" class="anchor" href="https://d.clarkee.co.uk#p-10572-conclusions-16"></a>Conclusions</h1>
+<p>Another small fun challenge for testing out some methods.<br>
+We already learned these briefly in the past challenges.<br>
+This time we had to combine some of these to solve the challenge. Still not a problem.<br>
+The next article of the series can be found <a href="https://0x00sec.org/t/hts-org-r9-challenge/">here</a> once it’s up!!</p>
+<p>Stay tuned <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/hts-org-r8-challenge/2337/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/hts-org-r8-challenge/2337/1</link>
+        <pubDate>Tue, 13 Jun 2017 08:57:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2337-1</guid>
+        <source url="https://d.clarkee.co.uk/t/hts-org-r8-challenge/2337.rss">HTS.org R8 challenge</source>
+      </item>
+  </channel>
+</rss>

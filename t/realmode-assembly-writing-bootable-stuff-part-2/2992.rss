@@ -1,0 +1,722 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+    <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992</link>
+    <description># Realmode Assembly - Writing bootable stuff - Part 2
+## Part 2: Hello World Bootloader
+
+----------
+
+## What is this?
+This is going to be a walk-through in writing an Operation System in assembly which operates purely in Realmode.
+Goal will be writing different kernels from a simple &quot;Hello World&quot; over small terminal programs to
+graphically displayed games.
+	
+	
+## Requirements:
+* Being able to read x86 Intel Assembly
+* Being tolerant enough to accept my assembly code even though it might not be perfect
+* Reading the previous article
+	
+## Notes
+
+* This information is the result of my research and own programming, everything said here might be wrong, correct me if you spot mistakes though!
+* I will try to list my sources at the bottom but I can&#39;t guarantee that these are all of them.
+* I&#39;M NOT RESPONSIBLE IF YOU BREAK SOMETHING USING INFORMATION I PROVIDED HERE.
+	
+## Content of this Article:
+This article will be about writing a Master Boot Record that loads a small
+kernel into memory that then prints out a &quot;Hello World&quot; message
+	
+## Tools used:
+
+* NASM for compiling assembly code to raw binary
+* A text editor to write the code in
+
+
+
+----------
+
+
+## Writing a loader for the kernel:
+
+So to start we are going to write a minimalistic bootloader that just loads the kernel and then gives control to it. We will improve the bootloader later and make it more abstract and reliable but for the explanation this will be enough.
+	
+Let&#39;s go:
+We will need to execute two interrupts, one to reset the disk system which will ensure we will read the right partand one to read the kernel from hard drive to RAM. As already explained in the last article we will use the interrupt 0x13 which decides which disk operation to execute based on the ah register (higher byte of ax, which is the lower word of eax).
+
+For the disk resetting we will use the first function of the interrupt 0x13, so ah will be set to 0. I will use the syntax int 0x13,0 to refer to this interrupt to make my life a bit easier. Int 0x13,0 takes two parameters ah = 0 and dl = drive number (a number representing a specific drive. for example: 0x80 = drive 0). Luckily the BIOS (or better said almost every BIOS) puts the drive number of the device currently booting from (in our case the hard drive the kernel is on or an emulated device) into dl before giving control to the MBR, so we will assume that the drive number is already in dl which will be the case most of the time.
+
+```makefile
+|----int----|--ah--|------dl------|------Description------|
+|  int 0x13 |   0  | drive number | Resetting Disk System |
+|-----------|------|--------------|-----------------------|
+```
+
+As already explained previously the bootloader will be loaded into 0st segment at address 0x7c00 so we also have to tell NASM to calculate offsets starting from that address. Also let&#39;s tell NASM that we are in 16bit mode so it tells us when we use illegal instructions for this mode and knows how to correctly refer to memory.
+ 
+```asm
+org 0x7C00 ;NASM now calculated everything with the right offset
+bits 16
+mov ah, 0
+int 0x13 ;  int 0x13,0  dl = drive number
+..
+```
+
+
+Now that the disk system is reset we can start reading from the correct offset of the hard drive we boot from. For that we will use int 0x13,2. It takes an address within the RAM to write in as argument into bx, we will just write it to 0x8000 as it&#39;s free space. The al register will contain the amount of sectors to read, this will be the size of our kernel and as our HelloWorld Kernel will be small we just write a 1 into al (1 sector = 512 bytes, size of kernel has to be multiple of 512 bytes). If we increase the size of our kernel we have to increase this number as well and because it&#39;s pretty annoying to change this every time we make the kernel bigger so we will later look at ways to make this easier for us. The address to read from is in the Cylinder-Head-Sector (CHS) format (which is a pretty old format for addresses on hard drives) so we have to do some converting (also knowing the math behind those numbers helps reading from other segments):
+
+
+(Following values are true for 1.44 MB 3.5&quot; Floppy Disks , the theory applies for every hard drive. Obviously this memory layout doesn&#39;t make sense for USB-Devices and similar but as it&#39;s the way the BIOS works we will later add a Standard BIOS Parameter Block which will define the following values for the BIOS)
+
+Each Sector has a size of 512 (BytesPerSector) bytes. Sectors start with 1.
+Each Head contains 18 (SectorsPerTrack) sectors.
+Each Cylinder (also called Track) contains 2(Sides) Heads. There are 2(Sides) Cylinders. 
+
+Using this we can calculate the CHS-Values for the logical segment(continuous numeration starting from 0) we want to read from. The bootloader is at logical segment 0 (as it&#39;s the first segment on the hard drive). After that the kernel follows at logical segment 1 (as it&#39;s directly after the bootloader on the hard drive and the bootloader is exactly 512 bytes (1 segment) in size.)
+
+```makefile
+|----int----|--ah--|------dl------|-------ch------|------dh------|------cl--------|------Description------|
+|  int 0x13 |   2  | drive number | Reading Track | Reading Head | Reading Sector | Read from Hard drive  |
+|-----------|------|--------------|---------------|--------------|----------------|-----------------------|
+```
+
+```makefile
+Logical segment ls = 1
+=&gt;
+Cylinder is saved in ch
+ch = Cylinder/Track = (ls/SectorsPerTrack)/Sides = 0
+Head is saved in dh
+dh = Head =(ls/SectorsPerTrack)%Sides = 0
+Sector is saved in cl
+cl = Sector = (ls%SectorsPerTrack)+1 = 2
+```
+
+Our new code now looks like this:
+```asm
+..
+mov bx, 0x8000     ; bx = address to write the kernel to
+mov al, 1 		   ; al = amount of sectors to read
+mov ch, 0          ; cylinder/track = 0
+mov dh, 0          ; head           = 0
+mov cl, 2          ; sector         = 2
+mov ah, 2          ; ah = 2: read from drive
+int 0x13   		   ; =&gt; ah = status, al = amount read
+```
+
+Ok next let&#39;s add the remaining parts to make this bootloader work:
+
+```asm
+..
+; pass execution to kernel	
+jmp 0x8000
+;$ = address of current position, $$ = address for start of segment, so ($-$$) = amount of already filled bytes of this segment
+;pads everything from here up to 510 with 0&#39;s, also gives compiler errors if not possible which
+;might happen if we already wrote more than 510 bytes in this segment and thus causes ($-$$) to be negative
+;this is very useful as it makes sure that the resulting binary has a size multiple of 512 which is required to make everything work
+times 510-($-$$) db 0
+;Begin MBR Signature
+db 0x55 ;byte 511 = 0x55
+db 0xAA ;byte 512 = 0xAA
+```
+
+Ok now our bootloader is finally done but as we don&#39;t have a kernel yet we can&#39;t test it.
+
+Complete MBR Code:
+```asm
+org 0x7C00
+;Reset disk system
+mov ah, 0
+int 0x13 ; 0x13 ah=0 dl = drive number
+
+;Read from harddrive and write to RAM
+mov bx, 0x8000     ; bx = address to write the kernel to
+mov al, 1 		   ; al = amount of sectors to read
+mov ch, 0          ; cylinder/track = 0
+mov dh, 0          ; head           = 0
+mov cl, 2          ; sector         = 2
+mov ah, 2          ; ah = 2: read from drive
+int 0x13   		   ; =&gt; ah = status, al = amount read
+jmp 0x8000
+times 510-($-$$) db 0
+;Begin MBR Signature
+db 0x55 ;byte 511 = 0x55
+db 0xAA ;byte 512 = 0xAA
+```
+
+
+## Writing a kernel for the loader:
+Now that we have a bootloader that loads our kernel let&#39;s start writing our kernel. The kernel is supposed to print out a &quot;Hello World&quot; message and then halt/stop everything.
+
+Printing something to the display means we need a way to interact with it. BIOS Interrupt 0x10 will help us here as it&#39;s responsible for all kinds of video services (printing characters, drawing pixels, ..). We will print the string &quot;Hello World&quot; character after character using int 0x10,0xE which takes a single character (ASCII) in register al, the page to write to in bh (there is enough memory to have a few text pages for quick swapping, default is page 0) and color attributes in bl (but this is only displayed if we are in a graphical mode with which we will mess later).
+
+```makefile
+|----int----|--ah--|------------al------------|---------bh-------|-------bl-------|-----------Description-----------|
+|  int 0x10 | 0xE  | ASCII Character to print | Page to write to | Color Attribute| Print a character to the screen |
+|-----------|------|--------------------------|------------------|----------------|---------------------------------|
+```
+
+So our print character functions should look like this:
+```asm
+printCharacter:
+	;before calling this function al must be set to the character to print
+	mov bh, 0x00 ;page to write to, page 0 is displayed by default
+	mov bl, 0x00 ;color attribute, doesn&#39;t matter for now
+	mov ah, 0x0E 
+	int 0x10 ; int 0x10, 0x0E = print character in al
+	ret	
+```
+
+Given how to print a single character the remaining code for printing a string is pretty simple:
+```asm
+printNullTerminatedString:
+	pusha ;save all registers to be able to call this from where every we want
+	.loop:
+		lodsb ;loads byte from si into al and increases si
+		test al, al ;test if al is 0 which would mean the string reached it&#39;s end
+		jz .end
+		call printCharacter ;print character in al
+	jmp .loop ;print next character
+	.end:
+	popa ;restore registers to original state
+	ret
+```
+Now we just have to put it together by telling NASM the right offset and instruction size and actually calling the printNullTerminatedString function. Note that I added a padding again to ensure that the final kernel has a size multiple of 512 as it might result in problems reading from the hard drive if  the size isn&#39;t correct.
+```asm
+org 0x8000 
+bits 16
+mov si, msg
+call printNullTerminatedString
+
+jmp $   ; this freezes the system, best for testing
+hlt		;this makes a real system halt
+ret     ;this makes qemu halt, to ensure everything works we add both
+
+printCharacter:
+	;before calling this function al must be set to the character to print
+	mov bh, 0x00 ;page to write to, page 0 is displayed by default
+	mov bl, 0x00 ;color attribute, doesn&#39;t matter for now
+	mov ah, 0x0E 
+	int 0x10 ; int 0x10, 0x0E = print character in al
+	ret	
+printNullTerminatedString:
+	pusha ;save all registers to be able to call this from where every we want
+	.loop:
+		lodsb ;loads byte from si into al and increases si
+		test al, al ;test if al is 0 which would mean the string reached it&#39;s end
+		jz .end
+		call printCharacter ;print character in al
+	jmp .loop ;print next character
+	.end:
+	popa ;restore registers to original state
+	ret
+msg db &quot;Hello World!&quot;
+times 512-($-$$) db 0 ;kernel must have size multiple of 512 so let&#39;s pad it to the correct size
+```
+
+## How to build and run this?
+You can build it with the following commands:
+```bash
+nasm -fbin bootloader.asm -o bootloader.bin
+nasm -fbin kernel.asm -o kernel.bin
+cat bootloader.bin kernel.bin &gt; result.bin
+```
+And run it with this:
+```bash
+qemu-system-i386 result.bin
+```
+	
+https://github.com/Pusty/realmode-assembly/raw/master/part2/doc/part2_img1.PNG
+
+
+## Conclusion:
+We now have a working bootloader and kernel. This concludes the HelloWorld kernel and bootloader part. The next part will be about how to build and run it in more detail also it will contain information on how to load the self written kernel binary to an USB-Drive and actually test it on your computer. I hope this part contained information useful to you. If I wrote something wrong just point it out and I will correct it. Feedback is appreciated.
+
+## [Next Part](https://0x00sec.org/t/realmode-assembly-writing-bootable-stuff-part-3/3116/)
+## [Previous Part](https://0x00sec.org/t/realmode-assembly-writing-bootable-stuff-part-1/2901/)
+
+----------
+
+## Link to source files:
+* https://github.com/Pusty/realmode-assembly/tree/master/part2
+
+## Other Hello World bootloaders (both don&#39;t load a kernel but are interesting anyways):
+* http://viralpatel.net/taj/tutorial/hello_world_bootloader.php
+* http://blog.ackx.net/asm-hello-world-bootloader.html
+
+## Sources:
+* http://www.nasm.us/
+* http://stanislavs.org/helppc/int_13-0.html
+* https://en.wikipedia.org/wiki/Cylinder-head-sector
+* http://www.pcguide.com/ref/fdd/mediaGeometry-c.html
+* http://mikeos.sourceforge.net/
+* http://stanislavs.org/helppc/int_13-2.html´
+* http://www.delorie.com/djgpp/doc/rbinter/id/11/1.html</description>
+    
+    <lastBuildDate>Sun, 12 Jul 2020 13:05:02 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/17</link>
+        <pubDate>Sun, 12 Jul 2020 13:24:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-17</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[Bowlslaw]]></dc:creator>
+        <description><![CDATA[
+            <p>Fret not! Part 3 is being worked on.</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/14</link>
+        <pubDate>Sun, 30 Jul 2017 13:43:17 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-14</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[febri]]></dc:creator>
+        <description><![CDATA[
+            <p>yeay ! <img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"> Is there part 3 ?</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/13</link>
+        <pubDate>Thu, 27 Jul 2017 05:30:35 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-13</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[g3troot]]></dc:creator>
+        <description><![CDATA[
+            <p>HI all, you can find a basic OS made by me. See here <a href="https://github.com/ashishhacker/TinuOS" rel="nofollow noopener">https://github.com/ashishhacker/TinuOS</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/12</link>
+        <pubDate>Wed, 26 Jul 2017 02:15:28 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-12</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[ricksanchez]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice series <a class="mention" href="https://d.clarkee.co.uk/u/leeky">@Leeky</a> . Looking forward to the next parts to extend my knowledge on more low level stuff other than asm for reversing <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/11</link>
+        <pubDate>Tue, 25 Jul 2017 19:23:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-11</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[hkh4cks]]></dc:creator>
+        <description><![CDATA[
+            <p>I want to extend it further. But it’s just difficult and time consuming for me to do it alone</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/10</link>
+        <pubDate>Tue, 25 Jul 2017 12:40:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-10</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[Leeky]]></dc:creator>
+        <description><![CDATA[
+            <p>Interesting stuff there!<br>
+I never messed with protected mode before but I see lots of familiar code. <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:">  I also see that you are working with both C and Assembly which is apparently quite common but I’ve never messed with that either (as I mainly did real mode assembly to get into x86 assembly). Is that something people are interested in for further walk-throughs ( I mean this is a assembly article but I could still show some c/asm code)? The resources also look excellent, will read through them (but I have lots of other stuff to read first).Loading the OS to GDB is very interesting as well, my debugging was more of a trial and error approach, need to experiment with that for the next part!</p>
+<p>Thank you for comment.<br>
+I also see that you haven’t messed with graphical modes yet so this might get interesting for you as well!</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/9</link>
+        <pubDate>Tue, 25 Jul 2017 04:33:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-9</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[hkh4cks]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m happy to share my code and open to any improvements.<br>
+<a href="https://github.com/HrushikeshK/miniOS" rel="nofollow noopener">miniOS</a></p>
+<p>Feel free to contribute <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/8</link>
+        <pubDate>Tue, 25 Jul 2017 03:56:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-8</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[Leeky]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m happy that you enjoyed it!<br>
+The next parts that I’ve planned will be about How to Run/Build it and Writing a small input/output console kernel.<br>
+I haven’t messed with the Interrupt Service Routines that much yet, only ever written a custom keyboard handler with it, I’m very interested in your code if you are willing to share it! <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/7</link>
+        <pubDate>Mon, 24 Jul 2017 14:09:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-7</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[hkh4cks]]></dc:creator>
+        <description><![CDATA[
+            <p>Great tutorial.<br>
+I’ve completed this part.  Also I’ve implemented ISR and IRQ. I would like to know what’s next!</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/6</link>
+        <pubDate>Sat, 22 Jul 2017 17:58:37 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-6</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[BO41]]></dc:creator>
+        <description><![CDATA[
+            <p>ok, thank you for explaining <img src="https://0x00sec.org/images/emoji/twitter/slightly_smiling_face.png?v=9" title=":slightly_smiling_face:" class="emoji" alt=":slightly_smiling_face:"></p>
+<p>Would have been too easy and powerful</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/5</link>
+        <pubDate>Sat, 22 Jul 2017 08:57:59 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-5</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[Leeky]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="BO41" data-post="2" data-topic="2992">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/b/59ef9b/48.png" class="avatar"> BO41:</div>
+<blockquote>
+<p>Can you use those assembler  interrupts and commands in your normal OS?<br>
+Maybe to halt the system or reset the disk like you did before booting?</p>
+</blockquote>
+</aside>
+<p>Let’s start with the interrupts. As they are only available in realmode you need to switch from your current mode (Long Mode / Protected Mode) to it and that’s nothing normal user programs can do (nor do I recommend that, didn’t try it myself though). But if you are running DOS you can use them freely as far as I know.<br>
+The command thing is a bit different as it’s not using the BIOS. For example the hlt instruction is only available from ring 0 (kernel mode) so again nothing a user program can do but nothing impossible either.</p>
+<p>Hope this helped.</p>
+<p>##<span class="hashtag-raw">#Sources:</span></p>
+<ul>
+<li><a href="http://www.shsu.edu/~csc_tjm/spring2001/cs272/interrupt.html" rel="noopener nofollow ugc">http://www.shsu.edu/~csc_tjm/spring2001/cs272/interrupt.html</a></li>
+<li><a href="https://en.wikipedia.org/wiki/Protection_ring" class="inline-onebox" rel="noopener nofollow ugc">Protection ring - Wikipedia</a></li>
+<li><a href="https://en.wikipedia.org/wiki/HLT_(x86_instruction)" class="inline-onebox" rel="noopener nofollow ugc">HLT (x86 instruction) - Wikipedia</a></li>
+</ul>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/4</link>
+        <pubDate>Fri, 21 Jul 2017 20:58:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-4</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Great post <a class="mention" href="https://d.clarkee.co.uk/u/leeky">@Leeky</a>!</p>
+<p>As discussed yesterday on IRC… this is slight modification poking the video memory instead of using the slow BIOS <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<pre><code class="lang-auto">org 0x8000
+bits 16
+	push  0xb800
+	pop   es     		; Set ES to the Video Memory
+	;; Clear screen
+	mov ax, 0x1000    	; Clean screen blue background
+	call  cls
+	;; Print message
+	mov   si, msg
+	call  print
+	;; Done!
+	jmp $   ; this freezes the system, best for testing
+	hlt	;this makes a real system halt
+	ret     ;this makes qemu halt, to ensure everything works we add both
+
+cls:
+	xor   di,di
+	mov   cx, 80*24		;Default console size
+	repnz stosw
+	ret
+
+print:
+	xor   di, di
+	mov   ah, 0x1e		; Text Color :)
+
+.loop:
+	lodsb       ;loads byte from si into al and increases si
+	test  al, al ;tests end of string
+	jz    .end
+        stosw	    ; Stores AX (char + color)
+	jmp   .loop ;print next character
+
+.end:
+	ret
+
+
+msg   db "Hello World!"
+times 512-($-$$) db 0 ; Make it a disk sector
+
+</code></pre>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/3</link>
+        <pubDate>Fri, 21 Jul 2017 17:23:18 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-3</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[BO41]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote group-VIP" data-username="Leeky" data-post="1" data-topic="2992">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/leeky/48/41432_2.png" class="avatar"> Leeky:</div>
+<blockquote>
+<p>The next part will be about how to build and run it in more detail</p>
+</blockquote>
+</aside>
+<p>I really like this series. Extremely interesting. <img src="https://d.clarkee.co.uk/images/emoji/twitter/slight_smile.png?v=15" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
+<p>I hope you can keep the requirements low, so that I can follow.</p>
+<p>Can you use those assembler  interrupts and commands in your normal OS?<br>
+Maybe to halt the system or reset the disk like you did before booting?</p>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/2</link>
+        <pubDate>Fri, 21 Jul 2017 11:44:40 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-2</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+      <item>
+        <title>Realmode Assembly - Writing bootable stuff - Part 2</title>
+        <dc:creator><![CDATA[Leeky]]></dc:creator>
+        <description><![CDATA[
+            <h1>Realmode Assembly - Writing bootable stuff - Part 2</h1>
+<h2>Part 2: Hello World Bootloader</h2>
+<hr>
+<h2>What is this?</h2>
+<p>This is going to be a walk-through in writing an Operation System in assembly which operates purely in Realmode.<br>
+Goal will be writing different kernels from a simple “Hello World” over small terminal programs to<br>
+graphically displayed games.</p>
+<h2>Requirements:</h2>
+<ul>
+<li>Being able to read x86 Intel Assembly</li>
+<li>Being tolerant enough to accept my assembly code even though it might not be perfect</li>
+<li>Reading the previous article</li>
+</ul>
+<h2>Notes</h2>
+<ul>
+<li>This information is the result of my research and own programming, everything said here might be wrong, correct me if you spot mistakes though!</li>
+<li>I will try to list my sources at the bottom but I can’t guarantee that these are all of them.</li>
+<li>I’M NOT RESPONSIBLE IF YOU BREAK SOMETHING USING INFORMATION I PROVIDED HERE.</li>
+</ul>
+<h2>Content of this Article:</h2>
+<p>This article will be about writing a Master Boot Record that loads a small<br>
+kernel into memory that then prints out a “Hello World” message</p>
+<h2>Tools used:</h2>
+<ul>
+<li>NASM for compiling assembly code to raw binary</li>
+<li>A text editor to write the code in</li>
+</ul>
+<hr>
+<h2>Writing a loader for the kernel:</h2>
+<p>So to start we are going to write a minimalistic bootloader that just loads the kernel and then gives control to it. We will improve the bootloader later and make it more abstract and reliable but for the explanation this will be enough.</p>
+<p>Let’s go:<br>
+We will need to execute two interrupts, one to reset the disk system which will ensure we will read the right partand one to read the kernel from hard drive to RAM. As already explained in the last article we will use the interrupt 0x13 which decides which disk operation to execute based on the ah register (higher byte of ax, which is the lower word of eax).</p>
+<p>For the disk resetting we will use the first function of the interrupt 0x13, so ah will be set to 0. I will use the syntax int 0x13,0 to refer to this interrupt to make my life a bit easier. Int 0x13,0 takes two parameters ah = 0 and dl = drive number (a number representing a specific drive. for example: 0x80 = drive 0). Luckily the BIOS (or better said almost every BIOS) puts the drive number of the device currently booting from (in our case the hard drive the kernel is on or an emulated device) into dl before giving control to the MBR, so we will assume that the drive number is already in dl which will be the case most of the time.</p>
+<pre><code class="lang-makefile">|----int----|--ah--|------dl------|------Description------|
+|  int 0x13 |   0  | drive number | Resetting Disk System |
+|-----------|------|--------------|-----------------------|
+</code></pre>
+<p>As already explained previously the bootloader will be loaded into 0st segment at address 0x7c00 so we also have to tell NASM to calculate offsets starting from that address. Also let’s tell NASM that we are in 16bit mode so it tells us when we use illegal instructions for this mode and knows how to correctly refer to memory.</p>
+<pre><code class="lang-auto">org 0x7C00 ;NASM now calculated everything with the right offset
+bits 16
+mov ah, 0
+int 0x13 ;  int 0x13,0  dl = drive number
+..
+</code></pre>
+<p>Now that the disk system is reset we can start reading from the correct offset of the hard drive we boot from. For that we will use int 0x13,2. It takes an address within the RAM to write in as argument into bx, we will just write it to 0x8000 as it’s free space. The al register will contain the amount of sectors to read, this will be the size of our kernel and as our HelloWorld Kernel will be small we just write a 1 into al (1 sector = 512 bytes, size of kernel has to be multiple of 512 bytes). If we increase the size of our kernel we have to increase this number as well and because it’s pretty annoying to change this every time we make the kernel bigger so we will later look at ways to make this easier for us. The address to read from is in the Cylinder-Head-Sector (CHS) format (which is a pretty old format for addresses on hard drives) so we have to do some converting (also knowing the math behind those numbers helps reading from other segments):</p>
+<p>(Following values are true for 1.44 MB 3.5" Floppy Disks , the theory applies for every hard drive. Obviously this memory layout doesn’t make sense for USB-Devices and similar but as it’s the way the BIOS works we will later add a Standard BIOS Parameter Block which will define the following values for the BIOS)</p>
+<p>Each Sector has a size of 512 (BytesPerSector) bytes. Sectors start with 1.<br>
+Each Head contains 18 (SectorsPerTrack) sectors.<br>
+Each Cylinder (also called Track) contains 2(Sides) Heads. There are 2(Sides) Cylinders.</p>
+<p>Using this we can calculate the CHS-Values for the logical segment(continuous numeration starting from 0) we want to read from. The bootloader is at logical segment 0 (as it’s the first segment on the hard drive). After that the kernel follows at logical segment 1 (as it’s directly after the bootloader on the hard drive and the bootloader is exactly 512 bytes (1 segment) in size.)</p>
+<pre><code class="lang-makefile">|----int----|--ah--|------dl------|-------ch------|------dh------|------cl--------|------Description------|
+|  int 0x13 |   2  | drive number | Reading Track | Reading Head | Reading Sector | Read from Hard drive  |
+|-----------|------|--------------|---------------|--------------|----------------|-----------------------|
+</code></pre>
+<pre><code class="lang-makefile">Logical segment ls = 1
+=&gt;
+Cylinder is saved in ch
+ch = Cylinder/Track = (ls/SectorsPerTrack)/Sides = 0
+Head is saved in dh
+dh = Head =(ls/SectorsPerTrack)%Sides = 0
+Sector is saved in cl
+cl = Sector = (ls%SectorsPerTrack)+1 = 2
+</code></pre>
+<p>Our new code now looks like this:</p>
+<pre><code class="lang-auto">..
+mov bx, 0x8000     ; bx = address to write the kernel to
+mov al, 1 		   ; al = amount of sectors to read
+mov ch, 0          ; cylinder/track = 0
+mov dh, 0          ; head           = 0
+mov cl, 2          ; sector         = 2
+mov ah, 2          ; ah = 2: read from drive
+int 0x13   		   ; =&gt; ah = status, al = amount read
+</code></pre>
+<p>Ok next let’s add the remaining parts to make this bootloader work:</p>
+<pre><code class="lang-auto">..
+; pass execution to kernel	
+jmp 0x8000
+;$ = address of current position, $$ = address for start of segment, so ($-$$) = amount of already filled bytes of this segment
+;pads everything from here up to 510 with 0's, also gives compiler errors if not possible which
+;might happen if we already wrote more than 510 bytes in this segment and thus causes ($-$$) to be negative
+;this is very useful as it makes sure that the resulting binary has a size multiple of 512 which is required to make everything work
+times 510-($-$$) db 0
+;Begin MBR Signature
+db 0x55 ;byte 511 = 0x55
+db 0xAA ;byte 512 = 0xAA
+</code></pre>
+<p>Ok now our bootloader is finally done but as we don’t have a kernel yet we can’t test it.</p>
+<p>Complete MBR Code:</p>
+<pre><code class="lang-auto">org 0x7C00
+;Reset disk system
+mov ah, 0
+int 0x13 ; 0x13 ah=0 dl = drive number
+
+;Read from harddrive and write to RAM
+mov bx, 0x8000     ; bx = address to write the kernel to
+mov al, 1 		   ; al = amount of sectors to read
+mov ch, 0          ; cylinder/track = 0
+mov dh, 0          ; head           = 0
+mov cl, 2          ; sector         = 2
+mov ah, 2          ; ah = 2: read from drive
+int 0x13   		   ; =&gt; ah = status, al = amount read
+jmp 0x8000
+times 510-($-$$) db 0
+;Begin MBR Signature
+db 0x55 ;byte 511 = 0x55
+db 0xAA ;byte 512 = 0xAA
+</code></pre>
+<h2>Writing a kernel for the loader:</h2>
+<p>Now that we have a bootloader that loads our kernel let’s start writing our kernel. The kernel is supposed to print out a “Hello World” message and then halt/stop everything.</p>
+<p>Printing something to the display means we need a way to interact with it. BIOS Interrupt 0x10 will help us here as it’s responsible for all kinds of video services (printing characters, drawing pixels, …). We will print the string “Hello World” character after character using int 0x10,0xE which takes a single character (ASCII) in register al, the page to write to in bh (there is enough memory to have a few text pages for quick swapping, default is page 0) and color attributes in bl (but this is only displayed if we are in a graphical mode with which we will mess later).</p>
+<pre><code class="lang-makefile">|----int----|--ah--|------------al------------|---------bh-------|-------bl-------|-----------Description-----------|
+|  int 0x10 | 0xE  | ASCII Character to print | Page to write to | Color Attribute| Print a character to the screen |
+|-----------|------|--------------------------|------------------|----------------|---------------------------------|
+</code></pre>
+<p>So our print character functions should look like this:</p>
+<pre><code class="lang-auto">printCharacter:
+	;before calling this function al must be set to the character to print
+	mov bh, 0x00 ;page to write to, page 0 is displayed by default
+	mov bl, 0x00 ;color attribute, doesn't matter for now
+	mov ah, 0x0E 
+	int 0x10 ; int 0x10, 0x0E = print character in al
+	ret	
+</code></pre>
+<p>Given how to print a single character the remaining code for printing a string is pretty simple:</p>
+<pre><code class="lang-auto">printNullTerminatedString:
+	pusha ;save all registers to be able to call this from where every we want
+	.loop:
+		lodsb ;loads byte from si into al and increases si
+		test al, al ;test if al is 0 which would mean the string reached it's end
+		jz .end
+		call printCharacter ;print character in al
+	jmp .loop ;print next character
+	.end:
+	popa ;restore registers to original state
+	ret
+</code></pre>
+<p>Now we just have to put it together by telling NASM the right offset and instruction size and actually calling the printNullTerminatedString function. Note that I added a padding again to ensure that the final kernel has a size multiple of 512 as it might result in problems reading from the hard drive if  the size isn’t correct.</p>
+<pre><code class="lang-auto">org 0x8000 
+bits 16
+mov si, msg
+call printNullTerminatedString
+
+jmp $   ; this freezes the system, best for testing
+hlt		;this makes a real system halt
+ret     ;this makes qemu halt, to ensure everything works we add both
+
+printCharacter:
+	;before calling this function al must be set to the character to print
+	mov bh, 0x00 ;page to write to, page 0 is displayed by default
+	mov bl, 0x00 ;color attribute, doesn't matter for now
+	mov ah, 0x0E 
+	int 0x10 ; int 0x10, 0x0E = print character in al
+	ret	
+printNullTerminatedString:
+	pusha ;save all registers to be able to call this from where every we want
+	.loop:
+		lodsb ;loads byte from si into al and increases si
+		test al, al ;test if al is 0 which would mean the string reached it's end
+		jz .end
+		call printCharacter ;print character in al
+	jmp .loop ;print next character
+	.end:
+	popa ;restore registers to original state
+	ret
+msg db "Hello World!"
+times 512-($-$$) db 0 ;kernel must have size multiple of 512 so let's pad it to the correct size
+</code></pre>
+<h2>How to build and run this?</h2>
+<p>You can build it with the following commands:</p>
+<pre><code class="lang-bash">nasm -fbin bootloader.asm -o bootloader.bin
+nasm -fbin kernel.asm -o kernel.bin
+cat bootloader.bin kernel.bin &gt; result.bin
+</code></pre>
+<p>And run it with this:</p>
+<pre><code class="lang-bash">qemu-system-i386 result.bin
+</code></pre>
+<p>          <a href="https://raw.githubusercontent.com/Pusty/realmode-assembly/master/part2/doc/part2_img1.PNG" target="_blank" rel="noopener nofollow ugc" class="onebox">
+            <img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2768b6a80245cdc90c4e65ad8af6fdda8c51e4bc.png" width="690" height="411">
+          </a>
+</p>
+<h2>Conclusion:</h2>
+<p>We now have a working bootloader and kernel. This concludes the HelloWorld kernel and bootloader part. The next part will be about how to build and run it in more detail also it will contain information on how to load the self written kernel binary to an USB-Drive and actually test it on your computer. I hope this part contained information useful to you. If I wrote something wrong just point it out and I will correct it. Feedback is appreciated.</p>
+<h2><a href="https://0x00sec.org/t/realmode-assembly-writing-bootable-stuff-part-3/3116/">Next Part</a></h2>
+<h2><a href="https://0x00sec.org/t/realmode-assembly-writing-bootable-stuff-part-1/2901/">Previous Part</a></h2>
+<hr>
+<h2>Link to source files:</h2>
+<ul>
+<li><a href="https://github.com/Pusty/realmode-assembly/tree/master/part2" rel="noopener nofollow ugc">https://github.com/Pusty/realmode-assembly/tree/master/part2</a></li>
+</ul>
+<h2>Other Hello World bootloaders (both don’t load a kernel but are interesting anyways):</h2>
+<ul>
+<li><a href="http://viralpatel.net/taj/tutorial/hello_world_bootloader.php" rel="noopener nofollow ugc">http://viralpatel.net/taj/tutorial/hello_world_bootloader.php</a></li>
+<li><a href="http://blog.ackx.net/asm-hello-world-bootloader.html" rel="noopener nofollow ugc">http://blog.ackx.net/asm-hello-world-bootloader.html</a></li>
+</ul>
+<h2>Sources:</h2>
+<ul>
+<li><a href="http://www.nasm.us/" rel="noopener nofollow ugc">http://www.nasm.us/</a></li>
+<li><a href="http://stanislavs.org/helppc/int_13-0.html" rel="noopener nofollow ugc">http://stanislavs.org/helppc/int_13-0.html</a></li>
+<li><a href="https://en.wikipedia.org/wiki/Cylinder-head-sector" rel="noopener nofollow ugc">https://en.wikipedia.org/wiki/Cylinder-head-sector</a></li>
+<li><a href="http://www.pcguide.com/ref/fdd/mediaGeometry-c.html" rel="noopener nofollow ugc">http://www.pcguide.com/ref/fdd/mediaGeometry-c.html</a></li>
+<li><a href="http://mikeos.sourceforge.net/" rel="noopener nofollow ugc">http://mikeos.sourceforge.net/</a></li>
+<li><a href="http://stanislavs.org/helppc/int_13-2.html%C2%B4" rel="noopener nofollow ugc">http://stanislavs.org/helppc/int_13-2.html´</a></li>
+<li><a href="http://www.delorie.com/djgpp/doc/rbinter/id/11/1.html" rel="noopener nofollow ugc">http://www.delorie.com/djgpp/doc/rbinter/id/11/1.html</a></li>
+</ul>
+          <p><a href="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992/1</link>
+        <pubDate>Thu, 20 Jul 2017 23:58:32 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-2992-1</guid>
+        <source url="https://d.clarkee.co.uk/t/realmode-assembly-writing-bootable-stuff-part-2/2992.rss">Realmode Assembly - Writing bootable stuff - Part 2</source>
+      </item>
+  </channel>
+</rss>

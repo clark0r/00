@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Crashing Hackarmy Botnet</title>
+    <link>https://0x00sec.org/t/crashing-hackarmy-botnet/16738</link>
+    <description>Hello all!
+
+I&#39;ve been away for a while. Yet I&#39;m here with a new story for you!
+This is a short story of me encountering a vulnerability while analyzing a malware. I hope you will enjoy it :slight_smile: 
+
+If you have read the black covered &quot;Secrets of Reverse Engineering&quot; you may remember Hackarmy botnet client. Its a really old IRC botnet malware from 2009. I was supposed to analyse it during an assesment I have entered. Questions were relatively trivial like; &quot;What&#39;s the c2 this malware connects to?&quot; and such. But while I was inspecting its code, something caught my attention in its IRC command parser.
+
+This malware connects to an IRC server which is hardcoded inside it. Joins a specific channel. Then starts waiting to receive commands through **private message**.
+Normally, it expects a specific password value to be sent before starting to process anything. This prevents unauthorized execution of a command.
+However this vulnerability is directly in a part which is parsing &quot;PRIVMSG&quot; command of IRC. So crashing this malware doesn&#39;t require any knowledge of password beforehand. Yay! :smiley:
+
+Take a look at the following snippet
+![resim|690x473](upload://1mw5tO09j5sQpDLnUSBs5xRi391.png) 
+
+When malware receives a data over the network:
+
+1. It first compares first 7 bytes to &quot;PRIVMSG&quot; to see if it has received an irc private message.
+2. If its indeed a private message it searches the string &quot; :&quot; (without quotes) and retrieves the beginning address of first occurence.
+
+Now lets take a look at what a PRIVMSG command looks like.
+
+&gt;PRIVMSG Wiz :Hello are you receiving this message ?
+
+So according to search operation above now you got;
+
+* &quot; :Hello are you receiving this message?&quot;
+
+Afterward it calculates *address_of_first_occurence + 2*, namely the location which actual body of the message begins. It then proceed to read the first byte and compare it to char &#39;!&#39; (some commands this malware receive start with exclamation mark).
+
+Here the malware assumes PRIVMSG commands will indeed contain a space and column. I went on to try to send one without it and see what will happen. As I suspected the IRC server redirected the private message nonetheless. And since malware couldn&#39;t parse it properly it crashed.
+
+![resim|690x312](upload://8V7OjfHEutv01TkDT25IjLL1Stn.png) 
+![resim|484x146](upload://zNXxCetCT7fVLnMPOsnjuEWrAX0.png) 
+
+But what happened exactly? By definition, the function *strstr()* returns *zero* if no occurences found.
+![resim|690x64](upload://6TQzdZW7uqnR39XXJsje00FLdK3.png) 
+
+Afterward the malware tried to calculate beginning of message body: *address_of_first_occurence+2* which is actually *0+2* since *strstr()* returned a null pointer. Then it tried to read from address **0x2**. Since this address is reserved for kernel it is inaccessible by a userland application. Operating system noticed this read attempt and **crashed** the application as a way of telling it to mind its own damn business :smiley: 
+
+So this was the vulnerability I found. No need to say that I have passed the assessment :joy:
+You may watch the video below if you would like to see a live demonstration!
+
+https://www.youtube.com/watch?v=952tJ8oDlgE
+
+I hope you enjoyed this thread see you in the next one :)</description>
+    
+    <lastBuildDate>Thu, 17 Oct 2019 11:58:15 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://0x00sec.org/t/crashing-hackarmy-botnet/16738.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Crashing Hackarmy Botnet</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/crashing-hackarmy-botnet/16738/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/crashing-hackarmy-botnet/16738/5</link>
+        <pubDate>Wed, 05 Feb 2020 09:10:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-16738-5</guid>
+        <source url="https://0x00sec.org/t/crashing-hackarmy-botnet/16738.rss">Crashing Hackarmy Botnet</source>
+      </item>
+      <item>
+        <title>Crashing Hackarmy Botnet</title>
+        <dc:creator><![CDATA[bunny]]></dc:creator>
+        <description><![CDATA[
+            <p>This is a very good discovery and look forward to the next update</p>
+          <p><a href="https://0x00sec.org/t/crashing-hackarmy-botnet/16738/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/crashing-hackarmy-botnet/16738/3</link>
+        <pubDate>Fri, 11 Oct 2019 12:06:06 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-16738-3</guid>
+        <source url="https://0x00sec.org/t/crashing-hackarmy-botnet/16738.rss">Crashing Hackarmy Botnet</source>
+      </item>
+      <item>
+        <title>Crashing Hackarmy Botnet</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Exploiting malware is alpha <img src="https://0x00sec.org/images/emoji/twitter/sunglasses.png?v=9" title=":sunglasses:" class="emoji" alt=":sunglasses:"></p>
+          <p><a href="https://0x00sec.org/t/crashing-hackarmy-botnet/16738/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/crashing-hackarmy-botnet/16738/2</link>
+        <pubDate>Sun, 06 Oct 2019 22:40:17 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-16738-2</guid>
+        <source url="https://0x00sec.org/t/crashing-hackarmy-botnet/16738.rss">Crashing Hackarmy Botnet</source>
+      </item>
+      <item>
+        <title>Crashing Hackarmy Botnet</title>
+        <dc:creator><![CDATA[hunter]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello all!</p>
+<p>I’ve been away for a while. Yet I’m here with a new story for you!<br>
+This is a short story of me encountering a vulnerability while analyzing a malware. I hope you will enjoy it <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
+<p>If you have read the black covered “Secrets of Reverse Engineering” you may remember Hackarmy botnet client. Its a really old IRC botnet malware from 2009. I was supposed to analyse it during an assesment I have entered. Questions were relatively trivial like; “What’s the c2 this malware connects to?” and such. But while I was inspecting its code, something caught my attention in its IRC command parser.</p>
+<p>This malware connects to an IRC server which is hardcoded inside it. Joins a specific channel. Then starts waiting to receive commands through <strong>private message</strong>.<br>
+Normally, it expects a specific password value to be sent before starting to process anything. This prevents unauthorized execution of a command.<br>
+However this vulnerability is directly in a part which is parsing “PRIVMSG” command of IRC. So crashing this malware doesn’t require any knowledge of password beforehand. Yay! <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=12" title=":smiley:" class="emoji" alt=":smiley:" loading="lazy" width="20" height="20"></p>
+<p>Take a look at the following snippet<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/0/098dcb2295ed448fb0661de27ff7d041dac9041b.png" data-download-href="/uploads/short-url/1mw5tO09j5sQpDLnUSBs5xRi391.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/0/098dcb2295ed448fb0661de27ff7d041dac9041b.png" alt="resim" data-base62-sha1="1mw5tO09j5sQpDLnUSBs5xRi391" width="690" height="473"></a></div><p></p>
+<p>When malware receives a data over the network:</p>
+<ol>
+<li>It first compares first 7 bytes to “PRIVMSG” to see if it has received an irc private message.</li>
+<li>If its indeed a private message it searches the string " :" (without quotes) and retrieves the beginning address of first occurence.</li>
+</ol>
+<p>Now lets take a look at what a PRIVMSG command looks like.</p>
+<blockquote>
+<p>PRIVMSG Wiz :Hello are you receiving this message ?</p>
+</blockquote>
+<p>So according to search operation above now you got;</p>
+<ul>
+<li>" :Hello are you receiving this message?"</li>
+</ul>
+<p>Afterward it calculates <em>address_of_first_occurence + 2</em>, namely the location which actual body of the message begins. It then proceed to read the first byte and compare it to char ‘!’ (some commands this malware receive start with exclamation mark).</p>
+<p>Here the malware assumes PRIVMSG commands will indeed contain a space and column. I went on to try to send one without it and see what will happen. As I suspected the IRC server redirected the private message nonetheless. And since malware couldn’t parse it properly it crashed.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/3/3e86852ead1206c91475236cba06d4cb0f35e9bd.png" data-download-href="/uploads/short-url/8V7OjfHEutv01TkDT25IjLL1Stn.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/3e86852ead1206c91475236cba06d4cb0f35e9bd.png" alt="resim" data-base62-sha1="8V7OjfHEutv01TkDT25IjLL1Stn" width="690" height="312"></a></div><br>
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/f/faf1db322af4fffe8708f2d7828736aad301c6a2.png" alt="resim" data-base62-sha1="zNXxCetCT7fVLnMPOsnjuEWrAX0" width="484" height="146"><p></p>
+<p>But what happened exactly? By definition, the function <em>strstr()</em> returns <em>zero</em> if no occurences found.<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/3/305d2f8e292d4849b39742be27511e79f20c9473.png" data-download-href="/uploads/short-url/6TQzdZW7uqnR39XXJsje00FLdK3.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/305d2f8e292d4849b39742be27511e79f20c9473.png" alt="resim" data-base62-sha1="6TQzdZW7uqnR39XXJsje00FLdK3" width="690" height="64"></a></div><p></p>
+<p>Afterward the malware tried to calculate beginning of message body: <em>address_of_first_occurence+2</em> which is actually <em>0+2</em> since <em>strstr()</em> returned a null pointer. Then it tried to read from address <strong>0x2</strong>. Since this address is reserved for kernel it is inaccessible by a userland application. Operating system noticed this read attempt and <strong>crashed</strong> the application as a way of telling it to mind its own damn business <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=12" title=":smiley:" class="emoji" alt=":smiley:" loading="lazy" width="20" height="20"></p>
+<p>So this was the vulnerability I found. No need to say that I have passed the assessment <img src="https://0x00sec.org/images/emoji/twitter/joy.png?v=12" title=":joy:" class="emoji" alt=":joy:" loading="lazy" width="20" height="20"><br>
+You may watch the video below if you would like to see a live demonstration!</p>
+<p><a href="https://www.youtube.com/watch?v=952tJ8oDlgE">burnit4</a></p>
+
+<p>I hope you enjoyed this thread see you in the next one <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/crashing-hackarmy-botnet/16738/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/crashing-hackarmy-botnet/16738/1</link>
+        <pubDate>Sun, 06 Oct 2019 17:02:44 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-16738-1</guid>
+        <source url="https://0x00sec.org/t/crashing-hackarmy-botnet/16738.rss">Crashing Hackarmy Botnet</source>
+      </item>
+  </channel>
+</rss>

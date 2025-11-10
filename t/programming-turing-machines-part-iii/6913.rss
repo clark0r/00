@@ -1,0 +1,668 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Programming Turing Machines - Part III</title>
+    <link>https://d.clarkee.co.uk/t/programming-turing-machines-part-iii/6913</link>
+    <description># Programming Turing Machines: High-level approach
+If you&#39;ve got the hang of Turing machine procedures down, at this point you should be able to write your own with relative ease.  If you aren&#39;t comfortable with them yet, revisit the last section of the [previous topic](https://0x00sec.org/t/programming-turing-machines-part-ii/6908) (feel free to use the comments section as a scratch pad to run examples by me).  I wrote out nine procedures for the Turing machine implementation that perform bitwise operations.  Before moving onto the &quot;main attraction&quot;, I will describe some of these operations, as well as some measures I took to make inference easier later on.
+
+## Procedure standards
+As I mentioned in [Part I](https://0x00sec.org/t/programming-turing-machines-part-i/6895), I use &#39;&gt;&#39; to mark the beginning of the tape.  Some of my procedures perform an operation on two words on the same tape; I use a &#39;:&#39; to mark the end of the first word.  Any procedure that requires marking symbols to keep track of previously visited cells uses &#39;\*&#39; as the marker.  As an example, I wrote a procedure that will reverse a bitstring:
+```
+; go to end of string
+s1 &gt; &gt; r s1
+s1 0 0 r s1
+s1 1 1 r s1
+s1 _ : l s2
+
+; grab value to copy
+s2 * * l s2
+s2 0 * r s3
+s2 1 * r s4
+s2 &gt; &gt; r s5
+
+; go to end of string on 0
+s3 * * r s3
+s3 0 0 r s3
+s3 1 1 r s3
+s3 : : r s3
+s3 _ 0 l s6
+
+; go to end of string on 1
+s4 * * r s4
+s4 0 0 r s4
+s4 1 1 r s4
+s4 : : r s4
+s4 _ 1 l s6
+
+; move left to :
+s6 0 0 l s6
+s6 1 1 l s6
+s6 : : l s2
+
+; delete *
+s5 * l s5
+s5 : l s5
+s5 &gt; &gt; r s5
+```
+This procedure will first append a &#39;:&#39; to the end of the tape.  Then it will loop back and forth marking and copying characters in reverse order.  To clean things up, the last thing it does is remove marking characters and the &#39;:&#39; separator.  To make things a bit more clear, here is the output configurations for the word &quot;0011&quot;:
+```t
+&gt;0011 s1
+^
+&gt;0011 s1
+ ^
+&gt;0011 s1
+  ^
+&gt;0011 s1
+   ^
+&gt;0011 s1
+    ^
+&gt;0011_ s1
+     ^
+&gt;0011: s2
+    ^
+&gt;001*: s4
+     ^
+&gt;001*:_ s4
+      ^
+&gt;001*:1 s6
+     ^
+&gt;001*:1 s2
+    ^
+&gt;001*:1 s2
+   ^
+&gt;00**:1 s4
+    ^
+&gt;00**:1 s4
+     ^
+&gt;00**:1 s4
+      ^
+&gt;00**:1_ s4
+       ^
+&gt;00**:11 s6
+      ^
+&gt;00**:11 s6
+     ^
+&gt;00**:11 s2
+    ^
+&gt;00**:11 s2
+   ^
+&gt;00**:11 s2
+  ^
+&gt;0***:11 s3
+   ^
+&gt;0***:11 s3
+    ^
+&gt;0***:11 s3
+     ^
+&gt;0***:11 s3
+      ^
+&gt;0***:11 s3
+       ^
+&gt;0***:11_ s3
+        ^
+&gt;0***:110 s6
+       ^
+&gt;0***:110 s6
+      ^
+&gt;0***:110 s6
+     ^
+&gt;0***:110 s2
+    ^
+&gt;0***:110 s2
+   ^
+&gt;0***:110 s2
+  ^
+&gt;0***:110 s2
+ ^
+&gt;****:110 s3
+  ^
+&gt;****:110 s3
+   ^
+&gt;****:110 s3
+    ^
+&gt;****:110 s3
+     ^
+&gt;****:110 s3
+      ^
+&gt;****:110 s3
+       ^
+&gt;****:110 s3
+        ^
+&gt;****:110_ s3
+         ^
+&gt;****:1100 s6
+        ^
+&gt;****:1100 s6
+       ^
+&gt;****:1100 s6
+      ^
+&gt;****:1100 s6
+     ^
+&gt;****:1100 s2
+    ^
+&gt;****:1100 s2
+   ^
+&gt;****:1100 s2
+  ^
+&gt;****:1100 s2
+ ^
+&gt;****:1100 s2
+^
+&gt;****:1100 s5
+ ^
+&gt;***:1100 s5
+^
+&gt;***:1100 s5
+ ^
+&gt;**:1100 s5
+^
+&gt;**:1100 s5
+ ^
+&gt;*:1100 s5
+^
+&gt;*:1100 s5
+ ^
+&gt;:1100 s5
+^
+&gt;:1100 s5
+ ^
+&gt;1100 s5
+^
+&gt;1100 s5
+ ^
+&gt;1100 H
+ ^
+```
+It is important that the procedure clean up any markers or trailing symbols in Γ: the next part involves setting the input tape of one Turing machine equal to the output of another.
+
+## Chaining
+It&#39;s time to move on to bigger and better things.  Let&#39;s revisit a procedure from the previous post:
+```makefile
+s1 &gt; &gt; r s1
+s1 0 1 r s1
+s1 1 0 r s1
+s1 _ _ l s2
+
+s2 0 1 l s3
+s2 1 0 l s2
+s2 &gt; &gt; r s3
+
+s3 0 0 l s3
+s3 1 1 l s3
+s3 &gt; &gt; r s4
+
+s4 0 0 r s4
+s4 1 1 r s4
+s4 _ l s5
+```
+This procedure takes a bitstring as input and outputs [two&#39;s complement](https://en.wikipedia.org/wiki/Two%27s_complement).  This procedure isn&#39;t terribly useful on its own, but when combined with a procedure to add two numbers, we get binary subtraction.  [Here&#39;s an example](https://0x0.st/s2EW.txt) of the one I made; it&#39;s a bit lengthy so I won&#39;t paste it here.
+Looking at that, you can see how these procedures comply with the standard I outlined earlier: the add procedure expects two operands (of equal length) separated by a &#39;:&#39; with no additional characters from Γ.  Our two&#39;s complement procedure expects one operand with no additional characters from Γ.
+To combine these procedures into something useful, we need a way of storing and manipulating input tapes before they are passed to the next Turing machine.  Let&#39;s say we want to perform `2 - 1`; based on what we know the procedures expect, we can start constructing our inputs:
+```
+2 = 10
+1 = 01
+```
+So our tape for two&#39;s complement will start out as follows:
+```makefile
+&gt;01
+^
+```
+After the procedure runs, we will have:
+```makefile
+&gt;11
+^
+```
+Next, we append the 2; since we&#39;re adding now, order is irrelevant:
+```
+&gt;11:10
+^
+```
+Our add procedure will preserve bitness, so we don&#39;t care about overflow.  If we pass this modified tape into our add procedure, it will output the following after halting:
+```makefile
+&gt;01
+^
+```
+And just like that, we have our answer.
+
+## More power
+Like most of you, when I got to this point of the project, I began wondering &quot;just how far can I take this?&quot;  Pretty far.  I wont paste the code I wrote, but I made a separate `Chain()` class for Turing machines.  It contains the following components:
+1. An ordered list of procedures to run,
+2. A string to contain the tape passed immediately to a Turing machine,
+3. Four &quot;registers&quot; that can hold tapes for pending instructions before passing into a Turing machine,
+4. An integer to set global bitness (defaults to 32),
+5. A path to the folder containing your Turing machine procedures,
+6. An integer containing the index of a procedure to run next (for jumping),
+7. A separate tape &quot;register&quot; to store a value to compare other tapes to (for conditional jumps),
+8. An ordered list with class functions to make it operate as a stack,
+9. And an integer to hold the current index of the top of the stack.
+
+With those nine things, it&#39;s very hard to figure out what you _can&#39;t_ do, but some additional instructions are necessary.
+Now that we&#39;ve reached the point where we are operating on two different classes, I will be using specific words to mitigate confusion.  An _instruction_ is a command sent to the `Chain()` class to perform some tape operation, while a _procedure_ is a file containing transitions for the `TuringMachine()` class to run.  Let&#39;s start exploring some basic procedures we need to perform common tasks.  So far, I&#39;ve only written bitwise procedures, as I am trying to simulate modern computing.  Here&#39;s a list of what I have:
+1. add
+2. and
+3. not
+4. or
+5. xor
+6. tcomp
+7. shl
+8. shr
+
+It should be easy to understand what these procedures do based on their names.  The next most important part are the instructions for chaining.  Right off the bat, we need a way of sending data to the tape, so I made a `put` instruction.  This is only one of two instructions that actually take input.  Currently the `put` instruction will copy an integer (base 2, 10, or 16) and copy it to the tape in binary, padded with zeros to fill the bitness specified by the class variable.  We also need a way of setting and getting tapes to and from the tape registers, respectively.  Since we have four registers, we have four store commands (`stX`, where X is &#39;a&#39;, &#39;b&#39;, &#39;c&#39;, or &#39;d&#39;) and four get commands (`gtX`, where X is &#39;a&#39;, &#39;b&#39;, &#39;c&#39;, or &#39;d&#39;).  I also created a concatenate instruction that will automate the combination of operands separated by a &#39;:&#39; (`ctXY`, where X and Y are &#39;a&#39;, &#39;b&#39;, &#39;c&#39;, or &#39;d&#39;).
+With these instructions, combined with our eight procedures, we can begin writing programs that look an awful lot like Assembly.  Here&#39;s a quick example of one that will perform the previous `2 - 1` example:
+```makefile
+put 2
+sta
+put 1
+tcomp
+stb
+ctab
+add
+```
+For my chaining implementation, it is important to remember that I tried to make instructions pirform an operation on the _input_ tape.  For example, `sta` will copy the word on the input tape into the A register; `put` writes a word directly onto the input tape.  One instruction that &quot;skips&quot; a step is the `ctab` one.  This instruction will take the tape in the A register and copy it to the input tape, then append a &#39;:&#39; and the tape from the B register (excluding the &#39;&gt;&#39; marker).
+
+## Jumping and the stack
+I added instructions that will perform a loop backwards through the instruction list.  Later, I added ways of pushing and popping the current instruction index to the stack; this allows us to do more advanced jumps and calls, like this:
+```makefile
+; code
+call 4
+call 12
+call 19
+halt
+
+; 4
+    put     1
+    sta
+    put     2
+    stb
+    ctab
+    add
+    sta
+    ret
+
+; 12
+    put     123456789
+    tcomp
+    stb
+    ctab
+    add
+    sta
+    ret
+
+; 19
+    put     987654321
+    tcomp
+    stb
+    ctab
+    add
+    sta
+    ret
+```
+`call` will push the index of the next instruction onto the stack, and set our indexing variable equal to the integer that you pass with the instruction (this is the second of two instructions that take input).  `ret` will pop the top of the stack (make sure you clean it up before this, obviously) and set our indexing variable equal to what is popped.  Finally, the `halt` command will force the chain to stop executing instructions.  Without this command, the above example will perform all of its instructions twice: once when they are explicitly called, and again after `call 19` returns and the chain continues its top-down execution.
+
+## Parting words
+Some other things I added was an instruction in the parser that will preload some data from a configuration file.  The parser assumes the path to this configuration is the first non-commented line.  Here is an example:
+```makefile
+; config path
+/Users/fi6uh/.rconfig
+
+; code
+call 2
+halt
+; 1
+    put     1
+    sta
+    put     2
+    stb
+    ctab
+    add
+    sta
+    ret
+```
+Currently, the parser only looks for two things: your bitness value, and the path to your procedures:
+```
+bits=4
+path=/Users/fi6uh/Projects/path/to/procedures/
+```
+I also added a debugging feature that will show register and stack content (and other stuff) in a fashion similar to GDB.  The way the chain currently operates, it will be easy to make more useful debugging features (step, back, break, etc.) and I will do so in the near future.  Some of the instructions I have added leave room for cool &quot;exploits&quot;, which is where I&#39;m headed next with this project.  I&#39;ll end here for now, but expect a Part 4 in the not-too-distant future!
+
+## Challenge
+If anyone is interested in using this project, I can push the whole thing to GitHub.  If you want an exercise to test what I&#39;ve demonstrated, try writing a program that will perform the string reversal algorithm I talked about in [this post](https://0x00sec.org/t/scalable-reversing/6523).  As the project sits, I have no way of performing string operations; just use bitstrings for your tests.  Let me know how it goes and post your woes in the comments!  I&#39;ll be trying this out as well!</description>
+    
+    <lastBuildDate>Thu, 31 May 2018 00:02:24 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/programming-turing-machines-part-iii/6913.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Programming Turing Machines - Part III</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-turing-machines-part-iii/6913/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-turing-machines-part-iii/6913/2</link>
+        <pubDate>Sat, 30 Jun 2018 00:02:24 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-6913-2</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-turing-machines-part-iii/6913.rss">Programming Turing Machines - Part III</source>
+      </item>
+      <item>
+        <title>Programming Turing Machines - Part III</title>
+        <dc:creator><![CDATA[fi6uh]]></dc:creator>
+        <description><![CDATA[
+            <h1>Programming Turing Machines: High-level approach</h1>
+<p>If you’ve got the hang of Turing machine procedures down, at this point you should be able to write your own with relative ease.  If you aren’t comfortable with them yet, revisit the last section of the <a href="https://0x00sec.org/t/programming-turing-machines-part-ii/6908">previous topic</a> (feel free to use the comments section as a scratch pad to run examples by me).  I wrote out nine procedures for the Turing machine implementation that perform bitwise operations.  Before moving onto the “main attraction”, I will describe some of these operations, as well as some measures I took to make inference easier later on.</p>
+<h2>Procedure standards</h2>
+<p>As I mentioned in <a href="https://0x00sec.org/t/programming-turing-machines-part-i/6895">Part I</a>, I use ‘&gt;’ to mark the beginning of the tape.  Some of my procedures perform an operation on two words on the same tape; I use a ‘:’ to mark the end of the first word.  Any procedure that requires marking symbols to keep track of previously visited cells uses ‘*’ as the marker.  As an example, I wrote a procedure that will reverse a bitstring:</p>
+<pre><code class="lang-auto">; go to end of string
+s1 &gt; &gt; r s1
+s1 0 0 r s1
+s1 1 1 r s1
+s1 _ : l s2
+
+; grab value to copy
+s2 * * l s2
+s2 0 * r s3
+s2 1 * r s4
+s2 &gt; &gt; r s5
+
+; go to end of string on 0
+s3 * * r s3
+s3 0 0 r s3
+s3 1 1 r s3
+s3 : : r s3
+s3 _ 0 l s6
+
+; go to end of string on 1
+s4 * * r s4
+s4 0 0 r s4
+s4 1 1 r s4
+s4 : : r s4
+s4 _ 1 l s6
+
+; move left to :
+s6 0 0 l s6
+s6 1 1 l s6
+s6 : : l s2
+
+; delete *
+s5 * l s5
+s5 : l s5
+s5 &gt; &gt; r s5
+</code></pre>
+<p>This procedure will first append a ‘:’ to the end of the tape.  Then it will loop back and forth marking and copying characters in reverse order.  To clean things up, the last thing it does is remove marking characters and the ‘:’ separator.  To make things a bit more clear, here is the output configurations for the word “0011”:</p>
+<pre><code class="lang-auto">&gt;0011 s1
+^
+&gt;0011 s1
+ ^
+&gt;0011 s1
+  ^
+&gt;0011 s1
+   ^
+&gt;0011 s1
+    ^
+&gt;0011_ s1
+     ^
+&gt;0011: s2
+    ^
+&gt;001*: s4
+     ^
+&gt;001*:_ s4
+      ^
+&gt;001*:1 s6
+     ^
+&gt;001*:1 s2
+    ^
+&gt;001*:1 s2
+   ^
+&gt;00**:1 s4
+    ^
+&gt;00**:1 s4
+     ^
+&gt;00**:1 s4
+      ^
+&gt;00**:1_ s4
+       ^
+&gt;00**:11 s6
+      ^
+&gt;00**:11 s6
+     ^
+&gt;00**:11 s2
+    ^
+&gt;00**:11 s2
+   ^
+&gt;00**:11 s2
+  ^
+&gt;0***:11 s3
+   ^
+&gt;0***:11 s3
+    ^
+&gt;0***:11 s3
+     ^
+&gt;0***:11 s3
+      ^
+&gt;0***:11 s3
+       ^
+&gt;0***:11_ s3
+        ^
+&gt;0***:110 s6
+       ^
+&gt;0***:110 s6
+      ^
+&gt;0***:110 s6
+     ^
+&gt;0***:110 s2
+    ^
+&gt;0***:110 s2
+   ^
+&gt;0***:110 s2
+  ^
+&gt;0***:110 s2
+ ^
+&gt;****:110 s3
+  ^
+&gt;****:110 s3
+   ^
+&gt;****:110 s3
+    ^
+&gt;****:110 s3
+     ^
+&gt;****:110 s3
+      ^
+&gt;****:110 s3
+       ^
+&gt;****:110 s3
+        ^
+&gt;****:110_ s3
+         ^
+&gt;****:1100 s6
+        ^
+&gt;****:1100 s6
+       ^
+&gt;****:1100 s6
+      ^
+&gt;****:1100 s6
+     ^
+&gt;****:1100 s2
+    ^
+&gt;****:1100 s2
+   ^
+&gt;****:1100 s2
+  ^
+&gt;****:1100 s2
+ ^
+&gt;****:1100 s2
+^
+&gt;****:1100 s5
+ ^
+&gt;***:1100 s5
+^
+&gt;***:1100 s5
+ ^
+&gt;**:1100 s5
+^
+&gt;**:1100 s5
+ ^
+&gt;*:1100 s5
+^
+&gt;*:1100 s5
+ ^
+&gt;:1100 s5
+^
+&gt;:1100 s5
+ ^
+&gt;1100 s5
+^
+&gt;1100 s5
+ ^
+&gt;1100 H
+ ^
+</code></pre>
+<p>It is important that the procedure clean up any markers or trailing symbols in Γ: the next part involves setting the input tape of one Turing machine equal to the output of another.</p>
+<h2>Chaining</h2>
+<p>It’s time to move on to bigger and better things.  Let’s revisit a procedure from the previous post:</p>
+<pre><code class="lang-makefile">s1 &gt; &gt; r s1
+s1 0 1 r s1
+s1 1 0 r s1
+s1 _ _ l s2
+
+s2 0 1 l s3
+s2 1 0 l s2
+s2 &gt; &gt; r s3
+
+s3 0 0 l s3
+s3 1 1 l s3
+s3 &gt; &gt; r s4
+
+s4 0 0 r s4
+s4 1 1 r s4
+s4 _ l s5
+</code></pre>
+<p>This procedure takes a bitstring as input and outputs <a href="https://en.wikipedia.org/wiki/Two%27s_complement" rel="nofollow noopener">two’s complement</a>.  This procedure isn’t terribly useful on its own, but when combined with a procedure to add two numbers, we get binary subtraction.  <a href="https://0x0.st/s2EW.txt" rel="nofollow noopener">Here’s an example</a> of the one I made; it’s a bit lengthy so I won’t paste it here.<br>
+Looking at that, you can see how these procedures comply with the standard I outlined earlier: the add procedure expects two operands (of equal length) separated by a ‘:’ with no additional characters from Γ.  Our two’s complement procedure expects one operand with no additional characters from Γ.<br>
+To combine these procedures into something useful, we need a way of storing and manipulating input tapes before they are passed to the next Turing machine.  Let’s say we want to perform <code>2 - 1</code>; based on what we know the procedures expect, we can start constructing our inputs:</p>
+<pre><code class="lang-auto">2 = 10
+1 = 01
+</code></pre>
+<p>So our tape for two’s complement will start out as follows:</p>
+<pre><code class="lang-makefile">&gt;01
+^
+</code></pre>
+<p>After the procedure runs, we will have:</p>
+<pre><code class="lang-makefile">&gt;11
+^
+</code></pre>
+<p>Next, we append the 2; since we’re adding now, order is irrelevant:</p>
+<pre><code class="lang-auto">&gt;11:10
+^
+</code></pre>
+<p>Our add procedure will preserve bitness, so we don’t care about overflow.  If we pass this modified tape into our add procedure, it will output the following after halting:</p>
+<pre><code class="lang-makefile">&gt;01
+^
+</code></pre>
+<p>And just like that, we have our answer.</p>
+<h2>More power</h2>
+<p>Like most of you, when I got to this point of the project, I began wondering “just how far can I take this?”  Pretty far.  I wont paste the code I wrote, but I made a separate <code>Chain()</code> class for Turing machines.  It contains the following components:</p>
+<ol>
+<li>An ordered list of procedures to run,</li>
+<li>A string to contain the tape passed immediately to a Turing machine,</li>
+<li>Four “registers” that can hold tapes for pending instructions before passing into a Turing machine,</li>
+<li>An integer to set global bitness (defaults to 32),</li>
+<li>A path to the folder containing your Turing machine procedures,</li>
+<li>An integer containing the index of a procedure to run next (for jumping),</li>
+<li>A separate tape “register” to store a value to compare other tapes to (for conditional jumps),</li>
+<li>An ordered list with class functions to make it operate as a stack,</li>
+<li>And an integer to hold the current index of the top of the stack.</li>
+</ol>
+<p>With those nine things, it’s very hard to figure out what you <em>can’t</em> do, but some additional instructions are necessary.<br>
+Now that we’ve reached the point where we are operating on two different classes, I will be using specific words to mitigate confusion.  An <em>instruction</em> is a command sent to the <code>Chain()</code> class to perform some tape operation, while a <em>procedure</em> is a file containing transitions for the <code>TuringMachine()</code> class to run.  Let’s start exploring some basic procedures we need to perform common tasks.  So far, I’ve only written bitwise procedures, as I am trying to simulate modern computing.  Here’s a list of what I have:</p>
+<ol>
+<li>add</li>
+<li>and</li>
+<li>not</li>
+<li>or</li>
+<li>xor</li>
+<li>tcomp</li>
+<li>shl</li>
+<li>shr</li>
+</ol>
+<p>It should be easy to understand what these procedures do based on their names.  The next most important part are the instructions for chaining.  Right off the bat, we need a way of sending data to the tape, so I made a <code>put</code> instruction.  This is only one of two instructions that actually take input.  Currently the <code>put</code> instruction will copy an integer (base 2, 10, or 16) and copy it to the tape in binary, padded with zeros to fill the bitness specified by the class variable.  We also need a way of setting and getting tapes to and from the tape registers, respectively.  Since we have four registers, we have four store commands (<code>stX</code>, where X is ‘a’, ‘b’, ‘c’, or ‘d’) and four get commands (<code>gtX</code>, where X is ‘a’, ‘b’, ‘c’, or ‘d’).  I also created a concatenate instruction that will automate the combination of operands separated by a ‘:’ (<code>ctXY</code>, where X and Y are ‘a’, ‘b’, ‘c’, or ‘d’).<br>
+With these instructions, combined with our eight procedures, we can begin writing programs that look an awful lot like Assembly.  Here’s a quick example of one that will perform the previous <code>2 - 1</code> example:</p>
+<pre><code class="lang-makefile">put 2
+sta
+put 1
+tcomp
+stb
+ctab
+add
+</code></pre>
+<p>For my chaining implementation, it is important to remember that I tried to make instructions pirform an operation on the <em>input</em> tape.  For example, <code>sta</code> will copy the word on the input tape into the A register; <code>put</code> writes a word directly onto the input tape.  One instruction that “skips” a step is the <code>ctab</code> one.  This instruction will take the tape in the A register and copy it to the input tape, then append a ‘:’ and the tape from the B register (excluding the ‘&gt;’ marker).</p>
+<h2>Jumping and the stack</h2>
+<p>I added instructions that will perform a loop backwards through the instruction list.  Later, I added ways of pushing and popping the current instruction index to the stack; this allows us to do more advanced jumps and calls, like this:</p>
+<pre><code class="lang-makefile">; code
+call 4
+call 12
+call 19
+halt
+
+; 4
+    put     1
+    sta
+    put     2
+    stb
+    ctab
+    add
+    sta
+    ret
+
+; 12
+    put     123456789
+    tcomp
+    stb
+    ctab
+    add
+    sta
+    ret
+
+; 19
+    put     987654321
+    tcomp
+    stb
+    ctab
+    add
+    sta
+    ret
+</code></pre>
+<p><code>call</code> will push the index of the next instruction onto the stack, and set our indexing variable equal to the integer that you pass with the instruction (this is the second of two instructions that take input).  <code>ret</code> will pop the top of the stack (make sure you clean it up before this, obviously) and set our indexing variable equal to what is popped.  Finally, the <code>halt</code> command will force the chain to stop executing instructions.  Without this command, the above example will perform all of its instructions twice: once when they are explicitly called, and again after <code>call 19</code> returns and the chain continues its top-down execution.</p>
+<h2>Parting words</h2>
+<p>Some other things I added was an instruction in the parser that will preload some data from a configuration file.  The parser assumes the path to this configuration is the first non-commented line.  Here is an example:</p>
+<pre><code class="lang-makefile">; config path
+/Users/fi6uh/.rconfig
+
+; code
+call 2
+halt
+; 1
+    put     1
+    sta
+    put     2
+    stb
+    ctab
+    add
+    sta
+    ret
+</code></pre>
+<p>Currently, the parser only looks for two things: your bitness value, and the path to your procedures:</p>
+<pre><code class="lang-auto">bits=4
+path=/Users/fi6uh/Projects/path/to/procedures/
+</code></pre>
+<p>I also added a debugging feature that will show register and stack content (and other stuff) in a fashion similar to GDB.  The way the chain currently operates, it will be easy to make more useful debugging features (step, back, break, etc.) and I will do so in the near future.  Some of the instructions I have added leave room for cool “exploits”, which is where I’m headed next with this project.  I’ll end here for now, but expect a Part 4 in the not-too-distant future!</p>
+<h2>Challenge</h2>
+<p>If anyone is interested in using this project, I can push the whole thing to GitHub.  If you want an exercise to test what I’ve demonstrated, try writing a program that will perform the string reversal algorithm I talked about in <a href="https://0x00sec.org/t/scalable-reversing/6523">this post</a>.  As the project sits, I have no way of performing string operations; just use bitstrings for your tests.  Let me know how it goes and post your woes in the comments!  I’ll be trying this out as well!</p>
+          <p><a href="https://d.clarkee.co.uk/t/programming-turing-machines-part-iii/6913/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/programming-turing-machines-part-iii/6913/1</link>
+        <pubDate>Thu, 31 May 2018 00:02:24 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-6913-1</guid>
+        <source url="https://d.clarkee.co.uk/t/programming-turing-machines-part-iii/6913.rss">Programming Turing Machines - Part III</source>
+      </item>
+  </channel>
+</rss>

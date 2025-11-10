@@ -1,0 +1,860 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>A simple Linux Crypter</title>
+    <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537</link>
+    <description>As @dtm has explained us how to write a crypter for Windows, and @TheDoctor has done the same for C#, I&#39;m going to talk about how to build similar stuff for GNU/Linux. This post is kind of based on something else I wrote some months ago for a different community. I had tried to make a twist of the original paper, but... to be honest, it is difficult to come up with something simpler.
+
+I will skip the scan-time crypter. There are no big differences compared to what has already been said in this community. So, by now, you should know enough to build such a crypter for GNU/Linux, following what my colleagues have already explained to you.
+
+The technique I&#39;m going to present is pretty simple and can only secure relatively small parts of the binary. I will first briefly describe how the system works  and then present you a possible implementation.
+
+# The Technique
+This technique allows you to crypt parts of your application using whatever algorithm you want. As usual I will use the classical XOR encoder so we do not spend time talking about cryptography and we can focus on the crypter itself.
+
+We will have to write a small program that will encrypt parts of the application we want to secure (we will name this the _off-line crypter_). The secured application will also need a couple of functions (the so-called _stub_) to decrypt at run-time the secured parts.
+
+In order to easily identify which parts of the application we want secured, we will be pushing them into a special section within the ELF file. Your program&#39;s code usually ends up in the `.text` section but, you are free to create additional sections for code or data in your program. And that is what we are going to do.
+
+This way, the __off-line crypter__ can examine the binary we want to process and easily find the parts that have to be encrypted, and the parts that have to remain unencrypted. 
+
+Enough theory, let&#39;s start looking at the off-line crypter
+
+# A Simple Crypter
+The off-line crypter is surprisingly simple. We will make use of a couple of function we have already used in the post ( [ELFun File Injector](https://0x00sec.org/t/elfun-file-injector/410)). I will not discuss them again in this post. 
+
+The functions I&#39;m talking about are:
+
+* `get_file_size`. This function returns the size in bytes of an opened file
+* `elfi_find_section`. This function returns a pointer to an ELF section structure for a memory mapped ELF file.
+
+Be free to check the post mentioned above for details. 
+
+In addition to these two function we will need a XOR encoder function. Something like this:
+
+```
+#define KEY_MASK 0x7
+static char key[8] =&quot;ABCDEFGH&quot;;
+
+void
+xor_block (unsigned char *data, int len)
+{
+  int i;
+  for (i = 0; i &lt; len; data[i] ^= key[i &amp; KEY_MASK], i++);
+}
+```
+
+This time I&#39;m forcing a power of two length on the key so we can use the AND operator instead of the MODULUS operator. Just for fun.
+
+And that is it. Now, we have all the elements to write our encoding functions. Here it is:
+
+```
+int
+encode (char *f)
+{
+  int            fd, len;
+  unsigned char *p;
+  Elf64_Shdr    *s;
+
+  printf (&quot;+ Encoding\n&quot;);
+  if ((fd = open (f, O_RDWR, 0)) &lt; 0) DIE (&quot;open&quot;);
+  len = (get_file_size (fd));
+  if ((p = mmap (0, len, 
+		 PROT_READ | PROT_WRITE, 
+		 MAP_SHARED, fd, 0)) == MAP_FAILED) DIE (&quot;mmap&quot;);
+
+  if ((s = elfi_find_section (p, &quot;.secure&quot;)) == NULL)
+    {
+      fprintf (stderr, &quot;- No secure section found... Nothing to do!\n&quot;);
+      close (fd);
+      exit (1);
+    }
+
+  xor_block (p+s-&gt;sh_offset, s-&gt;sh_size);
+
+  /* Store Offset and size */
+  *((int*)  (p + 0x09)) = s-&gt;sh_offset;
+  *((short*)(p + 0x0d)) = s-&gt;sh_size;
+
+  printf (&quot;+ Offsets: 0x%x, 0x%x\n&quot;, s-&gt;sh_offset, s-&gt;sh_size);
+  close (fd);
+}
+```
+
+This function may look scary at first glance but it is actually a pretty simple function. 
+
+The first thing we do is to open the file we want to crypt and map it in memory. This code is actually also used in the ELFun post. Mapping the file in memory is just a convenient way to modify it, without having to use `lseek`, `read` and `write` functions.
+
+Once our file is in memory we can search for our special section. We had named it `.secure`, but you can actually use any name you want. Using the `elfi_find_section` function we get a pointer to an ELF section structure containing all the section details. Specifically, we are interested in the section&#39;s file offset and the section&#39;s size.
+
+Next step is to use this information, the offset and size of the section, to crypt that memory block using our XOR crypt function. Finally, we store the offset and the size in the ELF header, so the run-time decrypt function can quickly find out which memory block needs to be processed.
+
+The ELF header contains, at the very beginning a 16 bytes field including some generic information (the ELF magic number, word-length, endianess,...). The last 7 bytes of this field are reserved for future uses. Well, this is a future use, isn&#39;t it?. That means that we can store up to 7 bytes in the header starting at offset 0x09.
+
+This is what the last two lines in the function do. We use 4 bytes (an `int`) to store the offset to the section, and 2 bytes (a `short`) to store the size of the section... and we still have 1 extra free byte!!
+
+Now we can close our file and dump all our changes into the file in the disk, effectively applying all these changes to the program file.
+
+# A Secured Program.
+In order to test our off-line crypter we need a test program with some code in a section named &#39;.secured&#39; and containing a bit of code able to decrypt anything on that section (our __stub__).
+
+First, let&#39;s produce a `main` function. 
+
+```
+int
+main (int argc, char *argv[])
+{
+  uncrypt ();
+  secure_main (argc, argv);
+}
+```
+
+Sure. We do not need much more. First we uncrypt the secured parts (this is our stub... probably I should had call it stub :), and then we run the rest of the program. In this case we just call the function `secure_main` that will contain the code we want to secure.
+
+Next point is how to push `secure_main` into the `.secure` section so our off-line crypter can find it and do its stuff.
+
+The easiest way to force some functions in a specific section is to use the so-called GCC&#39;s function attributes... the `__attribute__` keyword (https://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html) will do the trick:
+
+```
+#define CRYPT_ME __attribute__((section(&quot;.secure&quot;)))
+
+CRYPT_ME int
+secure_main (int argc, char *argv[])
+{
+  printf (&quot;This was crypted!\n&quot;);
+  getchar ();
+  return 0;
+}
+```
+For convenience, we have defined a pre-processor macro so we just prefix any function definition with that macro to push it into the `.secure` section. Yes, that is it. 
+
+## The UNCRYPT Function
+So, the last part of our system is the `uncrypt` function. Once again, all that pointer gymnastics at the beginning may look intimidating, but the concept behind this is pretty simple:
+
+1. Get the offset and size of the section to uncrypt. We have conveniently stored this information in the ELF header
+2. Find out the memory page the encrypted code is located so we can change permissions (we need to decrypt it)
+3. Run the XOR function on the section
+4. Restore permissions on the memory block so the binary does not look _suspicious at run-time_.
+
+Let&#39;s take a quick look to the function before diving into the details.
+```
+#define DEFAULT_EP ((unsigned char*)0x400000)
+
+int
+uncrypt ()
+{
+  int   p   = *((int   *)(DEFAULT_EP + 0x09));
+  int   len = *((short *)(DEFAULT_EP + 0x0d));
+
+  /* Change Permissions */
+  unsigned char *ptr       = DEFAULT_EP + p;
+  unsigned char *ptr1      = DEFAULT_EP + p + len;
+  size_t         pagesize  = sysconf(_SC_PAGESIZE);
+  uintptr_t      pagestart = (uintptr_t)ptr &amp; -pagesize;
+  int            psize     = (ptr1 - (unsigned char*)pagestart);
+
+  /* Make the pages writable...*/
+  if (mprotect ((void*)pagestart, psize, PROT_READ | PROT_WRITE | PROT_EXEC) &lt; 0)
+    perror (&quot;mprotect:&quot;);
+
+  xor_block (DEFAULT_EP + p, len);
+  if (mprotect ((void*)pagestart, psize, PROT_READ | PROT_EXEC) &lt; 0)
+    perror (&quot;mprotect:&quot;);
+
+  printf (&quot;+ Ready to run!\n&quot;);
+}
+```
+
+Let&#39;s dissect the function.
+
+## Getting the Offset and Size
+The first thing to do is to retrieve the section offset and size. These values were stored in the ELF header by the off-line crypter, and now we have to retrieve them.
+
+So, when a program is executed, the beginning of the file is directly loaded at a default memory address. For 64bits ELF Linux files, this address is `0x400000`. To keep it simple we just assume that this is always the case. 
+
+
+&gt; You can force the loading of the program in a different address using special linker flags. Also note that PIE (Position Independent Executables) binaries are mapped at different addresses.
+
+
+What all this means, is that the ELF header (the same bytes at the beginning of the program file) is available at address `0x4000000`, and therefore we can easily retrieve our data from the header at offsets `0x09` and `0x0d`. This is what the two first lines do.
+
+## Finding the Code&#39;s Pages
+Well, this probably needs some explanation. We need to use the system call `mprotect` to change the memory permissions of our `.secure` section. Executable code goes into segments with the read and the execution permissions, but not the write permission. We want to decrypt a memory block located in that area, and for that, either we allocate another memory block to write the decoded bytes and then do some manipulations of the op-codes (something that may be a bit complex), or we just change permissions and decode in-place.
+
+So, `mprotect` expects as first parameter a pointer that is page aligned... Check the man page if you do not believe me. 
+
+There is no reason for our `.secure` section to be page aligned. Actually, it will probably be somewhere in the middle of a page, or even laying between two different pages. So, we have to find out the page boundary for the memory block we are interested on. Then, we can change the page permissions to decrypt the code store there, and write it back in the same place. 
+
+## Understanding Paging
+If you are already familiar with concept of _Memory Page_ you can skip this section. Otherwise keep reading.
+
+There are two main memory management strategies: Pagination and Segmentation. In practice, you will always find a combination of both: Segmented Pagination or Paged Segmentation (roughly). At the end, it all depends on the support provided by the processor. Actually the support provided by the **MMU** (_Memory Management Unit_). Modern processors have an integrated MMU, but old ones use to have an external one (another chip in the board).
+
+Anyway, the processor will keep a table of pages or segments, depending on how it was designed, and will provide mechanisms to assign, among other things permissions to them. This is the basis for virtual memory management... we need the processor to produce _page faults_ to swap in and out pieces of memory... Anyway, we want to change those permissions, otherwise, the MMU will generate a exception... a segmentation fault.
+
+From our application point of view, segments are defined by the ELF format as a base address and a size. An those segment will span through one or more pages. Pages are just defined by a page size. Think about them as an array. The whole memory gets organized in chunks of the page size. Let&#39;s see how a 1Mb memory looks when it is organized in 4Kb pages (4096 bytes or in hexadecimal `0x1000`):
+
+    0x00000  |-----------|
+             |           | 
+             |...........| 0x00XXX
+             |           | 
+    0x01000  |-----------|
+             |           | 
+             |...........| 0x01XXX
+             |           | 
+    0x02000  |-----------|
+                 ...       0xffXXX
+    0xff000  |-----------| 0xfffff
+
+So, the two high bits in the address, represents the page number/index, and the rest of the nibbles in the address, represents the offset within the page. Something like this:
+
+`0xPPOOO`
+
+* `0xPP` : Page index (increases every `0x1000` bytes or 4Kb)
+* `0xOOO` : Offset within page 0xPP (ranging from 0 to `0xfff`)
+
+If we just delete the last 3 nibbles of the address we are actually getting the page base address (`0XPP000`). 
+
+If you pay attention, you will see that, if our page size is, for instance `0x1000`, we can always get the page base address ANDing any address with the mask `0xff000`. Such an operation will delete the lower 3 nibbles (12 bits) in the address and automatically provide the base page address we need for `mprotect`.
+
+So, given a page size, for instance `0x1000`, the mask we need is actually the arithmetic negative of that value, for our example `-0x1000` = `0xff000`.
+
+## Back to the Crypter
+Now, you should easily understand what the code in the `uncrypt` function does. It calculates the base page address of the page where the starting address of the `.secure` section (stored in the ELF header) is located. Then, we recalculate the size of our block with respect to the page base address, so we pass the right size to the `mprotect` system call. I think you understand why (code spanning multiple pages).
+
+Now we can finally change permissions.
+
+```
+mprotect ((void*)pagestart, psize, PROT_READ | PROT_WRITE | PROT_EXEC) 
+```
+
+The `mprotect` will add write permissions (`PROT_WRITE`) to the pages were our crypted code is, so we can just run `xor_block` directly on the code and decrypt it.
+
+After that, we call again `mprotect` to restore the permissions so our process does not look suspicious.
+
+Well, all this thing is actually pretty simple. I think that trying to explain it for everybody I have manage to make this look very complicated... It is not, really.
+
+# Testing
+OK, let&#39;s do some testing to see in practice how all this works.
+
+First, let&#39;s compile our test program. We have called it `prog` and it will run a function called `secure_main` that just prints a message and waits for the user to press a key:
+
+
+    $ make prog
+    $ readelf -h prog | grep Magic
+     Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00
+    $ objdump -d prog | grep -A 15 &quot;\.secure&quot;
+    Disassembly of section .secure:
+
+    00000000004008d8 &lt;secure_main&gt;:
+      4008d8:	55                   	push   %rbp
+      4008d9:	48 89 e5             	mov    %rsp,%rbp
+      4008dc:	48 83 ec 10          	sub    $0x10,%rsp
+      4008e0:	89 7d fc             	mov    %edi,-0x4(%rbp)
+      4008e3:	48 89 75 f0          	mov    %rsi,-0x10(%rbp)
+      4008e7:	bf 14 09 40 00       	mov    $0x400914,%edi
+      4008ec:	e8 1f fc ff ff       	callq  400510 &lt;puts@plt&gt;
+      4008f1:	e8 4a fc ff ff       	callq  400540 &lt;getchar@plt&gt;
+      4008f6:	b8 00 00 00 00       	mov    $0x0,%eax
+      4008fb:	c9                   	leaveq
+      4008fc:	c3                   	retq
+
+
+We can see that our Magic field in the ELF header looks good (all those 0s at the end), and that we have a normal function in the `.secure` section that prints something and then waits for the user input (`puts` + `getchar`).
+
+Let&#39;s run our off-line crypter against this innocent program:
+
+    $ ./crypter_rt prog
+    + Encoding
+    + 31 section in file. Looking for section &#39;.secure&#39;
+    + Offsets: 0x8d8, 0x25
+    $ readelf -h prog | grep Magic
+      Magic:   7f 45 4c 46 02 01 01 00 00 d8 08 00 00 25 00 00
+    $ objdump -d prog  | grep -A15 &quot;\.secure&quot;
+    Disassembly of section .secure:
+
+    00000000004008d8 &lt;secure_main&gt;:
+      4008d8:	14 0a                	adc    $0xa,%al
+      4008da:	ca a1 0d             	lret   $0xda1
+      4008dd:	c5 ab 58 c8          	vaddsd %xmm0,%xmm10,%xmm1
+      4008e1:	3f                   	(bad)
+      4008e2:	bf 0c cc 33 b7       	mov    $0xb733cc0c,%edi
+      4008e7:	f7 55 4b             	notl   0x4b(%rbp)
+      4008ea:	03 44 ad 59          	add    0x59(%rbp,%rbp,4),%eax
+      4008ee:	bb b7 be aa 09       	mov    $0x9aabeb7,%ebx
+      4008f3:	b8 ba b9 ff 48       	mov    $0x48ffb9ba,%eax
+      4008f8:	41                   	rex.B
+      4008f9:	42                   	rex.X
+      4008fa:	43                   	rex.XB
+      4008fb:	8d                   	.byte 0x8d
+
+Now, the header&#39;s `Magic` field contains some data. Actually the offset and size (the off-line crypter prints the values for you to check). The `.secure` section is now crypted... objdump cannot make sense out of it. However, if we run the program:
+
+
+    $ ./prog
+    + Ready to run!
+    This was crypted!
+
+
+It works OK!
+
+I have added the `getchar` function to stop the program execution so we can check the run-time memory map of the process. Run the program and while the process is waiting for the key, find out the process PID:
+
+`ps ax | grep prog`
+
+Then check the memory map with the command:
+
+
+    $ cat /proc/PID/maps
+
+    00400000-00401000 r-xp 00000000 08:06 6700454                            /home/pico/prog
+    00600000-00601000 r--p 00000000 08:06 6700454                            /home/pico/prog
+    00601000-00602000 rw-p 00001000 08:06 6700454                            /home/pico/prog
+    7f8614f19000-7f86150cd000 r-xp 00000000 08:06 14224791                   /lib/x86_64-linux-gnu/libc-2.15.so
+    ...
+
+
+You can see how the code is mapped at `0x400000`  with read and execution permissions, but without write permissions (first line). You can try to remove the second `mprotect` in the `uncrypt` function and check how the run-time memory map will look like. A process with a executable and writable memory block is just suspicious....
+
+As usual, you can get the source code from github to play with it:
+
+https://github.com/0x00pf/0x00sec_code/tree/master/crypter
+
+# Next
+
+This crypter is very basic and there is a lot of room for improvement, but I hope you have got some tools to walk the next steps on your own. Anyway, I will drop a couple of ideas for you:
+
+* Store the pointer and size of the memory portion to crypt somewhere else in the file instead of using the ELF header...
+* Find alternative ways to specify the block (or blocks) of memory to encrypt/decrypt, instead of using the suspicious `.secure` section.
+* Use the ideas on the ELFun tutorial to inject your stub on any program so your can crypt programs even if they do not include the __stub__ code.
+* What about crypt/decrypt on demand?...
+
+Looking forward to your progress!
+
+Happy Hacking!
+pico</description>
+    
+    <lastBuildDate>Thu, 02 Jun 2016 08:47:24 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/13</link>
+        <pubDate>Sun, 21 Jan 2018 00:42:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-13</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>AWESOME Job man. This is really good. Everything from the code to the writing is quality!</p>
+<p>“Pointer gymnastics” made me crack up <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<p>Can’t wait to see your next article <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/12</link>
+        <pubDate>Thu, 02 Jun 2016 08:47:24 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-12</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="oaktree" data-post="6" data-topic="537" data-full="true">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/oaktree/48/4077_2.png" class="avatar"> oaktree:</div>
+<blockquote>
+<p>Wouldn’t you just look at the COFF and maybe some RFCs?</p>
+</blockquote>
+</aside>
+<p>COFF is indeed a reference for PE… but ELF is not based on COFF. Anyway, they share a lot of concepts.<br>
+Also thanks for your words ;), that’s appreciated</p>
+<aside class="quote no-group" data-username="airth" data-post="7" data-topic="537">
+<div class="title">
+<div class="quote-controls"></div>
+ airth:</div>
+<blockquote>
+<p>I have looked at a bunch of links</p>
+</blockquote>
+</aside>
+<p>I have found myself this link very useful.</p>
+<aside class="onebox allowlistedgeneric" data-onebox-src="https://phrack.org/issues/58/5">
+  <header class="source">
+      <img src="https://phrack.org/favicon-32x32.png" class="site-icon" alt="" width="32" height="32">
+
+      <a href="https://phrack.org/issues/58/5" target="_blank" rel="noopener nofollow ugc">Phrack</a>
+  </header>
+
+  <article class="onebox-body">
+    <img width="" height="" src="https://phrack.org/images/p40ylogo.jpg" class="thumbnail" alt="">
+
+<h3><a href="https://phrack.org/issues/58/5" target="_blank" rel="noopener nofollow ugc">Runtime binary encryption</a></h3>
+
+  <p>Click to read the article on phrack</p>
+
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+<p>It is 15 years old, but the ELF format haven’t change much since that <img src="https://d.clarkee.co.uk/images/emoji/twitter/slight_smile.png?v=15" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> (and phrack… well it’s phrack). For the young ones… that code at the end is <strong>uuencoded</strong> . The Silvio Cesare papers (in the references of the phrack article) were really good… apparently old those paper about <em>virus</em> have disappear from the Internet… OK I haven’t searched in deep, but the works from Mr Cesare should just pop-up in any regular search.</p>
+<p>Maybe is because of this:</p>
+<aside class="onebox wikipedia" data-onebox-src="https://en.wikipedia.org/wiki/Silvio_Cesare#Controversies">
+  <header class="source">
+
+      <a href="https://en.wikipedia.org/wiki/Silvio_Cesare#Controversies" target="_blank" rel="noopener nofollow ugc">en.wikipedia.org</a>
+  </header>
+
+  <article class="onebox-body">
+    <div class="aspect-image" style="--aspect-ratio:250/333;"><img src="//upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Silvio_pondering_the_enormity_of_his_invention.jpg/250px-Silvio_pondering_the_enormity_of_his_invention.jpg" class="thumbnail" width="250" height="333"></div>
+
+<h3><a href="https://en.wikipedia.org/wiki/Silvio_Cesare#Controversies" target="_blank" rel="noopener nofollow ugc">Silvio Cesare</a></h3>
+
+<p>
+ Silvio Cesare (/tʃɛˈzæreɪ/ chez-ARR-ay)[citation needed] is an Australian security researcher known for his multiple articles in phrack, talks at numerous security conferences including Defcon and Black Hat Briefings. Silvio is also a former member of w00w00. His security research includes an IDS evasion bug in the widely deployed Snort software. Silvio holds a PhD in Computer Science from Deakin University and is the co-founder of the security conference BSides Canberra. He earned Silvio is th...</p>
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/11</link>
+        <pubDate>Thu, 02 Jun 2016 05:33:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-11</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p><span class="mention">@airth</span>, the best are the specification<br>
+</p><aside class="onebox pdf">
+  <header class="source">
+      <a href="https://refspecs.linuxbase.org/elf/elf.pdf" target="_blank" rel="nofollow noopener">refspecs.linuxbase.org</a>
+  </header>
+  <article class="onebox-body">
+    <a href="https://refspecs.linuxbase.org/elf/elf.pdf" target="_blank" rel="nofollow noopener"><span class="pdf-onebox-logo"></span></a>
+<h3><a href="https://refspecs.linuxbase.org/elf/elf.pdf" target="_blank" rel="nofollow noopener">elf.pdf</a></h3>
+
+<p class="filesize">337.12 KB</p>
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<p></p>
+<p>and the includes (<code>/usr/include/elf.h</code>). There are many pages describing the format but, once you now what is it about, the specification is the main document you need.</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/10</link>
+        <pubDate>Thu, 02 Jun 2016 05:15:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-10</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>I know. That part was a bit messy… and I re-wrote it a couple of times. I probably should try again in a week or two <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/9</link>
+        <pubDate>Thu, 02 Jun 2016 05:12:22 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-9</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>That’s always exciting, when a person you know seems to know more than Google (<em>about a subject</em>).</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/8</link>
+        <pubDate>Wed, 01 Jun 2016 23:58:40 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-8</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>I have looked at a bunch of links. <a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a> just seems to know more than the links I read.</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/7</link>
+        <pubDate>Wed, 01 Jun 2016 23:57:09 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-7</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Wouldn’t you just look at the <a href="https://en.wikipedia.org/wiki/COFF" rel="nofollow noopener">COFF</a> and maybe some RFCs?</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/6</link>
+        <pubDate>Wed, 01 Jun 2016 23:24:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-6</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Do you recommend any ELF, PE structure documentation?</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/5</link>
+        <pubDate>Wed, 01 Jun 2016 22:34:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-5</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>You’d lost me at the whole pagination thing, but then I scrolled down and saw your tangent and was relieved!</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/4</link>
+        <pubDate>Wed, 01 Jun 2016 22:25:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-4</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks <span class="mention">@airth</span> for the positive feedback. It is pretty much appreciated coming from you</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/3</link>
+        <pubDate>Wed, 01 Jun 2016 22:17:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-3</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>A lot to take in but educational at the same time. Good stuff pico!</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/2</link>
+        <pubDate>Wed, 01 Jun 2016 22:06:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-2</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+      <item>
+        <title>A simple Linux Crypter</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>As <a class="mention" href="https://d.clarkee.co.uk/u/dtm">@dtm</a> has explained us how to write a crypter for Windows, and <a class="mention" href="https://d.clarkee.co.uk/u/thedoctor">@TheDoctor</a> has done the same for C#, I’m going to talk about how to build similar stuff for GNU/Linux. This post is kind of based on something else I wrote some months ago for a different community. I had tried to make a twist of the original paper, but… to be honest, it is difficult to come up with something simpler.</p>
+<p>I will skip the scan-time crypter. There are no big differences compared to what has already been said in this community. So, by now, you should know enough to build such a crypter for GNU/Linux, following what my colleagues have already explained to you.</p>
+<p>The technique I’m going to present is pretty simple and can only secure relatively small parts of the binary. I will first briefly describe how the system works  and then present you a possible implementation.</p>
+<h1><a name="p-2569-the-technique-1" class="anchor" href="https://d.clarkee.co.uk#p-2569-the-technique-1"></a>The Technique</h1>
+<p>This technique allows you to crypt parts of your application using whatever algorithm you want. As usual I will use the classical XOR encoder so we do not spend time talking about cryptography and we can focus on the crypter itself.</p>
+<p>We will have to write a small program that will encrypt parts of the application we want to secure (we will name this the <em>off-line crypter</em>). The secured application will also need a couple of functions (the so-called <em>stub</em>) to decrypt at run-time the secured parts.</p>
+<p>In order to easily identify which parts of the application we want secured, we will be pushing them into a special section within the ELF file. Your program’s code usually ends up in the <code>.text</code> section but, you are free to create additional sections for code or data in your program. And that is what we are going to do.</p>
+<p>This way, the <strong>off-line crypter</strong> can examine the binary we want to process and easily find the parts that have to be encrypted, and the parts that have to remain unencrypted.</p>
+<p>Enough theory, let’s start looking at the off-line crypter</p>
+<h1><a name="p-2569-a-simple-crypter-2" class="anchor" href="https://d.clarkee.co.uk#p-2569-a-simple-crypter-2"></a>A Simple Crypter</h1>
+<p>The off-line crypter is surprisingly simple. We will make use of a couple of function we have already used in the post ( <a href="https://0x00sec.org/t/elfun-file-injector/410" rel="noopener nofollow ugc">ELFun File Injector</a>). I will not discuss them again in this post.</p>
+<p>The functions I’m talking about are:</p>
+<ul>
+<li><code>get_file_size</code>. This function returns the size in bytes of an opened file</li>
+<li><code>elfi_find_section</code>. This function returns a pointer to an ELF section structure for a memory mapped ELF file.</li>
+</ul>
+<p>Be free to check the post mentioned above for details.</p>
+<p>In addition to these two function we will need a XOR encoder function. Something like this:</p>
+<pre><code class="lang-auto">#define KEY_MASK 0x7
+static char key[8] ="ABCDEFGH";
+
+void
+xor_block (unsigned char *data, int len)
+{
+  int i;
+  for (i = 0; i &lt; len; data[i] ^= key[i &amp; KEY_MASK], i++);
+}
+</code></pre>
+<p>This time I’m forcing a power of two length on the key so we can use the AND operator instead of the MODULUS operator. Just for fun.</p>
+<p>And that is it. Now, we have all the elements to write our encoding functions. Here it is:</p>
+<pre><code class="lang-auto">int
+encode (char *f)
+{
+  int            fd, len;
+  unsigned char *p;
+  Elf64_Shdr    *s;
+
+  printf ("+ Encoding\n");
+  if ((fd = open (f, O_RDWR, 0)) &lt; 0) DIE ("open");
+  len = (get_file_size (fd));
+  if ((p = mmap (0, len, 
+		 PROT_READ | PROT_WRITE, 
+		 MAP_SHARED, fd, 0)) == MAP_FAILED) DIE ("mmap");
+
+  if ((s = elfi_find_section (p, ".secure")) == NULL)
+    {
+      fprintf (stderr, "- No secure section found... Nothing to do!\n");
+      close (fd);
+      exit (1);
+    }
+
+  xor_block (p+s-&gt;sh_offset, s-&gt;sh_size);
+
+  /* Store Offset and size */
+  *((int*)  (p + 0x09)) = s-&gt;sh_offset;
+  *((short*)(p + 0x0d)) = s-&gt;sh_size;
+
+  printf ("+ Offsets: 0x%x, 0x%x\n", s-&gt;sh_offset, s-&gt;sh_size);
+  close (fd);
+}
+</code></pre>
+<p>This function may look scary at first glance but it is actually a pretty simple function.</p>
+<p>The first thing we do is to open the file we want to crypt and map it in memory. This code is actually also used in the ELFun post. Mapping the file in memory is just a convenient way to modify it, without having to use <code>lseek</code>, <code>read</code> and <code>write</code> functions.</p>
+<p>Once our file is in memory we can search for our special section. We had named it <code>.secure</code>, but you can actually use any name you want. Using the <code>elfi_find_section</code> function we get a pointer to an ELF section structure containing all the section details. Specifically, we are interested in the section’s file offset and the section’s size.</p>
+<p>Next step is to use this information, the offset and size of the section, to crypt that memory block using our XOR crypt function. Finally, we store the offset and the size in the ELF header, so the run-time decrypt function can quickly find out which memory block needs to be processed.</p>
+<p>The ELF header contains, at the very beginning a 16 bytes field including some generic information (the ELF magic number, word-length, endianess,…). The last 7 bytes of this field are reserved for future uses. Well, this is a future use, isn’t it?. That means that we can store up to 7 bytes in the header starting at offset 0x09.</p>
+<p>This is what the last two lines in the function do. We use 4 bytes (an <code>int</code>) to store the offset to the section, and 2 bytes (a <code>short</code>) to store the size of the section… and we still have 1 extra free byte!!</p>
+<p>Now we can close our file and dump all our changes into the file in the disk, effectively applying all these changes to the program file.</p>
+<h1><a name="p-2569-a-secured-program-3" class="anchor" href="https://d.clarkee.co.uk#p-2569-a-secured-program-3"></a>A Secured Program.</h1>
+<p>In order to test our off-line crypter we need a test program with some code in a section named ‘.secured’ and containing a bit of code able to decrypt anything on that section (our <strong>stub</strong>).</p>
+<p>First, let’s produce a <code>main</code> function.</p>
+<pre><code class="lang-auto">int
+main (int argc, char *argv[])
+{
+  uncrypt ();
+  secure_main (argc, argv);
+}
+</code></pre>
+<p>Sure. We do not need much more. First we uncrypt the secured parts (this is our stub… probably I should had call it stub :), and then we run the rest of the program. In this case we just call the function <code>secure_main</code> that will contain the code we want to secure.</p>
+<p>Next point is how to push <code>secure_main</code> into the <code>.secure</code> section so our off-line crypter can find it and do its stuff.</p>
+<p>The easiest way to force some functions in a specific section is to use the so-called GCC’s function attributes… the <code>__attribute__</code> keyword (<a href="https://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html" class="inline-onebox" rel="noopener nofollow ugc">Function Attributes (Using the GNU Compiler Collection (GCC))</a>) will do the trick:</p>
+<pre><code class="lang-auto">#define CRYPT_ME __attribute__((section(".secure")))
+
+CRYPT_ME int
+secure_main (int argc, char *argv[])
+{
+  printf ("This was crypted!\n");
+  getchar ();
+  return 0;
+}
+</code></pre>
+<p>For convenience, we have defined a pre-processor macro so we just prefix any function definition with that macro to push it into the <code>.secure</code> section. Yes, that is it.</p>
+<h2><a name="p-2569-the-uncrypt-function-4" class="anchor" href="https://d.clarkee.co.uk#p-2569-the-uncrypt-function-4"></a>The UNCRYPT Function</h2>
+<p>So, the last part of our system is the <code>uncrypt</code> function. Once again, all that pointer gymnastics at the beginning may look intimidating, but the concept behind this is pretty simple:</p>
+<ol>
+<li>Get the offset and size of the section to uncrypt. We have conveniently stored this information in the ELF header</li>
+<li>Find out the memory page the encrypted code is located so we can change permissions (we need to decrypt it)</li>
+<li>Run the XOR function on the section</li>
+<li>Restore permissions on the memory block so the binary does not look <em>suspicious at run-time</em>.</li>
+</ol>
+<p>Let’s take a quick look to the function before diving into the details.</p>
+<pre><code class="lang-auto">#define DEFAULT_EP ((unsigned char*)0x400000)
+
+int
+uncrypt ()
+{
+  int   p   = *((int   *)(DEFAULT_EP + 0x09));
+  int   len = *((short *)(DEFAULT_EP + 0x0d));
+
+  /* Change Permissions */
+  unsigned char *ptr       = DEFAULT_EP + p;
+  unsigned char *ptr1      = DEFAULT_EP + p + len;
+  size_t         pagesize  = sysconf(_SC_PAGESIZE);
+  uintptr_t      pagestart = (uintptr_t)ptr &amp; -pagesize;
+  int            psize     = (ptr1 - (unsigned char*)pagestart);
+
+  /* Make the pages writable...*/
+  if (mprotect ((void*)pagestart, psize, PROT_READ | PROT_WRITE | PROT_EXEC) &lt; 0)
+    perror ("mprotect:");
+
+  xor_block (DEFAULT_EP + p, len);
+  if (mprotect ((void*)pagestart, psize, PROT_READ | PROT_EXEC) &lt; 0)
+    perror ("mprotect:");
+
+  printf ("+ Ready to run!\n");
+}
+</code></pre>
+<p>Let’s dissect the function.</p>
+<h2><a name="p-2569-getting-the-offset-and-size-5" class="anchor" href="https://d.clarkee.co.uk#p-2569-getting-the-offset-and-size-5"></a>Getting the Offset and Size</h2>
+<p>The first thing to do is to retrieve the section offset and size. These values were stored in the ELF header by the off-line crypter, and now we have to retrieve them.</p>
+<p>So, when a program is executed, the beginning of the file is directly loaded at a default memory address. For 64bits ELF Linux files, this address is <code>0x400000</code>. To keep it simple we just assume that this is always the case.</p>
+<blockquote>
+<p>You can force the loading of the program in a different address using special linker flags. Also note that PIE (Position Independent Executables) binaries are mapped at different addresses.</p>
+</blockquote>
+<p>What all this means, is that the ELF header (the same bytes at the beginning of the program file) is available at address <code>0x4000000</code>, and therefore we can easily retrieve our data from the header at offsets <code>0x09</code> and <code>0x0d</code>. This is what the two first lines do.</p>
+<h2><a name="p-2569-finding-the-codes-pages-6" class="anchor" href="https://d.clarkee.co.uk#p-2569-finding-the-codes-pages-6"></a>Finding the Code’s Pages</h2>
+<p>Well, this probably needs some explanation. We need to use the system call <code>mprotect</code> to change the memory permissions of our <code>.secure</code> section. Executable code goes into segments with the read and the execution permissions, but not the write permission. We want to decrypt a memory block located in that area, and for that, either we allocate another memory block to write the decoded bytes and then do some manipulations of the op-codes (something that may be a bit complex), or we just change permissions and decode in-place.</p>
+<p>So, <code>mprotect</code> expects as first parameter a pointer that is page aligned… Check the man page if you do not believe me.</p>
+<p>There is no reason for our <code>.secure</code> section to be page aligned. Actually, it will probably be somewhere in the middle of a page, or even laying between two different pages. So, we have to find out the page boundary for the memory block we are interested on. Then, we can change the page permissions to decrypt the code store there, and write it back in the same place.</p>
+<h2><a name="p-2569-understanding-paging-7" class="anchor" href="https://d.clarkee.co.uk#p-2569-understanding-paging-7"></a>Understanding Paging</h2>
+<p>If you are already familiar with concept of <em>Memory Page</em> you can skip this section. Otherwise keep reading.</p>
+<p>There are two main memory management strategies: Pagination and Segmentation. In practice, you will always find a combination of both: Segmented Pagination or Paged Segmentation (roughly). At the end, it all depends on the support provided by the processor. Actually the support provided by the <strong>MMU</strong> (<em>Memory Management Unit</em>). Modern processors have an integrated MMU, but old ones use to have an external one (another chip in the board).</p>
+<p>Anyway, the processor will keep a table of pages or segments, depending on how it was designed, and will provide mechanisms to assign, among other things permissions to them. This is the basis for virtual memory management… we need the processor to produce <em>page faults</em> to swap in and out pieces of memory… Anyway, we want to change those permissions, otherwise, the MMU will generate a exception… a segmentation fault.</p>
+<p>From our application point of view, segments are defined by the ELF format as a base address and a size. An those segment will span through one or more pages. Pages are just defined by a page size. Think about them as an array. The whole memory gets organized in chunks of the page size. Let’s see how a 1Mb memory looks when it is organized in 4Kb pages (4096 bytes or in hexadecimal <code>0x1000</code>):</p>
+<pre><code>0x00000  |-----------|
+         |           | 
+         |...........| 0x00XXX
+         |           | 
+0x01000  |-----------|
+         |           | 
+         |...........| 0x01XXX
+         |           | 
+0x02000  |-----------|
+             ...       0xffXXX
+0xff000  |-----------| 0xfffff
+</code></pre>
+<p>So, the two high bits in the address, represents the page number/index, and the rest of the nibbles in the address, represents the offset within the page. Something like this:</p>
+<p><code>0xPPOOO</code></p>
+<ul>
+<li><code>0xPP</code> : Page index (increases every <code>0x1000</code> bytes or 4Kb)</li>
+<li><code>0xOOO</code> : Offset within page 0xPP (ranging from 0 to <code>0xfff</code>)</li>
+</ul>
+<p>If we just delete the last 3 nibbles of the address we are actually getting the page base address (<code>0XPP000</code>).</p>
+<p>If you pay attention, you will see that, if our page size is, for instance <code>0x1000</code>, we can always get the page base address ANDing any address with the mask <code>0xff000</code>. Such an operation will delete the lower 3 nibbles (12 bits) in the address and automatically provide the base page address we need for <code>mprotect</code>.</p>
+<p>So, given a page size, for instance <code>0x1000</code>, the mask we need is actually the arithmetic negative of that value, for our example <code>-0x1000</code> = <code>0xff000</code>.</p>
+<h2><a name="p-2569-back-to-the-crypter-8" class="anchor" href="https://d.clarkee.co.uk#p-2569-back-to-the-crypter-8"></a>Back to the Crypter</h2>
+<p>Now, you should easily understand what the code in the <code>uncrypt</code> function does. It calculates the base page address of the page where the starting address of the <code>.secure</code> section (stored in the ELF header) is located. Then, we recalculate the size of our block with respect to the page base address, so we pass the right size to the <code>mprotect</code> system call. I think you understand why (code spanning multiple pages).</p>
+<p>Now we can finally change permissions.</p>
+<pre><code class="lang-auto">mprotect ((void*)pagestart, psize, PROT_READ | PROT_WRITE | PROT_EXEC) 
+</code></pre>
+<p>The <code>mprotect</code> will add write permissions (<code>PROT_WRITE</code>) to the pages were our crypted code is, so we can just run <code>xor_block</code> directly on the code and decrypt it.</p>
+<p>After that, we call again <code>mprotect</code> to restore the permissions so our process does not look suspicious.</p>
+<p>Well, all this thing is actually pretty simple. I think that trying to explain it for everybody I have manage to make this look very complicated… It is not, really.</p>
+<h1><a name="p-2569-testing-9" class="anchor" href="https://d.clarkee.co.uk#p-2569-testing-9"></a>Testing</h1>
+<p>OK, let’s do some testing to see in practice how all this works.</p>
+<p>First, let’s compile our test program. We have called it <code>prog</code> and it will run a function called <code>secure_main</code> that just prints a message and waits for the user to press a key:</p>
+<pre><code>$ make prog
+$ readelf -h prog | grep Magic
+ Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00
+$ objdump -d prog | grep -A 15 "\.secure"
+Disassembly of section .secure:
+
+00000000004008d8 &lt;secure_main&gt;:
+  4008d8:	55                   	push   %rbp
+  4008d9:	48 89 e5             	mov    %rsp,%rbp
+  4008dc:	48 83 ec 10          	sub    $0x10,%rsp
+  4008e0:	89 7d fc             	mov    %edi,-0x4(%rbp)
+  4008e3:	48 89 75 f0          	mov    %rsi,-0x10(%rbp)
+  4008e7:	bf 14 09 40 00       	mov    $0x400914,%edi
+  4008ec:	e8 1f fc ff ff       	callq  400510 &lt;puts@plt&gt;
+  4008f1:	e8 4a fc ff ff       	callq  400540 &lt;getchar@plt&gt;
+  4008f6:	b8 00 00 00 00       	mov    $0x0,%eax
+  4008fb:	c9                   	leaveq
+  4008fc:	c3                   	retq
+</code></pre>
+<p>We can see that our Magic field in the ELF header looks good (all those 0s at the end), and that we have a normal function in the <code>.secure</code> section that prints something and then waits for the user input (<code>puts</code> + <code>getchar</code>).</p>
+<p>Let’s run our off-line crypter against this innocent program:</p>
+<pre><code>$ ./crypter_rt prog
++ Encoding
++ 31 section in file. Looking for section '.secure'
++ Offsets: 0x8d8, 0x25
+$ readelf -h prog | grep Magic
+  Magic:   7f 45 4c 46 02 01 01 00 00 d8 08 00 00 25 00 00
+$ objdump -d prog  | grep -A15 "\.secure"
+Disassembly of section .secure:
+
+00000000004008d8 &lt;secure_main&gt;:
+  4008d8:	14 0a                	adc    $0xa,%al
+  4008da:	ca a1 0d             	lret   $0xda1
+  4008dd:	c5 ab 58 c8          	vaddsd %xmm0,%xmm10,%xmm1
+  4008e1:	3f                   	(bad)
+  4008e2:	bf 0c cc 33 b7       	mov    $0xb733cc0c,%edi
+  4008e7:	f7 55 4b             	notl   0x4b(%rbp)
+  4008ea:	03 44 ad 59          	add    0x59(%rbp,%rbp,4),%eax
+  4008ee:	bb b7 be aa 09       	mov    $0x9aabeb7,%ebx
+  4008f3:	b8 ba b9 ff 48       	mov    $0x48ffb9ba,%eax
+  4008f8:	41                   	rex.B
+  4008f9:	42                   	rex.X
+  4008fa:	43                   	rex.XB
+  4008fb:	8d                   	.byte 0x8d
+</code></pre>
+<p>Now, the header’s <code>Magic</code> field contains some data. Actually the offset and size (the off-line crypter prints the values for you to check). The <code>.secure</code> section is now crypted… objdump cannot make sense out of it. However, if we run the program:</p>
+<pre><code>$ ./prog
++ Ready to run!
+This was crypted!
+</code></pre>
+<p>It works OK!</p>
+<p>I have added the <code>getchar</code> function to stop the program execution so we can check the run-time memory map of the process. Run the program and while the process is waiting for the key, find out the process PID:</p>
+<p><code>ps ax | grep prog</code></p>
+<p>Then check the memory map with the command:</p>
+<pre><code>$ cat /proc/PID/maps
+
+00400000-00401000 r-xp 00000000 08:06 6700454                            /home/pico/prog
+00600000-00601000 r--p 00000000 08:06 6700454                            /home/pico/prog
+00601000-00602000 rw-p 00001000 08:06 6700454                            /home/pico/prog
+7f8614f19000-7f86150cd000 r-xp 00000000 08:06 14224791                   /lib/x86_64-linux-gnu/libc-2.15.so
+...
+</code></pre>
+<p>You can see how the code is mapped at <code>0x400000</code>  with read and execution permissions, but without write permissions (first line). You can try to remove the second <code>mprotect</code> in the <code>uncrypt</code> function and check how the run-time memory map will look like. A process with a executable and writable memory block is just suspicious…</p>
+<p>As usual, you can get the source code from github to play with it:</p>
+<aside class="onebox githubfolder" data-onebox-src="https://github.com/0x00pf/0x00sec_code/tree/master/crypter">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" alt="" width="32" height="32">
+
+      <a href="https://github.com/0x00pf/0x00sec_code/tree/master/crypter" target="_blank" rel="noopener nofollow ugc">github.com</a>
+  </header>
+
+  <article class="onebox-body">
+    <h3><a href="https://github.com/0x00pf/0x00sec_code/tree/master/crypter" target="_blank" rel="noopener nofollow ugc">0x00sec_code/crypter at master · 0x00pf/0x00sec_code</a></h3>
+
+
+  <p><span class="label1">Code for my 0x00sec.org posts. Contribute to 0x00pf/0x00sec_code development by creating an account on GitHub.</span></p>
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+<h1><a name="p-2569-next-10" class="anchor" href="https://d.clarkee.co.uk#p-2569-next-10"></a>Next</h1>
+<p>This crypter is very basic and there is a lot of room for improvement, but I hope you have got some tools to walk the next steps on your own. Anyway, I will drop a couple of ideas for you:</p>
+<ul>
+<li>Store the pointer and size of the memory portion to crypt somewhere else in the file instead of using the ELF header…</li>
+<li>Find alternative ways to specify the block (or blocks) of memory to encrypt/decrypt, instead of using the suspicious <code>.secure</code> section.</li>
+<li>Use the ideas on the ELFun tutorial to inject your stub on any program so your can crypt programs even if they do not include the <strong>stub</strong> code.</li>
+<li>What about crypt/decrypt on demand?..</li>
+</ul>
+<p>Looking forward to your progress!</p>
+<p>Happy Hacking!<br>
+pico</p>
+          <p><a href="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/a-simple-linux-crypter/537/1</link>
+        <pubDate>Wed, 01 Jun 2016 21:07:35 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-537-1</guid>
+        <source url="https://d.clarkee.co.uk/t/a-simple-linux-crypter/537.rss">A simple Linux Crypter</source>
+      </item>
+  </channel>
+</rss>

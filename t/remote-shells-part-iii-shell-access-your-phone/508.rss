@@ -1,0 +1,473 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Remote Shells Part III. Shell Access your Phone</title>
+    <link>https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508</link>
+    <description>If you have been following this series, you may remember that I started [Part I](https://0x00sec.org/t/remote-shells-part-i/269) with an use case involving remote access to an Android Phone. This part will cover how to get a remote shell access to your phone and other devices.
+
+Actually, deploying our remote shells in a device is nothing special, but we need to do a couple of changes to our base code to work in the new conditions. So this post is really about cross-compiling and getting to know you devices.
+
+# Improving our Remote Shell Application
+We will do two main changes to our code, so we get closer to a more realistic scenario. 
+
+The first update will allow us to get rid of those &quot;_Address already in use_&quot;  messages. If you had played with the code from previous posts, you may have seen this message. When applications do not properly close a connection, the socket goes into the so-called `TIME_WAIT` state (there are actually 2... go fetch the TCP RFC). The resources get blocked for a while and the address (and port) cannot be used again until the socket goes into the `CLOSE` state. 
+
+The timeout for this transition may be long, and makes debugging pretty annoying. Fortunately, we can force the reuse of the address/port. Let&#39;s update the server code to get rid of this problem.
+
+In the `server_int` function, just after the creation of our socket, add the following lines:
+
+```
+  int                ops =1;
+  setsockopt (s, SOL_SOCKET, SO_REUSEADDR, &amp;ops, sizeof(ops));
+```
+
+The system call `setsockopt` allows us to fine tune the socket behaviour in many different ways. Check the section 7 of the manual for `socket`, `ip`, `tcp`, to get an idea of what is in there.
+
+&gt; Note: You can read section 7 of the man with command `man 7 socket`. You can read section 2 of the man with the command `man 2 socket`... and so on
+
+The second thing we have to do to our remote server is to make it become a `daemon`.
+
+# Demonising Programs
+A normal program started from the console is associated to a user session. Your console starts a shell and whatever you execute in that shell is a child of the shell process. When the shell dies, all its child process dies, and that happens automatically if you close your session or kill your terminal.
+
+We want our remote shell to run in the background, waiting for connections or trying to connect somewhere. Independently of how do we launch the code (from a shell session, for some launcher), we will want to make our program a __daemon__.
+
+A `daemon` is a process that runs in the background, and it is detached from consoles or parent processes. Recent Linux system provides a function to do this in just one call. The `daemon` function. But you may wonder what this function actually does.
+
+```
+int daemon (int nochdir,int noclose)
+{
+  int fd;
+  switch (fork()) {
+  case -1: return (-1);
+  case  0: break;
+  default: _exit (0);
+  }
+  if (setsid () == -1) return (-1);
+  if (!nochdir) chdir (&quot;/&quot;);
+  if (!noclose) {
+    fd = open(_PATH_DEVNULL,O_RDWR,0);
+    if (fd == -1) return (-1);
+    dup2 (fd,STDIN_FILENO);
+    dup2 (fd,STDOUT_FILENO);
+    dup2 (fd,STDERR_FILENO);
+    if (fd&gt;2) close (fd);
+  }
+  return (0);
+}
+```
+
+The code above is the implementation provided by the `libcompat` library that comes with `dietlibc` (yes, I love it). We will talk a bit more about this in a sec. The source code can be found at: https://github.com/ensc/dietlibc/blob/master/libcompat/daemon.c or in the dietlibc source package.
+
+It does, what the documentation says it has to do... Google for `daemon` and you will find hundreds of pages explaining how to convert a program into a `daemon`. Roughly, what you have to do is to create a child process, kill the father and make the new process the session leader... Basically, this detaches the child process from its parent and the console, so whenever the parent dies, the process does not die with it, and whenever the console session is closed, the process does not close with it.
+
+The rest of the code is optional, but it is normal stuff you want to do with your server. Change the working directory to `/` and close all open file descriptors.... we do not want to write stuff into the console. You can see that, for this implementation, stdin, stdout and stderr, are redirected to `/dev/null` if the `noclose` parameter is set.
+
+Enough chat. Let&#39;s change our program. We have decided to add a command-line parameter to make the program go into daemon mode. The main function will now look like this:
+
+```
+ if (argv[i][0] == &#39;d&#39;) 
+    {
+      i++;
+      daemon (0,0);
+    }
+  if (argv[i][0] == &#39;c&#39;)
+    secure_shell (client_init (argv[i+1], atoi(argv[i+2])));
+  else if (argv[i][0] == &#39;a&#39;)
+    async_read (client_init (argv[i+1], atoi(argv[i+2])), 0);
+  if (argv[i][0] == &#39;s&#39;)
+    secure_shell (server_init (atoi(argv[i+1])));
+  else if (argv[i][0] == &#39;b&#39;)
+    async_read (server_init (atoi(argv[i+1])), 0);
+  
+```
+
+Test the program now!. You can take a look to [the previous post on this series](https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306) if you do not remember how to do that test.
+
+# Cross-Compiling for your Android Phone
+Let&#39;s try to run our remote shell in our Android phone. If you are a poor iXX user, or you do not want to play with your phone at all, you can use the Google SDK emulator. I will not describe here how to set-up the basic Android SDK tools or how to create a Virtual Device or launch the emulator. There are plenty of tutorials out there, and the official Google documentation is pretty good. 
+
+Let&#39;s first re-compile our remote shell for ARM. For doing that, we will need a toolchain. A toolchain is the set of tools you need to build programs: a compiler, an assembler, a linker,... We have quite some options:
+
+* Install Android NDK (Native Development Kit) and create a toolchain for your device... something like `make-standalone-toolchain.sh --platform=PLATFORMID --install-dir=TOOLCHAIN_DIR --arch=arm`. 
+Check the official docs for details.
+* Install a third party toolchain from CodeSourcery or Linaro (this is pretty up to date)
+* If you are running a Debian based distro, just install the provided cross-compiler
+* Roll your own using some of the tools out there... 
+
+The easiest is actually to install the Debian provided cross-compiler:
+
+`sudo apt-get install gcc-arm-linux-gnueabihf`
+
+In my system I can only find the `hf` compiler. `hf` stands for `Hardware/Hard Floating point` and it basically means that your code will not work on old processors (the ones with out a floating point unit). To be honest, I haven&#39;t checked if there are flags in the compiler to force SW emulator for the Floating Points routines...
+
+If you are using the Android Emulator, make sure your virtual device is, at least, running a Cortex-A9 processor.
+
+Now we can just re-compile our remote shell.
+
+`arm-linux-gnueabi-gcc -static -o rss1-arm rss1.c`
+
+
+# Deploying and testing
+We have to copy our binary in our phone and run it. So, let&#39;s do a bit of Android command-lining.
+
+You may have noticed that we are not requiring you to be root. This has some limitation on where we can copy our files and from where we can run them. The `tmp` folder is usually the best option, it has to provide universal writing permissions and also usually execution permissions to support some programs that may need to create scripts and run them. The temporal folder in your computer is normally located at `/tmp` (you can changed it setting the `TMPDIR` env var). In Android it is located at `/local/data/tmp`, or at least something close enough to what we need.
+
+Let&#39;s copy our code in there.
+
+`adb push rss1-arm /data/local/tmp/rss1`
+
+Now let&#39;s try to run it. Start a shell with `adb shell` and type:
+
+```
+computer$ adb shell
+phone$ cd /data/local/tmp
+phone$ chmod 777 rss1
+phone$ ./rss1 s 1234
+```
+
+The remote shell should be working by now. Try to connect from your computer. You need to find out the IP address of your phone... I&#39;m pretty sure you know how to do that.
+
+Well, if you try, you will find out that the program does not seem to work. That&#39;s unfortunate. Let&#39;s see how to fix that.
+
+# The Android File System
+Even when Android runs on top of the Linux kernel, it is not a standard GNU/Linux distributions. Most GNU/Linux distributions follow a file system layout defined by the so called LSB ([https://en.wikipedia.org/wiki/Linux_Standard_Base](https://en.wikipedia.org/wiki/Linux_Standard_Base)). The LSB covers other standard aspects of Linux, on top of the file system hierarchy.
+
+Anyway, in our program, we are trying to run a shell located at `/bin/sh`. That path just does not exist on Android. The shell is actually located at `/system/bin/sh`. So, let&#39;s do another small change to our remote shell code. In the `start_shell` function let&#39;s change the code that sets `name[0]` to this:
+
+```
+...
+#ifdef _ANDROID
+  name[0] = &quot;/system/bin/sh&quot;;
+#else  
+  name[0] = &quot;/bin/sh&quot;;
+#endif
+...
+```
+
+Now, we can use a `define` to decide if we want to compile for Android or for a standard Linux system. Let&#39;s recompile again with the new settings:
+
+`arm-linux-gnueabi-gcc -D_ANDROID -static -o aa rss1.c`
+
+And let&#39;s try again.... Is it working now?.... Hope so.
+
+# A Word on the Compilation
+Android uses a modified version of libc (called Bionic) and also uses a modified dynamic linker. Using the standard ARM toolchain from Debian it is not possible (at least not in a straight forward way) to produce a dynamic linked binary. This is why we have added the `-static` flag to our previous compilation attempts. 
+
+In principle, if you use the Android NDK, everything should be set-up to work out of the box with Android, and it should be possible for you to deploy a dynamically linked binary. I haven&#39;t try this myself (I had enough of NDK a couple of years ago), but if somebody tries and wants to share the finding, please drop a comment below.
+
+So, our binary is around 600Kb. Even after stripping it, we can only squeeze 100Kb extra saving. That is actually too much for this simple program. We can do better.
+
+I had already mentioned it in other post, and I&#39;m going to mention it again. Yes!, you can use dietlibc also with ARM an even MIPS processor... actually it has support for the main architectures out there.
+
+To be able to use dietlibc with your ARM toolchain, you will need the dietlibc source code. 
+
+```
+$ wget https://www.fefe.de/dietlibc/dietlibc-0.33.tar.bz2
+$ tar xjvf dietlibc-0.33.tar.bz2
+$ cd dietlibc-0.33
+dietlibc-0.33$ make
+dietlibc-0.33$ sudo make install
+dietlibc-0.33$ make ARCH=arm CROSS=arm-linux-gnueabi- all
+```
+
+A couple of remarks:
+
+* The dietlibc source folder, once you have compiled it, has to remain in the same place.. That folder will contain code for all the platforms you compile it for. If you delete the folder, `diet` will not find that code and will not work.
+* You can repeat the last command above for other platforms. For instance, if you have a MIPS toolchain for your router, you can use the following command to create the dietlibc library for MIPS:
+   `make ARCH=mips CROSS=mips-linux-uclibc- all `
+
+Now, we can recompile our remote shell for Android, or any other ARM device... the program will also just work on a Rpi, a BeableBone Black, any modern ARM device with a Linux kernel.
+
+`diet arm-linux-gnueabi-gcc -DANDROID -o rss1-arm rss1.c -lcompat`
+
+You may be wondering what is that `-lcompact` at the end of the line. It is a compatibility library provided by `dietlibc`. It includes simple versions of some functions, usually `extensions`(macros) of the standard C library. In this particular case, we need it because of the `daemon` function (do you remember? we have seen it before in this post). You can  copy the `daemon` function in your source code if you prefer... Then you can call yourself &quot;The Linker&quot;... well actually you should call yourself &quot;The Preprocessor&quot;, but that doesn&#39;t sound that cool ...uhm?
+
+Let&#39;s compile:
+
+```
+$ diet arm-linux-gnueabi-gcc -DANDROID -o rss1-arm rss1.c -lcompat
+/tmp/ccNy3AWc.o: In function `async_read&#39;:
+rss1.c:(.text+0x468): undefined reference to `memfrob&#39;
+rss1.c:(.text+0x524): undefined reference to `memfrob&#39;
+collect2: error: ld returned 1 exit status
+
+```
+
+# Fixing the Code for DietLibC
+
+Damn, that `memfrob` is not supported. If we quickly check the man page for the function, we will see that it is a GNU macro (do you see the `_GNU_SOURCE` in the `SYNOPSIS`?). Fortunately, this function is so simple that we can just re-rewrite it.
+
+I think this is a nice exercise for the ones that are starting with C. You can find the code in my [github](https://github.com/0x00pf/0x00sec_code/tree/master/remote_shell) if you do not want to write your own. I have also added a 8 characters password, instead of using the default `42` single-char-password used by `memfrob`.
+
+After recompiling, our binary is now 14Kb long. Not bad, we went from 600Kb to 14Kb!!. Now, let&#39;s strip it and save a few more Kb:
+
+```
+$ arm-linux-gnueabi-strip -s rss1-arm
+$ ls -lh        
+-rwxr-xr-x 1 pico pico 7.7K May 28 13:19 rss1-arm
+
+```
+
+Pretty good. Just under 8Kb for a remote shell.
+
+Now you already know how to deploy it on your phone/emulator... so go and test it!. 
+
+# A Word on Routers
+Home routers are usually based on MIPS processor. Deploying SW on the router provided by your ISP is a bit tricky unless you have access to the command-line. If you want to play with your router, my recommendation is that you buy a cheap one (20 bucks or so) and you flash it with one of the Open Source Firmwares out there. I have played with OpenWRT and DD-WRT and both give you a lot of room for playing.
+
+Using one of the Open Source Firmwares listed above will make your life easier. They should provide a toolchain ready to use (you will have to find the one for your router), so you can start compiling your programs right away.
+
+Otherwise, I have found that the easiest way to get a working toolchain for your router is to build your own, using Buildroot (http://buildroot.org). Instead of selecting one of the pre-build toolchains, just configure it to build its own. It will take a while, but that will likely work without issues. Ah!, do not forget to chose the headers of the kernel used by your router. Your binaries may be broken if you do not chose the right one.
+
+_NOTE: There are some dependencies between libC and the kernel. In general it is OK, but from time to time, when there is a substantial change on the kernel API, the libC also needs a change._
+
+
+# Conclusions
+We had polished a bit more our remote shell and update it to run as a daemon on any linux device (smartphones, routers, etc...)... There is only one thing left regarding remote shells... but that may lead to two more posts.
+
+As always, you can find the code in github (rss1.c )
+
+https://github.com/0x00pf/0x00sec_code/tree/master/remote_shell
+
+Happy Hacking</description>
+    
+    <lastBuildDate>Sat, 28 May 2016 18:52:07 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Remote Shells Part III. Shell Access your Phone</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508/4</link>
+        <pubDate>Sun, 21 Jan 2018 00:37:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-508-4</guid>
+        <source url="https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508.rss">Remote Shells Part III. Shell Access your Phone</source>
+      </item>
+      <item>
+        <title>Remote Shells Part III. Shell Access your Phone</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks <a class="mention" href="https://d.clarkee.co.uk/u/oaktree">@oaktree</a>. I’m not sure about what did you mean. Maybe my wording was a bit loose.</p>
+<p>It is indeed preprocessor stuff. I use <code>define</code>, but formally it is a preprocessor macro. The fact is that you can either define your macro in the source code using <code>#define _ANDROID</code> or you can achieve exactly the same thing pass ing the <code>-D_ANDROID</code> flag to the compiler. As far as I know the <code>-D</code> flag stands for <code>define</code> as this is the only way to define macros using the pre-processor.</p>
+          <p><a href="https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508/3</link>
+        <pubDate>Sat, 28 May 2016 18:52:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-508-3</guid>
+        <source url="https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508.rss">Remote Shells Part III. Shell Access your Phone</source>
+      </item>
+      <item>
+        <title>Remote Shells Part III. Shell Access your Phone</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="0x00pf" data-post="1" data-topic="508">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/0x00pf/48/13708_2.png" class="avatar"> 0x00pf:</div>
+<blockquote>
+<p>Now, we can use a <code>define</code> to decide if we want to compile for Android or for a standard Linux system. Let’s recompile again with the new settings:</p>
+</blockquote>
+</aside>
+<p>Wouldn’t this be just standard preprocessor stuff, rather than “a <code>define</code>?”</p>
+<hr>
+<p>Anyway, this tutorial is crazy! I’d give you <em>2674</em> of the w33k, lol! (1337 * 2)</p>
+          <p><a href="https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508/2</link>
+        <pubDate>Sat, 28 May 2016 18:21:20 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-508-2</guid>
+        <source url="https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508.rss">Remote Shells Part III. Shell Access your Phone</source>
+      </item>
+      <item>
+        <title>Remote Shells Part III. Shell Access your Phone</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>If you have been following this series, you may remember that I started <a href="https://0x00sec.org/t/remote-shells-part-i/269" rel="noopener nofollow ugc">Part I</a> with an use case involving remote access to an Android Phone. This part will cover how to get a remote shell access to your phone and other devices.</p>
+<p>Actually, deploying our remote shells in a device is nothing special, but we need to do a couple of changes to our base code to work in the new conditions. So this post is really about cross-compiling and getting to know you devices.</p>
+<h1><a name="p-2425-improving-our-remote-shell-application-1" class="anchor" href="https://d.clarkee.co.uk#p-2425-improving-our-remote-shell-application-1"></a>Improving our Remote Shell Application</h1>
+<p>We will do two main changes to our code, so we get closer to a more realistic scenario.</p>
+<p>The first update will allow us to get rid of those “<em>Address already in use</em>”  messages. If you had played with the code from previous posts, you may have seen this message. When applications do not properly close a connection, the socket goes into the so-called <code>TIME_WAIT</code> state (there are actually 2… go fetch the TCP RFC). The resources get blocked for a while and the address (and port) cannot be used again until the socket goes into the <code>CLOSE</code> state.</p>
+<p>The timeout for this transition may be long, and makes debugging pretty annoying. Fortunately, we can force the reuse of the address/port. Let’s update the server code to get rid of this problem.</p>
+<p>In the <code>server_int</code> function, just after the creation of our socket, add the following lines:</p>
+<pre><code class="lang-auto">  int                ops =1;
+  setsockopt (s, SOL_SOCKET, SO_REUSEADDR, &amp;ops, sizeof(ops));
+</code></pre>
+<p>The system call <code>setsockopt</code> allows us to fine tune the socket behaviour in many different ways. Check the section 7 of the manual for <code>socket</code>, <code>ip</code>, <code>tcp</code>, to get an idea of what is in there.</p>
+<blockquote>
+<p>Note: You can read section 7 of the man with command <code>man 7 socket</code>. You can read section 2 of the man with the command <code>man 2 socket</code>… and so on</p>
+</blockquote>
+<p>The second thing we have to do to our remote server is to make it become a <code>daemon</code>.</p>
+<h1><a name="p-2425-demonising-programs-2" class="anchor" href="https://d.clarkee.co.uk#p-2425-demonising-programs-2"></a>Demonising Programs</h1>
+<p>A normal program started from the console is associated to a user session. Your console starts a shell and whatever you execute in that shell is a child of the shell process. When the shell dies, all its child process dies, and that happens automatically if you close your session or kill your terminal.</p>
+<p>We want our remote shell to run in the background, waiting for connections or trying to connect somewhere. Independently of how do we launch the code (from a shell session, for some launcher), we will want to make our program a <strong>daemon</strong>.</p>
+<p>A <code>daemon</code> is a process that runs in the background, and it is detached from consoles or parent processes. Recent Linux system provides a function to do this in just one call. The <code>daemon</code> function. But you may wonder what this function actually does.</p>
+<pre><code class="lang-auto">int daemon (int nochdir,int noclose)
+{
+  int fd;
+  switch (fork()) {
+  case -1: return (-1);
+  case  0: break;
+  default: _exit (0);
+  }
+  if (setsid () == -1) return (-1);
+  if (!nochdir) chdir ("/");
+  if (!noclose) {
+    fd = open(_PATH_DEVNULL,O_RDWR,0);
+    if (fd == -1) return (-1);
+    dup2 (fd,STDIN_FILENO);
+    dup2 (fd,STDOUT_FILENO);
+    dup2 (fd,STDERR_FILENO);
+    if (fd&gt;2) close (fd);
+  }
+  return (0);
+}
+</code></pre>
+<p>The code above is the implementation provided by the <code>libcompat</code> library that comes with <code>dietlibc</code> (yes, I love it). We will talk a bit more about this in a sec. The source code can be found at: <a href="https://github.com/ensc/dietlibc/blob/master/libcompat/daemon.c" class="inline-onebox" rel="noopener nofollow ugc">dietlibc/libcompat/daemon.c at master · ensc/dietlibc · GitHub</a> or in the dietlibc source package.</p>
+<p>It does, what the documentation says it has to do… Google for <code>daemon</code> and you will find hundreds of pages explaining how to convert a program into a <code>daemon</code>. Roughly, what you have to do is to create a child process, kill the father and make the new process the session leader… Basically, this detaches the child process from its parent and the console, so whenever the parent dies, the process does not die with it, and whenever the console session is closed, the process does not close with it.</p>
+<p>The rest of the code is optional, but it is normal stuff you want to do with your server. Change the working directory to <code>/</code> and close all open file descriptors… we do not want to write stuff into the console. You can see that, for this implementation, stdin, stdout and stderr, are redirected to <code>/dev/null</code> if the <code>noclose</code> parameter is set.</p>
+<p>Enough chat. Let’s change our program. We have decided to add a command-line parameter to make the program go into daemon mode. The main function will now look like this:</p>
+<pre><code class="lang-auto"> if (argv[i][0] == 'd') 
+    {
+      i++;
+      daemon (0,0);
+    }
+  if (argv[i][0] == 'c')
+    secure_shell (client_init (argv[i+1], atoi(argv[i+2])));
+  else if (argv[i][0] == 'a')
+    async_read (client_init (argv[i+1], atoi(argv[i+2])), 0);
+  if (argv[i][0] == 's')
+    secure_shell (server_init (atoi(argv[i+1])));
+  else if (argv[i][0] == 'b')
+    async_read (server_init (atoi(argv[i+1])), 0);
+  
+</code></pre>
+<p>Test the program now!. You can take a look to <a href="https://0x00sec.org/t/remote-shells-part-ii-crypt-your-link/306" rel="noopener nofollow ugc">the previous post on this series</a> if you do not remember how to do that test.</p>
+<h1><a name="p-2425-cross-compiling-for-your-android-phone-3" class="anchor" href="https://d.clarkee.co.uk#p-2425-cross-compiling-for-your-android-phone-3"></a>Cross-Compiling for your Android Phone</h1>
+<p>Let’s try to run our remote shell in our Android phone. If you are a poor iXX user, or you do not want to play with your phone at all, you can use the Google SDK emulator. I will not describe here how to set-up the basic Android SDK tools or how to create a Virtual Device or launch the emulator. There are plenty of tutorials out there, and the official Google documentation is pretty good.</p>
+<p>Let’s first re-compile our remote shell for ARM. For doing that, we will need a toolchain. A toolchain is the set of tools you need to build programs: a compiler, an assembler, a linker,… We have quite some options:</p>
+<ul>
+<li>Install Android NDK (Native Development Kit) and create a toolchain for your device… something like <code>make-standalone-toolchain.sh --platform=PLATFORMID --install-dir=TOOLCHAIN_DIR --arch=arm</code>.<br>
+Check the official docs for details.</li>
+<li>Install a third party toolchain from CodeSourcery or Linaro (this is pretty up to date)</li>
+<li>If you are running a Debian based distro, just install the provided cross-compiler</li>
+<li>Roll your own using some of the tools out there…</li>
+</ul>
+<p>The easiest is actually to install the Debian provided cross-compiler:</p>
+<p><code>sudo apt-get install gcc-arm-linux-gnueabihf</code></p>
+<p>In my system I can only find the <code>hf</code> compiler. <code>hf</code> stands for <code>Hardware/Hard Floating point</code> and it basically means that your code will not work on old processors (the ones with out a floating point unit). To be honest, I haven’t checked if there are flags in the compiler to force SW emulator for the Floating Points routines…</p>
+<p>If you are using the Android Emulator, make sure your virtual device is, at least, running a Cortex-A9 processor.</p>
+<p>Now we can just re-compile our remote shell.</p>
+<p><code>arm-linux-gnueabi-gcc -static -o rss1-arm rss1.c</code></p>
+<h1><a name="p-2425-deploying-and-testing-4" class="anchor" href="https://d.clarkee.co.uk#p-2425-deploying-and-testing-4"></a>Deploying and testing</h1>
+<p>We have to copy our binary in our phone and run it. So, let’s do a bit of Android command-lining.</p>
+<p>You may have noticed that we are not requiring you to be root. This has some limitation on where we can copy our files and from where we can run them. The <code>tmp</code> folder is usually the best option, it has to provide universal writing permissions and also usually execution permissions to support some programs that may need to create scripts and run them. The temporal folder in your computer is normally located at <code>/tmp</code> (you can changed it setting the <code>TMPDIR</code> env var). In Android it is located at <code>/local/data/tmp</code>, or at least something close enough to what we need.</p>
+<p>Let’s copy our code in there.</p>
+<p><code>adb push rss1-arm /data/local/tmp/rss1</code></p>
+<p>Now let’s try to run it. Start a shell with <code>adb shell</code> and type:</p>
+<pre><code class="lang-auto">computer$ adb shell
+phone$ cd /data/local/tmp
+phone$ chmod 777 rss1
+phone$ ./rss1 s 1234
+</code></pre>
+<p>The remote shell should be working by now. Try to connect from your computer. You need to find out the IP address of your phone… I’m pretty sure you know how to do that.</p>
+<p>Well, if you try, you will find out that the program does not seem to work. That’s unfortunate. Let’s see how to fix that.</p>
+<h1><a name="p-2425-the-android-file-system-5" class="anchor" href="https://d.clarkee.co.uk#p-2425-the-android-file-system-5"></a>The Android File System</h1>
+<p>Even when Android runs on top of the Linux kernel, it is not a standard GNU/Linux distributions. Most GNU/Linux distributions follow a file system layout defined by the so called LSB (<a href="https://en.wikipedia.org/wiki/Linux_Standard_Base" rel="noopener nofollow ugc">https://en.wikipedia.org/wiki/Linux_Standard_Base</a>). The LSB covers other standard aspects of Linux, on top of the file system hierarchy.</p>
+<p>Anyway, in our program, we are trying to run a shell located at <code>/bin/sh</code>. That path just does not exist on Android. The shell is actually located at <code>/system/bin/sh</code>. So, let’s do another small change to our remote shell code. In the <code>start_shell</code> function let’s change the code that sets <code>name[0]</code> to this:</p>
+<pre><code class="lang-auto">...
+#ifdef _ANDROID
+  name[0] = "/system/bin/sh";
+#else  
+  name[0] = "/bin/sh";
+#endif
+...
+</code></pre>
+<p>Now, we can use a <code>define</code> to decide if we want to compile for Android or for a standard Linux system. Let’s recompile again with the new settings:</p>
+<p><code>arm-linux-gnueabi-gcc -D_ANDROID -static -o aa rss1.c</code></p>
+<p>And let’s try again… Is it working now?.. Hope so.</p>
+<h1><a name="p-2425-a-word-on-the-compilation-6" class="anchor" href="https://d.clarkee.co.uk#p-2425-a-word-on-the-compilation-6"></a>A Word on the Compilation</h1>
+<p>Android uses a modified version of libc (called Bionic) and also uses a modified dynamic linker. Using the standard ARM toolchain from Debian it is not possible (at least not in a straight forward way) to produce a dynamic linked binary. This is why we have added the <code>-static</code> flag to our previous compilation attempts.</p>
+<p>In principle, if you use the Android NDK, everything should be set-up to work out of the box with Android, and it should be possible for you to deploy a dynamically linked binary. I haven’t try this myself (I had enough of NDK a couple of years ago), but if somebody tries and wants to share the finding, please drop a comment below.</p>
+<p>So, our binary is around 600Kb. Even after stripping it, we can only squeeze 100Kb extra saving. That is actually too much for this simple program. We can do better.</p>
+<p>I had already mentioned it in other post, and I’m going to mention it again. Yes!, you can use dietlibc also with ARM an even MIPS processor… actually it has support for the main architectures out there.</p>
+<p>To be able to use dietlibc with your ARM toolchain, you will need the dietlibc source code.</p>
+<pre><code class="lang-auto">$ wget https://www.fefe.de/dietlibc/dietlibc-0.33.tar.bz2
+$ tar xjvf dietlibc-0.33.tar.bz2
+$ cd dietlibc-0.33
+dietlibc-0.33$ make
+dietlibc-0.33$ sudo make install
+dietlibc-0.33$ make ARCH=arm CROSS=arm-linux-gnueabi- all
+</code></pre>
+<p>A couple of remarks:</p>
+<ul>
+<li>The dietlibc source folder, once you have compiled it, has to remain in the same place.. That folder will contain code for all the platforms you compile it for. If you delete the folder, <code>diet</code> will not find that code and will not work.</li>
+<li>You can repeat the last command above for other platforms. For instance, if you have a MIPS toolchain for your router, you can use the following command to create the dietlibc library for MIPS:<br>
+<code>make ARCH=mips CROSS=mips-linux-uclibc- all </code></li>
+</ul>
+<p>Now, we can recompile our remote shell for Android, or any other ARM device… the program will also just work on a Rpi, a BeableBone Black, any modern ARM device with a Linux kernel.</p>
+<p><code>diet arm-linux-gnueabi-gcc -DANDROID -o rss1-arm rss1.c -lcompat</code></p>
+<p>You may be wondering what is that <code>-lcompact</code> at the end of the line. It is a compatibility library provided by <code>dietlibc</code>. It includes simple versions of some functions, usually <code>extensions</code>(macros) of the standard C library. In this particular case, we need it because of the <code>daemon</code> function (do you remember? we have seen it before in this post). You can  copy the <code>daemon</code> function in your source code if you prefer… Then you can call yourself “The Linker”… well actually you should call yourself “The Preprocessor”, but that doesn’t sound that cool …uhm?</p>
+<p>Let’s compile:</p>
+<pre><code class="lang-auto">$ diet arm-linux-gnueabi-gcc -DANDROID -o rss1-arm rss1.c -lcompat
+/tmp/ccNy3AWc.o: In function `async_read':
+rss1.c:(.text+0x468): undefined reference to `memfrob'
+rss1.c:(.text+0x524): undefined reference to `memfrob'
+collect2: error: ld returned 1 exit status
+
+</code></pre>
+<h1><a name="p-2425-fixing-the-code-for-dietlibc-7" class="anchor" href="https://d.clarkee.co.uk#p-2425-fixing-the-code-for-dietlibc-7"></a>Fixing the Code for DietLibC</h1>
+<p>Damn, that <code>memfrob</code> is not supported. If we quickly check the man page for the function, we will see that it is a GNU macro (do you see the <code>_GNU_SOURCE</code> in the <code>SYNOPSIS</code>?). Fortunately, this function is so simple that we can just re-rewrite it.</p>
+<p>I think this is a nice exercise for the ones that are starting with C. You can find the code in my <a href="https://github.com/0x00pf/0x00sec_code/tree/master/remote_shell" rel="noopener nofollow ugc">github</a> if you do not want to write your own. I have also added a 8 characters password, instead of using the default <code>42</code> single-char-password used by <code>memfrob</code>.</p>
+<p>After recompiling, our binary is now 14Kb long. Not bad, we went from 600Kb to 14Kb!!. Now, let’s strip it and save a few more Kb:</p>
+<pre><code class="lang-auto">$ arm-linux-gnueabi-strip -s rss1-arm
+$ ls -lh        
+-rwxr-xr-x 1 pico pico 7.7K May 28 13:19 rss1-arm
+
+</code></pre>
+<p>Pretty good. Just under 8Kb for a remote shell.</p>
+<p>Now you already know how to deploy it on your phone/emulator… so go and test it!.</p>
+<h1><a name="p-2425-a-word-on-routers-8" class="anchor" href="https://d.clarkee.co.uk#p-2425-a-word-on-routers-8"></a>A Word on Routers</h1>
+<p>Home routers are usually based on MIPS processor. Deploying SW on the router provided by your ISP is a bit tricky unless you have access to the command-line. If you want to play with your router, my recommendation is that you buy a cheap one (20 bucks or so) and you flash it with one of the Open Source Firmwares out there. I have played with OpenWRT and DD-WRT and both give you a lot of room for playing.</p>
+<p>Using one of the Open Source Firmwares listed above will make your life easier. They should provide a toolchain ready to use (you will have to find the one for your router), so you can start compiling your programs right away.</p>
+<p>Otherwise, I have found that the easiest way to get a working toolchain for your router is to build your own, using Buildroot (<a href="http://buildroot.org" rel="noopener nofollow ugc">http://buildroot.org</a>). Instead of selecting one of the pre-build toolchains, just configure it to build its own. It will take a while, but that will likely work without issues. Ah!, do not forget to chose the headers of the kernel used by your router. Your binaries may be broken if you do not chose the right one.</p>
+<p><em>NOTE: There are some dependencies between libC and the kernel. In general it is OK, but from time to time, when there is a substantial change on the kernel API, the libC also needs a change.</em></p>
+<h1><a name="p-2425-conclusions-9" class="anchor" href="https://d.clarkee.co.uk#p-2425-conclusions-9"></a>Conclusions</h1>
+<p>We had polished a bit more our remote shell and update it to run as a daemon on any linux device (smartphones, routers, etc…)… There is only one thing left regarding remote shells… but that may lead to two more posts.</p>
+<p>As always, you can find the code in github (rss1.c )</p>
+<aside class="onebox githubfolder" data-onebox-src="https://github.com/0x00pf/0x00sec_code/tree/master/remote_shell">
+  <header class="source">
+      <img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" alt="" width="32" height="32">
+
+      <a href="https://github.com/0x00pf/0x00sec_code/tree/master/remote_shell" target="_blank" rel="noopener nofollow ugc">github.com</a>
+  </header>
+
+  <article class="onebox-body">
+    <h3><a href="https://github.com/0x00pf/0x00sec_code/tree/master/remote_shell" target="_blank" rel="noopener nofollow ugc">0x00sec_code/remote_shell at master · 0x00pf/0x00sec_code</a></h3>
+
+
+  <p><span class="label1">Code for my 0x00sec.org posts. Contribute to 0x00pf/0x00sec_code development by creating an account on GitHub.</span></p>
+
+  </article>
+
+  <div class="onebox-metadata">
+    
+    
+  </div>
+
+  <div style="clear: both"></div>
+</aside>
+
+<p>Happy Hacking</p>
+          <p><a href="https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508/1</link>
+        <pubDate>Sat, 28 May 2016 13:37:14 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-508-1</guid>
+        <source url="https://d.clarkee.co.uk/t/remote-shells-part-iii-shell-access-your-phone/508.rss">Remote Shells Part III. Shell Access your Phone</source>
+      </item>
+  </channel>
+</rss>

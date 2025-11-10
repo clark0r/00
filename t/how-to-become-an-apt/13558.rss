@@ -1,0 +1,328 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>How to become an APT</title>
+    <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558</link>
+    <description>Hi fellas,
+
+You know there are many tutorials like &quot;How to become a hacker&quot; or &quot;How to become a pentester&quot; etc literally everywhere. Some actually have very good content (such as the ones here heheh=) but you might be asking: OK I&#39;ve become a hacker now what&#39;s next? So today I&#39;m gonna walk you through on a journey of becoming an APT :P
+
+Jokes aside, as I may have mentioned earlier I am regularly delivering reverse code engineering and malware analysis courses. During my class we are solving challenges from RPISEC Malware open courseware (great resource! https://github.com/RPISEC/Malware). Then we take the challenge one step further and play a game named &quot;How to become an APT&quot; :smiley:
+
+# Overview
+During this game students are tasked with reverse engineering the communication protocol of APT1&#39;s STARSYPOUND implant, then develop a server application and remotely control the implant on an infected virtual machine.
+
+First lets have an overview of this implant&#39;s behavior on a poorly drawn board:
+
+![resim|640x409](upload://5INO7lzRAAcyUEOgSKK3rL8YI4v.jpeg)
+
+### Some key features:
+* Malware receives its IP:Port configuration from its Resources
+* If malware has received &quot;cmd&quot; it spawns a new thread of _cmd.exe_
+* Malware creates a pipe to its child thread and redirects network I/O to _cmd.exe_ back and forth
+* Malware contains a custom PRNG like **key generator** which will be used to generate a key of N-bytes on demand
+* Network traffic will be XOR ciphered with these generated keys
+* Each packet sent by malware will contain a 4 byte **header** at the beginning to indicate the size of message, however packets received by malware aren&#39;t expected to have this &quot;header&quot;
+
+#### IP:Port Configuration
+![resim|674x167](upload://yQXt80Rl3j4yoCMvJzu9psUthCv.png) 
+
+#### When malware receives &quot;cmd&quot; command
+![resim|502x430](upload://bYxc4eBXsMahhSFonAB1nu68OV0.png) 
+
+#### Encryption/Decryption Procedure
+![resim|335x469](upload://wlgqTttTz0I5rtnsSC0KDV7UFLn.png) 
+
+#### Example Traffic
+![resim|466x500](upload://8IBz9kAxeo2bbJI1oPQN6OAno67.png) 
+
+# Debugging Encryption Routine
+Lets inspect the encryption routine step by step to see what is getting xor&#39;d.
+
+![resim|690x190](upload://xCGpYBehNdnHTYt2wYvM098EXvr.png) 
+
+To put it simply the procedure is basically;
+&gt; ciphertext[i] = plaintext[i] ^ generate_key_byte()
+
+# Becoming APT
+To remotely control the implant I need to be able to generate the same sequence of bytes as the malware. In order to do that I have two options.
+1. Reverse the key generation algorithm and re-implement it (hard way)
+2. Patch the program to make it dump the key somewhere in memory on the fly, then make it generate a long key (1024 bytes long for example)
+
+Obviously I took the second way :smiley: 
+
+## Steps I Followed
+* Create a new section with RWE permissions, fill it with NOP&#39;s
+* Write a small assembly code which will copy the key on the fly and return
+* Hijack the execution flow by patching encryption routine and redirect it to our key thief
+* Debug the patched malware, initiate handshake then send 1024-byte long message
+* Retrieve the key from dumped memory location
+
+### Key Copier Code
+![resim|203x254](upload://cXZXsmTVUuX9n65f8dcsFMFLc3Y.png) 
+Pseudocode:
+&gt; ciphertext[i] = plaintext[i] ^ key_byte
+&gt; mem[i] = key_byte ; ==&gt; where we are copying the key
+&gt; return
+
+### Hijacked Execution Flow
+![resim|318x474](upload://sRAfdZxLJnc5tNv7BquyGlF62ge.png) 
+
+## Lets Do It :slight_smile: 
+#### 1. Engaging with Malware
+![resim|690x385](upload://6gI6V9UqEOvqCKAbDoIYyltfxp7.png) 
+
+#### 2. Retrieving the Key
+![resim|690x343](upload://2vjAAPARaASqDVOkke8Aje3P5Au.png)  
+
+## Last Step
+Now that you have retrieved a key of sufficient length you may encrypt/decrypt the traffic in order to engage and remotely control the implant. You may even develop a server application to automate the thing. I have made a shitty one (on purpose) here: https://github.com/robindimyan/apthowto/tree/master/APT1-STARSYPOUND
+
+Congratulations, you have just become APT1 :smile:</description>
+    
+    <lastBuildDate>Tue, 21 May 2019 15:15:19 +0000</lastBuildDate>
+    <category>Malware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/12</link>
+        <pubDate>Sat, 08 Jun 2019 14:31:28 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-12</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[Narcodex]]></dc:creator>
+        <description><![CDATA[
+            <p>Intersting read. Thank you <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/11</link>
+        <pubDate>Tue, 21 May 2019 15:15:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-11</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>The exploit wasn’t the reason why it was bad. NotPetya used the same infection method but it was much more severe probably because it wasn’t so poorly developed(?)</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/10</link>
+        <pubDate>Sat, 11 May 2019 23:15:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-10</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[fade]]></dc:creator>
+        <description><![CDATA[
+            <p>Yes, a lot of systems are not properly patched. But a lot of malware, if not most, operate in this fashion, leveraging known vulns and utilizing existing exploits. You’re not going to burn 0-days on every run. Patching is notoriously, well, patchy. This isn’t really the same as OPSEC. Not to mention, a ransomware like WannaCry isn’t meant to hide (for obvious reasons). The goal is quick, dirty money. Of course, it’s hard to reconcile this as APT because it really isn’t. (APT as I see it applies more to a group than it does specific strain of malware.)</p>
+<p>edit: Actually if you consider NK’s overall goals and strategies for its uses of cyber, I guess WannaCry is more-or-less consistent.</p>
+<p>edit: I think this is sort of off-topic from OP.  So to go back to that. First off, very cool. I’d like to know if you have other “games”, “challenges”, or exercises like this.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/9</link>
+        <pubDate>Sat, 11 May 2019 21:31:04 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-9</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[Alice]]></dc:creator>
+        <description><![CDATA[
+            <p>WannaCry is a joke because as far as I know, it infected machines that haven’t been updated in months?</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/8</link>
+        <pubDate>Sat, 11 May 2019 15:02:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-8</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[hunter]]></dc:creator>
+        <description><![CDATA[
+            <p>Glad that it became helpful <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:"> If I get to have some free time I’m thinking of writing a loooong thread about instrumentation of ‘cyber’ in interstate conflicts. Will touch upon the terms in more detail and hopefully will contain lots of case analysis <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/7</link>
+        <pubDate>Sat, 11 May 2019 13:34:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-7</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[axom_hexor]]></dc:creator>
+        <description><![CDATA[
+            <p>It would be helpful if you continue this topic to part 2 or another class. This class is really helpful.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/6</link>
+        <pubDate>Sat, 11 May 2019 13:18:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-6</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>ETERNALBLUE was an outdated exploit which already had patches available for the vulnerability. WannaCry was a pretty bad piece of malware. The (or one of) NK agent who deployed it had poor OPSEC. Very APT. <img src="https://0x00sec.org/images/emoji/twitter/thinking.png?v=9" title=":thinking:" class="emoji" alt=":thinking:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/5</link>
+        <pubDate>Sat, 11 May 2019 13:13:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-5</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[hunter]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for your comment! As <a class="mention" href="https://d.clarkee.co.uk/u/dtm">@dtm</a> pointed out I wasn’t really serious on this being a tutorial to become an APT, its only a name we’ve given to an exercise made during my class <img src="https://0x00sec.org/images/emoji/twitter/smile.png?v=9" title=":smile:" class="emoji" alt=":smile:"></p>
+<p>However you have made a good point on defining APTs (Advanced Persistent Threat). While working in the field of cyber threat intelligence I’ve came to realize that definitions of APT in popular sources like Wikipedia are mostly wrong. I saw that even cyber security companies sometimes make incorrect definitions for the sake of marketing.</p>
+<p>Term of “APT” is usually associated with nation-state or state sponsored attacker groups, because the term itself has its origins in military. But in the realm of cyber security you will see that the term has actually a more generic meaning and it may include (however rarely) non-state actors.</p>
+<p>Now lets break down the term shall we <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<ul>
+<li>ADVANCED: Meaning the threat group has advanced <strong>capabilities</strong>. This advancement isn’t measured by the number of 0days or MBR rootkits a threat group possess. But it’s measured by their target selection and their <em>modus operandi</em> (how they roll out their operation). Their campaigns may or may not be sophisticated.</li>
+</ul>
+<h4>Myth <span class="hashtag">#1:</span> APT’s are invisible and their attacks are very sophisticated</h4>
+<p>To start with, “invisibility” itself is impossible. There is no invisibility (of an attacker) but rather insufficient visibility (of a defender). Even if an attacker penetrates a system using 0days and then implants a rootkit, their activity can be detected.</p>
+<p>Second, many campaigns which are attributed to APT groups are actually far from sophisticated. Some even have very poor OPSEC, you would be surprised. What we need to understand is that these groups run on a budget and every 0day/implant used on a target shall be considered burned. So it’s certain that these guys won’t spit out their 0days and most advanced implants on every target they see. Apart from that, a campaign may be meant to be detected as a part of counter intelligence, influence op, diplomatic signaling etc.</p>
+<ul>
+<li>PERSISTENT: Meaning, targets of the threat group is most probably dictated by a higher-level agenda like political motivations, intelligence needs, military or diplomatic objectives etc. Because of this APT campaigns are not only targeted but also they’re very insistent on intruding their targets.</li>
+</ul>
+<p>This topic most probably deserves its own thread but this is all what I can do at the moment. I hope it is somehow helpful <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/4</link>
+        <pubDate>Sat, 11 May 2019 10:50:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-4</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the definition but in case you didn’t know, I don’t believe it was meant to be taken seriously.</p>
+<aside class="quote group-VIP quote-modified" data-username="hunter" data-post="1" data-topic="13558">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/hunter/48/14106_2.png" class="avatar"> hunter:</div>
+<blockquote>
+<p>So today I’m gonna walk you through on a journey of becoming an APT <img src="https://d.clarkee.co.uk/images/emoji/twitter/stuck_out_tongue.png?v=15" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:" loading="lazy" width="20" height="20"></p>
+<p>Jokes aside, …</p>
+</blockquote>
+</aside>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/3</link>
+        <pubDate>Sat, 11 May 2019 00:06:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-3</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[Alice]]></dc:creator>
+        <description><![CDATA[
+            <p>Interesting, but I think a more detailed explanation is needed. According to <a href="https://en.wikipedia.org/wiki/Advanced_persistent_threat" rel="noopener nofollow ugc">Wikipedia</a> the first sentence is:</p>
+<blockquote>
+<p>“stealthy computer network attack in which a person or group gains unauthorized access to a network and remains undetected for an extended period.”</p>
+</blockquote>
+<p>All APTs that we are aware of operate invisibly. Even when querying and probing of servers are detected  by someone by that point it is to late. The factors that let APTs stand out are:</p>
+<ol>
+<li>Well funded</li>
+<li>Maintain access and if locked out they usually find another way in</li>
+<li>They always have an end goal</li>
+</ol>
+<p>An example is APT39 which is suspected to be associated with the Russian Intelligence. APT39 are what many security researchers believe were behind DNC hack during the 2016 election. The feds noticed that a person or a group of people were probing the servers and contacted the DNC, but even with the usual checks, COZY BEAR which is the suite of malware that they use, was invisible and allowed them to continue their operation. We all know how that played out. Lastly, it is rare for an individual to be considered an APT since most of the known APTs are too sophisticated and too organized to just be the doing of one person.</p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/2</link>
+        <pubDate>Fri, 10 May 2019 18:02:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-2</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+      <item>
+        <title>How to become an APT</title>
+        <dc:creator><![CDATA[hunter]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi fellas,</p>
+<p>You know there are many tutorials like “How to become a hacker” or “How to become a pentester” etc literally everywhere. Some actually have very good content (such as the ones here heheh=) but you might be asking: OK I’ve become a hacker now what’s next? So today I’m gonna walk you through on a journey of becoming an APT <img src="https://d.clarkee.co.uk/images/emoji/twitter/stuck_out_tongue.png?v=15" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:" loading="lazy" width="20" height="20"></p>
+<p>Jokes aside, as I may have mentioned earlier I am regularly delivering reverse code engineering and malware analysis courses. During my class we are solving challenges from RPISEC Malware open courseware (great resource! <a href="https://github.com/RPISEC/Malware" class="inline-onebox">GitHub - RPISEC/Malware: Course materials for Malware Analysis by RPISEC</a>). Then we take the challenge one step further and play a game named “How to become an APT” <img src="https://d.clarkee.co.uk/images/emoji/twitter/smiley.png?v=15" title=":smiley:" class="emoji" alt=":smiley:" loading="lazy" width="20" height="20"></p>
+<h1><a name="p-41016-overview-1" class="anchor" href="https://d.clarkee.co.uk#p-41016-overview-1"></a>Overview</h1>
+<p>During this game students are tasked with reverse engineering the communication protocol of APT1’s STARSYPOUND implant, then develop a server application and remotely control the implant on an infected virtual machine.</p>
+<p>First lets have an overview of this implant’s behavior on a poorly drawn board:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/2/281b6709021373cd9e388b81ad14473338173dc7.jpeg" data-download-href="/uploads/short-url/5INO7lzRAAcyUEOgSKK3rL8YI4v.jpeg?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/281b6709021373cd9e388b81ad14473338173dc7.jpeg" alt="resim" data-base62-sha1="5INO7lzRAAcyUEOgSKK3rL8YI4v" width="640" height="409"></a></div><p></p>
+<h3><a name="p-41016-some-key-features-2" class="anchor" href="https://d.clarkee.co.uk#p-41016-some-key-features-2"></a>Some key features:</h3>
+<ul>
+<li>Malware receives its IP:Port configuration from its Resources</li>
+<li>If malware has received “cmd” it spawns a new thread of <em>cmd.exe</em></li>
+<li>Malware creates a pipe to its child thread and redirects network I/O to <em>cmd.exe</em> back and forth</li>
+<li>Malware contains a custom PRNG like <strong>key generator</strong> which will be used to generate a key of N-bytes on demand</li>
+<li>Network traffic will be XOR ciphered with these generated keys</li>
+<li>Each packet sent by malware will contain a 4 byte <strong>header</strong> at the beginning to indicate the size of message, however packets received by malware aren’t expected to have this “header”</li>
+</ul>
+<h4><a name="p-41016-ipport-configuration-3" class="anchor" href="https://d.clarkee.co.uk#p-41016-ipport-configuration-3"></a>IP:Port Configuration</h4>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/f/f446769e4a2b48373cca0516e45f1a120f20c46f.png" data-download-href="/uploads/short-url/yQXt80Rl3j4yoCMvJzu9psUthCv.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f446769e4a2b48373cca0516e45f1a120f20c46f.png" alt="resim" data-base62-sha1="yQXt80Rl3j4yoCMvJzu9psUthCv" width="674" height="167"></a></div><p></p>
+<h4><a name="p-41016-when-malware-receives-cmd-command-4" class="anchor" href="https://d.clarkee.co.uk#p-41016-when-malware-receives-cmd-command-4"></a>When malware receives “cmd” command</h4>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/5/53efb45c916e7a684f78d8b6e9059394cf0a6736.png" data-download-href="/uploads/short-url/bYxc4eBXsMahhSFonAB1nu68OV0.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/53efb45c916e7a684f78d8b6e9059394cf0a6736.png" alt="resim" data-base62-sha1="bYxc4eBXsMahhSFonAB1nu68OV0" width="502" height="430"></a></div><p></p>
+<h4><a name="p-41016-encryptiondecryption-procedure-5" class="anchor" href="https://d.clarkee.co.uk#p-41016-encryptiondecryption-procedure-5"></a>Encryption/Decryption Procedure</h4>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/e/e2acf1067475c56e6f470ac1b9ca93f73272cd6d.png" data-download-href="/uploads/short-url/wlgqTttTz0I5rtnsSC0KDV7UFLn.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/e2acf1067475c56e6f470ac1b9ca93f73272cd6d.png" alt="resim" data-base62-sha1="wlgqTttTz0I5rtnsSC0KDV7UFLn" width="335" height="469"></a></div><p></p>
+<h4><a name="p-41016-example-traffic-6" class="anchor" href="https://d.clarkee.co.uk#p-41016-example-traffic-6"></a>Example Traffic</h4>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/3/3d1c35f381ed9ef3df679bb1271720f3b64a5123.png" data-download-href="/uploads/short-url/8IBz9kAxeo2bbJI1oPQN6OAno67.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/3d1c35f381ed9ef3df679bb1271720f3b64a5123.png" alt="resim" data-base62-sha1="8IBz9kAxeo2bbJI1oPQN6OAno67" width="466" height="500"></a></div><p></p>
+<h1><a name="p-41016-debugging-encryption-routine-7" class="anchor" href="https://d.clarkee.co.uk#p-41016-debugging-encryption-routine-7"></a>Debugging Encryption Routine</h1>
+<p>Lets inspect the encryption routine step by step to see what is getting xor’d.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/e/eba731e56566af504156316f828882f75cdaf6a9.png" data-download-href="/uploads/short-url/xCGpYBehNdnHTYt2wYvM098EXvr.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/eba731e56566af504156316f828882f75cdaf6a9.png" alt="resim" data-base62-sha1="xCGpYBehNdnHTYt2wYvM098EXvr" width="690" height="190"></a></div><p></p>
+<p>To put it simply the procedure is basically;</p>
+<blockquote>
+<p>ciphertext[i] = plaintext[i] ^ generate_key_byte()</p>
+</blockquote>
+<h1><a name="p-41016-becoming-apt-8" class="anchor" href="https://d.clarkee.co.uk#p-41016-becoming-apt-8"></a>Becoming APT</h1>
+<p>To remotely control the implant I need to be able to generate the same sequence of bytes as the malware. In order to do that I have two options.</p>
+<ol>
+<li>Reverse the key generation algorithm and re-implement it (hard way)</li>
+<li>Patch the program to make it dump the key somewhere in memory on the fly, then make it generate a long key (1024 bytes long for example)</li>
+</ol>
+<p>Obviously I took the second way <img src="https://d.clarkee.co.uk/images/emoji/twitter/smiley.png?v=15" title=":smiley:" class="emoji" alt=":smiley:" loading="lazy" width="20" height="20"></p>
+<h2><a name="p-41016-steps-i-followed-9" class="anchor" href="https://d.clarkee.co.uk#p-41016-steps-i-followed-9"></a>Steps I Followed</h2>
+<ul>
+<li>Create a new section with RWE permissions, fill it with NOP’s</li>
+<li>Write a small assembly code which will copy the key on the fly and return</li>
+<li>Hijack the execution flow by patching encryption routine and redirect it to our key thief</li>
+<li>Debug the patched malware, initiate handshake then send 1024-byte long message</li>
+<li>Retrieve the key from dumped memory location</li>
+</ul>
+<h3><a name="p-41016-key-copier-code-10" class="anchor" href="https://d.clarkee.co.uk#p-41016-key-copier-code-10"></a>Key Copier Code</h3>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/5/5ae25daa0d34f62f06c37c25de48c6b3a024cb7e.png" data-download-href="/uploads/short-url/cXZXsmTVUuX9n65f8dcsFMFLc3Y.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5ae25daa0d34f62f06c37c25de48c6b3a024cb7e.png" alt="resim" data-base62-sha1="cXZXsmTVUuX9n65f8dcsFMFLc3Y" width="203" height="254"></a></div><br>
+Pseudocode:<p></p>
+<blockquote>
+<p>ciphertext[i] = plaintext[i] ^ key_byte<br>
+mem[i] = key_byte ; ==&gt; where we are copying the key<br>
+return</p>
+</blockquote>
+<h3><a name="p-41016-hijacked-execution-flow-11" class="anchor" href="https://d.clarkee.co.uk#p-41016-hijacked-execution-flow-11"></a>Hijacked Execution Flow</h3>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/c/ca4b849aeabff14864da720bf94e2512c16b1f36.png" data-download-href="/uploads/short-url/sRAfdZxLJnc5tNv7BquyGlF62ge.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/ca4b849aeabff14864da720bf94e2512c16b1f36.png" alt="resim" data-base62-sha1="sRAfdZxLJnc5tNv7BquyGlF62ge" width="318" height="474"></a></div><p></p>
+<h2><a name="p-41016-lets-do-it-slight_smile-12" class="anchor" href="https://d.clarkee.co.uk#p-41016-lets-do-it-slight_smile-12"></a>Lets Do It <img src="https://d.clarkee.co.uk/images/emoji/twitter/slight_smile.png?v=15" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></h2>
+<h4><a name="p-41016-h-1-engaging-with-malware-13" class="anchor" href="https://d.clarkee.co.uk#p-41016-h-1-engaging-with-malware-13"></a>1. Engaging with Malware</h4>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/2/2bf0a539a41b522b3d55ebc582637e08b021c7d1.png" data-download-href="/uploads/short-url/6gI6V9UqEOvqCKAbDoIYyltfxp7.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/2bf0a539a41b522b3d55ebc582637e08b021c7d1.png" alt="resim" data-base62-sha1="6gI6V9UqEOvqCKAbDoIYyltfxp7" width="690" height="385"></a></div><p></p>
+<h4><a name="p-41016-h-2-retrieving-the-key-14" class="anchor" href="https://d.clarkee.co.uk#p-41016-h-2-retrieving-the-key-14"></a>2. Retrieving the Key</h4>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/1/118e941ebff4bad7d23836922bab392873244882.png" data-download-href="/uploads/short-url/2vjAAPARaASqDVOkke8Aje3P5Au.png?dl=1" title="resim"><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/118e941ebff4bad7d23836922bab392873244882.png" alt="resim" data-base62-sha1="2vjAAPARaASqDVOkke8Aje3P5Au" width="690" height="343"></a></div><p></p>
+<h2><a name="p-41016-last-step-15" class="anchor" href="https://d.clarkee.co.uk#p-41016-last-step-15"></a>Last Step</h2>
+<p>Now that you have retrieved a key of sufficient length you may encrypt/decrypt the traffic in order to engage and remotely control the implant. You may even develop a server application to automate the thing. I have made a shitty one (on purpose) here: <a href="https://github.com/robindimyan/apthowto/tree/master/APT1-STARSYPOUND" class="inline-onebox">apthowto/APT1-STARSYPOUND at master · robindimyan/apthowto · GitHub</a></p>
+<p>Congratulations, you have just become APT1 <img src="https://d.clarkee.co.uk/images/emoji/twitter/smile.png?v=15" title=":smile:" class="emoji" alt=":smile:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/how-to-become-an-apt/13558/1</link>
+        <pubDate>Thu, 09 May 2019 14:31:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13558-1</guid>
+        <source url="https://d.clarkee.co.uk/t/how-to-become-an-apt/13558.rss">How to become an APT</source>
+      </item>
+  </channel>
+</rss>

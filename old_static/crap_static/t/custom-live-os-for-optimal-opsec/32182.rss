@@ -1,0 +1,586 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Custom Live OS for Optimal OPSEC</title>
+    <link>https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182</link>
+    <description>* Let&#39;s build an example Debian 11 Live OS from a fresh Debian 11 VPS with one script.
+
+![testos|666x500, 75%](upload://lXuo3LqMRI0wVeyTLSyYgNoQVLM.png)
+
+Start up some root scripting with:
+
+```
+sudo su
+nano in.sh &amp;&amp; chmod 755 in.sh
+```
+First, let&#39;s setup some aliases to help us get to where we&#39;re going:
+
+```
+#!/bin/bash
+cat &gt;&gt; /root/.bashrc &lt;&lt; EOA
+alias opt=&#39;cd /root/liveos/config/includes.chroot/opt/;ls -lth&#39;
+alias packages=&#39;nano /root/liveos/config/package-lists/main.list.chroot&#39;
+alias run=&#39;nano /root/liveos/config/includes.chroot/opt/run.sh&#39;
+alias log=&#39;watch -d -n5 &quot;tail -n 36 /root/liveos/build.log&quot;&#39;
+alias build=&#39;cd /root/liveos;screen -dmS iso ./build.sh;htop -C || log;ls -lth&#39;
+EOA
+```
+
+So *opt* is going to be the directory we stash our additions in, *packages* is going to control the list of debian repository packages we want included in our build, *run* is going to edit the start-up control script, *log* lets us watch our 25 minute build session, and *build* of course builds the live disk ISO. Now, let&#39;s install our prerequisites: 
+
+
+```
+apt update &amp;&amp; apt upgrade -y
+apt install -y live-build screen htop net-tools
+```
+
+Now setup a build directory and adjust some defaults. Most would want to change the architecture to *amd64*. This setup will produce an image of about 600mb.
+
+```
+mkdir -p /root/liveos
+cd /root/liveos
+lb config
+cp /usr/share/doc/live-build/examples/auto/* auto/
+cat &gt; auto/config &lt;&lt; EOF
+#!/bin/sh
+set -e
+lb config noauto \
+    -d bullseye \
+    --mode debian \
+    --architectures i386 \
+    --linux-flavours 686-pae \
+    --debian-installer false \
+    --archive-areas &quot;main contrib non-free&quot; \
+    --apt-indices false \
+    --memtest none \
+    --iso-volume &quot;TestOS&quot; \
+    --bootappend-live &quot;quiet hostname=testos boot=live&quot; \
+    &quot;${@}&quot;
+EOF
+lb config -d bullseye --apt-indices false --apt-recommends false --debootstrap-options &quot;--variant=minbase&quot; --firmware-chroot false --memtest none --bootappend-live &quot;quiet boot=live hostname=testos&quot;
+echo &quot;live-tools user-setup sudo eject&quot; &gt; config/package-lists/recommends.list.chroot
+```
+Then lets add a list of packages and make that *opt* directory for additional software.
+
+```
+cat &gt; config/package-lists/main.list.chroot &lt;&lt; EOF
+firefox-esr
+lxterminal
+net-tools
+wget
+xorg
+openbox
+pcmanfm
+nano
+mousepad
+conky
+feh
+ufw
+screen
+htop
+lsof
+wipe
+usbutils
+gnome-screenshot
+network-manager
+pciutils
+software-properties-common
+ca-certificates
+libfuse2
+EOF
+mkdir -p config/includes.chroot/opt &amp;&amp; sync
+cd /root/liveos/config/includes.chroot/opt
+```
+
+Adjust as needed of course. The goal here is a minimally viable graphical operating system that is easily expandable.  Openbox as a window manager fits the bill here quit nicely. Conky is also very extensible. By setting it up this way we can do all of our configuration on-the-fly at boot time. Let&#39;s add in the real workhorse, *run.sh*:
+
+```
+cat &gt; run.sh &lt;&lt; &quot;EOR&quot;
+#!/bin/bash
+cat &gt; /etc/motd &lt;&lt; EOF
+
+████████ ███████ ███████ ████████  ██████  ███████
+   ██    ██      ██         ██    ██    ██ ██
+   ██    █████   ███████    ██    ██    ██ ███████
+   ██    ██           ██    ██    ██    ██      ██
+   ██    ███████ ███████    ██     ██████  ███████
+
+EOF
+cat &gt; /etc/conky/conky.conf &lt;&lt; &quot;EOF&quot;
+
+conky.config = {
+    alignment = &#39;top_right&#39;,
+    background = false,
+    border_width = 0,
+    cpu_avg_samples = 2,
+    default_color = &#39;white&#39;,
+    default_outline_color = &#39;white&#39;,
+    default_shade_color = &#39;white&#39;,
+    draw_borders = false,
+    draw_graph_borders = true,
+    draw_outline = false,
+    draw_shades = false,
+    use_xft = true,
+    font = &#39;DejaVu Sans Mono:size=16&#39;,
+    gap_x = 30,
+    gap_y = 20,
+    minimum_height = 5,
+    minimum_width = 6,
+    net_avg_samples = 2,
+    no_buffers = true,
+    out_to_console = false,
+    out_to_stderr = false,
+    extra_newline = false,
+    own_window = true,
+    own_window_class = &#39;Conky&#39;,
+    own_window_colour = &#39;black&#39;,
+    own_window_type = &#39;desktop&#39;,
+    stippled_borders = 0,
+    update_interval = 2,
+    uppercase = false,
+    use_spacer = &#39;none&#39;,
+    show_graph_scale = false,
+    show_graph_range = false
+}
+
+conky.text = [[
+${font Open Sans Light:size=88}$alignc${time %l:%M}${font}
+
+${font Open Sans:size=23}$alignr${time %B %e}${font}
+]]
+EOF
+ln -sf /usr/share/zoneinfo/America/Chicago /etc/localtime
+sed -i &#39;86s/9/14/g&#39; /etc/xdg/openbox/rc.xml
+sed -i &#39;95s/9/14/g&#39; /etc/xdg/openbox/rc.xml
+xsetroot -solid black
+xset s off -dpms
+xhost +si:localuser:root
+conky -b &amp;
+cat &gt; /root/.bashrc &lt;&lt; &quot;EOA&quot;
+source /home/user/.bashrc
+EOA
+cat &gt;&gt; /home/user/.bashrc &lt;&lt; &quot;EOA&quot;
+alias aliases=&#39;sudo nano /home/user/.bashrc; . /home/user/.bashrc&#39;
+alias menu=&#39;sudo nano /etc/xdg/openbox/menu.xml; openbox --reconfigure&#39;
+alias pubip=&#39;wget --connect-timeout=10 -qO- checkip.dyn.com | grep -E -o &quot;([0-9]{1,3}[\.]){3}[0-9]{1,3}&quot;&#39;
+alias wifi=&#39;sudo nmcli dev wifi list; echo &quot;sudo nmcli --ask dev wifi connect [SSID here]&quot;&#39;
+alias crypt=&#39;/opt/./truecrypt-console-x86 &amp;&amp; truecrypt -c&#39;
+EOA
+chown user:user /home/user/.bashrc
+cat &gt; /home/user/.profile &lt;&lt; &quot;EOA&quot;
+source /home/user/.bashrc
+clear
+cat /etc/motd
+EOA
+chown user:user /home/user/.profile
+cat &gt; /etc/xdg/openbox/menu.xml &lt;&lt; EOF
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;openbox_menu xmlns=&quot;http://openbox.org/3.4/menu&quot;&gt;
+&lt;menu id=&quot;root-menu&quot; label=&quot;Openbox 3&quot;&gt;
+  &lt;separator label=&quot;TestOS&quot; /&gt;
+   &lt;item label=&quot;Terminal&quot;&gt;
+	&lt;action name=&quot;Execute&quot;&gt;
+      &lt;command&gt;lxterminal --geometry=109x45 --title=TestOS&lt;/command&gt;
+    &lt;/action&gt;
+  &lt;/item&gt;
+   &lt;item label=&quot;Firefox&quot;&gt;
+	&lt;action name=&quot;Execute&quot;&gt;
+      &lt;command&gt;firefox http://start.duckduckgo.com&lt;/command&gt;
+    &lt;/action&gt;
+  &lt;/item&gt;
+   &lt;item label=&quot;Files&quot;&gt;
+	&lt;action name=&quot;Execute&quot;&gt;
+      &lt;command&gt;pcmanfm&lt;/command&gt;
+    &lt;/action&gt;
+  &lt;/item&gt;
+   &lt;item label=&quot;Text&quot;&gt;
+	&lt;action name=&quot;Execute&quot;&gt;
+      &lt;command&gt;mousepad&lt;/command&gt;
+    &lt;/action&gt;
+  &lt;/item&gt;
+  &lt;item label=&quot;Shutdown&quot;&gt;
+    &lt;action name=&quot;Execute&quot;&gt;
+      &lt;command&gt;sudo shutdown -P --no-wall now&lt;/command&gt;
+    &lt;/action&gt;
+  &lt;/item&gt;
+&lt;/menu&gt;
+&lt;/openbox_menu&gt;
+EOF
+sed -i &#39;317s/scrot/gnome-screenshot -i/g&#39; /etc/xdg/openbox/rc.xml
+openbox --reconfigure
+ufw enable
+ufw logging low
+echo &quot;nameserver 1.1.1.1&quot; &gt; /etc/resolv.conf
+echo &quot;nameserver 1.0.0.1&quot; &gt;&gt; /etc/resolv.conf
+exit 0
+EOR
+chmod 755 run.sh
+```
+
+A live OS with Truecrypt, Veracrypt, or Shufflecake built-in is enough to justify this whole endeavor but really anything can be done once you get used to building for a live environment. The original Truecrypt docs [**1**] recommend building a live OS and the NSA used Truecrypt [**2**] back in the day so yea...this **is** worth it.
+
+
+```
+wget -q https://raw.githubusercontent.com/DrWhax/truecrypt-archive/master/truecrypt-7.1a-linux-console-x86.tar.gz &amp;&amp; tar -xvf *.tar.gz; rm -f truecrypt-7.1a-linux-console-x86.tar.gz
+mv -v truecrypt-7.1a-setup-console-x86 truecrypt-console-x86; chmod 755 truecrypt-console-x86
+cd ..
+chown -Rv user:user opt
+```
+
+We need to hook the live disk boot process to hand off control to Openbox. We&#39;re also changing the default four workspaces to one here as it cleans up the middle-click menu.
+
+
+```
+cd /root/liveos/
+mkdir -p config/includes.chroot/lib/live/config
+cat &gt; config/includes.chroot/lib/live/config/2000-custom-run &lt;&lt; &quot;EOF&quot;
+#!/bin/sh
+sed -i &#39;131s/4/1/g&#39; /etc/xdg/openbox/rc.xml
+echo &quot;sudo /opt/./run.sh&quot; &gt;&gt; /etc/xdg/openbox/autostart
+EOF
+chmod 755 config/includes.chroot/lib/live/config/2000-custom-run
+```
+
+Let&#39;s copy in the default boot loader and setup a tiny build script.
+
+
+```
+mkdir -p config/bootloaders/isolinux
+cp -Rv /usr/share/live/build/bootloaders/isolinux/* config/bootloaders/isolinux
+
+cat &gt; /root/liveos/build.sh &lt;&lt; &quot;EOF&quot;
+#!/bin/bash
+cd /root/liveos
+lb clean
+lb build 2&gt;&amp;1 | tee build.log
+mv -v live-image-i386.hybrid.iso TestOS.iso
+exit 0
+EOF
+chmod 755 /root/liveos/build.sh
+```
+
+That should be it! Run the script, source the aliases, and run the build.
+
+
+```
+./in.sh
+source .bashrc
+build
+```
+
+This script and setup has been thoroughly tested by myself so I&#39;m confident in sharing this method. I think as a community we should have a better answer to our personal setups then &quot;I use Kali.&quot; **F*ck Kali**. Try this or literally anything else.
+[1]: https://www.grc.com/misc/truecrypt/TrueCrypt%20User%20Guide.pdf
+[2]: https://github.com/x0rz/EQGRP/blob/master/Linux/bin/scrubhands</description>
+    
+    <lastBuildDate>Wed, 23 Nov 2022 15:29:24 +0000</lastBuildDate>
+    <category>Linux</category>
+    <atom:link href="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Custom Live OS for Optimal OPSEC</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/7</link>
+        <pubDate>Sun, 19 Mar 2023 11:21:35 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32182-7</guid>
+        <source url="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182.rss">Custom Live OS for Optimal OPSEC</source>
+      </item>
+      <item>
+        <title>Custom Live OS for Optimal OPSEC</title>
+        <dc:creator><![CDATA[jakeofark]]></dc:creator>
+        <description><![CDATA[
+            <p>Exactly! As a base and add whatever you want on top of it. For example, here’s a <a href="https://pastebin.com/raw/HzgyEDZZ" rel="noopener nofollow ugc">live build script for Metasploit</a>.</p>
+          <p><a href="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/5</link>
+        <pubDate>Sat, 19 Nov 2022 20:51:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32182-5</guid>
+        <source url="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182.rss">Custom Live OS for Optimal OPSEC</source>
+      </item>
+      <item>
+        <title>Custom Live OS for Optimal OPSEC</title>
+        <dc:creator><![CDATA[c0z]]></dc:creator>
+        <description><![CDATA[
+            <p>Lol, I’ve used Kali, ParrotOS, Weakerth4n Linux, Demon Linux, SamuraiWTF, SamuraiSTFU, Backtrack, Backbox, Pentoo, BlackArch, and all the other more niche distro’s. What’s funny is that for a long while I just copied all my configs to a plain Debian installation and it worked fine for me. The only reason why I still use big named “Pentest” distro’s is for convenience.</p>
+<p>Though for automation, build and refresh I like this as a base. If you don’t want to log into every box an scp here’s my <a href="https://github.com/Ghost53574/Automation" rel="noopener nofollow ugc">script</a> that probably will help with mass deployment.</p>
+          <p><a href="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/4</link>
+        <pubDate>Sat, 19 Nov 2022 15:06:27 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32182-4</guid>
+        <source url="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182.rss">Custom Live OS for Optimal OPSEC</source>
+      </item>
+      <item>
+        <title>Custom Live OS for Optimal OPSEC</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice Post !, but with a small intro into why someone should do this would it would be even better <img src="https://0x00sec.org/images/emoji/twitter/grinning.png?v=12" title=":grinning:" class="emoji" alt=":grinning:" loading="lazy" width="20" height="20">.</p>
+          <p><a href="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/3</link>
+        <pubDate>Fri, 18 Nov 2022 12:27:36 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32182-3</guid>
+        <source url="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182.rss">Custom Live OS for Optimal OPSEC</source>
+      </item>
+      <item>
+        <title>Custom Live OS for Optimal OPSEC</title>
+        <dc:creator><![CDATA[voryzen]]></dc:creator>
+        <description><![CDATA[
+            <p>Cool tut, bro. There are definitely some good tips in here.</p>
+          <p><a href="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/2</link>
+        <pubDate>Fri, 18 Nov 2022 09:26:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32182-2</guid>
+        <source url="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182.rss">Custom Live OS for Optimal OPSEC</source>
+      </item>
+      <item>
+        <title>Custom Live OS for Optimal OPSEC</title>
+        <dc:creator><![CDATA[jakeofark]]></dc:creator>
+        <description><![CDATA[
+            <ul>
+<li>Let’s build an example Debian 11 Live OS from a fresh Debian 11 VPS with one script.</li>
+</ul>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/9/9/99e7322b965d19bd06f4bfcb244104fdabec8d36.png" data-download-href="/uploads/short-url/lXuo3LqMRI0wVeyTLSyYgNoQVLM.png?dl=1" title="testos" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/9/9/99e7322b965d19bd06f4bfcb244104fdabec8d36_2_499x375.png" alt="testos" data-base62-sha1="lXuo3LqMRI0wVeyTLSyYgNoQVLM" width="499" height="375" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/9/9/99e7322b965d19bd06f4bfcb244104fdabec8d36_2_499x375.png, https://0x00sec.s3.amazonaws.com/optimized/3X/9/9/99e7322b965d19bd06f4bfcb244104fdabec8d36_2_748x562.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/9/9/99e7322b965d19bd06f4bfcb244104fdabec8d36_2_998x750.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/9/9/99e7322b965d19bd06f4bfcb244104fdabec8d36_2_10x10.png"></a></div><p></p>
+<p>Start up some root scripting with:</p>
+<pre><code class="lang-auto">sudo su
+nano in.sh &amp;&amp; chmod 755 in.sh
+</code></pre>
+<p>First, let’s setup some aliases to help us get to where we’re going:</p>
+<pre><code class="lang-auto">#!/bin/bash
+cat &gt;&gt; /root/.bashrc &lt;&lt; EOA
+alias opt='cd /root/liveos/config/includes.chroot/opt/;ls -lth'
+alias packages='nano /root/liveos/config/package-lists/main.list.chroot'
+alias run='nano /root/liveos/config/includes.chroot/opt/run.sh'
+alias log='watch -d -n5 "tail -n 36 /root/liveos/build.log"'
+alias build='cd /root/liveos;screen -dmS iso ./build.sh;htop -C || log;ls -lth'
+EOA
+</code></pre>
+<p>So <em>opt</em> is going to be the directory we stash our additions in, <em>packages</em> is going to control the list of debian repository packages we want included in our build, <em>run</em> is going to edit the start-up control script, <em>log</em> lets us watch our 25 minute build session, and <em>build</em> of course builds the live disk ISO. Now, let’s install our prerequisites:</p>
+<pre><code class="lang-auto">apt update &amp;&amp; apt upgrade -y
+apt install -y live-build screen htop net-tools
+</code></pre>
+<p>Now setup a build directory and adjust some defaults. Most would want to change the architecture to <em>amd64</em>. This setup will produce an image of about 600mb.</p>
+<pre><code class="lang-auto">mkdir -p /root/liveos
+cd /root/liveos
+lb config
+cp /usr/share/doc/live-build/examples/auto/* auto/
+cat &gt; auto/config &lt;&lt; EOF
+#!/bin/sh
+set -e
+lb config noauto \
+    -d bullseye \
+    --mode debian \
+    --architectures i386 \
+    --linux-flavours 686-pae \
+    --debian-installer false \
+    --archive-areas "main contrib non-free" \
+    --apt-indices false \
+    --memtest none \
+    --iso-volume "TestOS" \
+    --bootappend-live "quiet hostname=testos boot=live" \
+    "${@}"
+EOF
+lb config -d bullseye --apt-indices false --apt-recommends false --debootstrap-options "--variant=minbase" --firmware-chroot false --memtest none --bootappend-live "quiet boot=live hostname=testos"
+echo "live-tools user-setup sudo eject" &gt; config/package-lists/recommends.list.chroot
+</code></pre>
+<p>Then lets add a list of packages and make that <em>opt</em> directory for additional software.</p>
+<pre><code class="lang-auto">cat &gt; config/package-lists/main.list.chroot &lt;&lt; EOF
+firefox-esr
+lxterminal
+net-tools
+wget
+xorg
+openbox
+pcmanfm
+nano
+mousepad
+conky
+feh
+ufw
+screen
+htop
+lsof
+wipe
+usbutils
+gnome-screenshot
+network-manager
+pciutils
+software-properties-common
+ca-certificates
+libfuse2
+EOF
+mkdir -p config/includes.chroot/opt &amp;&amp; sync
+cd /root/liveos/config/includes.chroot/opt
+</code></pre>
+<p>Adjust as needed of course. The goal here is a minimally viable graphical operating system that is easily expandable.  Openbox as a window manager fits the bill here quit nicely. Conky is also very extensible. By setting it up this way we can do all of our configuration on-the-fly at boot time. Let’s add in the real workhorse, <em>run.sh</em>:</p>
+<pre><code class="lang-auto">cat &gt; run.sh &lt;&lt; "EOR"
+#!/bin/bash
+cat &gt; /etc/motd &lt;&lt; EOF
+
+████████ ███████ ███████ ████████  ██████  ███████
+   ██    ██      ██         ██    ██    ██ ██
+   ██    █████   ███████    ██    ██    ██ ███████
+   ██    ██           ██    ██    ██    ██      ██
+   ██    ███████ ███████    ██     ██████  ███████
+
+EOF
+cat &gt; /etc/conky/conky.conf &lt;&lt; "EOF"
+
+conky.config = {
+    alignment = 'top_right',
+    background = false,
+    border_width = 0,
+    cpu_avg_samples = 2,
+    default_color = 'white',
+    default_outline_color = 'white',
+    default_shade_color = 'white',
+    draw_borders = false,
+    draw_graph_borders = true,
+    draw_outline = false,
+    draw_shades = false,
+    use_xft = true,
+    font = 'DejaVu Sans Mono:size=16',
+    gap_x = 30,
+    gap_y = 20,
+    minimum_height = 5,
+    minimum_width = 6,
+    net_avg_samples = 2,
+    no_buffers = true,
+    out_to_console = false,
+    out_to_stderr = false,
+    extra_newline = false,
+    own_window = true,
+    own_window_class = 'Conky',
+    own_window_colour = 'black',
+    own_window_type = 'desktop',
+    stippled_borders = 0,
+    update_interval = 2,
+    uppercase = false,
+    use_spacer = 'none',
+    show_graph_scale = false,
+    show_graph_range = false
+}
+
+conky.text = [[
+${font Open Sans Light:size=88}$alignc${time %l:%M}${font}
+
+${font Open Sans:size=23}$alignr${time %B %e}${font}
+]]
+EOF
+ln -sf /usr/share/zoneinfo/America/Chicago /etc/localtime
+sed -i '86s/9/14/g' /etc/xdg/openbox/rc.xml
+sed -i '95s/9/14/g' /etc/xdg/openbox/rc.xml
+xsetroot -solid black
+xset s off -dpms
+xhost +si:localuser:root
+conky -b &amp;
+cat &gt; /root/.bashrc &lt;&lt; "EOA"
+source /home/user/.bashrc
+EOA
+cat &gt;&gt; /home/user/.bashrc &lt;&lt; "EOA"
+alias aliases='sudo nano /home/user/.bashrc; . /home/user/.bashrc'
+alias menu='sudo nano /etc/xdg/openbox/menu.xml; openbox --reconfigure'
+alias pubip='wget --connect-timeout=10 -qO- checkip.dyn.com | grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}"'
+alias wifi='sudo nmcli dev wifi list; echo "sudo nmcli --ask dev wifi connect [SSID here]"'
+alias crypt='/opt/./truecrypt-console-x86 &amp;&amp; truecrypt -c'
+EOA
+chown user:user /home/user/.bashrc
+cat &gt; /home/user/.profile &lt;&lt; "EOA"
+source /home/user/.bashrc
+clear
+cat /etc/motd
+EOA
+chown user:user /home/user/.profile
+cat &gt; /etc/xdg/openbox/menu.xml &lt;&lt; EOF
+&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;openbox_menu xmlns="http://openbox.org/3.4/menu"&gt;
+&lt;menu id="root-menu" label="Openbox 3"&gt;
+  &lt;separator label="TestOS" /&gt;
+   &lt;item label="Terminal"&gt;
+	&lt;action name="Execute"&gt;
+      &lt;command&gt;lxterminal --geometry=109x45 --title=TestOS&lt;/command&gt;
+    &lt;/action&gt;
+  &lt;/item&gt;
+   &lt;item label="Firefox"&gt;
+	&lt;action name="Execute"&gt;
+      &lt;command&gt;firefox http://start.duckduckgo.com&lt;/command&gt;
+    &lt;/action&gt;
+  &lt;/item&gt;
+   &lt;item label="Files"&gt;
+	&lt;action name="Execute"&gt;
+      &lt;command&gt;pcmanfm&lt;/command&gt;
+    &lt;/action&gt;
+  &lt;/item&gt;
+   &lt;item label="Text"&gt;
+	&lt;action name="Execute"&gt;
+      &lt;command&gt;mousepad&lt;/command&gt;
+    &lt;/action&gt;
+  &lt;/item&gt;
+  &lt;item label="Shutdown"&gt;
+    &lt;action name="Execute"&gt;
+      &lt;command&gt;sudo shutdown -P --no-wall now&lt;/command&gt;
+    &lt;/action&gt;
+  &lt;/item&gt;
+&lt;/menu&gt;
+&lt;/openbox_menu&gt;
+EOF
+sed -i '317s/scrot/gnome-screenshot -i/g' /etc/xdg/openbox/rc.xml
+openbox --reconfigure
+ufw enable
+ufw logging low
+echo "nameserver 1.1.1.1" &gt; /etc/resolv.conf
+echo "nameserver 1.0.0.1" &gt;&gt; /etc/resolv.conf
+exit 0
+EOR
+chmod 755 run.sh
+</code></pre>
+<p>A live OS with Truecrypt, Veracrypt, or Shufflecake built-in is enough to justify this whole endeavor but really anything can be done once you get used to building for a live environment. The original Truecrypt docs [<strong>1</strong>] recommend building a live OS and the NSA used Truecrypt [<strong>2</strong>] back in the day so yea…this <strong>is</strong> worth it.</p>
+<pre><code class="lang-auto">wget -q https://raw.githubusercontent.com/DrWhax/truecrypt-archive/master/truecrypt-7.1a-linux-console-x86.tar.gz &amp;&amp; tar -xvf *.tar.gz; rm -f truecrypt-7.1a-linux-console-x86.tar.gz
+mv -v truecrypt-7.1a-setup-console-x86 truecrypt-console-x86; chmod 755 truecrypt-console-x86
+cd ..
+chown -Rv user:user opt
+</code></pre>
+<p>We need to hook the live disk boot process to hand off control to Openbox. We’re also changing the default four workspaces to one here as it cleans up the middle-click menu.</p>
+<pre><code class="lang-auto">cd /root/liveos/
+mkdir -p config/includes.chroot/lib/live/config
+cat &gt; config/includes.chroot/lib/live/config/2000-custom-run &lt;&lt; "EOF"
+#!/bin/sh
+sed -i '131s/4/1/g' /etc/xdg/openbox/rc.xml
+echo "sudo /opt/./run.sh" &gt;&gt; /etc/xdg/openbox/autostart
+EOF
+chmod 755 config/includes.chroot/lib/live/config/2000-custom-run
+</code></pre>
+<p>Let’s copy in the default boot loader and setup a tiny build script.</p>
+<pre><code class="lang-auto">mkdir -p config/bootloaders/isolinux
+cp -Rv /usr/share/live/build/bootloaders/isolinux/* config/bootloaders/isolinux
+
+cat &gt; /root/liveos/build.sh &lt;&lt; "EOF"
+#!/bin/bash
+cd /root/liveos
+lb clean
+lb build 2&gt;&amp;1 | tee build.log
+mv -v live-image-i386.hybrid.iso TestOS.iso
+exit 0
+EOF
+chmod 755 /root/liveos/build.sh
+</code></pre>
+<p>That should be it! Run the script, source the aliases, and run the build.</p>
+<pre><code class="lang-auto">./in.sh
+source .bashrc
+build
+</code></pre>
+<p>This script and setup has been thoroughly tested by myself so I’m confident in sharing this method. I think as a community we should have a better answer to our personal setups then “I use Kali.” <strong>F*ck Kali</strong>. Try this or literally anything else.<br>
+[1]: <a href="https://www.grc.com/misc/truecrypt/TrueCrypt%20User%20Guide.pdf" rel="noopener nofollow ugc">https://www.grc.com/misc/truecrypt/TrueCrypt%20User%20Guide.pdf</a><br>
+[2]: <a href="https://github.com/x0rz/EQGRP/blob/master/Linux/bin/scrubhands" class="inline-onebox" rel="noopener nofollow ugc">EQGRP/scrubhands at master · x0rz/EQGRP · GitHub</a></p>
+          <p><a href="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182/1</link>
+        <pubDate>Thu, 17 Nov 2022 19:21:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32182-1</guid>
+        <source url="https://0x00sec.org/t/custom-live-os-for-optimal-opsec/32182.rss">Custom Live OS for Optimal OPSEC</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Building a God’s Eye Android App: Part 1 - Collecting Installed Android Apps</title>
+    <link>https://d.clarkee.co.uk/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121</link>
+    <description>Greetings my fellow hackers,
+
+In the previous tutorial [Introduction to Amunet](https://www.javaworld.com/article/3095406/android/android-studio-for-beginners-part-1-installation-and-setup.html) , we learnt Amunet would be a spying Android App. I wouldn&#39;t waste much time as I&#39;ll get straight to the point. 
+
+In this tutorial, we will only collect installed applications and their associated information but not send them to an external server since we are yet to setup our server and databases. I believe that will be the next tutorial ( Setting up Web Server and Databases ).
+
+I assume you have already installed Android Studio and have the environment running smoothly. If not, just head over to Google and search &quot;**installing and setting up android studio**&quot; or simply follow the tutorial from this external website [Android Studio for beginners, Part 1: Installation and setup](https://www.javaworld.com/article/3095406/android/android-studio-for-beginners-part-1-installation-and-setup.html) ( I am in no way affiliated with them ). That being said, we can move on and create an android project.
+
+**CREATE A NEW ANDROID PROJECT**
+
+Start up Android Studio and create a new android project.
+
+![26|690x424](upload://psyhiTBm7jLU3qMkNdDRyP9hZmR.png)
+
+Enter the application name of your choice, Amunet for me. Domain name can be anything of your choice. Next.
+
+![38|669x500](upload://raxqP2ipDMndmRZCog8cNBfHYHq.png)
+
+Now the minimum phone target API is 19 ( KitKat ). Next.
+
+![35|670x500](upload://oo0QyXrQwuy0Y7Qmx70nxfq6gOc.png)
+
+With the activity, go ahead and choose a **Basic Activity**. Next.
+
+![44|669x500](upload://hu4DZaShJr0tpV21Xo50lVUqJCN.png)
+
+We will leave the activity as &quot;**MainActivity**&quot; and click Finish.
+
+![51|668x500](upload://6bgUIstBuyANT01x4fTGJTGR0fw.png)
+
+Our project should be created successfully. We won&#39;t do much with the interface as most of the codes will be written in background threads, services and Broadcast Receiver. We will probably use the UI for asking for permissions ( on 23 + )
+
+&lt;img src=&#39;//0x00sec.s3.dualstack.us-east-1.amazonaws.com/original/2X/a/ab7f9b0cbb5b93a2e3b13569cd4c807bde00adfa.jpeg&#39;&gt;
+
+**COLLECTING INFORMATION ABOUT INSTALLED APPS**
+
+Head over to the
+
+&gt; MainActivity.java
+
+Feel free to remove the code for the `FloatingActionButton` in the `onCreate` method and add this code
+
+    new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    collect_installed_apps();
+                }
+    }).start();
+
+As you might have probably guessed, we are running a thread in the `onCreate` method and calling a method ( function ) `collect_installed_apps`. You&#39;ll also find that the function has been underlined with color red showing that we have not created the function yet. Lets move on and create the function.
+
+**COLLECT_INSTALLED_APPS**
+
+In this method, we import ApplicationInfo, PackageManager, Log and List. Go to the very top of the file but below the package line ( Line 1 ) and add this import statements.
+
+    import android.content.pm.ApplicationInfo;
+    import android.content.pm.PackageManager;
+    import java.util.List;
+    import android.util.Log;
+
+Now, lets create our method `collect_installed_apps`
+
+&gt;         private void collect_installed_apps() {
+&gt;         final PackageManager pm = getPackageManager();
+&gt;         List&lt;ApplicationInfo&gt; packages = pm.getInstalledApplications(PackageManager.GET_META_DATA);
+&gt;         for (ApplicationInfo packageInfo : packages) {
+&gt;             if(pm.getLaunchIntentForPackage(packageInfo.packageName) != null)
+&gt;             {
+&gt;                 String app_name = packageInfo.loadLabel(getPackageManager()).toString();
+&gt;                 String app_package = packageInfo.processName;
+&gt; 
+&gt;                 Log.i(&quot;0x00sec&quot;, &quot;App name: &quot; + app_name + &quot; Package Name: &quot; + app_package);
+&gt;             }
+&gt;         }
+&gt;     }
+
+Using the packager manager, the code loops through the installed apps and gets their information. The information we are gathering here is the application name and package name. There are alot of information available but we are limiting ourselves to only these two. You can however go ahead and collect other information. Since we have not setup our web server and database, we will instead log the information to the console using the `Log.i`.
+
+**CONFIGURING LOGCAT**
+
+You can read more about [Logcat](https://developer.android.com/studio/command-line/logcat) but in simple terms, the system and other apps dump messages like errors, warnings and other information into this stream. It is ever changing and not constant. Our android app also dumps information into this stream with the `Log.i` call. Since there are alot of information being pushed, it will be hard to find our information so we instead configure our Android Studio to show only messages with a specific tag. If you noticed in the `Log.i` code, we passed two parameters: tag and message respectively. We tell Android Studio to only show messages with our defined tag that is `0x00sec`. With this way, we don&#39;t see other messages not related to our android app. To the lower left of Android Studio, we will find the `Logcat` tab. Do yourself the honors and click on it. 
+
+![27|690x151](upload://3ZZ2oFhOD1YyKdFUmCjvi0jZXXp.jpg)
+
+Follow the steps in the image and another Log dialog will pop up. Fill in the correct information, otherwise the appropriate message will not be shown.
+
+1. Enter your own filter name.
+2. In the Log Tag, use `0x00sec` ( or whatever you used as the first parameter in the `Log.i` code ).
+3. Enter the package name ( located on the first line of `MainActivity.java` )
+
+![37|634x280](upload://hdMgLiDuAxpP53qXj2m6sgG3TEx.png)
+
+Click Ok. Now we are ready to run our android app. You first have to ensure USB Debugging is enabled on your testing device. Follow this link [How to Enable USB Debugging Mode on Android - KingoRoot](https://www.kingoapp.com/root-tutorials/how-to-enable-usb-debugging-mode-on-android.htm) if you&#39;ve not enabled it.
+
+**LETS RUN OUR ANDROID APPLICATION**
+
+Click on the green play button beside `app` at the top of the android studio or use `Control + R ( Mac )` and `Shift + F10 ( Windows/Linux )`. Make sure your device is connected and usb debugging enabled.
+
+When the app runs, the console should populate our installed apps and their package names.
+
+&lt;img src=&#39;//0x00sec.s3.dualstack.us-east-1.amazonaws.com/original/2X/9/99efd95978e97cafc9a231a025c73c85d183c674.jpeg&#39;&gt;
+
+As you noticed, our logcat filter is working great.
+
+**LETS END IT HERE**
+
+In today&#39;s tutorial, we&#39;ve learnt how to populate installed android apps. In the next tutorial, we will design our database and set up our web server. In meantime, our code corrections, suggestions, app designs, etc are welcome. Thank you for the opportunity to share and until we meet again, I&#39;m out.
+
+Checkout the github repo: https://github.com/sergeantexploiter/Amunet
+
+**#Sergeant**</description>
+    
+    <lastBuildDate>Fri, 15 Jun 2018 10:59:39 +0000</lastBuildDate>
+    <category>Phone Hacking</category>
+    <atom:link href="https://d.clarkee.co.uk/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Building a God’s Eye Android App: Part 1 - Collecting Installed Android Apps</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121/2</link>
+        <pubDate>Sun, 15 Jul 2018 10:33:41 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7121-2</guid>
+        <source url="https://d.clarkee.co.uk/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121.rss">Building a God’s Eye Android App: Part 1 - Collecting Installed Android Apps</source>
+      </item>
+      <item>
+        <title>Building a God’s Eye Android App: Part 1 - Collecting Installed Android Apps</title>
+        <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+        <description><![CDATA[
+            <p>Greetings my fellow hackers,</p>
+<p>In the previous tutorial <a href="https://www.javaworld.com/article/3095406/android/android-studio-for-beginners-part-1-installation-and-setup.html" rel="noopener nofollow ugc">Introduction to Amunet</a> , we learnt Amunet would be a spying Android App. I wouldn’t waste much time as I’ll get straight to the point.</p>
+<p>In this tutorial, we will only collect installed applications and their associated information but not send them to an external server since we are yet to setup our server and databases. I believe that will be the next tutorial ( Setting up Web Server and Databases ).</p>
+<p>I assume you have already installed Android Studio and have the environment running smoothly. If not, just head over to Google and search “<strong>installing and setting up android studio</strong>” or simply follow the tutorial from this external website <a href="https://www.javaworld.com/article/3095406/android/android-studio-for-beginners-part-1-installation-and-setup.html" rel="noopener nofollow ugc">Android Studio for beginners, Part 1: Installation and setup</a> ( I am in no way affiliated with them ). That being said, we can move on and create an android project.</p>
+<p><strong>CREATE A NEW ANDROID PROJECT</strong></p>
+<p>Start up Android Studio and create a new android project.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/b/b2709ef98bb4763c3680c904c3c3f9f0954f4925.png" data-download-href="/uploads/short-url/psyhiTBm7jLU3qMkNdDRyP9hZmR.png?dl=1" title="26" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/b/b2709ef98bb4763c3680c904c3c3f9f0954f4925.png" alt="26" data-base62-sha1="psyhiTBm7jLU3qMkNdDRyP9hZmR" width="690" height="424"></a></div><p></p>
+<p>Enter the application name of your choice, Amunet for me. Domain name can be anything of your choice. Next.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/b/be6baf43a1bc30e810a9133e1405ed1cfceb35ac.png" data-download-href="/uploads/short-url/raxqP2ipDMndmRZCog8cNBfHYHq.png?dl=1" title="38" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/b/be6baf43a1bc30e810a9133e1405ed1cfceb35ac.png" alt="38" data-base62-sha1="raxqP2ipDMndmRZCog8cNBfHYHq" width="669" height="500"></a></div><p></p>
+<p>Now the minimum phone target API is 19 ( KitKat ). Next.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/a/aaeb1704e85466ca6460c78b51d7f2b9577fecb8.png" data-download-href="/uploads/short-url/oo0QyXrQwuy0Y7Qmx70nxfq6gOc.png?dl=1" title="35" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/a/aaeb1704e85466ca6460c78b51d7f2b9577fecb8.png" alt="35" data-base62-sha1="oo0QyXrQwuy0Y7Qmx70nxfq6gOc" width="670" height="500"></a></div><p></p>
+<p>With the activity, go ahead and choose a <strong>Basic Activity</strong>. Next.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/7/7a8b463095a84e016929917e1bcd78a8697278e9.png" data-download-href="/uploads/short-url/hu4DZaShJr0tpV21Xo50lVUqJCN.png?dl=1" title="44" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/7/7a8b463095a84e016929917e1bcd78a8697278e9.png" alt="44" data-base62-sha1="hu4DZaShJr0tpV21Xo50lVUqJCN" width="669" height="500"></a></div><p></p>
+<p>We will leave the activity as “<strong>MainActivity</strong>” and click Finish.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/2/2b53428a50d1c64bd1bed56076a80f2c45e6d01a.png" data-download-href="/uploads/short-url/6bgUIstBuyANT01x4fTGJTGR0fw.png?dl=1" title="51" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/2/2b53428a50d1c64bd1bed56076a80f2c45e6d01a.png" alt="51" data-base62-sha1="6bgUIstBuyANT01x4fTGJTGR0fw" width="668" height="500"></a></div><p></p>
+<p>Our project should be created successfully. We won’t do much with the interface as most of the codes will be written in background threads, services and Broadcast Receiver. We will probably use the UI for asking for permissions ( on 23 + )</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/a/ab7f9b0cbb5b93a2e3b13569cd4c807bde00adfa.jpeg" data-download-href="/uploads/short-url/ot92yPstoVX0up0iH78BD3IUR18.jpeg?dl=1" title="AWcrjs6.jpg" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/a/ab7f9b0cbb5b93a2e3b13569cd4c807bde00adfa.jpeg" width="690" height="431"></a></div><p></p>
+<p><strong>COLLECTING INFORMATION ABOUT INSTALLED APPS</strong></p>
+<p>Head over to the</p>
+<blockquote>
+<p>MainActivity.java</p>
+</blockquote>
+<p>Feel free to remove the code for the <code>FloatingActionButton</code> in the <code>onCreate</code> method and add this code</p>
+<pre><code>new Thread(new Runnable() {
+            @Override
+            public void run() {
+                collect_installed_apps();
+            }
+}).start();
+</code></pre>
+<p>As you might have probably guessed, we are running a thread in the <code>onCreate</code> method and calling a method ( function ) <code>collect_installed_apps</code>. You’ll also find that the function has been underlined with color red showing that we have not created the function yet. Lets move on and create the function.</p>
+<p><strong>COLLECT_INSTALLED_APPS</strong></p>
+<p>In this method, we import ApplicationInfo, PackageManager, Log and List. Go to the very top of the file but below the package line ( Line 1 ) and add this import statements.</p>
+<pre><code>import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import java.util.List;
+import android.util.Log;
+</code></pre>
+<p>Now, lets create our method <code>collect_installed_apps</code></p>
+<blockquote>
+<pre><code>    private void collect_installed_apps() {
+    final PackageManager pm = getPackageManager();
+    List&lt;ApplicationInfo&gt; packages = pm.getInstalledApplications(PackageManager.GET_META_DATA);
+    for (ApplicationInfo packageInfo : packages) {
+        if(pm.getLaunchIntentForPackage(packageInfo.packageName) != null)
+        {
+            String app_name = packageInfo.loadLabel(getPackageManager()).toString();
+            String app_package = packageInfo.processName;
+
+            Log.i("0x00sec", "App name: " + app_name + " Package Name: " + app_package);
+        }
+    }
+}
+</code></pre>
+</blockquote>
+<p>Using the packager manager, the code loops through the installed apps and gets their information. The information we are gathering here is the application name and package name. There are alot of information available but we are limiting ourselves to only these two. You can however go ahead and collect other information. Since we have not setup our web server and database, we will instead log the information to the console using the <code>Log.i</code>.</p>
+<p><strong>CONFIGURING LOGCAT</strong></p>
+<p>You can read more about <a href="https://developer.android.com/studio/command-line/logcat" rel="noopener nofollow ugc">Logcat</a> but in simple terms, the system and other apps dump messages like errors, warnings and other information into this stream. It is ever changing and not constant. Our android app also dumps information into this stream with the <code>Log.i</code> call. Since there are alot of information being pushed, it will be hard to find our information so we instead configure our Android Studio to show only messages with a specific tag. If you noticed in the <code>Log.i</code> code, we passed two parameters: tag and message respectively. We tell Android Studio to only show messages with our defined tag that is <code>0x00sec</code>. With this way, we don’t see other messages not related to our android app. To the lower left of Android Studio, we will find the <code>Logcat</code> tab. Do yourself the honors and click on it.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/1/1c083f4734ae88a0bc309f0f42ea8214d907b697.jpg" data-download-href="/uploads/short-url/3ZZ2oFhOD1YyKdFUmCjvi0jZXXp.jpg?dl=1" title="27" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/1/1c083f4734ae88a0bc309f0f42ea8214d907b697.jpg" alt="27" data-base62-sha1="3ZZ2oFhOD1YyKdFUmCjvi0jZXXp" width="690" height="151"></a></div><p></p>
+<p>Follow the steps in the image and another Log dialog will pop up. Fill in the correct information, otherwise the appropriate message will not be shown.</p>
+<ol>
+<li>Enter your own filter name.</li>
+<li>In the Log Tag, use <code>0x00sec</code> ( or whatever you used as the first parameter in the <code>Log.i</code> code ).</li>
+<li>Enter the package name ( located on the first line of <code>MainActivity.java</code> )</li>
+</ol>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/7/78b3af6ddc3a866e46db31b2c6182c5375858735.png" alt="37" data-base62-sha1="hdMgLiDuAxpP53qXj2m6sgG3TEx" width="634" height="280"></p>
+<p>Click Ok. Now we are ready to run our android app. You first have to ensure USB Debugging is enabled on your testing device. Follow this link <a href="https://www.kingoapp.com/root-tutorials/how-to-enable-usb-debugging-mode-on-android.htm" rel="noopener nofollow ugc">How to Enable USB Debugging Mode on Android - KingoRoot</a> if you’ve not enabled it.</p>
+<p><strong>LETS RUN OUR ANDROID APPLICATION</strong></p>
+<p>Click on the green play button beside <code>app</code> at the top of the android studio or use <code>Control + R ( Mac )</code> and <code>Shift + F10 ( Windows/Linux )</code>. Make sure your device is connected and usb debugging enabled.</p>
+<p>When the app runs, the console should populate our installed apps and their package names.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/9/99efd95978e97cafc9a231a025c73c85d183c674.jpeg" data-download-href="/uploads/short-url/lXMVtUM15N1DslJCdVyy6BjRfIE.jpeg?dl=1" title="zYv0ZkO.jpg" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/99efd95978e97cafc9a231a025c73c85d183c674.jpeg" width="690" height="416"></a></div><p></p>
+<p>As you noticed, our logcat filter is working great.</p>
+<p><strong>LETS END IT HERE</strong></p>
+<p>In today’s tutorial, we’ve learnt how to populate installed android apps. In the next tutorial, we will design our database and set up our web server. In meantime, our code corrections, suggestions, app designs, etc are welcome. Thank you for the opportunity to share and until we meet again, I’m out.</p>
+<p>Checkout the github repo: <a href="https://github.com/sergeantexploiter/Amunet" class="inline-onebox" rel="noopener nofollow ugc">GitHub - sergeantexploiter/Amunet: An android spying application</a></p>
+<p><strong><span class="hashtag-raw">#Sergeant</span></strong></p>
+          <p><a href="https://d.clarkee.co.uk/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121/1</link>
+        <pubDate>Fri, 15 Jun 2018 10:27:38 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-7121-1</guid>
+        <source url="https://d.clarkee.co.uk/t/building-a-god-s-eye-android-app-part-1-collecting-installed-android-apps/7121.rss">Building a God’s Eye Android App: Part 1 - Collecting Installed Android Apps</source>
+      </item>
+  </channel>
+</rss>

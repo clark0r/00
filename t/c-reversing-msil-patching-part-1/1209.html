@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!-- Added by HTTrack --><meta http-equiv="content-type" content="text/html;charset=utf-8" /><!-- /Added by HTTrack -->
+<head>
+    <meta charset="utf-8">
+    <title>C# Reversing - MSIL Patching [Part 1] - Reverse Engineering - 0x00sec - The Home of the Hacker</title>
+    <meta name="description" content="Hey mates! 
+Maybe some of the elder members remember my series about C# CrackMe Challenges. After a little break where I focussed on other stuff I’m now back with an introduction to MSIL patching. Before you start with t&amp;hellip;">
+    <meta name="generator" content="Discourse 3.6.0.beta2-latest - https://github.com/discourse/discourse version 3b1964f3ed8bdc2f181e2abccb1b116e4b814db5">
+<link rel="icon" type="image/png" href="../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.html">
+<link rel="apple-touch-icon" type="image/png" href="../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.html">
+<meta name="theme-color" media="all" content="#171616">
+
+<meta name="color-scheme" content="dark">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, viewport-fit=cover">
+<link rel="canonical" href="1209.html" />
+
+<link rel="search" type="application/opensearchdescription+xml" href="../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+
+    
+    <link href="../../stylesheets/color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4.css_%3b%20filename_%3dUTF-8%27%27color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" class="light-scheme" data-scheme-id="15"/>
+
+<link href="../../stylesheets/common_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27common_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common"  />
+
+  <link href="../../stylesheets/mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile"  />
+  <link href="../../stylesheets/desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop"  />
+
+
+
+    <link href="../../stylesheets/chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="chat"  />
+    <link href="../../stylesheets/checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="checklist"  />
+    <link href="../../stylesheets/discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-cakeday"  />
+    <link href="../../stylesheets/discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-details"  />
+    <link href="../../stylesheets/discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-lazy-videos"  />
+    <link href="../../stylesheets/discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-local-dates"  />
+    <link href="../../stylesheets/discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-narrative-bot"  />
+    <link href="../../stylesheets/discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-presence"  />
+    <link href="../../stylesheets/discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-solved"  />
+    <link href="../../stylesheets/discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-templates"  />
+    <link href="../../stylesheets/discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-topic-voting"  />
+    <link href="../../stylesheets/docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="docker_manager"  />
+    <link href="../../stylesheets/footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="footnote"  />
+    <link href="../../stylesheets/poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="poll"  />
+    <link href="../../stylesheets/spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="spoiler-alert"  />
+    <link href="../../stylesheets/chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="chat_mobile"  />
+    <link href="../../stylesheets/discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-solved_mobile"  />
+    <link href="../../stylesheets/discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-topic-voting_mobile"  />
+    <link href="../../stylesheets/chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="chat_desktop"  />
+    <link href="../../stylesheets/discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="discourse-topic-voting_desktop"  />
+    <link href="../../stylesheets/poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="poll_desktop"  />
+
+  <link href="../../stylesheets/common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960db.css_%3b%20filename_%3dUTF-8%27%27common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960dba97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common_theme" data-theme-id="57" data-theme-name="0x00sec-v2"/>
+    <link href="../../stylesheets/mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38.css_%3b%20filename_%3dUTF-8%27%27mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile_theme" data-theme-id="4" data-theme-name="mobile chrome"/>
+    <link href="../../stylesheets/desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96.css_%3b%20filename_%3dUTF-8%27%27desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2"/>
+
+    <link rel="stylesheet" href="../../../external.html?link=https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="../../../external.html?link=https://s3.amazonaws.com/0x00sec/highlight.pack.js" nonce="DWLD1y9zIzAZxFVl9kTdGOsg1"></script>
+<script defer="" src="../../theme-javascripts/05954ff525aceb8daa8b585f92d758d311ae7077.js_%3b%20filename_%3dUTF-8%27%2705954ff525aceb8daa8b585f92d758d311ae7077a97f.js?__ws=d.clarkee.co.uk" data-theme-id="40" nonce="DWLD1y9zIzAZxFVl9kTdGOsg1"></script>
+    
+        <link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;C# Reversing - MSIL Patching [Part 1]&#39;" href="1209.rss" />
+    <meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:image" content="https://0x00sec.s3.amazonaws.com/original/2X/3/35fa4535cac06720d476a2bf7ef5ad3493d0f829.PNG" />
+<meta property="og:image" content="https://0x00sec.s3.amazonaws.com/original/2X/3/35fa4535cac06720d476a2bf7ef5ad3493d0f829.PNG" />
+<meta property="og:url" content="https://d.clarkee.co.uk/t/c-reversing-msil-patching-part-1/1209" />
+<meta name="twitter:url" content="https://d.clarkee.co.uk/t/c-reversing-msil-patching-part-1/1209" />
+<meta property="og:title" content="C# Reversing - MSIL Patching [Part 1]" />
+<meta name="twitter:title" content="C# Reversing - MSIL Patching [Part 1]" />
+<meta property="og:description" content="Hey mates!  Maybe some of the elder members remember my series about C# CrackMe Challenges. After a little break where I focussed on other stuff I’m now back with an introduction to MSIL patching. Before you start with this post I recommend you to have a look at my other parts first 😉. They teach some fundamentals which I won’t cover here.  Moreover you shouldn’t expect a typical tutorial. There are great tutorials out there written by more experienced reverse engineers. I just want to give..." />
+<meta name="twitter:description" content="Hey mates!  Maybe some of the elder members remember my series about C# CrackMe Challenges. After a little break where I focussed on other stuff I’m now back with an introduction to MSIL patching. Before you start with this post I recommend you to have a look at my other parts first 😉. They teach some fundamentals which I won’t cover here.  Moreover you shouldn’t expect a typical tutorial. There are great tutorials out there written by more experienced reverse engineers. I just want to give..." />
+<meta property="og:article:section" content="Reverse Engineering" />
+<meta property="og:article:section:color" content="12A89D" />
+<meta property="og:article:tag" content="msil" />
+<meta property="og:article:tag" content="csharp" />
+<meta property="og:article:tag" content="reverseengineering" />
+<meta name="twitter:label1" value="Reading time" />
+<meta name="twitter:data1" value="2 mins 🕑" />
+<meta name="twitter:label2" value="Likes" />
+<meta name="twitter:data2" value="8 ❤" />
+<meta property="article:published_time" content="2016-10-17T11:28:12+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+
+
+    
+  </head>
+  <body class="crawler ">
+    <div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+  <!--<a href="https://git.0x00sec.org" class="dow-menu">GitLab</a>  
+  <a href="https://blog.0x00sec.org/irc" class="dow-menu">IRC</a>!-->
+  <a href="../../../external.html?link=https://init.0x00sec.org/" class="dow-menu">Init</a>
+  <a href="../../../external.html?link=https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+  <a href="../../../external.html?link=https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+    <header>
+  <a href="../../index.html">0x00sec - The Home of the Hacker</a>
+</header>
+
+    <div id="main-outlet" class="wrap" role="main">
+        <div id="topic-title">
+    <h1>
+      <a href="1209.html">C# Reversing - MSIL Patching [Part 1]</a>
+    </h1>
+
+      <div class="topic-category" itemscope itemtype="../../../external.html?link=http://schema.org/BreadcrumbList">
+          <span itemprop="itemListElement" itemscope itemtype="../../../external.html?link=http://schema.org/ListItem">
+            <a href="../../c/reverse-engineering/58.html" class="badge-wrapper bullet" itemprop="item">
+              <span class='badge-category-bg' style='background-color: #12A89D'></span>
+              <span class='badge-category clear-badge'>
+                <span class='category-name' itemprop='name'>Reverse Engineering</span>
+              </span>
+            </a>
+            <meta itemprop="position" content="1" />
+          </span>
+      </div>
+
+      <div class="topic-category">
+        <div class='discourse-tags list-tags'>
+            <a href='../../tag/msil.html' class='discourse-tag' rel="tag">msil</a>, 
+            <a href='../../tag/csharp.html' class='discourse-tag' rel="tag">csharp</a>, 
+            <a href='../../tag/reverseengineering.html' class='discourse-tag' rel="tag">reverseengineering</a>
+        </div>
+      </div>
+  </div>
+
+  
+
+    <div itemscope itemtype='../../../external.html?link=http://schema.org/DiscussionForumPosting'>
+      <meta itemprop='headline' content='C# Reversing - MSIL Patching [Part 1]'>
+      <link itemprop='url' href='1209.html'>
+      <meta itemprop='datePublished' content='2016-10-17T11:28:12Z'>
+        <meta itemprop='articleSection' content='Reverse Engineering'>
+      <meta itemprop='keywords' content='msil, csharp, reverseengineering'>
+      <div itemprop='publisher' itemscope itemtype="../../../external.html?link=http://schema.org/Organization">
+        <meta itemprop='name' content='0x00sec - The Home of the Hacker'>
+          <div itemprop='logo' itemscope itemtype="../../../external.html?link=http://schema.org/ImageObject">
+            <meta itemprop='url' content='../../uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.html'>
+          </div>
+      </div>
+
+
+          <div id='post_1'  class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/TheDoctor.html'><span itemprop='name'>TheDoctor</span></a>
+                (The C# Dude)
+              </span>
+
+                <link itemprop="mainEntityOfPage" href="1209.html">
+
+                <link itemprop="image" href="../../../0x00sec.s3.amazonaws.com/original/2X/3/35fa4535cac06720d476a2bf7ef5ad3493d0f829.PNG">
+
+              <span class="crawler-post-infos">
+                  <time  datetime='2016-10-17T11:28:12Z' class='post-time'>
+                    October 17, 2016, 11:28am
+                  </time>
+                  <meta itemprop='dateModified' content='2016-10-17T11:44:32Z'>
+              <span itemprop='position'>1</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Hey mates!</p>
+<p>Maybe some of the elder members remember my series about C# CrackMe Challenges. After a little break where I focussed on other stuff I’m now back with an introduction to MSIL patching. Before you start with this post I recommend you to have a look at my <a href="../../../external.html?link=https://0x00sec.org/t/crackme-challenge-part-1-introduction-very-easy-password-mechanism-python/409/29">other parts</a> first <img src="../../images/emoji/twitter/winkc164.png?v=9" title=":wink:" class="emoji" alt=":wink:">. They teach some fundamentals which I won’t cover here.</p>
+<p>Moreover you shouldn’t expect a typical tutorial. There are great tutorials out there written by more experienced reverse engineers. I just want to give you an insight into the topic and teach you some basic things which will help you out when you move further on <img src="../../images/emoji/twitter/slight_smilec164.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">.</p>
+<hr>
+<h2>MSIL</h2>
+<p>The Microsoft Intermediate Language is the representation of .Net code ready for being executed by a Virtual Machine or to be compiled into Native Code. It reminds of Assembler instructions due to it’s bytecode-style but is not as low-level. All we have to know is that it’s the code we can find when we get a .Net-executable. So when you want to reverse a .Net-application, MSIL is your new best friend <img src="../../images/emoji/twitter/grinc164.png?v=9" title=":grin:" class="emoji" alt=":grin:">. For more information have a look at <a href="../../../external.html?link=https://en.wikipedia.org/wiki/Common_Intermediate_Language" rel="noopener nofollow ugc">WikiPedia</a>.</p>
+<hr>
+<h2>Why Don’t Just Decompile?</h2>
+<p>If you’ve read my other series, you probably wonder why we aren’t just decompiling into source code and working with it. Yep, good objection. Maybe it seems to be the easiest solution but sometimes a decompiled Visual Studio project produces errors. Or it’s just too easy and not 1337 enough for us <img src="../../images/emoji/twitter/grinc164.png?v=9" title=":grin:" class="emoji" alt=":grin:">. Anyway, I recommend you to know your enemy, so if you prefer working with the source code it’s okay but you should know how you could do it without it <img src="../../images/emoji/twitter/winkc164.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<hr>
+<h2>Preparing The Environment</h2>
+<p>For decompiling I usually prefer dotPeek but this time we’ll need <a href="../../../external.html?link=http://ilspy.net/" rel="noopener nofollow ugc">ILSpy</a> and as plugin <a href="../../../external.html?link=http://reflexil.net/" rel="noopener nofollow ugc">Reflexil</a>. Please download both of them before we continue. Reflexil can be easily installed by copying the .dll into ILSpys directory.</p>
+<hr>
+<h2>Our Target</h2>
+<p>As a target I’ve found a <a href="../../../external.html?link=https://mega.nz/#!OxxQQIYJ!e2NAcXtIEpwAzkP9_7_e1U5zLYzFQ6oLXrMOuFXsPFg" rel="noopener nofollow ugc">crypter</a> and a <a href="../../../external.html?link=https://mega.nz/#!foowVISJ!Rtd-9TchF5zO2Rs70mcP25rjAbVr2fX-0y3XnPqrLWY" rel="noopener nofollow ugc">binder</a>. They were both obfuscated with CliSecure but that’s an easy challenge for de4dot <img src="../../images/emoji/twitter/winkc164.png?v=9" title=":wink:" class="emoji" alt=":wink:">. See my previous series for a tutorial on using it. This time I already cleaned both of them for you <img src="../../images/emoji/twitter/slight_smilec164.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">. If you cracked one of them, the other one’s pretty futile but maybe you want to test it out more than one time <img src="../../images/emoji/twitter/grinc164.png?v=9" title=":grin:" class="emoji" alt=":grin:">.</p>
+<p>At this point I highly recommend you to spot the license-checking on your own. You won’t need much experience to know how it can be circumvented… Come back when you’ve got a plan how you’d change the source to bypass it!</p>
+<hr>
+<h2>Description Of My Patch</h2>
+<p>Have you found a way on your own? Okay, I trust you <img src="../../images/emoji/twitter/winkc164.png?v=9" title=":wink:" class="emoji" alt=":wink:">. The patch in this case is pretty easy. First we have to spot the place where the license checking is done. I use <code>Binder_Load()</code> but you could also patch the checking in other parts of the code. Maybe you want to do that as homework?</p>
+<pre><code class="lang-auto">        private void Binder_Load(object sender, System.EventArgs e)
+        {
+            try
+            {
+                this.class1_0.method_0();
+                string text = System.IO.File.ReadAllText(System.Windows.Forms.Application.StartupPath + "\\License\\binder.license");
+
+                if (text.Length &gt; 0)
+                {
+                    string[] array = this.class1_0.method_1(text);
+                    this.kryptonLabel2.Text = string.Concat(new string[]
+                    {
+                        array[0],
+                        " - ",
+                        array[1],
+                        " - ",
+                        array[2]
+                    });
+
+                    this.bool_0 = true;
+                }
+            }
+            catch
+            {
+                KryptonMessageBox.Show("Invalid license file!", "License Error", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Exclamation);
+            }
+        }
+</code></pre>
+<p>I think there’s not much to explain. The first function <code>class1_0.method_0()</code> uses some anti-debugger stuff. Not interesting for us but maybe you want to have a look at it? In our case it never triggers so we can just ignore it. After that it tries to read a license file. Of course we haven’t such a file so the catch-block is triggered which tells us that our version is unlicensed. If everything would run fine a boolean at the end would be set to true. Mmh… Could that be something like <code>bIsLicensed = true</code>? I shorten it here a bit up with telling you that it’s the boolean which is used for identifying whether the program is licensed or not.</p>
+<p>What to do now? Again there are different ways of solving the problem. You could just comment everything except the boolean out, set the boolean already in the beginning of the method to true, etc… I decided to use the second method because it’s more interesting than just commenting some stuff out <img src="../../images/emoji/twitter/winkc164.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<p>How will the function look like when we’re finished? Because we just copy the line in front of the other code it’ll look like this:</p>
+<pre><code class="lang-auto">        private void Binder_Load(object sender, System.EventArgs e)
+        {
+            try
+            {
+                this.bool_0 = true;  // Here we add our little one-line patch
+
+                this.class1_0.method_0();
+                string text = System.IO.File.ReadAllText(System.Windows.Forms.Application.StartupPath + "\\License\\binder.license");
+
+                if (text.Length &gt; 0)
+                {
+                    string[] array = this.class1_0.method_1(text);
+                    this.kryptonLabel2.Text = string.Concat(new string[]
+                    {
+                        array[0],
+                        " - ",
+                        array[1],
+                        " - ",
+                        array[2]
+                    });
+
+                    this.bool_0 = true;
+                }
+            }
+            catch
+            {
+                KryptonMessageBox.Show("Invalid license file!", "License Error", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Exclamation);
+            }
+        }
+</code></pre>
+<p>I hope you understood our devious plan <img src="../../images/emoji/twitter/smilec164.png?v=9" title=":smile:" class="emoji" alt=":smile:">.</p>
+<hr>
+<h2>Using Reflexil</h2>
+<p>Now that we’ve got an aim to achieve, we can start with patching the MSIL code. Start ILSpy, open the Binder/Crypter (Both work the same) and go to the <code>Binder(or crypter)_load()</code> method. Then click on View at the top bar and select Reflexil. If everything worked fine, you should see a new window at the bottom.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/3/35fa4535cac06720d476a2bf7ef5ad3493d0f829.PNG" width="415" height="212"></p>
+<p>Reflexil is very intuitive so I think you won’t have any problems with it. Just select the method we’re going to patch on the left navigation bar and it’ll automatically show us the MSIL code.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/c/cf65ad222d54d745fbed3745c5db6938f68c87a6.PNG" width="316" height="189"></p>
+<p>Now scroll through the code and search for something interesting. Reflexil already commented on some of the lines, so that you don’t even have to read the OpCodes <img src="../../images/emoji/twitter/grinc164.png?v=9" title=":grin:" class="emoji" alt=":grin:">. In my case I’ve saw on line 53 how the bool is activated.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/1/1b46c65e92be460292aa3e06eef7bcc18e26d729.PNG" width="685" height="263"></p>
+<p>To patch the program just copy these 3 lines to the beginning of the method:</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/5/5d4fdcacf1e52064dc91d5e60bd3a9108d4057a4.PNG" width="658" height="267"></p>
+<p>If you want to save the patched crypter/binder now, just rightclick on it in the left navigation bar and chose Save As.</p>
+<p><img src="../../../0x00sec.s3.amazonaws.com/original/2X/5/52e500185f3da95d86d753edddb424e012357d4d.PNG" width="367" height="435"></p>
+<p>Finished!</p>
+<hr>
+<h2>Conclusion</h2>
+<p>When you want to make a fast inline patch, MSIL is essential. I highly recommend you to have a look at it and Reflexil when you got hooked <img src="../../images/emoji/twitter/winkc164.png?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+<p>|-TheDoctor-|</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="6" />
+              <span class='post-likes'>6 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_2' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/anon79434934.html'><span itemprop='name'>anon79434934</span></a>
+                
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2016-10-17T20:34:40Z' class='post-time'>
+                    October 17, 2016,  8:34pm
+                  </time>
+                  <meta itemprop='dateModified' content='2016-10-17T20:34:40Z'>
+              <span itemprop='position'>2</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>There are a few things in this world that are very underrated. Your proficiency in C# is one of them.</p>
+<p>Good job as usual.</p>
+<p>-Phoenix750</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_3' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/FFY00.html'><span itemprop='name'>FFY00</span></a>
+                (3,4,5-trimethoxyphenethylamine)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2016-10-17T21:12:58Z' class='post-time'>
+                    October 17, 2016,  9:12pm
+                  </time>
+                  <meta itemprop='dateModified' content='2016-10-17T21:12:58Z'>
+              <span itemprop='position'>3</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>I usually use dnSpy, it’s an upgraded version of ILSpy</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_4' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/TheDoctor.html'><span itemprop='name'>TheDoctor</span></a>
+                (The C# Dude)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2016-10-18T07:46:06Z' class='post-time'>
+                    October 18, 2016,  7:46am
+                  </time>
+                  <meta itemprop='dateModified' content='2016-10-18T07:46:06Z'>
+              <span itemprop='position'>4</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Glad to here that from you <img src="../../../0x00sec.org/images/emoji/twitter/slight_smilec164.html?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">. I’m excited for your next hardware posts <img src="../../../0x00sec.org/images/emoji/twitter/winkc164.html?v=9" title=":wink:" class="emoji" alt=":wink:">.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_5' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/TheDoctor.html'><span itemprop='name'>TheDoctor</span></a>
+                (The C# Dude)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2016-10-18T07:48:19Z' class='post-time'>
+                    October 18, 2016,  7:48am
+                  </time>
+                  <meta itemprop='dateModified' content='2016-10-18T07:48:19Z'>
+              <span itemprop='position'>5</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Never heard of it before but it seems to be <strong>really</strong> cool <img src="../../../0x00sec.org/images/emoji/twitter/grinc164.html?v=9" title=":grin:" class="emoji" alt=":grin:">. I’ll have a look at it within the next few days!</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+    </div>
+
+
+    
+
+
+
+
+    </div>
+    <footer class="container wrap">
+  <nav class='crawler-nav'>
+    <ul>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../index.html' itemprop="url">Home </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../categories.html' itemprop="url">Categories </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../guidelines.html' itemprop="url">Guidelines </a>
+        </span>
+      </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../tos.html' itemprop="url">Terms of Service </a>
+          </span>
+        </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../privacy.html' itemprop="url">Privacy Policy </a>
+          </span>
+        </li>
+    </ul>
+  </nav>
+  <p class='powered-by-link'>Powered by <a href="../../../external.html?link=https://www.discourse.org/">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+
+    
+    <script src="../../../external.html?link=http://instant.page/3.0.0" type="module" defer="" integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1" nonce="DWLD1y9zIzAZxFVl9kTdGOsg1"></script>
+  </body>
+  
+</html>

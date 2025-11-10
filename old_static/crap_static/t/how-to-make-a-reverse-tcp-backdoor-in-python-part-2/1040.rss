@@ -1,0 +1,415 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+    <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040</link>
+    <description>In our walk in linux, there comes a point where we need to hack ( pentest ) in a safe environment. The first thing we usually do is install Virtualization Softwares and install all the distros our system can take. In stages of hacking, to compromise the victim machine, we need some sort of program to infect the system. The down-side is: AntiVirus products have signatures of favourite Metasploit files and to successfully compromise the victim, we need to disable this products which isn&#39;t what we will be doing in real life. This calls for the development of our own program. Today, we touch on one of the many programs ( payloads actually ), that is, a reverse tcp program.
+
+Reverse TCP: In a normal forward connection, a client connects to a server through the server&#39;s open port, but in the case of a reverse connection, the client opens the port that the server connects to. The most common way a reverse connection is used is to bypass firewall and router security restrictions.
+
+For example, a backdoor running on a computer behind a firewall that blocks incoming connections can easily open an outbound connection to a remote host on the Internet. Once the connection is established, the remote host can send commands to the backdoor.This method of communication is helpful because starting a local shell on a victim machine can be easily and even without user control be detected by the system itself.
+
+In this series, we will be developing a reverse tcp program in python. Why should this be in parts ? This is because, with every part we introduce a new function or command or code into our shell making it more flexible. We are going to build our shell from ground up into a devastaing awesome fantastic fabulous catastrophic delicious ... ( I think thats enough ) shell.
+
+In today&#39;s tutorial, we are going to make the shell a little nice abit. Lets begin with the server ( attacker ) script.&lt;br&gt;
+
+&lt;strong&gt;SCRIPTING: THE IMPORT STATEMENTS&lt;/strong&gt;&lt;br&gt;&lt;br&gt;This will be our new import statement&lt;br&gt;
+
+&gt; &lt;span style=&#39;color:#75715E&#39;&gt;#!/usr/bin/env python&lt;/span&gt;
+&gt; &lt;span style=&#39;color:#F92672&#39;&gt;import&lt;/span&gt; socket, sys, os
+
+Nice !!&lt;br&gt;
+&lt;strong&gt;SCRIPTING: THE SCRIPT COLOUR FUNCTION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;This function is going to spawn our shell into a beautiful shell.&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/6/60ea62bd7782d27b3cd956c5b176ff3b7524adb3.png&quot; width=&quot;690&quot; height=&quot;462&quot;&gt;&lt;br&gt;&lt;br&gt;
+This function decorates any text passed to it with the specified colour. It accepts:
+
+1. &quot;r&quot; or &quot;red&quot; - Red
+2. &quot;g&quot; or &quot;green&quot; - Green
+3. &quot;b&quot; or &quot;blue&quot; - Blue
+4. &quot;y&quot; or &quot;yellow&quot; - Yellow
+5.  &quot;lgray&quot; - Light Gray
+6.  &quot;underline&quot; - Underline Text&lt;/li&gt;
+7. &quot;strike&quot; - Strikes Text
+
+&lt;strong&gt;SCRIPTING: THE BANNER FUNCTION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;All these introduced functions are not necessary but improve the user experience. We ( You ) can customize it as we ( you ) please.&lt;br&gt;&lt;Br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/5/5752d35aaae950f5643a03781079a0762ee7e8b4.png&quot; width=&quot;690&quot; height=&quot;270&quot;&gt;&lt;br&gt;
+&lt;strong&gt;EDIT:&lt;/strong&gt; I changed my &quot;lgray&quot; to &quot;gray&quot;. As I stated earlier, we can change it as we please.&lt;br&gt;
+This function as you already understand returns the text to the caller.&lt;br&gt;
+&lt;strong&gt;SCRIPTING: THE MAIN CONTROL FUNCTION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;This function takes over the server socket. In the previous tutorial, we didn&#39;t use any function and wrote raw codes. Those raw codes are now written into this function with some pretty good modifications.&lt;br&gt;&lt;Br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/3b3a85712197d77e7162ef14790892533ca33870.png&quot; width=&quot;690&quot; height=&quot;359&quot;&gt;&lt;br&gt;
+Don&#39;t panic yet. A close look at the code brings understanding. Lets break it down, shall we ?
+
+&gt; 1. We accept the socket information and pass it to the respective variables &lt;strong&gt;host&lt;/strong&gt; and &lt;strong&gt;port&lt;/strong&gt;
+&gt; 2. If no error is caught, we print &quot;Framework Started Successfully&quot; with the help of the &lt;strong&gt;script_color&lt;/strong&gt; function.
+&gt; 3. Next is the banner() function which is printed to the screen.
+&gt; 4.  We setup the sockets, bind and listen.
+&gt; 5. Usually we pass the host as an empty string. If that be the case, we change the host string to &quot;localhost&quot; after we setup the socket
+&gt; 6. We print &quot;Listening on host address:port number ...&quot;
+&gt; 7. We begin accepting connections.
+&gt; 8. If all goes well and a client comes through, we enter into the &lt;strong&gt;console&lt;/strong&gt; function passing the connection stream and the host address as an argument.
+&gt; 9. Should the function exit, we close our socket
+
+That wasn&#39;t difficult right !!!. Moving on.&lt;br&gt;
+&lt;strong&gt;SCRIPTING: THE CONSOLE FUNCTION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;The frustrating part of all but if we can stick together on this one, we are going to sail through. Lets write.&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/a/a7c5c6a5e2fe52611c2273bd7532809ce794d219.png&quot; width=&quot;665&quot; height=&quot;499&quot;&gt;&lt;br&gt;
+Pretty Long. First, we print a string saying Connection Established from the remote host. We then receive
+data from the stream, this data is information about the remote system ( We will deal with that in the client side). We then sort out the data, this is the layout of the data:&lt;Br&gt;
+
+&gt; System Type
+&gt; Computer Name ( Node Name )
+&gt; Release Version
+&gt; System Version
+&gt; Machine Architecture
+&gt; Username
+
+All these information are inherited from the &lt;strong&gt;uname()&lt;/strong&gt; and &lt;strong&gt;getlogin()&lt;/strong&gt; in the &lt;strong&gt;os&lt;/strong&gt; module ( We will get to that on the client side ).&lt;br&gt;
+We move on to create a custom prompt name for our shell using the information received, for example, root@127.0.0.1. &lt;br&gt;
+We then enter into our command loop. This loop contains commmands for the connection. We are defining our own custom commands therefore commands such as &quot;ls -l&quot; and other linux commands won&#39;t work.&lt;Br&gt;
+These are our first 5 ( five ) built in commands.
+&gt; 1. exec - Accepts a command as an argument and executes the command on the remote host. This is where our everyday linux commands can come to play, for example, exec ls -l
+&gt; 2. cls - Clears the Terminal screen. Uses the default linux clear command
+&gt; 3.  help - Calls the help function and prints the help text ( We will get there in a moment )
+&gt; 4. sysinfo - Prints the received remote system information
+&gt; 5. exit() - Sends a halt command to the remote shell and also exits locally
+&gt; 6. Any non-specified command is not accepted and an error message will be printed in the else statement
+
+In the inbuilt &lt;Strong&gt;exec&lt;/strong&gt; command, should no argument be passed, an error is printed. We have a new function in the &lt;strong&gt;exec&lt;/strong&gt; command which is &lt;strong&gt;send_data&lt;/strong&gt;. It accepts the connection stream and the command to execute. It automatically deals with sending and receiving of the data.&lt;br&gt;
+I would rather you write the code as you see it. You can modify it after it works. Modifying during writing can cause alot of problems ( trust me ).&lt;Br&gt;
+&lt;strong&gt;SCRIPTING: THE HELP FUNCTION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;All commands built into the framework ( script ) are to be entered here.&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/4ee4df5e490b97fb3584d9be2cb1f19755e31b21.png&quot; width=&quot;690&quot; height=&quot;206&quot;&gt;&lt;br&gt;
+This function prints the help_list in a sorted way and also formats the help_list.&lt;br&gt;&lt;br&gt;
+&lt;strong&gt;SCRIPTING: THE SEND DATA FUNCTION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;This function as stated earlier automatically sends and receives the data.&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/c9d34f391c808c78faccccf1f7e7b79ce95291be.png&quot; width=&quot;690&quot; height=&quot;226&quot;&gt;&lt;br&gt;
+Now, lets tie the knot ( not marriage ).&lt;Br&gt;
+&lt;strong&gt;CALLING EVERYTHING TOGETHER&lt;/strong&gt;&lt;br&gt;&lt;br&gt;We know functions don&#39;t execute thems and need callers.&lt;Br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/b/b43e1ac3bf8c2fe3fc55b714c25d6d6ceb068e4f.png&quot; width=&quot;690&quot; height=&quot;54&quot;&gt;&lt;br&gt;
+We are partly done. Lets now reflect our changes into the client script.&lt;br&gt;
+&lt;strong&gt;THE CLIENT SIDE&lt;/strong&gt;&lt;br&gt;&lt;br&gt;The client also needs to obey some rules and commands such as the &lt;strong&gt;exec&lt;/strong&gt; command in the server script. Our import statement should change to:&lt;br&gt;
+&gt; &lt;span style=&#39;color:#75715E&#39;&gt;#!/usr/bin/env python&lt;/span&gt;
+&gt; &lt;span style=&#39;color:#F92672&#39;&gt;import&lt;/span&gt; socket, subprocess as sp, sys, os
+
+Our first function would be the connect function.&lt;br&gt;
+&lt;strong&gt;THE CONNECT FUNCTION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;This function as the name implies connects to the specified address. It also sends the system information after a connection is established.&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/5/531b72e35a090d9961376acbdc75b36ea36aab3b.png&quot; width=&quot;690&quot; height=&quot;346&quot;&gt;&lt;br&gt;
+It then calls the &lt;strong&gt;interactive_session&lt;/strong&gt; function passing the connection stream as an argument.&lt;br&gt;
+&lt;strong&gt;THE INTERACTIVE SESSION FUNCTION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;This function runs a loop accepting and executing commands based on the &quot;if&quot; instructions.&lt;bR&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/febacfe1954dc6457d941c9a20490f2eff8b058c.png&quot; width=&quot;690&quot; height=&quot;436&quot;&gt;&lt;br&gt;
+The function uses another function &lt;strong&gt;send_data&lt;/strong&gt; to send the data.&lt;br&gt;
+&lt;strong&gt;THE SEND DATA FUNCTION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;This function calculates the length of the data and sends it along with the data.&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/f71bf24e57effd0e20f57a01cdcb7d1f61fe0097.png&quot; width=&quot;690&quot; height=&quot;69&quot;&gt;&lt;br&gt;
+This function will be helpful in future modifications. Lets tie the knot.&lt;br&gt;
+&lt;strong&gt;CALLING EVERYTHING TOGETHER&lt;/strong&gt;&lt;br&gt;&lt;br&gt;We write the magic line as the functions won&#39;t execute themselves.&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/b/b421a07e67c3c0287e6482cad58634dd2e59869d.png&quot; width=&quot;690&quot; height=&quot;50&quot;&gt;&lt;br&gt;
+Lets execute our attacker ( server ) script and see what we&#39;ve got&lt;br&gt;
+&gt; **&lt;span style=&#39;color:red&#39;&gt;root@Sploit:&lt;/span&gt;&lt;span style=&#39;color:#729FCF&#39;&gt;~/Desktop&lt;/span&gt;# python reverseTcp.py &#39;&#39; 8000**
+
+
+The client should connect passing the host information on the command line.&lt;br&gt;
+&gt; **&lt;span style=&#39;color:red&#39;&gt;root@Sploit:&lt;/span&gt;&lt;span style=&#39;color:#729FCF&#39;&gt;~/Desktop&lt;/span&gt;# python connect.py 127.0.0.1 8000**
+
+Here is a screenshot of the attacker&#39;s server script:&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/d5424d274ee40ca9a01015c929eed6b59efe4169.png&quot; width=&quot;552&quot; height=&quot;500&quot;&gt;&lt;br&gt;
+Exploring the help options&lt;br&gt;
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/1/18909cd2797fdc9e29f74fa9597efdd676270993.png&quot; width=&quot;690&quot; height=&quot;488&quot;&gt;&lt;br&gt;
+From the nmap result on the remote system, I think we opened a port on a registered service. As expected, the client console should be empty because we aren&#39;t printing anything.&lt;br&gt;
+&lt;strong&gt;LETS END IT - CONCLUSION&lt;/strong&gt;&lt;br&gt;&lt;br&gt;I think we have accomplished something in this tutorial.&lt;br&gt;
+Corrections, Modifications, Updates are welcome.</description>
+    
+    <lastBuildDate>Fri, 22 Dec 2017 00:29:58 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/14</link>
+        <pubDate>Fri, 22 Dec 2017 00:57:31 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-14</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/13</link>
+        <pubDate>Fri, 22 Dec 2017 00:29:58 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-13</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 19 hours. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/12">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/12</link>
+        <pubDate>Wed, 22 Nov 2017 18:00:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-12</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[myID]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks mate <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:">  Highly appreciated. Regards</p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/11</link>
+        <pubDate>Tue, 21 Nov 2017 21:37:30 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-11</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[dzervas]]></dc:creator>
+        <description><![CDATA[
+            <p>check out covertutils and RSPET on gihub <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/10</link>
+        <pubDate>Tue, 21 Nov 2017 19:01:29 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-10</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[myID]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi there. Very useful tutorial and very helpful. For executing basic commands, as in your print screen, with exec command, this exec command should be coded in connect.py?</p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/9</link>
+        <pubDate>Tue, 21 Nov 2017 18:18:32 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-9</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[SoLux]]></dc:creator>
+        <description><![CDATA[
+            <p>For printing colors I most of the time switch to Colorama, as it’s multi platform<br>
+Going to try to make a color library perhaps soon.<br>
+Love the tutorial, very high quality.</p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/8</link>
+        <pubDate>Wed, 01 Nov 2017 06:15:03 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-8</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[Fust3rCluck]]></dc:creator>
+        <description><![CDATA[
+            <p>Awesome tutorial! Can’t wait for more.</p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/7</link>
+        <pubDate>Sat, 24 Sep 2016 04:23:12 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-7</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[shutz_c0de]]></dc:creator>
+        <description><![CDATA[
+            <p>No worry mate, it forced me to code my own console() function, which is a good thing.<br>
+I’ll check yours,  thank’s for the update !</p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/6</link>
+        <pubDate>Fri, 23 Sep 2016 17:47:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-6</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks. I will fix it asap. Sorry if I kept you waiting ( Work Stuff: I even forgot my 0x00sec password ).<br>
+FIXED.</p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/5</link>
+        <pubDate>Fri, 23 Sep 2016 13:24:38 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-5</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[shutz_c0de]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi Sergeantsploit.<br>
+First of all, I want to thank you for this how to series, I found it really interesting !</p>
+<p>However, there is a minor problem in the chapter : SCRIPTING: THE CONSOLE FUNCTION.<br>
+In this chapter there is the screenshot of your main control function, instead of the console function.</p>
+<p>I wish you all the best, see you soon mate !</p>
+<ul>
+<li>shutz_c0de</li>
+</ul>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/4</link>
+        <pubDate>Thu, 22 Sep 2016 15:35:22 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-4</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+        <description><![CDATA[
+            <p>thanks big bro.</p>
+<p>Sergeant</p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/3</link>
+        <pubDate>Fri, 02 Sep 2016 19:31:23 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-3</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[root_haxor]]></dc:creator>
+        <description><![CDATA[
+            <p>Great Tutorial bro !</p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/2</link>
+        <pubDate>Fri, 02 Sep 2016 19:25:31 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-2</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+      <item>
+        <title>How To Make A Reverse TCP Backdoor In Python - Part 2</title>
+        <dc:creator><![CDATA[sergeantsploit]]></dc:creator>
+        <description><![CDATA[
+            <p>In our walk in linux, there comes a point where we need to hack ( pentest ) in a safe environment. The first thing we usually do is install Virtualization Softwares and install all the distros our system can take. In stages of hacking, to compromise the victim machine, we need some sort of program to infect the system. The down-side is: AntiVirus products have signatures of favourite Metasploit files and to successfully compromise the victim, we need to disable this products which isn’t what we will be doing in real life. This calls for the development of our own program. Today, we touch on one of the many programs ( payloads actually ), that is, a reverse tcp program.</p>
+<p>Reverse TCP: In a normal forward connection, a client connects to a server through the server’s open port, but in the case of a reverse connection, the client opens the port that the server connects to. The most common way a reverse connection is used is to bypass firewall and router security restrictions.</p>
+<p>For example, a backdoor running on a computer behind a firewall that blocks incoming connections can easily open an outbound connection to a remote host on the Internet. Once the connection is established, the remote host can send commands to the backdoor.This method of communication is helpful because starting a local shell on a victim machine can be easily and even without user control be detected by the system itself.</p>
+<p>In this series, we will be developing a reverse tcp program in python. Why should this be in parts ? This is because, with every part we introduce a new function or command or code into our shell making it more flexible. We are going to build our shell from ground up into a devastaing awesome fantastic fabulous catastrophic delicious … ( I think thats enough ) shell.</p>
+<p>In today’s tutorial, we are going to make the shell a little nice abit. Lets begin with the server ( attacker ) script.<br></p>
+<p><strong>SCRIPTING: THE IMPORT STATEMENTS</strong><br><br>This will be our new import statement<br></p>
+<blockquote>
+<p><span>#!/usr/bin/env python</span><br>
+<span>import</span> socket, sys, os</p>
+</blockquote>
+<p>Nice !!<br><br>
+<strong>SCRIPTING: THE SCRIPT COLOUR FUNCTION</strong><br><br>This function is going to spawn our shell into a beautiful shell.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/6/60ea62bd7782d27b3cd956c5b176ff3b7524adb3.png" width="690" height="462"><br><br><br>
+This function decorates any text passed to it with the specified colour. It accepts:</p>
+<ol>
+<li>“r” or “red” - Red</li>
+<li>“g” or “green” - Green</li>
+<li>“b” or “blue” - Blue</li>
+<li>“y” or “yellow” - Yellow</li>
+<li>“lgray” - Light Gray</li>
+<li>“underline” - Underline Text</li>
+<li>“strike” - Strikes Text</li>
+</ol>
+<p><strong>SCRIPTING: THE BANNER FUNCTION</strong><br><br>All these introduced functions are not necessary but improve the user experience. We ( You ) can customize it as we ( you ) please.<br><br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/5/5752d35aaae950f5643a03781079a0762ee7e8b4.png" width="690" height="270"><br><br>
+<strong>EDIT:</strong> I changed my “lgray” to “gray”. As I stated earlier, we can change it as we please.<br><br>
+This function as you already understand returns the text to the caller.<br><br>
+<strong>SCRIPTING: THE MAIN CONTROL FUNCTION</strong><br><br>This function takes over the server socket. In the previous tutorial, we didn’t use any function and wrote raw codes. Those raw codes are now written into this function with some pretty good modifications.<br><br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/3/3b3a85712197d77e7162ef14790892533ca33870.png" width="690" height="359"><br><br>
+Don’t panic yet. A close look at the code brings understanding. Lets break it down, shall we ?</p>
+<blockquote>
+<ol>
+<li>We accept the socket information and pass it to the respective variables <strong>host</strong> and <strong>port</strong>
+</li>
+<li>If no error is caught, we print “Framework Started Successfully” with the help of the <strong>script_color</strong> function.</li>
+<li>Next is the banner() function which is printed to the screen.</li>
+<li>We setup the sockets, bind and listen.</li>
+<li>Usually we pass the host as an empty string. If that be the case, we change the host string to “localhost” after we setup the socket</li>
+<li>We print “Listening on host address:port number …”</li>
+<li>We begin accepting connections.</li>
+<li>If all goes well and a client comes through, we enter into the <strong>console</strong> function passing the connection stream and the host address as an argument.</li>
+<li>Should the function exit, we close our socket</li>
+</ol>
+</blockquote>
+<p>That wasn’t difficult right !!!. Moving on.<br><br>
+<strong>SCRIPTING: THE CONSOLE FUNCTION</strong><br><br>The frustrating part of all but if we can stick together on this one, we are going to sail through. Lets write.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/a/a7c5c6a5e2fe52611c2273bd7532809ce794d219.png" width="665" height="499"><br><br>
+Pretty Long. First, we print a string saying Connection Established from the remote host. We then receive<br>
+data from the stream, this data is information about the remote system ( We will deal with that in the client side). We then sort out the data, this is the layout of the data:<br></p>
+<blockquote>
+<p>System Type<br>
+Computer Name ( Node Name )<br>
+Release Version<br>
+System Version<br>
+Machine Architecture<br>
+Username</p>
+</blockquote>
+<p>All these information are inherited from the <strong>uname()</strong> and <strong>getlogin()</strong> in the <strong>os</strong> module ( We will get to that on the client side ).<br><br>
+We move on to create a custom prompt name for our shell using the information received, for example, <a href="mailto:root@127.0.0.1">root@127.0.0.1</a>. <br><br>
+We then enter into our command loop. This loop contains commmands for the connection. We are defining our own custom commands therefore commands such as “ls -l” and other linux commands won’t work.<br><br>
+These are our first 5 ( five ) built in commands.</p>
+<blockquote>
+<ol>
+<li>exec - Accepts a command as an argument and executes the command on the remote host. This is where our everyday linux commands can come to play, for example, exec ls -l</li>
+<li>cls - Clears the Terminal screen. Uses the default linux clear command</li>
+<li>help - Calls the help function and prints the help text ( We will get there in a moment )</li>
+<li>sysinfo - Prints the received remote system information</li>
+<li>exit() - Sends a halt command to the remote shell and also exits locally</li>
+<li>Any non-specified command is not accepted and an error message will be printed in the else statement</li>
+</ol>
+</blockquote>
+<p>In the inbuilt <strong>exec</strong> command, should no argument be passed, an error is printed. We have a new function in the <strong>exec</strong> command which is <strong>send_data</strong>. It accepts the connection stream and the command to execute. It automatically deals with sending and receiving of the data.<br><br>
+I would rather you write the code as you see it. You can modify it after it works. Modifying during writing can cause alot of problems ( trust me ).<br><br>
+<strong>SCRIPTING: THE HELP FUNCTION</strong><br><br>All commands built into the framework ( script ) are to be entered here.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/4/4ee4df5e490b97fb3584d9be2cb1f19755e31b21.png" width="690" height="206"><br><br>
+This function prints the help_list in a sorted way and also formats the help_list.<br><br><br>
+<strong>SCRIPTING: THE SEND DATA FUNCTION</strong><br><br>This function as stated earlier automatically sends and receives the data.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/c/c9d34f391c808c78faccccf1f7e7b79ce95291be.png" width="690" height="226"><br><br>
+Now, lets tie the knot ( not marriage ).<br><br>
+<strong>CALLING EVERYTHING TOGETHER</strong><br><br>We know functions don’t execute thems and need callers.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/b/b43e1ac3bf8c2fe3fc55b714c25d6d6ceb068e4f.png" width="690" height="54"><br><br>
+We are partly done. Lets now reflect our changes into the client script.<br><br>
+<strong>THE CLIENT SIDE</strong><br><br>The client also needs to obey some rules and commands such as the <strong>exec</strong> command in the server script. Our import statement should change to:<br></p>
+<blockquote>
+<p><span>#!/usr/bin/env python</span><br>
+<span>import</span> socket, subprocess as sp, sys, os</p>
+</blockquote>
+<p>Our first function would be the connect function.<br><br>
+<strong>THE CONNECT FUNCTION</strong><br><br>This function as the name implies connects to the specified address. It also sends the system information after a connection is established.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/5/531b72e35a090d9961376acbdc75b36ea36aab3b.png" width="690" height="346"><br><br>
+It then calls the <strong>interactive_session</strong> function passing the connection stream as an argument.<br><br>
+<strong>THE INTERACTIVE SESSION FUNCTION</strong><br><br>This function runs a loop accepting and executing commands based on the “if” instructions.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/f/febacfe1954dc6457d941c9a20490f2eff8b058c.png" width="690" height="436"><br><br>
+The function uses another function <strong>send_data</strong> to send the data.<br><br>
+<strong>THE SEND DATA FUNCTION</strong><br><br>This function calculates the length of the data and sends it along with the data.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/f/f71bf24e57effd0e20f57a01cdcb7d1f61fe0097.png" width="690" height="69"><br><br>
+This function will be helpful in future modifications. Lets tie the knot.<br><br>
+<strong>CALLING EVERYTHING TOGETHER</strong><br><br>We write the magic line as the functions won’t execute themselves.<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/b/b421a07e67c3c0287e6482cad58634dd2e59869d.png" width="690" height="50"><br><br>
+Lets execute our attacker ( server ) script and see what we’ve got<br></p>
+<blockquote>
+<p><strong><span>root@Sploit:</span><span>~/Desktop</span># python reverseTcp.py ‘’ 8000</strong></p>
+</blockquote>
+<p>The client should connect passing the host information on the command line.<br></p>
+<blockquote>
+<p><strong><span>root@Sploit:</span><span>~/Desktop</span># python connect.py 127.0.0.1 8000</strong></p>
+</blockquote>
+<p>Here is a screenshot of the attacker’s server script:<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/d/d5424d274ee40ca9a01015c929eed6b59efe4169.png" width="552" height="500"><br><br>
+Exploring the help options<br><br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/1/18909cd2797fdc9e29f74fa9597efdd676270993.png" width="690" height="488"><br><br>
+From the nmap result on the remote system, I think we opened a port on a registered service. As expected, the client console should be empty because we aren’t printing anything.<br><br>
+<strong>LETS END IT - CONCLUSION</strong><br><br>I think we have accomplished something in this tutorial.<br><br>
+Corrections, Modifications, Updates are welcome.</p>
+          <p><a href="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040/1</link>
+        <pubDate>Fri, 02 Sep 2016 16:40:02 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-1040-1</guid>
+        <source url="https://0x00sec.org/t/how-to-make-a-reverse-tcp-backdoor-in-python-part-2/1040.rss">How To Make A Reverse TCP Backdoor In Python - Part 2</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,405 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>TCP server and TCP client in Python</title>
+    <link>https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042</link>
+    <description>## Transmission Control Protocol
+
+TCP stands for Transmission Control Protocol. TCP is a communication standard that enables application programs and computing devices to exchange messages over a network. TCP establishes a connection between the source and destination before it starts transmitting the data. It breaks large amounts of data into smaller packets while ensuring data integrity.
+
+## TCP server in python
+
+ We import `socket` and `threading` module. The `socket` module provides various objects, constants , functions and related exceptions for building full-fledged network applications including client and server programs. The `threading` module allows a program to run multiple operations concurrently in the same process space thus making the program faster.
+
+```python
+import socket
+import threading
+```
+
+We create a socket object with the the `AF_INET` and `SOCK_STREAM` parameters. `AF_INET` specifies the address family that our socket will use and in this case, it is Internet Protocol Version 4 address. `SOCK_STREAM` shows that the socket object will use TCP.
+
+```python
+#create TCP/IP socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+```
+
+We define the `IP` and the port number for the server and we pass these arguments to the socket. This tells the socket object to listen on this `IP` address and port number. 
+
+```python
+server_ip = &quot;0.0.0.0&quot;
+server_port = 9999
+
+#Bind socket to port
+sock.bind((server_ip,server_port))
+```
+
+This sets the number of maximum connections that can be connected to the server.in this case, the the server can only have a maximum of 5 connections.
+
+```python
+#Listen for incomming connections
+sock.listen(5)
+```
+
+Once a client has established a connection to the server, we keep the client&#39;s socket in the `connection` variable and the connection details in the `client_addr` variable. `client_addr[0]` stores the IP address of the client and `client_addr[1]` stores the port that the client used to establish a connection to the server.
+
+For each client connection, we spin up a thread object that calls the `handle_client` function and we pass in the `connection` variable as the argument to the function.
+
+```python
+while True:
+    #wait for connection
+    connection,client_addr = sock.accept()
+    print(&quot;[*] Accepted connection from: %s:%d&quot; %(client_addr[0],client_addr[1]))
+
+    client_handler =  threading.Thread(target=handle_client, args=(connection,))
+    client_handler.start()
+```
+
+The `handle_client` function receives what the client socket sent and it sends back an `ACK!` message to the client to acknowledge that the message was received.
+
+Then it closes the connection.
+
+```python
+def handle_client(client_socket):
+
+    request = client_socket.recv(1024)
+
+    print(&quot;[*] Recieved: %s&quot; %request)
+
+    #send acknowldgement
+    data = &quot;ACK!&quot;.encode(&#39;utf-8&#39;)
+    client_socket.send(data)
+
+    client_socket.close()
+```
+
+Here is the full code for the `tcp` server in python.
+
+```python
+import socket
+import threading
+
+#create TCP/IP socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+server_ip = &quot;0.0.0.0&quot;
+server_port = 9999
+
+#Bind socket to port
+sock.bind((server_ip,server_port))
+
+#Listen for incomming connections
+sock.listen(5)
+
+print (&quot;[*] Listening on %s:%d&quot; %(server_ip,server_port))
+
+def handle_client(client_socket):
+
+    request = client_socket.recv(1024)
+
+    print(&quot;[*] Recieved: %s&quot; %request)
+
+    #send acknowldgement
+    data = &quot;ACK!&quot;.encode(&#39;utf-8&#39;)
+    client_socket.send(data)
+
+    client_socket.close()
+while True:
+    #wait for connection
+    connection,client_addr = sock.accept()
+    print(&quot;[*] Accepted connection from: %s:%d&quot; %(client_addr[0],client_addr[1]))
+
+    client_handler =  threading.Thread(target=handle_client, args=(connection,))
+    client_handler.start()
+
+```
+
+Let&#39;s run the server.
+
+```bash
+python3 tcp_server.py 
+[*] Listening on 0.0.0.0:9999
+```
+
+The server is listening on `0.0.0.0:9999` and is ready for any incoming connections. 
+
+##TCP client in python
+
+Creating a `tcp` client is the same as creating the `tcp` server with only a few changes. Here the client connects to the server running on `0.0.0.0:9999` and sends a `Hello World!` message. Then, it prints the response it receives from the server.
+
+```python
+import socket
+
+target_ip = &quot;0.0.0.0&quot;
+target_port = 9999
+
+#create a socket object
+client = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+
+#connect the client
+client.connect((target_ip,target_port))
+
+#send data
+data = &quot;Hello World!&quot;.encode(&#39;utf-8&#39;)
+client.send(data)
+
+#recieve data
+response = client.recv(1024)
+
+print(response)
+```
+
+Let&#39;s run the client in another shell.
+
+```bash
+python3 tcp_client.py 
+b&#39;ACK!&#39;
+```
+
+Let&#39;s go back to the server and this is now the output of the server.
+
+```bash
+python3 tcp_server.py 
+[*] Listening on 0.0.0.0:9999
+[*] Accepted connection from: 127.0.0.1:55760
+[*] Recieved: b&#39;Hello World!&#39;
+
+```
+
+If you stop the server and run it again, you will get an error about the `address already being in use`. To fix this run `pkill -9 python3` and then you should now be able to run the server again.
+
+We have successfully built a `tcp` server and a `tcp` client in python.</description>
+    
+    <lastBuildDate>Wed, 25 May 2022 07:57:19 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>TCP server and TCP client in Python</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/7</link>
+        <pubDate>Tue, 16 Aug 2022 12:34:22 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-29042-7</guid>
+        <source url="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042.rss">TCP server and TCP client in Python</source>
+      </item>
+      <item>
+        <title>TCP server and TCP client in Python</title>
+        <dc:creator><![CDATA[seth_johnx]]></dc:creator>
+        <description><![CDATA[
+            <p>thank you for this ,</p>
+          <p><a href="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/6</link>
+        <pubDate>Wed, 25 May 2022 07:57:19 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-29042-6</guid>
+        <source url="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042.rss">TCP server and TCP client in Python</source>
+      </item>
+      <item>
+        <title>TCP server and TCP client in Python</title>
+        <dc:creator><![CDATA[curi_00]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi <a class="mention" href="https://0x00sec.org/u/winterr_dog">@winterr_dog</a>,<br>
+Thank you so much for the suggestion.<br>
+Including the suggest part in the code is really more convenient than killing the process every time.</p>
+          <p><a href="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/5</link>
+        <pubDate>Sat, 07 May 2022 05:55:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-29042-5</guid>
+        <source url="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042.rss">TCP server and TCP client in Python</source>
+      </item>
+      <item>
+        <title>TCP server and TCP client in Python</title>
+        <dc:creator><![CDATA[winterr_dog]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey <a class="mention" href="https://0x00sec.org/u/curi_00">@curi_00</a>,<br>
+Thanks for this nice introductory article! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:"><br>
+Just a <em>simple</em> suggestion, for this part of your article:</p>
+<blockquote>
+<p>If you stop the server and run it again, you will get an error about the <code>address already being in use</code> . To fix this run <code>pkill -9 python3</code> and then you should now be able to run the server again.</p>
+</blockquote>
+<p>You can also fix it in the code just after creating the server socket like so:</p>
+<pre><code class="lang-auto">#create TCP/IP socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.setsockopt(
+            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+        )  # reuse a socket even if it's recently closed
+</code></pre>
+<p>Running the server program many times with very small delay between executions, could lead to this error:</p>
+<p><code>OSError: [Errno 98] Address already in use</code></p>
+<p>This is because the execution that happened before left the socket in a <code>TIME_WAIT</code> state, and can’t be immediately reused.</p>
+<p>The socket flag, <code>socket.SO_REUSEADDR</code>, is set to <code>1</code>, in order to prevent this</p>
+<p>the <code>SO_REUSEADDR</code> flag tells the kernel to <em>reuse a local socket</em> in <code>TIME_WAIT</code> state, without waiting for its <strong>specified</strong> default timeout to expire.</p>
+          <p><a href="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/4</link>
+        <pubDate>Fri, 06 May 2022 18:57:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-29042-4</guid>
+        <source url="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042.rss">TCP server and TCP client in Python</source>
+      </item>
+      <item>
+        <title>TCP server and TCP client in Python</title>
+        <dc:creator><![CDATA[curi_00]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you <a class="mention" href="https://0x00sec.org/u/bonware">@bonware</a> . I will definitely check out those recommendations.</p>
+          <p><a href="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/3</link>
+        <pubDate>Mon, 18 Apr 2022 05:01:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-29042-3</guid>
+        <source url="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042.rss">TCP server and TCP client in Python</source>
+      </item>
+      <item>
+        <title>TCP server and TCP client in Python</title>
+        <dc:creator><![CDATA[bonware]]></dc:creator>
+        <description><![CDATA[
+            <p>A good beginner’s project to continue with, when learning about socket programming in Python, is to follow RFC’s for IRC and implement a simple IRC client.</p>
+<p>For practical situations when I need to communicate over a TCP socket I tend to use <a href="https://pwncat.org/" rel="noopener nofollow ugc">pwncat</a> or a higher-level protocol on top of TCP (almost always HTTP, for me).</p>
+          <p><a href="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/2</link>
+        <pubDate>Sun, 17 Apr 2022 17:45:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-29042-2</guid>
+        <source url="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042.rss">TCP server and TCP client in Python</source>
+      </item>
+      <item>
+        <title>TCP server and TCP client in Python</title>
+        <dc:creator><![CDATA[curi_00]]></dc:creator>
+        <description><![CDATA[
+            <h2>
+<a name="transmission-control-protocol-1" class="anchor" href="https://0x00sec.org#transmission-control-protocol-1"></a>Transmission Control Protocol</h2>
+<p>TCP stands for Transmission Control Protocol. TCP is a communication standard that enables application programs and computing devices to exchange messages over a network. TCP establishes a connection between the source and destination before it starts transmitting the data. It breaks large amounts of data into smaller packets while ensuring data integrity.</p>
+<h2>
+<a name="tcp-server-in-python-2" class="anchor" href="https://0x00sec.org#tcp-server-in-python-2"></a>TCP server in python</h2>
+<p>We import <code>socket</code> and <code>threading</code> module. The <code>socket</code> module provides various objects, constants , functions and related exceptions for building full-fledged network applications including client and server programs. The <code>threading</code> module allows a program to run multiple operations concurrently in the same process space thus making the program faster.</p>
+<pre><code class="lang-python">import socket
+import threading
+</code></pre>
+<p>We create a socket object with the the <code>AF_INET</code> and <code>SOCK_STREAM</code> parameters. <code>AF_INET</code> specifies the address family that our socket will use and in this case, it is Internet Protocol Version 4 address. <code>SOCK_STREAM</code> shows that the socket object will use TCP.</p>
+<pre><code class="lang-python">#create TCP/IP socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+</code></pre>
+<p>We define the <code>IP</code> and the port number for the server and we pass these arguments to the socket. This tells the socket object to listen on this <code>IP</code> address and port number.</p>
+<pre><code class="lang-python">server_ip = "0.0.0.0"
+server_port = 9999
+
+#Bind socket to port
+sock.bind((server_ip,server_port))
+</code></pre>
+<p>This sets the number of maximum connections that can be connected to the server.in this case, the the server can only have a maximum of 5 connections.</p>
+<pre><code class="lang-python">#Listen for incomming connections
+sock.listen(5)
+</code></pre>
+<p>Once a client has established a connection to the server, we keep the client’s socket in the <code>connection</code> variable and the connection details in the <code>client_addr</code> variable. <code>client_addr[0]</code> stores the IP address of the client and <code>client_addr[1]</code> stores the port that the client used to establish a connection to the server.</p>
+<p>For each client connection, we spin up a thread object that calls the <code>handle_client</code> function and we pass in the <code>connection</code> variable as the argument to the function.</p>
+<pre><code class="lang-python">while True:
+    #wait for connection
+    connection,client_addr = sock.accept()
+    print("[*] Accepted connection from: %s:%d" %(client_addr[0],client_addr[1]))
+
+    client_handler =  threading.Thread(target=handle_client, args=(connection,))
+    client_handler.start()
+</code></pre>
+<p>The <code>handle_client</code> function receives what the client socket sent and it sends back an <code>ACK!</code> message to the client to acknowledge that the message was received.</p>
+<p>Then it closes the connection.</p>
+<pre><code class="lang-python">def handle_client(client_socket):
+
+    request = client_socket.recv(1024)
+
+    print("[*] Recieved: %s" %request)
+
+    #send acknowldgement
+    data = "ACK!".encode('utf-8')
+    client_socket.send(data)
+
+    client_socket.close()
+</code></pre>
+<p>Here is the full code for the <code>tcp</code> server in python.</p>
+<pre><code class="lang-python">import socket
+import threading
+
+#create TCP/IP socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+server_ip = "0.0.0.0"
+server_port = 9999
+
+#Bind socket to port
+sock.bind((server_ip,server_port))
+
+#Listen for incomming connections
+sock.listen(5)
+
+print ("[*] Listening on %s:%d" %(server_ip,server_port))
+
+def handle_client(client_socket):
+
+    request = client_socket.recv(1024)
+
+    print("[*] Recieved: %s" %request)
+
+    #send acknowldgement
+    data = "ACK!".encode('utf-8')
+    client_socket.send(data)
+
+    client_socket.close()
+while True:
+    #wait for connection
+    connection,client_addr = sock.accept()
+    print("[*] Accepted connection from: %s:%d" %(client_addr[0],client_addr[1]))
+
+    client_handler =  threading.Thread(target=handle_client, args=(connection,))
+    client_handler.start()
+
+</code></pre>
+<p>Let’s run the server.</p>
+<pre><code class="lang-bash">python3 tcp_server.py 
+[*] Listening on 0.0.0.0:9999
+</code></pre>
+<p>The server is listening on <code>0.0.0.0:9999</code> and is ready for any incoming connections.</p>
+<p>#<span class="hashtag">#TCP</span> client in python</p>
+<p>Creating a <code>tcp</code> client is the same as creating the <code>tcp</code> server with only a few changes. Here the client connects to the server running on <code>0.0.0.0:9999</code> and sends a <code>Hello World!</code> message. Then, it prints the response it receives from the server.</p>
+<pre><code class="lang-python">import socket
+
+target_ip = "0.0.0.0"
+target_port = 9999
+
+#create a socket object
+client = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+
+#connect the client
+client.connect((target_ip,target_port))
+
+#send data
+data = "Hello World!".encode('utf-8')
+client.send(data)
+
+#recieve data
+response = client.recv(1024)
+
+print(response)
+</code></pre>
+<p>Let’s run the client in another shell.</p>
+<pre><code class="lang-bash">python3 tcp_client.py 
+b'ACK!'
+</code></pre>
+<p>Let’s go back to the server and this is now the output of the server.</p>
+<pre><code class="lang-bash">python3 tcp_server.py 
+[*] Listening on 0.0.0.0:9999
+[*] Accepted connection from: 127.0.0.1:55760
+[*] Recieved: b'Hello World!'
+
+</code></pre>
+<p>If you stop the server and run it again, you will get an error about the <code>address already being in use</code>. To fix this run <code>pkill -9 python3</code> and then you should now be able to run the server again.</p>
+<p>We have successfully built a <code>tcp</code> server and a <code>tcp</code> client in python.</p>
+          <p><a href="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042/1</link>
+        <pubDate>Sat, 16 Apr 2022 20:33:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-29042-1</guid>
+        <source url="https://0x00sec.org/t/tcp-server-and-tcp-client-in-python/29042.rss">TCP server and TCP client in Python</source>
+      </item>
+  </channel>
+</rss>

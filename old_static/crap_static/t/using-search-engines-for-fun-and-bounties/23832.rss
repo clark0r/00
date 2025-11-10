@@ -1,0 +1,700 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Using search engines for fun and bounties</title>
+    <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832</link>
+    <description>![2021-11-26_11-17|690x243](upload://smUoPk1bwJiubYirr1uWxxXvNOX.jpeg)
+
+## Passive vs Active reconnaissance
+Passive reconnaissance plays an important role in the approach of a target. In comparison to active reconnaissance, passive reconnaissance is the silent, stealthy one, where the attacker doesn&#39;t interact with the target. Instead, they obtain information about the target from other external, third-party sources. This information varies from open ports to discovering more assets and discovering sensitive information. Such a source for passive recon is search engines.
+
+In the following article, I list two of the most popular ones, namely Google Search and Shodan, as well as some techniques I use to broaden my attack surface by finding more (potentially vulnerable) assets and uncovering secrets. I would love to also include Github Search but my limited experience with it doesn&#39;t allow me that. Maybe in a future article? I hope.
+
+## Google Search
+The use of Google Search has been increased with time, as it is a very easy way to discover not only hidden information lying around the web but also a quicker way to identify possible vulnerable domains and endpoints.
+
+With using Google search as a passive recon tool comes also Google dorking. Google dorking is the technique of making more specific queries to Google Search based on filters and restrictions defined by the user so that the search engine returns more concrete results. It includes filters of the form
+```
+filter:value
+```
+and logical operators between the filters
+```
+filter:value [OPERATOR] filter:value
+```
+or
+```
+[OPERATOR]value
+```
+
+### Filters and Operators
+There are many filters that one can use with Google dorks. Some filters and operators that come handy when hunting for bugs:
+
+* `site`
+Yields results from the specified site/domain, e.g. `site:example.com`
+* `inurl` and `allinurl`
+Yields results that have the specified string in their URL, e.g. `inurl:cmd` and `allinurl:cmd execute`
+* `related`
+Yields results related to the specified site/domain. It&#39;s useful for finding an organization&#39;s acquisitions. E.g. `related:randstad.com` returns results from companies&#39; domains, like `monster.com`, which belongs to Randstad.
+* `filetype`
+Yields results and endpoints from the specified filetype, e.g. `filetype:pdf`
+* `intitle` and `allintitle`
+Yields results with the specified title, e.g. `intitle:Organisation intitle:Internal` or `allintitle:Organisation Internal`
+* `intext`
+Yields results where the specified string was found within the text of a result, e.g. `intext:password`
+* `AND`
+Logical AND operator to combine filters, e.g. `site:example.com AND filetype:pdf`
+* `OR`, `|`
+Logical OR operator to combine filters, e.g. `site:example.com OR site:target.com` or `site:example.com | site:target.com`
+* `-`
+Exception operator that is to be used before a filter, e.g. `site:example.com -site:www.example.com` will yield results from subdomains of `example.com` except for `www.example.com`. Also `-inurl:www` and `-www` can be used.
+* `*`
+Used as a wildcard, e.g. `site:www.example.*`
+
+#### Subdomain discovery
+The simple query
+```
+site:example.com -www
+```
+will ask Google to return results from every subdomain of `example.com` known to it, except for `www.example.com`. This is a good query to use for additional subdomain discovery, in case your automation missed any subdomains.
+
+#### Content discovery
+The query 
+```
+site:example.com inurl:src
+```
+returns result with the parameter `src` in the url, like e.g. `https://example.com/css_src.php?src=`. Then later, the endpoint can be analyzed for possible vulnerabilities, especially if the parameter has a name that points to specific vulnerabilities like e.g. the parameter `return` points to Open Redirections.
+
+#### Discovering technologies open to the public
+Targeting specific technologies can be done through the `intitle` filter. The query
+```
+intitle:&quot;Dashboard [Jenkins]&quot; site:example.com
+```
+will return a public Jenkins instance belonging to `example.com`, if there is any.
+
+#### Secret discovery
+In the [exploit-db.com collection](https://www.exploit-db.com/google-hacking-database) there is a large number of Google dorks queries for uncovering secrets and information on a target, like e.g. discovering private keys with the query
+
+```text
+&quot;-----BEGIN RSA PRIVATE KEY-----&quot; inurl:id_rsa
+```
+
+To be more creative, we can construct our own query for targeting files with sensitive information. Combining some of the above-mentioned filters, we can come up with
+```text
+site:*.target.com ( filetype:TYPE1 | filetype:TYPE2 ) intext:SECRET
+```
+where SECRET is the target secret we want to test/uncover, e.g. `password` and TYPE1/TYPE2 the filetype that is possible to contain such a secret, e.g. `pdf` or `txt` or `ppt`. Of course, both SECRET and TYPE1/TYPE2 may be depending on the target. For a company that has a billing process, SECRET may be `invoice` or `receipt` and for a, let&#39;s say, contract reviewing company, the `pdf` and `docx` TYPE may be more possible to return any results.
+
+Note that google dorking may return false negatives. That means that even if there is no result yielded from a query, that doesn&#39;t mean that it doesn&#39;t exist. Google&#39;s search engine takes some time to update its search results if the website is new or developers prevent google from crawling their website by [including a noindex meta tag in the page&#39;s HTML code, or by returning a &#39;noindex&#39; header in the HTTP request.](https://support.google.com/webmasters/answer/93710?hl=en)
+
+There are a lot of filters and operators to use for google dorks, so here is also some other lists with the available options:
+| Google dorks resources |
+|:------|
+| [Google dork cheatsheet](https://gist.github.com/sundowndev/283efaddbcf896ab405488330d1bbc06) |
+| [Google Search Operators: The Complete List (42 Advanced Operators)](https://ahrefs.com/blog/google-advanced-search-operators/) |
+|[google-dorks](https://gist.github.com/stevenswafford/393c6ec7b5375d5e8cdc)|
+| [Listing of a number of useful Google dorks.](https://gist.github.com/stevenswafford/393c6ec7b5375d5e8cdc) |
+
+
+### Case study: Content discovery
+As mentioned before, you can use Google dorks to identify possible vulnerabilities. While I was hunting for bugs in a target, I came across a vanilla Apache server in `subdomain.target.com`, where I first thought that there was no content at all. By using the very simple query
+
+```
+site:subdomain.target.com
+```
+
+Google provided me links and relative paths of that subdomain that my wordlists missed. That led me to a web application deployed on that server, where I found an endpoint, which was vulnerable to XSS and another endpoint vulnerable to frame injection. Note that the endpoints that Google yielded weren&#39;t included in the `gau` and `waybackurls` results.
+
+### Case study: Vulnerable parameter
+While this requires a lot of time, one can search for possible vulnerable parameters in web applications with the `inrul` filter. With a list of parameters, one can test the existence of those parameters, which may be possible to be vulnerable to some kind of attack. In this case, using a [list of common open redirection parameters](https://github.com/victoni/Bug-Bounty-Scripts/blob/master/lists/open_redirection_parameters.txt) and with the query
+
+```
+site:subdomain.target.com inurl:rt
+```
+
+I found an endpoint, vulnerable to open redirection, which I then escalated to XSS.
+
+### Google is just the tool
+Google is probably the most powerful search engine there is. Learning to use it to our advantage can give us an edge. It can be a great starting point when starting doing recon or it can be used as a last resort when everything else has failed. It can even be used to [find bug bounty programs](https://github.com/sushiwushi/bug-bounty-dorks/blob/master/dorks.txt) to start hacking.
+
+![](upload://dvgA15PXmIFU7jqWzxiHvPRa0ZF.png)
+
+## Shodan
+Although Shodan is pretty known and popular I think it&#39;s not used that often for bug hunting as it should.
+
+Shodan is a search engine for internet-connected devices. It is a specific purpose search engine, created first as a pet project. Now it is used to aid researchers on their work. It collects information about web servers such as open ports, services running on those ports and their banners. Making a query, let&#39;s say &quot;microsoft&quot; will yield any device in shodan&#39;s database that contains the word `microsoft` in its banners
+
+![](upload://7ijkLrsskVeD7Jce4aDWXRRdt61.png)
+
+\
+Shodan is best used with a one-time payment, where one gets access to most of its powers. But to use it&#39;s specifiers (filters) you need to make a free account.
+
+This search engine can play an important role in your bug hunting. When the scope is not strictly limited to specific subdomains and it is open enough to let you search for any server related to the organization, that&#39;s where it shines the most.
+
+### Filters
+Just like in Google, you can also make use of some filters the site provides in order to specify your query. Some of the most essentials are:
+
+* `http.status`
+Returns the servers with the specified http status code, e.g. `http.status:200`.
+* `http.title`
+Queries for the specified http title that can be found in the banners. A distinctive example is the shodan dork used to find BIG IP vulnerable components: `http.title:&quot;BIG-IP&amp;reg;- Redirect&quot;`.
+* `http.component`
+Returns servers with the specified web technology that is used on the website, e.g. `http.component:&quot;jenkins&quot;`.
+* `ssl`
+Finds servers with the specified string included in the SSL certificate, e.g. `ssl:&quot;Microsoft&quot;`. This Filter can be further specified with `ssl.expired`, `ssl.version` (more on the resources).
+* `org`
+Finds servers with IP belonging to the specified organization&#39;s netblock, e.g., `org:&quot;Microsoft&quot;`
+* `port`
+The port filter returns components with the specified port open, e.g. `port:8080`.
+* `os`
+Using this filter shodan returns servers running the specified operating system, e.g. `os:Windows`.
+* `product`
+Using this filter shodan returns devices running this specific product, e.g. `product:&quot;Apache Tomcat&quot;` or `product:&quot;IIS Windows Server&quot;`
+* `version`
+The `version` filter is to be combined with the `product` filter. It specifies the version of the specified product, e.g. `product:&quot;Apache Tomcat&quot; version:&quot;7.0.82&quot;`
+* `vuln`
+This filter is only available to academic users or Small Business API subscriptions and higher. It&#39;s used to to return components vulnerable to the specified CVE identifier, e.g. `vuln:cve-2010-2730`.
+
+Here are resources for shodan and its filters/use.
+| Shodan filters resources |
+|:------|
+| [shodan-filters](https://github.com/JavierOlmedo/shodan-filters) |
+| [Search Query Fundamentals](https://help.shodan.io/the-basics/search-query-fundamentals) |
+| [awesome-shodan-queries](https://github.com/jakejarvis/awesome-shodan-queries) |
+
+Of course, the more filters you use in a query, the more specified the query is.
+
+While all of the above-mentioned filters are the most important for bug hunting, my personal favorite filter is the `ssl`. Using the `ssl` filter you can search for certificates issued to the organization and lets you discover servers&#39; IPs that are either related to the organization (loose scope) or within the scope (strict scope) but were not picked up by your recon automation tools. You can check the latter with a reverse DNS lookup of the found IPs.
+
+### Mixing things up
+Having all the above-mentioned filters in our arsenal, we can start narrowing down our results to our specific target.
+
+#### Case study: Sensitive information leak
+It is not necessary to combine a ton of filters to come to an end result. Using the simple filter 
+```
+ssl:&quot;Target&quot;
+```
+where `Target` is the name of the organization, I found a number of servers whose certificates were issued to `Target`. Examining them one by one, while doing content discovery on one, I saw that the sensitive file `web.config.txt` was open in public, containing a number of SQLConnection strings, most of them related to `Target`. Even though there were no SQL ports open to the Internet for me to test them, I reported it and it got accepted.
+
+#### Case study: SSL certificate and CVE-2020-3452
+In July 2020 Cisco&#39;s Adaptive Security Appliance (ASA) Software and Firepower Threat Defense (FTD) were found vulnerable to unauthenticated file read/path traversal. The affected systems were WebVPN servers, which carried the string `&quot;Set-Cookie: webvpn;&quot;` in their banners. Restricting the search to include only servers whose SSL certificates include the organization&#39;s name, I was able to find several servers vulnerable to CVE-2020-3452.
+
+Query:
+```
+ssl:&quot;Target&quot; &quot;Set-Cookie: webvpn;&quot;
+```
+
+Vulnerability checking/PoC for CVE-2020-3452:
+```bash
+curl -s -k &quot;https://[IP or DOMAIN]/+CSCOT+/translation-table?type=mst&amp;textdomain=/%2bCSCOE%2b/portal_inc.lua&amp;default-language&amp;lang=../&quot;
+```
+
+The `ssl` filter can be further used for more specific results. The SSL certificate is read by Shodan in a JSON format with this form ([source](https://blog.shodan.io/ssl-update/)):
+```
+&quot;ssl&quot;: {
+    &quot;cert&quot;: {
+        &quot;sig_alg&quot;: &quot;sha1WithRSAEncryption&quot;,
+        &quot;issued&quot;: &quot;20110325103212Z&quot;,
+        &quot;expires&quot;: &quot;20120324103212Z&quot;,
+        &quot;expired&quot;: true,
+        &quot;version&quot;: 2,
+        &quot;extensions&quot;: [{
+            &quot;data&quot;: &quot;\u0003\u0002\u0006@&quot;,
+            &quot;name&quot;: &quot;nsCertType&quot;
+        }],
+        &quot;serial&quot;: 10104044343792293356,
+        &quot;issuer&quot;: {
+            &quot;C&quot;: &quot;TW&quot;,
+            &quot;L&quot;: &quot;TAIPEI&quot;,
+            &quot;O&quot;: &quot;CAMEO&quot;,
+            &quot;ST&quot;: &quot;TAIWAN&quot;
+        },
+        &quot;pubkey&quot;: {
+            &quot;bits&quot;: 1024,
+            &quot;type&quot;: &quot;rsa&quot;
+        },
+        &quot;subject&quot;: {
+            &quot;C&quot;: &quot;TW&quot;,
+            &quot;L&quot;: &quot;TAIPEI&quot;,
+            &quot;O&quot;: &quot;CAMEO&quot;,
+            &quot;ST&quot;: &quot;TAIWAN&quot;
+			&quot;CN&quot;:&quot;name.tld&quot;
+        }
+    },
+    &quot;cipher&quot;: {
+        &quot;version&quot;: &quot;TLSv1/SSLv3&quot;,
+        &quot;bits&quot;: 256,
+        &quot;name&quot;: &quot;AES256-SHA&quot;
+    },
+    &quot;chain&quot;: [&quot;-----BEGIN CERTIFICATE----- 
+	MIICETCCAXqgAwIBAgIJAIw4xswSiNXsMA0GCSqGSIb3DQEBBQUAMD8xCzAJBgNV
+	BAYTAlRXMQ8wDQYDVQQIEwZUQUlXQU4xDzANBgNVBAcTBlRBSVBFSTEOMAwGA1UE
+	ChMFQ0FNRU8wHhcNMTEwMzI1MTAzMjEyWhcNMTIwMzI0MTAzMjEyWjA/MQswCQYD
+	VQQGEwJUVzEPMA0GA1UECBMGVEFJV0FOMQ8wDQYDVQQHEwZUQUlQRUkxDjAMBgNV
+	BAoTBUNBTUVPMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCj8HWSuWUHYWLD
+	ASV1KCWd9+9U19tINKgY8CTw/gKeVoF6bjgQ3tuXliScLAsU8nNGiZibaXq9KR67
+	nLjjHzFiJDr6s8M3qimLdhcA7kf71v806Mls4KctdrMUiX3Bc7WvYtbClke0QDlC
+	FGgK7HksEWpQ026E3pI0T/2mTvbeXQIDAQABoxUwEzARBglghkgBhvhCAQEEBAMC
+	BkAwDQYJKoZIhvcNAQEFBQADgYEANbiCHCROX0X9ZbBaOsijkGh6+7WLaLUDEUpp
+	rw+bHFKhOvtQgEyQ01U0V9ZYtdPyVLnNVmJu6Q8MPuqBCkpcv0/gH31YSSRyOhid
+	vc+qCUCA7UBqt5f7QVOOYPqhzieoUO+pmQ3zidcwUGYh19gQv/fl7SnG00cDgxg3
+	m89S7ao=
+	-----END CERTIFICATE-----
+	&quot;],
+    &quot;versions&quot;: [&quot;TLSv1&quot;, &quot;SSLv3&quot;, &quot;-SSLv2&quot;, &quot;-TLSv1.1&quot;, &quot;-TLSv1.2&quot;]
+}
+```
+We can parse the SSL certificate and search for a term in it. We can parse the JSON by separating the nested JSON keys with `.`. To search for Common Names with the term `target` in it, we can use the query `ssl.cert.subject.CN:target`.
+
+#### Case study: Netblocks and CVE-2020-3452
+A technique [sneakerhax](https://twitter.com/sneakerhax/) showed me a while ago is looking if the target organization owns an ASN. This can not only be done in the cli but also in shodan. Like the previous case study, discovering a server vulnerable to CVE-2020-3452 within the target&#39;s ASN can be done with the query
+```
+&quot;Set-Cookie: webvpn;&quot; org:&quot;Target&quot;
+```
+Important the thing here is to do an additional check on whether the server is actually owned by the target and not just hosted in their ASN. So, to do that, you can add the `ssl:&quot;Target&quot;` filter or perform a reverse DNS check on the IP and see if the domain name is within the scope.
+
+### Shodan CLI
+Using the web app can be tiring and slow, so there is also the [shodan cli](https://cli.shodan.io/) option to get your results straight into your command line and integrate it with your pipeline and other tools. You just need to initialize it with your API Key.
+
+Shodan CLI can help you with your initial passive recon. After initializing the tool, you can use it for port scanning, banner grabbing, and probing for HTTP ports by using httpx/httprobe:
+
+```
+$ shodan host x.x.x.x # port scanning
+$ shodan search ip:x.x.x.x # banner grabbing
+$ shodan host --format tsv x.x.x.x | awk &#39;{ print&quot;x.x.x.x:&quot;$1 }&#39; | httpx -silent # probing for HTTP ports
+```
+
+### Google search for servers and IoT devices
+As previously mentioned, using Shodan for bug bounties shines the most, when it&#39;s combined with an open scope, where systems related to the organization can also be reported. But, as with all tools and search engines, shodan doesn&#39;t have every possible IP, so it might also lead to false negatives. But it&#39;s definitely a valuable tool to use after doing your initial recon.
+
+## Conclusion
+Using search engines for passive reconnaissance, either that is endpoint or secret or subdomain discovery, requires a lot of digging and can take some time. But when it comes to bug hunting, the more digging a bug requires the more probable it is to not be a dupe. Testing out the filters and creating unique and creative queries is the key.</description>
+    
+    <lastBuildDate>Tue, 23 Nov 2021 15:49:12 +0000</lastBuildDate>
+    <category>Bug Bounty</category>
+    <atom:link href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[fullpl4nch3]]></dc:creator>
+        <description><![CDATA[
+            <p>I am a beginner in Bug Bounties<br>
+So thanks for this post! very helpful!</p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/11</link>
+        <pubDate>Tue, 23 Nov 2021 15:49:12 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-11</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[rampage]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you for sharing such a useful information.</p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/10</link>
+        <pubDate>Sun, 29 Aug 2021 10:12:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-10</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[wabafet]]></dc:creator>
+        <description><![CDATA[
+            <p>Ok, that was cool I learned some new tricks and google operators thanks.</p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/9</link>
+        <pubDate>Thu, 01 Jul 2021 04:31:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-9</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[n33ds0n]]></dc:creator>
+        <description><![CDATA[
+            <p>Cool, nice Content.<br>
+really love the explanation.<br>
+Thanks <img src="https://0x00sec.org/images/emoji/twitter/+1.png?v=9" title=":+1:" class="emoji" alt=":+1:"></p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/8</link>
+        <pubDate>Wed, 31 Mar 2021 16:23:26 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-8</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>Adding another interesting site you should know about : <a href="https://community.riskiq.com/" rel="noopener nofollow ugc">https://community.riskiq.com/</a> , although you’ll need a free account , i have found that riskiq’s subdomain data is far far better even than that of dnstrails</p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/7</link>
+        <pubDate>Wed, 24 Mar 2021 05:58:41 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-7</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[CQR.ADS]]></dc:creator>
+        <description><![CDATA[
+            <p>Thank you for useful information.</p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/6</link>
+        <pubDate>Mon, 22 Mar 2021 12:32:58 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-6</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>I feel we need a wiki with all of these tricks indexed according to category .</p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/5</link>
+        <pubDate>Wed, 11 Nov 2020 01:43:07 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-5</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>thats a good trick as well , at this point i also want to introduce <a href="https://censys.io" rel="noopener nofollow ugc">https://censys.io</a> as well so that anyone following this thread can benefit from it , because censys has many  searching  and filtering options , especially when it comes to comes to ssl certificates , i usually endup finding some 'not so easy to discover ’ subdomains with censys.</p>
+<p>edit:  if anyone was wondering where the search page of censys is , its here <a href="https://censys.io/ipv4" rel="noopener nofollow ugc">https://censys.io/ipv4</a></p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/4</link>
+        <pubDate>Tue, 10 Nov 2020 14:04:18 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-4</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[vict0ni]]></dc:creator>
+        <description><![CDATA[
+            <p>Ooooh that’s awesome! Never used <code>http.html</code>, somehow. There is also <a href="https://twitter.com/intigriti/status/1324701841465221120">this</a> tip using the favicon hash.</p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/3</link>
+        <pubDate>Tue, 10 Nov 2020 10:20:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-3</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>Also (just like google ) shodan has a filter called  http.html , which filters results by the html content of the hosts  shodan has scanned ,  you could pick up a unique footer text used by a company and do this :<br>
+http.html:‘unique footer text’</p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/2</link>
+        <pubDate>Tue, 10 Nov 2020 00:53:28 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-2</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+      <item>
+        <title>Using search engines for fun and bounties</title>
+        <dc:creator><![CDATA[vict0ni]]></dc:creator>
+        <description><![CDATA[
+            <p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/c/6/c6d3d695c5f6771913f814921e15508b54e94ef3.jpeg" data-download-href="/uploads/short-url/smUoPk1bwJiubYirr1uWxxXvNOX.jpeg?dl=1" title="2021-11-26_11-17"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/c/6/c6d3d695c5f6771913f814921e15508b54e94ef3_2_690x243.jpeg" alt="2021-11-26_11-17" data-base62-sha1="smUoPk1bwJiubYirr1uWxxXvNOX" width="690" height="243" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/c/6/c6d3d695c5f6771913f814921e15508b54e94ef3_2_690x243.jpeg, https://0x00sec.s3.amazonaws.com/optimized/3X/c/6/c6d3d695c5f6771913f814921e15508b54e94ef3_2_1035x364.jpeg 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/c/6/c6d3d695c5f6771913f814921e15508b54e94ef3.jpeg 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/c/6/c6d3d695c5f6771913f814921e15508b54e94ef3_2_10x10.png"></a></div><p></p>
+<h2>
+<a name="passive-vs-active-reconnaissance-1" class="anchor" href="https://0x00sec.org#passive-vs-active-reconnaissance-1"></a>Passive vs Active reconnaissance</h2>
+<p>Passive reconnaissance plays an important role in the approach of a target. In comparison to active reconnaissance, passive reconnaissance is the silent, stealthy one, where the attacker doesn’t interact with the target. Instead, they obtain information about the target from other external, third-party sources. This information varies from open ports to discovering more assets and discovering sensitive information. Such a source for passive recon is search engines.</p>
+<p>In the following article, I list two of the most popular ones, namely Google Search and Shodan, as well as some techniques I use to broaden my attack surface by finding more (potentially vulnerable) assets and uncovering secrets. I would love to also include Github Search but my limited experience with it doesn’t allow me that. Maybe in a future article? I hope.</p>
+<h2>
+<a name="google-search-2" class="anchor" href="https://0x00sec.org#google-search-2"></a>Google Search</h2>
+<p>The use of Google Search has been increased with time, as it is a very easy way to discover not only hidden information lying around the web but also a quicker way to identify possible vulnerable domains and endpoints.</p>
+<p>With using Google search as a passive recon tool comes also Google dorking. Google dorking is the technique of making more specific queries to Google Search based on filters and restrictions defined by the user so that the search engine returns more concrete results. It includes filters of the form</p>
+<pre><code class="lang-auto">filter:value
+</code></pre>
+<p>and logical operators between the filters</p>
+<pre><code class="lang-auto">filter:value [OPERATOR] filter:value
+</code></pre>
+<p>or</p>
+<pre><code class="lang-auto">[OPERATOR]value
+</code></pre>
+<h3>
+<a name="filters-and-operators-3" class="anchor" href="https://0x00sec.org#filters-and-operators-3"></a>Filters and Operators</h3>
+<p>There are many filters that one can use with Google dorks. Some filters and operators that come handy when hunting for bugs:</p>
+<ul>
+<li>
+<code>site</code><br>
+Yields results from the specified site/domain, e.g. <code>site:example.com</code>
+</li>
+<li>
+<code>inurl</code> and <code>allinurl</code><br>
+Yields results that have the specified string in their URL, e.g. <code>inurl:cmd</code> and <code>allinurl:cmd execute</code>
+</li>
+<li>
+<code>related</code><br>
+Yields results related to the specified site/domain. It’s useful for finding an organization’s acquisitions. E.g. <code>related:randstad.com</code> returns results from companies’ domains, like <code>monster.com</code>, which belongs to Randstad.</li>
+<li>
+<code>filetype</code><br>
+Yields results and endpoints from the specified filetype, e.g. <code>filetype:pdf</code>
+</li>
+<li>
+<code>intitle</code> and <code>allintitle</code><br>
+Yields results with the specified title, e.g. <code>intitle:Organisation intitle:Internal</code> or <code>allintitle:Organisation Internal</code>
+</li>
+<li>
+<code>intext</code><br>
+Yields results where the specified string was found within the text of a result, e.g. <code>intext:password</code>
+</li>
+<li>
+<code>AND</code><br>
+Logical AND operator to combine filters, e.g. <code>site:example.com AND filetype:pdf</code>
+</li>
+<li>
+<code>OR</code>, <code>|</code><br>
+Logical OR operator to combine filters, e.g. <code>site:example.com OR site:target.com</code> or <code>site:example.com | site:target.com</code>
+</li>
+<li>
+<code>-</code><br>
+Exception operator that is to be used before a filter, e.g. <code>site:example.com -site:www.example.com</code> will yield results from subdomains of <code>example.com</code> except for <code>www.example.com</code>. Also <code>-inurl:www</code> and <code>-www</code> can be used.</li>
+<li>
+<code>*</code><br>
+Used as a wildcard, e.g. <code>site:www.example.*</code>
+</li>
+</ul>
+<h4>
+<a name="subdomain-discovery-4" class="anchor" href="https://0x00sec.org#subdomain-discovery-4"></a>Subdomain discovery</h4>
+<p>The simple query</p>
+<pre><code class="lang-auto">site:example.com -www
+</code></pre>
+<p>will ask Google to return results from every subdomain of <code>example.com</code> known to it, except for <code>www.example.com</code>. This is a good query to use for additional subdomain discovery, in case your automation missed any subdomains.</p>
+<h4>
+<a name="content-discovery-5" class="anchor" href="https://0x00sec.org#content-discovery-5"></a>Content discovery</h4>
+<p>The query</p>
+<pre><code class="lang-auto">site:example.com inurl:src
+</code></pre>
+<p>returns result with the parameter <code>src</code> in the url, like e.g. <code>https://example.com/css_src.php?src=</code>. Then later, the endpoint can be analyzed for possible vulnerabilities, especially if the parameter has a name that points to specific vulnerabilities like e.g. the parameter <code>return</code> points to Open Redirections.</p>
+<h4>
+<a name="discovering-technologies-open-to-the-public-6" class="anchor" href="https://0x00sec.org#discovering-technologies-open-to-the-public-6"></a>Discovering technologies open to the public</h4>
+<p>Targeting specific technologies can be done through the <code>intitle</code> filter. The query</p>
+<pre><code class="lang-auto">intitle:"Dashboard [Jenkins]" site:example.com
+</code></pre>
+<p>will return a public Jenkins instance belonging to <code>example.com</code>, if there is any.</p>
+<h4>
+<a name="secret-discovery-7" class="anchor" href="https://0x00sec.org#secret-discovery-7"></a>Secret discovery</h4>
+<p>In the <a href="https://www.exploit-db.com/google-hacking-database">exploit-db.com collection</a> there is a large number of Google dorks queries for uncovering secrets and information on a target, like e.g. discovering private keys with the query</p>
+<pre><code class="lang-nohighlight">"-----BEGIN RSA PRIVATE KEY-----" inurl:id_rsa
+</code></pre>
+<p>To be more creative, we can construct our own query for targeting files with sensitive information. Combining some of the above-mentioned filters, we can come up with</p>
+<pre><code class="lang-nohighlight">site:*.target.com ( filetype:TYPE1 | filetype:TYPE2 ) intext:SECRET
+</code></pre>
+<p>where SECRET is the target secret we want to test/uncover, e.g. <code>password</code> and TYPE1/TYPE2 the filetype that is possible to contain such a secret, e.g. <code>pdf</code> or <code>txt</code> or <code>ppt</code>. Of course, both SECRET and TYPE1/TYPE2 may be depending on the target. For a company that has a billing process, SECRET may be <code>invoice</code> or <code>receipt</code> and for a, let’s say, contract reviewing company, the <code>pdf</code> and <code>docx</code> TYPE may be more possible to return any results.</p>
+<p>Note that google dorking may return false negatives. That means that even if there is no result yielded from a query, that doesn’t mean that it doesn’t exist. Google’s search engine takes some time to update its search results if the website is new or developers prevent google from crawling their website by <a href="https://support.google.com/webmasters/answer/93710?hl=en">including a noindex meta tag in the page’s HTML code, or by returning a ‘noindex’ header in the HTTP request.</a></p>
+<p>There are a lot of filters and operators to use for google dorks, so here is also some other lists with the available options:</p>
+<div class="md-table">
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Google dorks resources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><a href="https://gist.github.com/sundowndev/283efaddbcf896ab405488330d1bbc06">Google dork cheatsheet</a></td>
+</tr>
+<tr>
+<td style="text-align:left"><a href="https://ahrefs.com/blog/google-advanced-search-operators/">Google Search Operators: The Complete List (42 Advanced Operators)</a></td>
+</tr>
+<tr>
+<td style="text-align:left"><a href="https://gist.github.com/stevenswafford/393c6ec7b5375d5e8cdc">google-dorks</a></td>
+</tr>
+<tr>
+<td style="text-align:left"><a href="https://gist.github.com/stevenswafford/393c6ec7b5375d5e8cdc">Listing of a number of useful Google dorks.</a></td>
+</tr>
+</tbody>
+</table>
+</div><h3>
+<a name="case-study-content-discovery-8" class="anchor" href="https://0x00sec.org#case-study-content-discovery-8"></a>Case study: Content discovery</h3>
+<p>As mentioned before, you can use Google dorks to identify possible vulnerabilities. While I was hunting for bugs in a target, I came across a vanilla Apache server in <code>subdomain.target.com</code>, where I first thought that there was no content at all. By using the very simple query</p>
+<pre><code class="lang-auto">site:subdomain.target.com
+</code></pre>
+<p>Google provided me links and relative paths of that subdomain that my wordlists missed. That led me to a web application deployed on that server, where I found an endpoint, which was vulnerable to XSS and another endpoint vulnerable to frame injection. Note that the endpoints that Google yielded weren’t included in the <code>gau</code> and <code>waybackurls</code> results.</p>
+<h3>
+<a name="case-study-vulnerable-parameter-9" class="anchor" href="https://0x00sec.org#case-study-vulnerable-parameter-9"></a>Case study: Vulnerable parameter</h3>
+<p>While this requires a lot of time, one can search for possible vulnerable parameters in web applications with the <code>inrul</code> filter. With a list of parameters, one can test the existence of those parameters, which may be possible to be vulnerable to some kind of attack. In this case, using a <a href="https://github.com/victoni/Bug-Bounty-Scripts/blob/master/lists/open_redirection_parameters.txt">list of common open redirection parameters</a> and with the query</p>
+<pre><code class="lang-auto">site:subdomain.target.com inurl:rt
+</code></pre>
+<p>I found an endpoint, vulnerable to open redirection, which I then escalated to XSS.</p>
+<h3>
+<a name="google-is-just-the-tool-10" class="anchor" href="https://0x00sec.org#google-is-just-the-tool-10"></a>Google is just the tool</h3>
+<p>Google is probably the most powerful search engine there is. Learning to use it to our advantage can give us an edge. It can be a great starting point when starting doing recon or it can be used as a last resort when everything else has failed. It can even be used to <a href="https://github.com/sushiwushi/bug-bounty-dorks/blob/master/dorks.txt">find bug bounty programs</a> to start hacking.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/5/e/5ea51671b86579f532c9c21bb87f379a3a9efbcf.png" data-download-href="/uploads/short-url/dvgA15PXmIFU7jqWzxiHvPRa0ZF.png?dl=1" title=""><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/5/e/5ea51671b86579f532c9c21bb87f379a3a9efbcf_2_554x500.png" alt="" data-base62-sha1="dvgA15PXmIFU7jqWzxiHvPRa0ZF" width="554" height="500" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/5/e/5ea51671b86579f532c9c21bb87f379a3a9efbcf_2_554x500.png, https://0x00sec.s3.amazonaws.com/original/3X/5/e/5ea51671b86579f532c9c21bb87f379a3a9efbcf.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/5/e/5ea51671b86579f532c9c21bb87f379a3a9efbcf.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/5/e/5ea51671b86579f532c9c21bb87f379a3a9efbcf_2_10x10.png"></a></div><p></p>
+<h2>
+<a name="shodan-11" class="anchor" href="https://0x00sec.org#shodan-11"></a>Shodan</h2>
+<p>Although Shodan is pretty known and popular I think it’s not used that often for bug hunting as it should.</p>
+<p>Shodan is a search engine for internet-connected devices. It is a specific purpose search engine, created first as a pet project. Now it is used to aid researchers on their work. It collects information about web servers such as open ports, services running on those ports and their banners. Making a query, let’s say “microsoft” will yield any device in shodan’s database that contains the word <code>microsoft</code> in its banners</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/3/3/332121aa8c391bc878e58eb9401a9c2b1017c8f1.png" data-download-href="/uploads/short-url/7ijkLrsskVeD7Jce4aDWXRRdt61.png?dl=1" title=""><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/3/3/332121aa8c391bc878e58eb9401a9c2b1017c8f1_2_690x367.png" alt="" data-base62-sha1="7ijkLrsskVeD7Jce4aDWXRRdt61" width="690" height="367" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/3/3/332121aa8c391bc878e58eb9401a9c2b1017c8f1_2_690x367.png, https://0x00sec.s3.amazonaws.com/optimized/3X/3/3/332121aa8c391bc878e58eb9401a9c2b1017c8f1_2_1035x550.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/3/3/332121aa8c391bc878e58eb9401a9c2b1017c8f1_2_1380x734.png 2x" data-small-upload="https://0x00sec.s3.amazonaws.com/optimized/3X/3/3/332121aa8c391bc878e58eb9401a9c2b1017c8f1_2_10x10.png"></a></div><p></p>
+<p><br>
+Shodan is best used with a one-time payment, where one gets access to most of its powers. But to use it’s specifiers (filters) you need to make a free account.</p>
+<p>This search engine can play an important role in your bug hunting. When the scope is not strictly limited to specific subdomains and it is open enough to let you search for any server related to the organization, that’s where it shines the most.</p>
+<h3>
+<a name="filters-12" class="anchor" href="https://0x00sec.org#filters-12"></a>Filters</h3>
+<p>Just like in Google, you can also make use of some filters the site provides in order to specify your query. Some of the most essentials are:</p>
+<ul>
+<li>
+<code>http.status</code><br>
+Returns the servers with the specified http status code, e.g. <code>http.status:200</code>.</li>
+<li>
+<code>http.title</code><br>
+Queries for the specified http title that can be found in the banners. A distinctive example is the shodan dork used to find BIG IP vulnerable components: <code>http.title:"BIG-IP&amp;reg;- Redirect"</code>.</li>
+<li>
+<code>http.component</code><br>
+Returns servers with the specified web technology that is used on the website, e.g. <code>http.component:"jenkins"</code>.</li>
+<li>
+<code>ssl</code><br>
+Finds servers with the specified string included in the SSL certificate, e.g. <code>ssl:"Microsoft"</code>. This Filter can be further specified with <code>ssl.expired</code>, <code>ssl.version</code> (more on the resources).</li>
+<li>
+<code>org</code><br>
+Finds servers with IP belonging to the specified organization’s netblock, e.g., <code>org:"Microsoft"</code>
+</li>
+<li>
+<code>port</code><br>
+The port filter returns components with the specified port open, e.g. <code>port:8080</code>.</li>
+<li>
+<code>os</code><br>
+Using this filter shodan returns servers running the specified operating system, e.g. <code>os:Windows</code>.</li>
+<li>
+<code>product</code><br>
+Using this filter shodan returns devices running this specific product, e.g. <code>product:"Apache Tomcat"</code> or <code>product:"IIS Windows Server"</code>
+</li>
+<li>
+<code>version</code><br>
+The <code>version</code> filter is to be combined with the <code>product</code> filter. It specifies the version of the specified product, e.g. <code>product:"Apache Tomcat" version:"7.0.82"</code>
+</li>
+<li>
+<code>vuln</code><br>
+This filter is only available to academic users or Small Business API subscriptions and higher. It’s used to to return components vulnerable to the specified CVE identifier, e.g. <code>vuln:cve-2010-2730</code>.</li>
+</ul>
+<p>Here are resources for shodan and its filters/use.</p>
+<div class="md-table">
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Shodan filters resources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><a href="https://github.com/JavierOlmedo/shodan-filters">shodan-filters</a></td>
+</tr>
+<tr>
+<td style="text-align:left"><a href="https://help.shodan.io/the-basics/search-query-fundamentals">Search Query Fundamentals</a></td>
+</tr>
+<tr>
+<td style="text-align:left"><a href="https://github.com/jakejarvis/awesome-shodan-queries">awesome-shodan-queries</a></td>
+</tr>
+</tbody>
+</table>
+</div><p>Of course, the more filters you use in a query, the more specified the query is.</p>
+<p>While all of the above-mentioned filters are the most important for bug hunting, my personal favorite filter is the <code>ssl</code>. Using the <code>ssl</code> filter you can search for certificates issued to the organization and lets you discover servers’ IPs that are either related to the organization (loose scope) or within the scope (strict scope) but were not picked up by your recon automation tools. You can check the latter with a reverse DNS lookup of the found IPs.</p>
+<h3>
+<a name="mixing-things-up-13" class="anchor" href="https://0x00sec.org#mixing-things-up-13"></a>Mixing things up</h3>
+<p>Having all the above-mentioned filters in our arsenal, we can start narrowing down our results to our specific target.</p>
+<h4>
+<a name="case-study-sensitive-information-leak-14" class="anchor" href="https://0x00sec.org#case-study-sensitive-information-leak-14"></a>Case study: Sensitive information leak</h4>
+<p>It is not necessary to combine a ton of filters to come to an end result. Using the simple filter</p>
+<pre><code class="lang-auto">ssl:"Target"
+</code></pre>
+<p>where <code>Target</code> is the name of the organization, I found a number of servers whose certificates were issued to <code>Target</code>. Examining them one by one, while doing content discovery on one, I saw that the sensitive file <code>web.config.txt</code> was open in public, containing a number of SQLConnection strings, most of them related to <code>Target</code>. Even though there were no SQL ports open to the Internet for me to test them, I reported it and it got accepted.</p>
+<h4>
+<a name="case-study-ssl-certificate-and-cve-2020-3452-15" class="anchor" href="https://0x00sec.org#case-study-ssl-certificate-and-cve-2020-3452-15"></a>Case study: SSL certificate and CVE-2020-3452</h4>
+<p>In July 2020 Cisco’s Adaptive Security Appliance (ASA) Software and Firepower Threat Defense (FTD) were found vulnerable to unauthenticated file read/path traversal. The affected systems were WebVPN servers, which carried the string <code>"Set-Cookie: webvpn;"</code> in their banners. Restricting the search to include only servers whose SSL certificates include the organization’s name, I was able to find several servers vulnerable to CVE-2020-3452.</p>
+<p>Query:</p>
+<pre><code class="lang-auto">ssl:"Target" "Set-Cookie: webvpn;"
+</code></pre>
+<p>Vulnerability checking/PoC for CVE-2020-3452:</p>
+<pre><code class="lang-bash">curl -s -k "https://[IP or DOMAIN]/+CSCOT+/translation-table?type=mst&amp;textdomain=/%2bCSCOE%2b/portal_inc.lua&amp;default-language&amp;lang=../"
+</code></pre>
+<p>The <code>ssl</code> filter can be further used for more specific results. The SSL certificate is read by Shodan in a JSON format with this form (<a href="https://blog.shodan.io/ssl-update/">source</a>):</p>
+<pre><code class="lang-auto">"ssl": {
+    "cert": {
+        "sig_alg": "sha1WithRSAEncryption",
+        "issued": "20110325103212Z",
+        "expires": "20120324103212Z",
+        "expired": true,
+        "version": 2,
+        "extensions": [{
+            "data": "\u0003\u0002\u0006@",
+            "name": "nsCertType"
+        }],
+        "serial": 10104044343792293356,
+        "issuer": {
+            "C": "TW",
+            "L": "TAIPEI",
+            "O": "CAMEO",
+            "ST": "TAIWAN"
+        },
+        "pubkey": {
+            "bits": 1024,
+            "type": "rsa"
+        },
+        "subject": {
+            "C": "TW",
+            "L": "TAIPEI",
+            "O": "CAMEO",
+            "ST": "TAIWAN"
+			"CN":"name.tld"
+        }
+    },
+    "cipher": {
+        "version": "TLSv1/SSLv3",
+        "bits": 256,
+        "name": "AES256-SHA"
+    },
+    "chain": ["-----BEGIN CERTIFICATE----- 
+	MIICETCCAXqgAwIBAgIJAIw4xswSiNXsMA0GCSqGSIb3DQEBBQUAMD8xCzAJBgNV
+	BAYTAlRXMQ8wDQYDVQQIEwZUQUlXQU4xDzANBgNVBAcTBlRBSVBFSTEOMAwGA1UE
+	ChMFQ0FNRU8wHhcNMTEwMzI1MTAzMjEyWhcNMTIwMzI0MTAzMjEyWjA/MQswCQYD
+	VQQGEwJUVzEPMA0GA1UECBMGVEFJV0FOMQ8wDQYDVQQHEwZUQUlQRUkxDjAMBgNV
+	BAoTBUNBTUVPMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCj8HWSuWUHYWLD
+	ASV1KCWd9+9U19tINKgY8CTw/gKeVoF6bjgQ3tuXliScLAsU8nNGiZibaXq9KR67
+	nLjjHzFiJDr6s8M3qimLdhcA7kf71v806Mls4KctdrMUiX3Bc7WvYtbClke0QDlC
+	FGgK7HksEWpQ026E3pI0T/2mTvbeXQIDAQABoxUwEzARBglghkgBhvhCAQEEBAMC
+	BkAwDQYJKoZIhvcNAQEFBQADgYEANbiCHCROX0X9ZbBaOsijkGh6+7WLaLUDEUpp
+	rw+bHFKhOvtQgEyQ01U0V9ZYtdPyVLnNVmJu6Q8MPuqBCkpcv0/gH31YSSRyOhid
+	vc+qCUCA7UBqt5f7QVOOYPqhzieoUO+pmQ3zidcwUGYh19gQv/fl7SnG00cDgxg3
+	m89S7ao=
+	-----END CERTIFICATE-----
+	"],
+    "versions": ["TLSv1", "SSLv3", "-SSLv2", "-TLSv1.1", "-TLSv1.2"]
+}
+</code></pre>
+<p>We can parse the SSL certificate and search for a term in it. We can parse the JSON by separating the nested JSON keys with <code>.</code>. To search for Common Names with the term <code>target</code> in it, we can use the query <code>ssl.cert.subject.CN:target</code>.</p>
+<h4>
+<a name="case-study-netblocks-and-cve-2020-3452-16" class="anchor" href="https://0x00sec.org#case-study-netblocks-and-cve-2020-3452-16"></a>Case study: Netblocks and CVE-2020-3452</h4>
+<p>A technique <a href="https://twitter.com/sneakerhax/">sneakerhax</a> showed me a while ago is looking if the target organization owns an ASN. This can not only be done in the cli but also in shodan. Like the previous case study, discovering a server vulnerable to CVE-2020-3452 within the target’s ASN can be done with the query</p>
+<pre><code class="lang-auto">"Set-Cookie: webvpn;" org:"Target"
+</code></pre>
+<p>Important the thing here is to do an additional check on whether the server is actually owned by the target and not just hosted in their ASN. So, to do that, you can add the <code>ssl:"Target"</code> filter or perform a reverse DNS check on the IP and see if the domain name is within the scope.</p>
+<h3>
+<a name="shodan-cli-17" class="anchor" href="https://0x00sec.org#shodan-cli-17"></a>Shodan CLI</h3>
+<p>Using the web app can be tiring and slow, so there is also the <a href="https://cli.shodan.io/">shodan cli</a> option to get your results straight into your command line and integrate it with your pipeline and other tools. You just need to initialize it with your API Key.</p>
+<p>Shodan CLI can help you with your initial passive recon. After initializing the tool, you can use it for port scanning, banner grabbing, and probing for HTTP ports by using httpx/httprobe:</p>
+<pre><code class="lang-auto">$ shodan host x.x.x.x # port scanning
+$ shodan search ip:x.x.x.x # banner grabbing
+$ shodan host --format tsv x.x.x.x | awk '{ print"x.x.x.x:"$1 }' | httpx -silent # probing for HTTP ports
+</code></pre>
+<h3>
+<a name="google-search-for-servers-and-iot-devices-18" class="anchor" href="https://0x00sec.org#google-search-for-servers-and-iot-devices-18"></a>Google search for servers and IoT devices</h3>
+<p>As previously mentioned, using Shodan for bug bounties shines the most, when it’s combined with an open scope, where systems related to the organization can also be reported. But, as with all tools and search engines, shodan doesn’t have every possible IP, so it might also lead to false negatives. But it’s definitely a valuable tool to use after doing your initial recon.</p>
+<h2>
+<a name="conclusion-19" class="anchor" href="https://0x00sec.org#conclusion-19"></a>Conclusion</h2>
+<p>Using search engines for passive reconnaissance, either that is endpoint or secret or subdomain discovery, requires a lot of digging and can take some time. But when it comes to bug hunting, the more digging a bug requires the more probable it is to not be a dupe. Testing out the filters and creating unique and creative queries is the key.</p>
+          <p><a href="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832/1</link>
+        <pubDate>Mon, 09 Nov 2020 13:04:55 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-23832-1</guid>
+        <source url="https://0x00sec.org/t/using-search-engines-for-fun-and-bounties/23832.rss">Using search engines for fun and bounties</source>
+      </item>
+  </channel>
+</rss>

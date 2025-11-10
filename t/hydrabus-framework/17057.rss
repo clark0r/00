@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Hydrabus Framework</title>
+    <link>https://d.clarkee.co.uk/t/hydrabus-framework/17057</link>
+    <description>Hi Guys,
+
+Before diving into the main subject, I&#39;m a security engineer and I&#39;m fascinated by hardware security assessment. 
+Since I play with some hardware tools like Bus Pirate and Hydrabus, I noticed that no tools bring together all the necessary scripts to interact with hardware protocols. 
+Who has never been frustrated during a hardware security assessment facing a chip or a debug port exposed, and you don&#39;t have the necessary script to dump it, find the baudrate of a UART port or properly communicate with it?
+That&#39;s why I choose to develop a new framework for the awesome hardware tools [Hydrabus](https://hydrabus.com/) named (Hydrabus-Framework)[https://github.com/hydrabus-framework/framework].
+It provides multiple modules allowing you to work efficiently and save time on any hardware project.
+
+This framework works like Metasploit, simply run `hbfconsole`, select a module using the `use` command, set the needed options with `set` and run it with the `run` command!
+It will also include a Miniterm to directly interact with the Hydrabus CLI.
+
+At the time of this writing, 3 modules are available.
+
+# Modules
+
+## hbfmodules.uart.baudrates
+
+This module allowing you to detect the baudrate of a UART target.
+It changes the UART baudrate automatically till finding the correct value. If it finds a valid baudrate, it prompts you to open a Miniterm session using the Hydrabus binary UART bridge. 
+
+[![asciicast](https://asciinema.org/a/275871.svg)](https://asciinema.org/a/275871)
+
+## hbfmodules.spi.chip_id
+
+The SPI chip_id module allows you to recover the ID of an SPI flash chip, useful to verify if the Hydrabus is correctly interfaced with the target or to identify the family of an unknown chip.
+It will be improved in the near future to print the manufacturer if finding and the chip name (Like flashrom)
+
+[![asciicast](https://asciinema.org/a/275875.svg)](https://asciinema.org/a/275875)
+
+## hbfmodules.spi.dump_eeprom
+
+SPI dump_eeprom is used to dump an SPI flash.
+With this module, you can easily dump a flash memory and don&#39;t waste your time writing a script to do this.
+You can rapidly jump to the analyze of the freshly dumped firmware!
+
+[![asciicast](https://asciinema.org/a/z9iBJsZMsDmSB94TiYWRrctKi.svg)](https://asciinema.org/a/z9iBJsZMsDmSB94TiYWRrctKi) 
+
+**More modules are coming soon!**
+
+You can download the latest modules and update the framework by simply running the `hbfupdate` script.
+
+# Architecture
+
+This framework has been developed with scalability in mind. Indeed, you can add modules without having to modify the framework&#39;s core engine.
+
+Each module inherits from the abstract class AModule, providing a solid foundation to start coding your own module.
+Once the module is created and installed using `python setup.py install`, you can use it in the framework.
+
+
+# Contributing
+
+To create a new module, open an issue on [hbfmodules.skeleton](https://github.com/hydrabus-framework/hbfmodules.skeleton), I will create a new repository initialized with the [hbfmodules.skeleton](https://github.com/hydrabus-framework/hbfmodules.skeleton) repository, once you have provided the needed information.
+You can read more information to contribute to this project on the [CONTRIBUTING.md](https://github.com/hydrabus-framework/framework/CONTRIBUTING.md) file.
+
+# Use case: Dumping an SPI flash chip.
+
+```
+ghecko % hbfconsole                  
+
+      _    ___     _______  _____            ____  _    _  _____           
+     | |  | \ \   / /  __ \|  __ \     /\   |  _ \| |  | |/ ____|          
+     | |__| |\ \_/ /| |  | | |__) |   /  \  | |_) | |  | | (___            
+     |  __  | \   / | |  | |  _  /   / /\ \ |  _ &lt;| |  | |\___ \           
+     | |  | |  | |  | |__| | | \ \  / ____ \| |_) | |__| |____) |          
+     |_|__|_|__|_|  |_____/|_|__\_\/_/____\_\____/ \____/|_____/____  _  __
+     |  ____|  __ \     /\   |  \/  |  ____\ \        / / __ \|  __ \| |/ /
+     | |__  | |__) |   /  \  | \  / | |__   \ \  /\  / / |  | | |__) | &#39; / 
+     |  __| |  _  /   / /\ \ | |\/| |  __|   \ \/  \/ /| |  | |  _  /|  &lt;  
+     | |    | | \ \  / ____ \| |  | | |____   \  /\  / | |__| | | \ \| . \ 
+     |_|    |_|  \_\/_/    \_\_|  |_|______|   \/  \/   \____/|_|  \_\_|\_\
+ 
+    
+[*] 3 modules loaded, run &#39;hbfupdate&#39; command to install the latest modules
+[hbf] &gt; use spi/dump_eeprom
+[hbf] spi(dump_eeprom)&gt; show options                                                                             
+Author: Jordan Ovrè
+Module name: dump SPI EEPROM, version 0.0.2
+Description: Module to dump SPI EEPROM
+
+Name          Value         Required    Description
+------------  ------------  ----------  --------------------------------------------------------------------------
+hydrabus      /dev/ttyACM0  True        Hydrabus device
+timeout       1             True        Hydrabus read timeout
+dumpfile                    True        The dump filename
+sectors       1024          True        The number of sector (4096) to read. For example 1024 sector * 4096 = 4MiB
+start_sector  0             True        The starting sector (1 sector = 4096 bytes)
+spi_device    1             True        The hydrabus SPI device (1=SPI1 or 0=SPI2)
+spi_speed     slow          True        set SPI speed (fast = 10.5MHz, slow = 320kHz, medium = 5MHz)
+spi_polarity  0             True        set SPI polarity (1=high or 0=low)
+spi_phase     0             True        set SPI phase (1=high or 0=low)
+
+[hbf] spi(dump_eeprom)&gt; set dumpfile firmware.bin 
+dumpfile ==&gt; firmware.bin
+[hbf] spi(dump_eeprom)&gt; set spi_speed medium
+spi_speed ==&gt; medium
+[hbf] spi(dump_eeprom)&gt; run
+[*] Starting to read chip...
+Reading 1024 sectors
+Dump 4.0MiB
+Readed: 4.0MiB   
+[✔] Finished dumping to firmware.bin
+[*] Reset hydrabus to console mode
+[hbf] spi(dump_eeprom)&gt; binwalk firmware.bin
+
+DECIMAL       HEXADECIMAL     DESCRIPTION
+--------------------------------------------------------------------------------
+134816        0x20EA0         Certificate in DER format (x509 v3), header length: 4, sequence length: 64
+150864        0x24D50         U-Boot version string, &quot;U-Boot 1.1.4 (Nov 26 2012 - 15:58:42)&quot;
+151232        0x24EC0         CRC32 polynomial table, big endian
+160905        0x27489         Copyright string: &quot;copyright.&quot;
+262208        0x40040         LZMA compressed data, properties: 0x6D, dictionary size: 8388608 bytes, uncompressed size: 2465316 bytes
+1114112       0x110000        Squashfs filesystem, little endian, version 4.0, compression:lzma, size: 2676149 bytes, 1117 inodes, blocksize: 131072 bytes, created: 2013-11-12 09:49:10
+3801091       0x3A0003        POSIX tar archive (GNU), owner user name: &quot;_table.tar.gz&quot;
+
+```
+
+You can find the tools and more details on the official github repository: [hydrabus-framework](https://github.com/hydrabus-framework/framework)
+
+
+Ghecko.</description>
+    
+    <lastBuildDate>Mon, 21 Oct 2019 11:52:23 +0000</lastBuildDate>
+    <category>Hardware</category>
+    <atom:link href="https://d.clarkee.co.uk/t/hydrabus-framework/17057.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Hydrabus Framework</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/hydrabus-framework/17057/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/hydrabus-framework/17057/3</link>
+        <pubDate>Wed, 19 Feb 2020 08:44:30 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-17057-3</guid>
+        <source url="https://d.clarkee.co.uk/t/hydrabus-framework/17057.rss">Hydrabus Framework</source>
+      </item>
+      <item>
+        <title>Hydrabus Framework</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This is so cool man!</p>
+<p>Really love to see some actual good software to interact with hardware.</p>
+<p>Thanks for sharing!</p>
+          <p><a href="https://d.clarkee.co.uk/t/hydrabus-framework/17057/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/hydrabus-framework/17057/2</link>
+        <pubDate>Mon, 21 Oct 2019 11:52:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-17057-2</guid>
+        <source url="https://d.clarkee.co.uk/t/hydrabus-framework/17057.rss">Hydrabus Framework</source>
+      </item>
+      <item>
+        <title>Hydrabus Framework</title>
+        <dc:creator><![CDATA[ghecko]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi Guys,</p>
+<p>Before diving into the main subject, I’m a security engineer and I’m fascinated by hardware security assessment.<br>
+Since I play with some hardware tools like Bus Pirate and Hydrabus, I noticed that no tools bring together all the necessary scripts to interact with hardware protocols.<br>
+Who has never been frustrated during a hardware security assessment facing a chip or a debug port exposed, and you don’t have the necessary script to dump it, find the baudrate of a UART port or properly communicate with it?<br>
+That’s why I choose to develop a new framework for the awesome hardware tools <a href="https://hydrabus.com/" rel="nofollow noopener">Hydrabus</a> named (Hydrabus-Framework)[<a href="https://github.com/hydrabus-framework/framework" rel="nofollow noopener">https://github.com/hydrabus-framework/framework</a>].<br>
+It provides multiple modules allowing you to work efficiently and save time on any hardware project.</p>
+<p>This framework works like Metasploit, simply run <code>hbfconsole</code>, select a module using the <code>use</code> command, set the needed options with <code>set</code> and run it with the <code>run</code> command!<br>
+It will also include a Miniterm to directly interact with the Hydrabus CLI.</p>
+<p>At the time of this writing, 3 modules are available.</p>
+<h1>Modules</h1>
+<h2>hbfmodules.uart.baudrates</h2>
+<p>This module allowing you to detect the baudrate of a UART target.<br>
+It changes the UART baudrate automatically till finding the correct value. If it finds a valid baudrate, it prompts you to open a Miniterm session using the Hydrabus binary UART bridge.</p>
+<p><a href="https://asciinema.org/a/275871" rel="nofollow noopener"><img src="https://asciinema.org/a/275871.svg" alt="asciicast" width="690" height="445"></a></p>
+<h2>hbfmodules.spi.chip_id</h2>
+<p>The SPI chip_id module allows you to recover the ID of an SPI flash chip, useful to verify if the Hydrabus is correctly interfaced with the target or to identify the family of an unknown chip.<br>
+It will be improved in the near future to print the manufacturer if finding and the chip name (Like flashrom)</p>
+<p><a href="https://asciinema.org/a/275875" rel="nofollow noopener"><img src="https://asciinema.org/a/275875.svg" alt="asciicast" width="690" height="445"></a></p>
+<h2>hbfmodules.spi.dump_eeprom</h2>
+<p>SPI dump_eeprom is used to dump an SPI flash.<br>
+With this module, you can easily dump a flash memory and don’t waste your time writing a script to do this.<br>
+You can rapidly jump to the analyze of the freshly dumped firmware!</p>
+<p><a href="https://asciinema.org/a/z9iBJsZMsDmSB94TiYWRrctKi" rel="nofollow noopener"><img src="https://asciinema.org/a/z9iBJsZMsDmSB94TiYWRrctKi.svg" alt="asciicast" width="690" height="477"></a></p>
+<p><strong>More modules are coming soon!</strong></p>
+<p>You can download the latest modules and update the framework by simply running the <code>hbfupdate</code> script.</p>
+<h1>Architecture</h1>
+<p>This framework has been developed with scalability in mind. Indeed, you can add modules without having to modify the framework’s core engine.</p>
+<p>Each module inherits from the abstract class AModule, providing a solid foundation to start coding your own module.<br>
+Once the module is created and installed using <code>python setup.py install</code>, you can use it in the framework.</p>
+<h1>Contributing</h1>
+<p>To create a new module, open an issue on <a href="https://github.com/hydrabus-framework/hbfmodules.skeleton" rel="nofollow noopener">hbfmodules.skeleton</a>, I will create a new repository initialized with the <a href="https://github.com/hydrabus-framework/hbfmodules.skeleton" rel="nofollow noopener">hbfmodules.skeleton</a> repository, once you have provided the needed information.<br>
+You can read more information to contribute to this project on the <a href="https://github.com/hydrabus-framework/framework/CONTRIBUTING.md" rel="nofollow noopener">CONTRIBUTING.md</a> file.</p>
+<h1>Use case: Dumping an SPI flash chip.</h1>
+<pre><code class="lang-auto">ghecko % hbfconsole                  
+
+      _    ___     _______  _____            ____  _    _  _____           
+     | |  | \ \   / /  __ \|  __ \     /\   |  _ \| |  | |/ ____|          
+     | |__| |\ \_/ /| |  | | |__) |   /  \  | |_) | |  | | (___            
+     |  __  | \   / | |  | |  _  /   / /\ \ |  _ &lt;| |  | |\___ \           
+     | |  | |  | |  | |__| | | \ \  / ____ \| |_) | |__| |____) |          
+     |_|__|_|__|_|  |_____/|_|__\_\/_/____\_\____/ \____/|_____/____  _  __
+     |  ____|  __ \     /\   |  \/  |  ____\ \        / / __ \|  __ \| |/ /
+     | |__  | |__) |   /  \  | \  / | |__   \ \  /\  / / |  | | |__) | ' / 
+     |  __| |  _  /   / /\ \ | |\/| |  __|   \ \/  \/ /| |  | |  _  /|  &lt;  
+     | |    | | \ \  / ____ \| |  | | |____   \  /\  / | |__| | | \ \| . \ 
+     |_|    |_|  \_\/_/    \_\_|  |_|______|   \/  \/   \____/|_|  \_\_|\_\
+ 
+    
+[*] 3 modules loaded, run 'hbfupdate' command to install the latest modules
+[hbf] &gt; use spi/dump_eeprom
+[hbf] spi(dump_eeprom)&gt; show options                                                                             
+Author: Jordan Ovrè
+Module name: dump SPI EEPROM, version 0.0.2
+Description: Module to dump SPI EEPROM
+
+Name          Value         Required    Description
+------------  ------------  ----------  --------------------------------------------------------------------------
+hydrabus      /dev/ttyACM0  True        Hydrabus device
+timeout       1             True        Hydrabus read timeout
+dumpfile                    True        The dump filename
+sectors       1024          True        The number of sector (4096) to read. For example 1024 sector * 4096 = 4MiB
+start_sector  0             True        The starting sector (1 sector = 4096 bytes)
+spi_device    1             True        The hydrabus SPI device (1=SPI1 or 0=SPI2)
+spi_speed     slow          True        set SPI speed (fast = 10.5MHz, slow = 320kHz, medium = 5MHz)
+spi_polarity  0             True        set SPI polarity (1=high or 0=low)
+spi_phase     0             True        set SPI phase (1=high or 0=low)
+
+[hbf] spi(dump_eeprom)&gt; set dumpfile firmware.bin 
+dumpfile ==&gt; firmware.bin
+[hbf] spi(dump_eeprom)&gt; set spi_speed medium
+spi_speed ==&gt; medium
+[hbf] spi(dump_eeprom)&gt; run
+[*] Starting to read chip...
+Reading 1024 sectors
+Dump 4.0MiB
+Readed: 4.0MiB   
+[✔] Finished dumping to firmware.bin
+[*] Reset hydrabus to console mode
+[hbf] spi(dump_eeprom)&gt; binwalk firmware.bin
+
+DECIMAL       HEXADECIMAL     DESCRIPTION
+--------------------------------------------------------------------------------
+134816        0x20EA0         Certificate in DER format (x509 v3), header length: 4, sequence length: 64
+150864        0x24D50         U-Boot version string, "U-Boot 1.1.4 (Nov 26 2012 - 15:58:42)"
+151232        0x24EC0         CRC32 polynomial table, big endian
+160905        0x27489         Copyright string: "copyright."
+262208        0x40040         LZMA compressed data, properties: 0x6D, dictionary size: 8388608 bytes, uncompressed size: 2465316 bytes
+1114112       0x110000        Squashfs filesystem, little endian, version 4.0, compression:lzma, size: 2676149 bytes, 1117 inodes, blocksize: 131072 bytes, created: 2013-11-12 09:49:10
+3801091       0x3A0003        POSIX tar archive (GNU), owner user name: "_table.tar.gz"
+
+</code></pre>
+<p>You can find the tools and more details on the official github repository: <a href="https://github.com/hydrabus-framework/framework" rel="nofollow noopener">hydrabus-framework</a></p>
+<p>Ghecko.</p>
+          <p><a href="https://d.clarkee.co.uk/t/hydrabus-framework/17057/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/hydrabus-framework/17057/1</link>
+        <pubDate>Sun, 20 Oct 2019 16:44:29 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-17057-1</guid>
+        <source url="https://d.clarkee.co.uk/t/hydrabus-framework/17057.rss">Hydrabus Framework</source>
+      </item>
+  </channel>
+</rss>

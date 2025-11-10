@@ -1,0 +1,428 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</title>
+    <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063</link>
+    <description>Hi everyone! It&#39;s been a while since [Part 3](https://0x00sec.org/t/c-dynamic-memory-part-3-0-dynamic-buffering/970), but rest assured that the wait has been worth it! (I hope)
+
+This paper will cover the Linux versions of two system calls that are ___paramount___ in memory management. The same system calls, possibly different in implementation, exist on \*BSD and its derivatives (macOS and such). I wouldn&#39;t be able to tell you about the equivalent calls for Windows.
+
+You may or may not know this, but `malloc` and its family of functions are __not__ system calls. At least on Linux, you are most commonly using GLibC&#39;s implementations of the `malloc` family of functions. This memory management suite is meant to be more portable than the system calls I&#39;m about to show you. In fact, there are a handful of memory management libraries out there.
+
+So, anyway, let&#39;s begin with a quote from `man malloc`:
+
+    Normally,  malloc() allocates memory from the heap, and adjusts
+    the size of the heap as required, using sbrk(2).
+
+What is this `sbrk()` of which the above excerpt speaks!?! Turns out it&#39;s the inner-workings of `malloc`!
+
+___Note:___ _At this point, some of you C gods and/or Linux pros may be questioning whether or not `sbrk` is a system call. It&#39;s the cousin to a system call, actually. It essentially adds on a little extra functionality. So, its being a syscall is a bit &quot;wishy-washy,&quot; but for this paper I will likely refer to it as one._
+
+I&#39;ll tell you right now that `sbrk` actually calls a cousin function `brk`, which is the actual system call. Let&#39;s look into these functions a bit more to see how they work:
+
+    $ man brk
+
+    brk()  and  sbrk()  change  the  location of the program break,
+    which defines the end of the process&#39;s data segment (i.e.,  the
+    program break is the first location after the end of the unini‐
+    tialized data segment).  Increasing the program break  has  the
+    effect  of  allocating  memory  to  the process; decreasing the
+    break deallocates memory.
+
+As said above, `brk` and `sbrk` change the location of a program&#39;s break. But what does that actually mean? Essentially, the heap has a given boundary. If you want to allocate memory, you can extend the heap. You&#39;re basically asking the kernel to extend how much memory your process has to work with.
+
+A question may pop in your mind: _But, oaktree, how can we extend memory if there are other running processes that might be right next to __our__ process_? The answer to this is [Virtual Memory](https://en.wikipedia.org/wiki/Virtual_memory) -- perhaps one of the best things about modern kernels/operating systems. Virtual Memory allows us as programmers to work with guaranteed-to-be contiguous memory. While our data may be spread out in RAM, the kernel provides the abstraction of one stretch of memory. (If anyone wants to dispute or clarify this, I definitely don&#39;t have a PhD in CS [yet] so your input would be much appreciated)
+
+So anyway, we know that we can use `brk` and `sbrk` to extend our program&#39;s allotted memory. Let&#39;s take a closer look at each one&#39;s parameter specifications:
+
+    int brk(void *addr);
+
+    void *sbrk(intptr_t increment);
+
+Both functions demand a single parameter to do essentially the same task.
+
+`brk` is rawer. It asks for an address in memory to which you want the program break moved. If you pass it an address _before_ the current break, you shrink the break and deallocate memory; if you pass it an address past the current break, you _allocate_ memory.
+
+`sbrk` provides a little more abstraction. But, in fact, it simply calls on `brk` and does a few extra things:
+
+    On Linux, sbrk() is implemented as a library function that uses
+    the  brk()  system  call, and does some internal bookkeeping so
+    that it can return the old break value.
+
+So, like I said above, `sbrk` isn&#39;t _really_ a system call. When you call `sbrk`, you pass it a number of bytes: a negative number implies deallocation; a positive number, allocation.
+
+`brk` returns `0` upon success and `-1` upon failure -- the typical nature of a system call. `sbrk` returns the address of the new program break.
+
+___Note:___ _When you call `sbrk` or `brk`, you are shrinking/growing from the end. If you want to deallocate something that wasn&#39;t the last-allocated thing, you have to move other things around in memory so that you end up deallocating the right stuff. And now you know why `malloc`/`free` is a thing._
+
+To sum up the above:
+* `malloc` calls `sbrk`
+* `sbrk` calls `brk`
+* `brk` moves a process&#39;s data segment/program break, allocating/deallocating memory.
+
+Let&#39;s get our hands dirty a little:
+
+```c
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;string.h&gt;
+```
+
+My demonstration requires the above four headers.
+
+```c
+int main(void) {
+ 
+    /* we can use void*&#39;s to store the program break */
+    void *proc_break = sbrk(0);
+   
+    printf(&quot;Boundary: %p\n&quot;, proc_break);
+   
+    /* should increase by 4 bytes */
+    if (brk(proc_break + 4) &lt; 0) {
+        perror(&quot;Couldn&#39;t Allocate Memory!!!\n&quot;);
+        exit(1);
+    }
+   
+    /* observe the wonderful black magic of pointer type-casting! */
+    int *int_ptr = (int*)proc_break;
+    *int_ptr = 16;
+   
+    printf(&quot;This is stored at %p : %i\n&quot;, int_ptr, *int_ptr ); 
+    printf(&quot;Boundary: %p\n&quot;, sbrk(0));
+ 
+    float *f_ptr = (float*)proc_break;
+    *f_ptr = 0.1;
+    printf(&quot;And now %p holds a float %.30f\n&quot;, f_ptr, *f_ptr);
+   
+    printf(&quot;Now I&#39;m \&quot;freeing\&quot; that memory...\nsbrk(0) returns %p\n&quot;, sbrk(0));
+    if (brk(proc_break) &lt; 0) {
+        perror(&quot;Couldn&#39;t Deallocate!!!\n&quot;);
+        exit(2);
+    }
+ 
+    printf(&quot;But now it returns... %p\n&quot;, sbrk(0));
+    printf(&quot;Now let&#39;s allocate for &#39;hello world&#39;\n&quot;);
+ 
+    char *feed = &quot;hello world&quot;; // we&#39;re gonna copy this literal to the heap!
+ 
+    if (brk(proc_break + strlen(feed)+1 ) &lt; 0) {
+        perror(&quot;Couldn&#39;t Allocate Memory!!!\n&quot;);
+        exit(3);
+    }
+ 
+    char *c_ptr = (char*)proc_break;
+   
+    for (int i = 0; i &lt; strlen(feed) + 1; i++)
+        c_ptr[i] = feed[i];
+ 
+    printf(&quot;c_ptr = %p and holds %s\n&quot;, c_ptr, c_ptr);
+ 
+    brk(proc_break - 12);
+ 
+    return 0;
+}
+```
+
+The above code does a few things:
+
+1. We call `sbrk(0)` to acquire the current program break address. _The man page actually notes the use of `sbrk(0)` to keep track of the break._
+2. We print out that program break and then allocate enough memory for an `int`, four bytes, by expanding the program break by four bytes. We then assign an integer value to the new memory.
+3. Then, with that __same memory__, we store a `float`, which is also 4 bytes.
+4. We free up the memory by returning our program break to its original spot.
+
+After messing around with `int`s and `float`s I decided to have a little fun by getting a string on the heap. As can be seen, the fact that it took so much code to do so should help you appreciate `malloc` and `free`.
+
+5. Allocate for &quot;hello world&quot; and initialize that string on the heap.
+6. Return to the original program break.
+
+---
+# Conclusion
+
+I strongly encourage you to run the above code, which can also be found [here](http://pastebin.com/UdY9xMr9), a few times. Note how the memory addresses outputted change on each run.
+
+There are a few things we can take away from this:
+
+1. Now you&#39;ll appreciate the `malloc` family a bit more.
+2. If you never re-shrank the program break, and you just kept expanding it, you&#39;d exhaust all your memory. This is what a memory leak is!!!
+3. `malloc` isn&#39;t a system call.
+4. A process&#39;s memory is contiguous (nowadays).
+
+In the man page of `brk`, it is explicitly stated that `brk` and `sbrk` should __never__ be used in your code. Let memory management libraries do the work for you! Nonetheless, understanding the `brk` system call and the closely-related `sbrk` function can help you learn more about the heap.
+
+Last, I want you to think: what if we went _beyond_ our program&#39;s break? What are the implications of it? Could it _even_ be done? Was it _ever_ doable?
+
+This may or may not be the last article in this series, depending on the responses to this one. If this was already too technical, I don&#39;t think I&#39;ll document my further explorations.
+
+Later...
+@oaktree</description>
+    
+    <lastBuildDate>Thu, 15 Sep 2016 00:07:46 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/9</link>
+        <pubDate>Sun, 21 Jan 2018 00:30:36 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1063-9</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063.rss">[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</source>
+      </item>
+      <item>
+        <title>[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/123loaded">@123loaded</a>: I have a <a href="https://0x00sec.org/t/c-dynamic-memory-part-5-0-make-your-own-malloc/1076" rel="noopener nofollow ugc">fifth tutorial</a> now. Yes, I might get into stack overflows and whatnot eventually. This series was meant to teach people about how dynamic memory works.</p>
+<p>Memory management in assembly, however, will not likely be covered in this (outside of reversing my C binaries). If you want, I could ask someone like <a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a> or <span class="mention">@unh0lys0da</span> if they would like to do a disassembling of malloc/free.</p>
+<aside class="quote no-group" data-username="123loaded" data-post="7" data-topic="1063">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/123loaded/48/578_2.png" class="avatar"> 123loaded:</div>
+<blockquote>
+<p>but what happens when we try to call a function with a LOT of parameters that would cause the stack to meet the heap before such prevention mechanisms maybe were flagged?</p>
+</blockquote>
+</aside>
+<p>As far as the above goes, heap-allocated instances of <code>struct</code>s are the most obvious way to limit the number of parameters passed to a function. Yet I will certainly have to research more on how limits are handled.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/8</link>
+        <pubDate>Thu, 15 Sep 2016 00:07:46 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1063-8</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063.rss">[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</source>
+      </item>
+      <item>
+        <title>[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</title>
+        <dc:creator><![CDATA[123loaded]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah <a class="mention" href="https://d.clarkee.co.uk/u/oaktree">@oaktree</a>, pleaaaaaaase keep doing these tutorials. I am very interested in <em>the Stack</em> and <em>the Heap</em> and exactly how these behave in relation to each other, and more specifically how a compiler such as GCC handles this in assembly… but I know that’s still a little ways off before we’ll get a tutorial of such nature, but just know that this isn’t <strong>too</strong> technical by any means… if anything I think it’s right on point where the users on this forum are, or should be (at least the active ones no doubt).</p>
+<p>PS - I would be really interested to see (either theories or practically), what kind of behavior happens when the Heap meets the Stack… which one gets precedence? Does a program crash? Is there any sort of prevention measures for this built in? Obviously I’m sure malloc has these things somewhat built in… but what happens when we try to call a function with a LOT of parameters that would cause the stack to meet the heap before such prevention mechanisms maybe were flagged? I don’t know the answers to these myself, so I don’t expect you to right now either haha! Food for thought I guess… and/or an IRC discussion hahaha… Look forward to seeing these series continue!! Thanks!</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/7</link>
+        <pubDate>Wed, 14 Sep 2016 23:41:35 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1063-7</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063.rss">[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</source>
+      </item>
+      <item>
+        <title>[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</title>
+        <dc:creator><![CDATA[forgotmyhandle]]></dc:creator>
+        <description><![CDATA[
+            <p>I really enjoyed reading this, thank you.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/6</link>
+        <pubDate>Sat, 10 Sep 2016 22:36:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1063-6</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063.rss">[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</source>
+      </item>
+      <item>
+        <title>[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>That sounds great! I’m looking forward to it!</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/5</link>
+        <pubDate>Thu, 08 Sep 2016 15:53:33 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1063-5</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063.rss">[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</source>
+      </item>
+      <item>
+        <title>[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks <a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a>! Next, I’ll be walking through a <em><strong>rough</strong></em> implementation of <code>malloc</code>.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/4</link>
+        <pubDate>Thu, 08 Sep 2016 13:07:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1063-4</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063.rss">[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</source>
+      </item>
+      <item>
+        <title>[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</title>
+        <dc:creator><![CDATA[0x00pf]]></dc:creator>
+        <description><![CDATA[
+            <p>Congrat <a class="mention" href="https://d.clarkee.co.uk/u/oaktree">@oaktree</a>. Good stuff.</p>
+<aside class="quote no-group" data-username="oaktree" data-post="1" data-topic="1063">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/oaktree/48/4077_2.png" class="avatar"> oaktree:</div>
+<blockquote>
+<p>Note how the memory addresses outputted change on each run.</p>
+</blockquote>
+</aside>
+<p>That’s <a href="https://en.wikipedia.org/wiki/Address_space_layout_randomization" rel="noopener nofollow ugc">ASLR</a> in action. Try to disable it to get it fixed.</p>
+<p>I think you should keep sharing your findings. Knowing how this works… specially the insides of <code>malloc/free</code> data structures are basic to understand things like heap overflows.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/3</link>
+        <pubDate>Thu, 08 Sep 2016 05:17:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1063-3</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063.rss">[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</source>
+      </item>
+      <item>
+        <title>[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <p>Great stuff. I’m sure this is useful for any potential exploit devs.</p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/2</link>
+        <pubDate>Thu, 08 Sep 2016 01:55:11 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1063-2</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063.rss">[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</source>
+      </item>
+      <item>
+        <title>[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi everyone! It’s been a while since <a href="https://0x00sec.org/t/c-dynamic-memory-part-3-0-dynamic-buffering/970">Part 3</a>, but rest assured that the wait has been worth it! (I hope)</p>
+<p>This paper will cover the Linux versions of two system calls that are <em><strong>paramount</strong></em> in memory management. The same system calls, possibly different in implementation, exist on *BSD and its derivatives (macOS and such). I wouldn’t be able to tell you about the equivalent calls for Windows.</p>
+<p>You may or may not know this, but <code>malloc</code> and its family of functions are <strong>not</strong> system calls. At least on Linux, you are most commonly using GLibC’s implementations of the <code>malloc</code> family of functions. This memory management suite is meant to be more portable than the system calls I’m about to show you. In fact, there are a handful of memory management libraries out there.</p>
+<p>So, anyway, let’s begin with a quote from <code>man malloc</code>:</p>
+<pre><code>Normally,  malloc() allocates memory from the heap, and adjusts
+the size of the heap as required, using sbrk(2).
+</code></pre>
+<p>What is this <code>sbrk()</code> of which the above excerpt speaks!?! Turns out it’s the inner-workings of <code>malloc</code>!</p>
+<p><em><strong>Note:</strong></em> <em>At this point, some of you C gods and/or Linux pros may be questioning whether or not <code>sbrk</code> is a system call. It’s the cousin to a system call, actually. It essentially adds on a little extra functionality. So, its being a syscall is a bit “wishy-washy,” but for this paper I will likely refer to it as one.</em></p>
+<p>I’ll tell you right now that <code>sbrk</code> actually calls a cousin function <code>brk</code>, which is the actual system call. Let’s look into these functions a bit more to see how they work:</p>
+<pre><code>$ man brk
+
+brk()  and  sbrk()  change  the  location of the program break,
+which defines the end of the process's data segment (i.e.,  the
+program break is the first location after the end of the unini‐
+tialized data segment).  Increasing the program break  has  the
+effect  of  allocating  memory  to  the process; decreasing the
+break deallocates memory.
+</code></pre>
+<p>As said above, <code>brk</code> and <code>sbrk</code> change the location of a program’s break. But what does that actually mean? Essentially, the heap has a given boundary. If you want to allocate memory, you can extend the heap. You’re basically asking the kernel to extend how much memory your process has to work with.</p>
+<p>A question may pop in your mind: <em>But, oaktree, how can we extend memory if there are other running processes that might be right next to <strong>our</strong> process</em>? The answer to this is <a href="https://en.wikipedia.org/wiki/Virtual_memory" rel="nofollow noopener">Virtual Memory</a> – perhaps one of the best things about modern kernels/operating systems. Virtual Memory allows us as programmers to work with guaranteed-to-be contiguous memory. While our data may be spread out in RAM, the kernel provides the abstraction of one stretch of memory. (If anyone wants to dispute or clarify this, I definitely don’t have a PhD in CS [yet] so your input would be much appreciated)</p>
+<p>So anyway, we know that we can use <code>brk</code> and <code>sbrk</code> to extend our program’s allotted memory. Let’s take a closer look at each one’s parameter specifications:</p>
+<pre><code>int brk(void *addr);
+
+void *sbrk(intptr_t increment);
+</code></pre>
+<p>Both functions demand a single parameter to do essentially the same task.</p>
+<p><code>brk</code> is rawer. It asks for an address in memory to which you want the program break moved. If you pass it an address <em>before</em> the current break, you shrink the break and deallocate memory; if you pass it an address past the current break, you <em>allocate</em> memory.</p>
+<p><code>sbrk</code> provides a little more abstraction. But, in fact, it simply calls on <code>brk</code> and does a few extra things:</p>
+<pre><code>On Linux, sbrk() is implemented as a library function that uses
+the  brk()  system  call, and does some internal bookkeeping so
+that it can return the old break value.
+</code></pre>
+<p>So, like I said above, <code>sbrk</code> isn’t <em>really</em> a system call. When you call <code>sbrk</code>, you pass it a number of bytes: a negative number implies deallocation; a positive number, allocation.</p>
+<p><code>brk</code> returns <code>0</code> upon success and <code>-1</code> upon failure – the typical nature of a system call. <code>sbrk</code> returns the address of the new program break.</p>
+<p><em><strong>Note:</strong></em> <em>When you call <code>sbrk</code> or <code>brk</code>, you are shrinking/growing from the end. If you want to deallocate something that wasn’t the last-allocated thing, you have to move other things around in memory so that you end up deallocating the right stuff. And now you know why <code>malloc</code>/<code>free</code> is a thing.</em></p>
+<p>To sum up the above:</p>
+<ul>
+<li>
+<code>malloc</code> calls <code>sbrk</code>
+</li>
+<li>
+<code>sbrk</code> calls <code>brk</code>
+</li>
+<li>
+<code>brk</code> moves a process’s data segment/program break, allocating/deallocating memory.</li>
+</ul>
+<p>Let’s get our hands dirty a little:</p>
+<pre><code class="lang-auto">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;string.h&gt;
+</code></pre>
+<p>My demonstration requires the above four headers.</p>
+<pre><code class="lang-auto">int main(void) {
+ 
+    /* we can use void*'s to store the program break */
+    void *proc_break = sbrk(0);
+   
+    printf("Boundary: %p\n", proc_break);
+   
+    /* should increase by 4 bytes */
+    if (brk(proc_break + 4) &lt; 0) {
+        perror("Couldn't Allocate Memory!!!\n");
+        exit(1);
+    }
+   
+    /* observe the wonderful black magic of pointer type-casting! */
+    int *int_ptr = (int*)proc_break;
+    *int_ptr = 16;
+   
+    printf("This is stored at %p : %i\n", int_ptr, *int_ptr ); 
+    printf("Boundary: %p\n", sbrk(0));
+ 
+    float *f_ptr = (float*)proc_break;
+    *f_ptr = 0.1;
+    printf("And now %p holds a float %.30f\n", f_ptr, *f_ptr);
+   
+    printf("Now I'm \"freeing\" that memory...\nsbrk(0) returns %p\n", sbrk(0));
+    if (brk(proc_break) &lt; 0) {
+        perror("Couldn't Deallocate!!!\n");
+        exit(2);
+    }
+ 
+    printf("But now it returns... %p\n", sbrk(0));
+    printf("Now let's allocate for 'hello world'\n");
+ 
+    char *feed = "hello world"; // we're gonna copy this literal to the heap!
+ 
+    if (brk(proc_break + strlen(feed)+1 ) &lt; 0) {
+        perror("Couldn't Allocate Memory!!!\n");
+        exit(3);
+    }
+ 
+    char *c_ptr = (char*)proc_break;
+   
+    for (int i = 0; i &lt; strlen(feed) + 1; i++)
+        c_ptr[i] = feed[i];
+ 
+    printf("c_ptr = %p and holds %s\n", c_ptr, c_ptr);
+ 
+    brk(proc_break - 12);
+ 
+    return 0;
+}
+</code></pre>
+<p>The above code does a few things:</p>
+<ol>
+<li>We call <code>sbrk(0)</code> to acquire the current program break address. <em>The man page actually notes the use of <code>sbrk(0)</code> to keep track of the break.</em>
+</li>
+<li>We print out that program break and then allocate enough memory for an <code>int</code>, four bytes, by expanding the program break by four bytes. We then assign an integer value to the new memory.</li>
+<li>Then, with that <strong>same memory</strong>, we store a <code>float</code>, which is also 4 bytes.</li>
+<li>We free up the memory by returning our program break to its original spot.</li>
+</ol>
+<p>After messing around with <code>int</code>s and <code>float</code>s I decided to have a little fun by getting a string on the heap. As can be seen, the fact that it took so much code to do so should help you appreciate <code>malloc</code> and <code>free</code>.</p>
+<ol start="5">
+<li>Allocate for “hello world” and initialize that string on the heap.</li>
+<li>Return to the original program break.</li>
+</ol>
+<hr>
+<h1>Conclusion</h1>
+<p>I strongly encourage you to run the above code, which can also be found <a href="http://pastebin.com/UdY9xMr9" rel="nofollow noopener">here</a>, a few times. Note how the memory addresses outputted change on each run.</p>
+<p>There are a few things we can take away from this:</p>
+<ol>
+<li>Now you’ll appreciate the <code>malloc</code> family a bit more.</li>
+<li>If you never re-shrank the program break, and you just kept expanding it, you’d exhaust all your memory. This is what a memory leak is!!!</li>
+<li>
+<code>malloc</code> isn’t a system call.</li>
+<li>A process’s memory is contiguous (nowadays).</li>
+</ol>
+<p>In the man page of <code>brk</code>, it is explicitly stated that <code>brk</code> and <code>sbrk</code> should <strong>never</strong> be used in your code. Let memory management libraries do the work for you! Nonetheless, understanding the <code>brk</code> system call and the closely-related <code>sbrk</code> function can help you learn more about the heap.</p>
+<p>Last, I want you to think: what if we went <em>beyond</em> our program’s break? What are the implications of it? Could it <em>even</em> be done? Was it <em>ever</em> doable?</p>
+<p>This may or may not be the last article in this series, depending on the responses to this one. If this was already too technical, I don’t think I’ll document my further explorations.</p>
+<p>Later…<br>
+<a class="mention" href="https://d.clarkee.co.uk/u/oaktree">@oaktree</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063/1</link>
+        <pubDate>Thu, 08 Sep 2016 01:39:07 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1063-1</guid>
+        <source url="https://d.clarkee.co.uk/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063.rss">[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</source>
+      </item>
+  </channel>
+</rss>

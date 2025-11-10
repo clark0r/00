@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!-- Added by HTTrack --><meta http-equiv="content-type" content="text/html;charset=utf-8" /><!-- /Added by HTTrack -->
+<head>
+    <meta charset="utf-8">
+    <title>[C] Dynamic Memory (Part 3.0): Dynamic Buffering - Programming - 0x00sec - The Home of the Hacker</title>
+    <meta name="description" content="The last two (1 and 2) articles covered the main differences between stack/heap as well as using arrays on the heap. 
+Now, I’m going to walk you guys through resizing these heap-allocated arrays. See, you might not alway&amp;hellip;">
+    <meta name="generator" content="Discourse 3.6.0.beta2-latest - https://github.com/discourse/discourse version 3b1964f3ed8bdc2f181e2abccb1b116e4b814db5">
+<link rel="icon" type="image/png" href="../../uploads/default/optimized/2X/3/30c4e7d76acf879a124fdfe4d8d126afe628c189_2_32x32.html">
+<link rel="apple-touch-icon" type="image/png" href="../../uploads/default/optimized/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e_2_180x180.html">
+<meta name="theme-color" media="all" content="#171616">
+
+<meta name="color-scheme" content="dark">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, viewport-fit=cover">
+<link rel="canonical" href="970.html" />
+
+<link rel="search" type="application/opensearchdescription+xml" href="../../opensearch.xml" title="0x00sec - The Home of the Hacker Search">
+
+    
+    <link href="../../stylesheets/color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4.css_%3b%20filename_%3dUTF-8%27%27color_definitions_0x00sec-v2_15_57_dfa17f5b2e0faf8b274cd749dd7dab92384218d4a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" class="light-scheme" data-scheme-id="15"/>
+
+<link href="../../stylesheets/common_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27common_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common"  />
+
+  <link href="../../stylesheets/mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile"  />
+  <link href="../../stylesheets/desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop"  />
+
+
+
+    <link href="../../stylesheets/chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="chat"  />
+    <link href="../../stylesheets/checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27checklist_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="checklist"  />
+    <link href="../../stylesheets/discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-cakeday_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-cakeday"  />
+    <link href="../../stylesheets/discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-details_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-details"  />
+    <link href="../../stylesheets/discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-lazy-videos_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-lazy-videos"  />
+    <link href="../../stylesheets/discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-local-dates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-local-dates"  />
+    <link href="../../stylesheets/discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-narrative-bot_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-narrative-bot"  />
+    <link href="../../stylesheets/discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-presence_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-presence"  />
+    <link href="../../stylesheets/discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-solved"  />
+    <link href="../../stylesheets/discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-templates_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-templates"  />
+    <link href="../../stylesheets/discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="discourse-topic-voting"  />
+    <link href="../../stylesheets/docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27docker_manager_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="docker_manager"  />
+    <link href="../../stylesheets/footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27footnote_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="footnote"  />
+    <link href="../../stylesheets/poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="poll"  />
+    <link href="../../stylesheets/spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27spoiler-alert_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="spoiler-alert"  />
+    <link href="../../stylesheets/chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="chat_mobile"  />
+    <link href="../../stylesheets/discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-solved_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-solved_mobile"  />
+    <link href="../../stylesheets/discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_mobile_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="discourse-topic-voting_mobile"  />
+    <link href="../../stylesheets/chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27chat_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="chat_desktop"  />
+    <link href="../../stylesheets/discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27discourse-topic-voting_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="discourse-topic-voting_desktop"  />
+    <link href="../../stylesheets/poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460.css_%3b%20filename_%3dUTF-8%27%27poll_desktop_790af2e09dec4f80b03e04c757d6ba29e7ae3460a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="poll_desktop"  />
+
+  <link href="../../stylesheets/common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960db.css_%3b%20filename_%3dUTF-8%27%27common_theme_57_2b2f1b92f8727e7da2866f327e36ad944c6960dba97f.css?__ws=d.clarkee.co.uk" media="all" rel="stylesheet" data-target="common_theme" data-theme-id="57" data-theme-name="0x00sec-v2"/>
+    <link href="../../stylesheets/mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38.css_%3b%20filename_%3dUTF-8%27%27mobile_theme_4_7b59060f894813801912cfad9deff99ebb9e9a38a97f.css?__ws=d.clarkee.co.uk" media="(max-width: 39.99999rem)" rel="stylesheet" data-target="mobile_theme" data-theme-id="4" data-theme-name="mobile chrome"/>
+    <link href="../../stylesheets/desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96.css_%3b%20filename_%3dUTF-8%27%27desktop_theme_46_ae6f300d6e65399f845f6707524095726ad69a96a97f.css?__ws=d.clarkee.co.uk" media="(min-width: 40rem)" rel="stylesheet" data-target="desktop_theme" data-theme-id="46" data-theme-name="header links v2"/>
+
+    <link rel="stylesheet" href="../../../external.html?link=https://s3.amazonaws.com/0x00sec/monokai-sublime.css">
+<script src="../../../external.html?link=https://s3.amazonaws.com/0x00sec/highlight.pack.js" nonce="d2VNni8XK7uzgRVVktV8ut9oP"></script>
+<script defer="" src="../../theme-javascripts/05954ff525aceb8daa8b585f92d758d311ae7077.js_%3b%20filename_%3dUTF-8%27%2705954ff525aceb8daa8b585f92d758d311ae7077a97f.js?__ws=d.clarkee.co.uk" data-theme-id="40" nonce="d2VNni8XK7uzgRVVktV8ut9oP"></script>
+    
+        <link rel="alternate nofollow" type="application/rss+xml" title="RSS feed of &#39;[C] Dynamic Memory (Part 3.0): Dynamic Buffering&#39;" href="970.rss" />
+    <meta property="og:site_name" content="0x00sec - The Home of the Hacker" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://d.clarkee.co.uk/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:image" content="https://d.clarkee.co.uk/uploads/default/original/2X/2/27a5373af868edade07624e8205c46e79c247445.jpeg" />
+<meta property="og:url" content="https://d.clarkee.co.uk/t/c-dynamic-memory-part-3-0-dynamic-buffering/970" />
+<meta name="twitter:url" content="https://d.clarkee.co.uk/t/c-dynamic-memory-part-3-0-dynamic-buffering/970" />
+<meta property="og:title" content="[C] Dynamic Memory (Part 3.0): Dynamic Buffering" />
+<meta name="twitter:title" content="[C] Dynamic Memory (Part 3.0): Dynamic Buffering" />
+<meta property="og:description" content="The last two (1 and 2) articles covered the main differences between stack/heap as well as using arrays on the heap.  Now, I’m going to walk you guys through resizing these heap-allocated arrays. See, you might not always know – at compile time – how much memory you will need. Thus, we can write code that gives us just the right amount of memory. And if, for some reason, we end up needing more, we can grab some more memory. If, also, our program doesn’t need as much, we can give some back.   Oka..." />
+<meta name="twitter:description" content="The last two (1 and 2) articles covered the main differences between stack/heap as well as using arrays on the heap.  Now, I’m going to walk you guys through resizing these heap-allocated arrays. See, you might not always know – at compile time – how much memory you will need. Thus, we can write code that gives us just the right amount of memory. And if, for some reason, we end up needing more, we can grab some more memory. If, also, our program doesn’t need as much, we can give some back.   Oka..." />
+<meta property="og:article:section" content="Programming" />
+<meta property="og:article:section:color" content="92278F" />
+<meta property="og:article:tag" content="dynamic" />
+<meta property="og:article:tag" content="heap" />
+<meta property="og:article:tag" content="cprogramming" />
+<meta property="og:article:tag" content="array" />
+<meta name="twitter:label1" value="Reading time" />
+<meta name="twitter:data1" value="1 mins 🕑" />
+<meta name="twitter:label2" value="Likes" />
+<meta name="twitter:data2" value="10 ❤" />
+<meta property="article:published_time" content="2016-08-25T00:47:04+00:00" />
+<meta property="og:ignore_canonical" content="true" />
+
+
+    
+  </head>
+  <body class="crawler ">
+    <div id="top-navbar" class="container">
+<span id="top-navbar-links" style="display:none;">
+  <!--<a href="https://git.0x00sec.org" class="dow-menu">GitLab</a>  
+  <a href="https://blog.0x00sec.org/irc" class="dow-menu">IRC</a>!-->
+  <a href="../../../external.html?link=https://init.0x00sec.org/" class="dow-menu">Init</a>
+  <a href="../../../external.html?link=https://discord.gg/c6BHVfn" class="dow-menu">Discord</a>
+  <a href="../../../external.html?link=https://init.0x00sec.org/?partners" class="dow-menu">Partners</a>
+</span>
+</div>
+    <header>
+  <a href="../../index.html">0x00sec - The Home of the Hacker</a>
+</header>
+
+    <div id="main-outlet" class="wrap" role="main">
+        <div id="topic-title">
+    <h1>
+      <a href="970.html">[C] Dynamic Memory (Part 3.0): Dynamic Buffering</a>
+    </h1>
+
+      <div class="topic-category" itemscope itemtype="../../../external.html?link=http://schema.org/BreadcrumbList">
+          <span itemprop="itemListElement" itemscope itemtype="../../../external.html?link=http://schema.org/ListItem">
+            <a href="../../c/programming/61.html" class="badge-wrapper bullet" itemprop="item">
+              <span class='badge-category-bg' style='background-color: #92278F'></span>
+              <span class='badge-category clear-badge'>
+                <span class='category-name' itemprop='name'>Programming</span>
+              </span>
+            </a>
+            <meta itemprop="position" content="1" />
+          </span>
+      </div>
+
+      <div class="topic-category">
+        <div class='discourse-tags list-tags'>
+            <a href='../../tag/dynamic.html' class='discourse-tag' rel="tag">dynamic</a>, 
+            <a href='../../tag/heap.html' class='discourse-tag' rel="tag">heap</a>, 
+            <a href='../../tag/cprogramming.html' class='discourse-tag' rel="tag">cprogramming</a>, 
+            <a href='../../tag/array.html' class='discourse-tag' rel="tag">array</a>
+        </div>
+      </div>
+  </div>
+
+  
+
+    <div itemscope itemtype='../../../external.html?link=http://schema.org/DiscussionForumPosting'>
+      <meta itemprop='headline' content='[C] Dynamic Memory (Part 3.0): Dynamic Buffering'>
+      <link itemprop='url' href='970.html'>
+      <meta itemprop='datePublished' content='2016-08-25T00:47:04Z'>
+        <meta itemprop='articleSection' content='Programming'>
+      <meta itemprop='keywords' content='dynamic, heap, cprogramming, array'>
+      <div itemprop='publisher' itemscope itemtype="../../../external.html?link=http://schema.org/Organization">
+        <meta itemprop='name' content='0x00sec - The Home of the Hacker'>
+          <div itemprop='logo' itemscope itemtype="../../../external.html?link=http://schema.org/ImageObject">
+            <meta itemprop='url' content='../../uploads/default/original/2X/c/c5e37f667fd0fe006ffa67653c662fb64fec597e.html'>
+          </div>
+      </div>
+
+
+          <div id='post_1'  class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/oaktree.html'><span itemprop='name'>oaktree</span></a>
+                (oaktree)
+              </span>
+
+                <link itemprop="mainEntityOfPage" href="970.html">
+
+
+              <span class="crawler-post-infos">
+                  <time  datetime='2016-08-25T00:47:04Z' class='post-time'>
+                    August 25, 2016, 12:47am
+                  </time>
+                  <meta itemprop='dateModified' content='2016-08-25T00:47:04Z'>
+              <span itemprop='position'>1</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>The last two (<a href="../../../external.html?link=https://0x00sec.org/t/c-dynamic-memory-part-1-0-stack-v-heap/960">1</a> and <a href="../../../external.html?link=https://0x00sec.org/t/c-dynamic-memory-part-2-0-arrays-on-the-heap/965">2</a>) articles covered the main differences between stack/heap as well as using arrays on the heap.</p>
+<p>Now, I’m going to walk you guys through resizing these heap-allocated arrays. See, you might not always know – at compile time – how much memory you will need. Thus, we can write code that gives us just the right amount of memory. And if, for some reason, we end up needing more, we can grab some more memory. If, also, our program doesn’t need as much, we can give some back.</p>
+<hr>
+<p>Okay, this time let’s write an actual program… All the necessary source can be found <a href="../../../external.html?link=http://pastebin.com/1ziFhKjm" rel="nofollow noopener">here</a>.</p>
+<p>We will start off by including the relevant headers:</p>
+<pre><code class="lang-auto">#include &lt;string.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt; /* this is where the memory functions are */
+</code></pre>
+<p><em>At this point, it would be wise to take a look at <code>man realloc</code> or <code>man malloc</code> and read the descriptions for <code>malloc</code>, <code>realloc</code>, and <code>free</code>.</em></p>
+<p>From the <code>man</code> page:</p>
+<pre><code>The realloc() function changes the size  of  the  memory  block
+pointed  to  by  ptr  to  size  bytes.   The  contents  will be
+unchanged in the range from the start of the region up  to  the
+minimum  of  the  old and new sizes.  If the new size is larger
+than the old size, the added memory will  not  be  initialized.
+If  ptr  is  NULL, then the call is equivalent to malloc(size),
+for all values of size; if size is equal to zero,  and  ptr  is
+not NULL, then the call is equivalent to free(ptr).  Unless ptr
+is NULL, it must have been returned by an earlier call to  mal‐
+loc(),  calloc()  or  realloc().   If  the  area pointed to was
+moved, a free(ptr) is done.
+</code></pre>
+<p>Our main function begins like so:</p>
+<pre><code class="lang-auto">int main(void) {
+ 
+    char* s = NULL; /* start off with just a pointer */
+    size_t s_len = 0; /* A pointer to nothing has a strlen of 0. */
+
+    // ...
+}
+</code></pre>
+<p>We initialize a <code>char * s</code> to <code>NULL</code>. <em><strong>Note:</strong></em> <em>You should always initialize your pointers to something. It can lead to undefined behaviour if you do not.</em></p>
+<p>Also, I’ve included the <code>s_len</code> variable to track how large our string <code>s</code> becomes.</p>
+<pre><code class="lang-auto">int main(void) {
+ 
+    // ...
+ 
+/*
+    Start taking input, dynamically.   
+*/
+    printf("Input a string...\n");
+ 
+    do {
+ 
+        s = realloc( s , ++s_len * sizeof(char) );
+ 
+    } while ( ( s[ s_len - 1 ] = getchar() ) != '\n' );
+ 
+    s[--s_len] = 0x00; /* remember to delimit the string! */
+/*
+    End dynamic input procedure.
+*/
+
+    // ...
+}
+</code></pre>
+<p>While the above code may seem <em>arcane</em>, it’s actually quite simple.</p>
+<ol>
+<li>Prompt the user for input.</li>
+<li>Expand <code>s</code> by an extra byte. Remember that <code>s</code> is simple an array of characters.</li>
+<li>Store a character in the last element of <code>s</code>. Go to step 2 if the character isn’t an <code>[ENTER]</code>.</li>
+<li>
+<code>0x00</code> (<code>null</code>) out the last element in the array to delimit the string.</li>
+</ol>
+<p>These steps are all is needed to continuously expand a string to hold more input, more data.</p>
+<pre><code class="lang-auto">int main(void) {
+ 
+    // ...
+ 
+    printf("\n\n%s\n", s);
+    printf("s_len = %i\n", (int)s_len);
+ 
+    /* Print out the ASCII codes. */
+    for (size_t i = 0; i &lt; s_len; i++)
+        printf("%i ", (int)s[i]);
+    printf("\n");
+ 
+    /* can't forget to free! */
+    free(s);
+ 
+}
+</code></pre>
+<p>The next thing we do is print out <code>s</code> in a few ways.</p>
+<p>And last, but certainly not least, we must <code>free</code> <code>s</code>.</p>
+<hr>
+<h1>Conclusion</h1>
+<p>That’s all there is to using <code>realloc</code>. Next, I’ll cover <code>calloc</code> and present some cool array code.</p>
+<p>Bai.<br>
+<a class="mention" href="../../u/oaktree.html">@oaktree</a></p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="7" />
+              <span class='post-likes'>7 Likes</span>
+            </div>
+
+                <div class='crawler-linkback-list' itemscope itemtype='../../../external.html?link=http://schema.org/ItemList'>
+                      <div itemprop='itemListElement' itemscope itemtype='../../../external.html?link=http://schema.org/ListItem'>
+                        <a itemprop='url' href="../../../external.html?link=https://0x00sec.org/t/c-dynamic-memory-part-4-0-get-deep-er-in-the-heap/1063">[C] Dynamic Memory (Part 4.0): Get Deep(er) in the Heap</a>
+                        <meta itemprop='position' content='4'>
+                      </div>
+                </div>
+
+            
+          </div>
+          <div id='post_2' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/0x00pf.html'><span itemprop='name'>0x00pf</span></a>
+                (pico)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2016-08-25T05:30:17Z' class='post-time'>
+                    August 25, 2016,  5:30am
+                  </time>
+                  <meta itemprop='dateModified' content='2016-08-25T05:35:53Z'>
+              <span itemprop='position'>2</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Nice post <a class="mention" href="../../u/oaktree.html">@oaktree</a>!</p>
+<p>Just a heads up from the <code>realloc</code> manpage</p>
+<blockquote>
+<p>The realloc() function returns a pointer to the newly allocated memory, which is suitably aligned for any kind of variable and may be <strong><code>different from ptr</code></strong>, or NULL if the request fails.</p>
+</blockquote>
+<p><code>realloc</code> calls usually look like this (it all depends what your program does indeed)</p>
+<pre><code class="lang-auto">   if ((aux = reallloc (s, len)) == NULL)  ERROR ("Out of memory")
+   s = aux;
+</code></pre>
+<p><em><code>ERROR ()</code> prints the message and exits/returns</em></p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="2" />
+              <span class='post-likes'>2 Likes</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_3' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/oaktree.html'><span itemprop='name'>oaktree</span></a>
+                (oaktree)
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2016-08-25T12:58:55Z' class='post-time'>
+                    August 25, 2016, 12:58pm
+                  </time>
+                  <meta itemprop='dateModified' content='2016-08-25T12:58:55Z'>
+              <span itemprop='position'>3</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>Yes, I should check for <code>NULL</code>. Note that this was demo code, so error checking was omitted to avoid any sort of confusion.</p>
+<p>You surely would do as you have displayed.</p>
+<p>Thanks <a class="mention" href="../../u/0x00pf.html">@0x00pf</a>!</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="1" />
+              <span class='post-likes'>1 Like</span>
+            </div>
+
+
+            
+          </div>
+          <div id='post_4' itemprop='comment' itemscope itemtype='http://schema.org/Comment' class='topic-body crawler-post'>
+            <div class='crawler-post-meta'>
+              <span class="creator" itemprop="author" itemscope itemtype="../../../external.html?link=http://schema.org/Person">
+                <a itemprop="url" rel='nofollow' href='../../u/oaktree.html'><span itemprop='name'>oaktree</span></a>
+                (oaktree)
+                  Closed 
+              </span>
+
+
+
+              <span class="crawler-post-infos">
+                  <time itemprop='datePublished' datetime='2018-01-21T00:30:36Z' class='post-time'>
+                    January 21, 2018, 12:30am
+                  </time>
+                  <meta itemprop='dateModified' content='2018-01-21T00:30:36Z'>
+              <span itemprop='position'>4</span>
+              </span>
+            </div>
+            <div class='post' itemprop='text'>
+              <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+            </div>
+
+            <div itemprop="interactionStatistic" itemscope itemtype="../../../external.html?link=http://schema.org/InteractionCounter">
+              <meta itemprop="interactionType" content="../../../external.html?link=http://schema.org/LikeAction"/>
+              <meta itemprop="userInteractionCount" content="0" />
+              <span class='post-likes'></span>
+            </div>
+
+
+            
+          </div>
+    </div>
+
+
+    
+
+
+
+
+    </div>
+    <footer class="container wrap">
+  <nav class='crawler-nav'>
+    <ul>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../index.html' itemprop="url">Home </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../categories.html' itemprop="url">Categories </a>
+        </span>
+      </li>
+      <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+        <span itemprop='name'>
+          <a href='../../guidelines.html' itemprop="url">Guidelines </a>
+        </span>
+      </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../tos.html' itemprop="url">Terms of Service </a>
+          </span>
+        </li>
+        <li itemscope itemtype='../../../external.html?link=http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='../../privacy.html' itemprop="url">Privacy Policy </a>
+          </span>
+        </li>
+    </ul>
+  </nav>
+  <p class='powered-by-link'>Powered by <a href="../../../external.html?link=https://www.discourse.org/">Discourse</a>, best viewed with JavaScript enabled</p>
+</footer>
+
+    
+    <script src="../../../external.html?link=http://instant.page/3.0.0" type="module" defer="" integrity="sha384-OeDn4XE77tdHo8pGtE1apMPmAipjoxUQ++eeJa6EtJCfHlvijigWiJpD7VDPWXV1" nonce="d2VNni8XK7uzgRVVktV8ut9oP"></script>
+  </body>
+  
+</html>

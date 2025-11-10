@@ -1,0 +1,761 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</title>
+    <link>https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157</link>
+    <description>Hello! Welcome to my first tutorial about the ELF format, the ARM processor, and how to code a debugger for it.
+
+Ever wondered how a debugger works? Ever wondered how a debugger works on an ARM processor?
+
+In this series of articles, I am going to go from start to finish on how to code a simple debugger for the ARM platform. There are many subtle, and some not-so-subtle, differences between x86 and ARM internals and the way they use the ptrace() syscall.
+
+In this first article, I am going to cover how to access and print the ELF section and program headers so you can take a closer look at what goes on under the hood. However, this is not an ELF or C programming tutorial. I will briefly cover the most important parts, but you should be prepared to use the man pages if you are interested in a more detailed understanding.
+
+**Consider this an introduction to the techniques that will be used in the debugger.**
+
+#### Community Assigned Level:
+[poll type=regular]
+* Newbie
+* Wannabe
+* Hacker
+* Wizard
+* Guru
+[/poll]
+
+#### Required Skills
+
+* Linux
+* Basics of the ELF format
+* C programming
+ 
+
+#### Disclaimer
+This article heavily draws upon the book [Learning Linux Binary Analysis](https://www.amazon.com/Learning-Binary-Analysis-elfmaster-ONeill/dp/1782167102) by Ryan &quot;elfmaster&quot; O&#39;Neill. I highly recommend this book for anyone interested in the ELF format.
+
+-----
+# Meat
+The ELF format is linux&#39;s chosen executable file format. In fact, it stands for Executable and Linkable Format.
+Within the ELF format are defined several structures which store program data. 
+The three structures we will be looking at are the Elf32_Ehdr, Elf32_Phdr, and Elf32_Shdr struct, which are the Elf Header, Program Header, and Section Headers structures, defined as:
+
+This is the ELF header. It essentially marks this file as the ELF type, its architecture, and the entry point address where execution begins.
+
+    #define EI_NIDENT 16
+       typedef struct {
+           unsigned char e_ident[EI_NIDENT];
+           uint16_t      e_type;
+           uint16_t      e_machine;
+           uint32_t      e_version;
+           ElfN_Addr     e_entry;
+           ElfN_Off      e_phoff;
+           ElfN_Off      e_shoff;
+           uint32_t      e_flags;
+           uint16_t      e_ehsize;
+           uint16_t      e_phentsize;
+           uint16_t      e_phnum;
+           uint16_t      e_shentsize;
+           uint16_t      e_shnum;
+           uint16_t      e_shstrndx;
+       } Elf32_Ehdr;
+
+According to &quot;Learning Linux Binary Analysis&quot;:
+_&quot;ELF program headers are what describe segments within a binary and are necessary for program loading. Segments are understood by the kernel during load time and describe the memory layout of an executable on disk and how it should translate to memory. The program header table can be accessed by referencing the offset found in the initial ELF header member called e__phoff&quot;_
+
+    typedef struct {
+        uint32_t   p_type;       //segment type
+        Elf32_Off  p_offset;     //segment offset
+        Elf32_Addr p_vaddr;      //segment virtual address
+        Elf32_Addr p_paddr;      //segment physical address
+        uint32_t   p_filesz;     //size of segment in the file
+        uint32_t   p_memsz;      //size of segment in memory
+        uint32_t   p_flags;      //segment flags, I.E execute|read|read
+        uint32_t   p_align;      //segment alignment in memory
+      } Elf32_Phdr;
+
+According to &quot;Learning Linux Binary Analysis&quot;
+_&quot;A section header table exists to reference the location and size of these sections and is primarily for linking and debugging purposes. Section headers are not necessary for program execution, and a program will execute just fine without having a section header table. This is because the section header table doesn&#39;t describe the program memory layout. That is the responsibility of the program header table. The section headers are really just complimentary to the program headers. The readelf –l command will show which sections are mapped to which segments, which helps to visualize the relationship between sections and segments.&quot;_
+
+    typedef struct {
+    uint32_t   sh_name;        // offset into shdr string table for shdr name
+        uint32_t   sh_type;    // shdr type I.E SHT_PROGBITS
+        uint32_t   sh_flags;   // shdr flags I.E SHT_WRITE|SHT_ALLOC
+        Elf32_Addr sh_addr;    // address of where section begins
+        Elf32_Off  sh_offset;  // offset of shdr from beginning of file
+        uint32_t   sh_size;    // size that section takes up on disk
+        uint32_t   sh_link;    // points to another section
+        uint32_t   sh_info;    // interpretation depends on section type
+    uint32_t   sh_addralign;   // alignment for address of section
+    uint32_t   sh_entsize;     // size of each certain entries that may be in section
+    } Elf32_Shdr;
+
+This is where our data is stored. Now, we can use some C code to access the members of these structures and print out their values. First, some setup is required:
+
+    #include &lt;stdio.h&gt;
+    #include &lt;string.h&gt;
+    #include &lt;errno.h&gt;
+    #include &lt;elf.h&gt;
+    #include &lt;unistd.h&gt;
+    #include &lt;stdlib.h&gt;
+    #include &lt;sys/mman.h&gt;
+    #include &lt;stdint.h&gt;
+    #include &lt;sys/stat.h&gt;
+    #include &lt;fcntl.h&gt;
+
+    int main(int argc, char **argv) {
+       int fd, i;                      // File descriptor and index
+       uint8_t *mem;                   // Variable we will use to mmap our executable
+       struct stat st;                 // Our usual stat structure
+       char *StringTable, *interp;
+       
+       // This is where we defined our ELF, program, and section header variables
+       Elf32_Ehdr *ehdr;
+       Elf32_Phdr *phdr;
+       Elf32_Shdr *shdr;
+
+       if(argc &lt; 2) {
+          printf(&quot;Usage: %s &lt;executable&gt;\n&quot;, argv[0]);
+          exit(0);
+       }
+
+       if((fd = open(argv[1], O_RDONLY)) &lt; 0) {
+          perror(&quot;open&quot;);
+          exit(EXIT_FAILURE);
+       }
+       
+       if(fstat(fd, &amp;st) &lt; 0) {
+          perror(&quot;fstat&quot;);
+          exit(EXIT_FAILURE);
+       }
+
+Now that we have our variables set up, we can map our executable into memory and begin to read and print our values.
+
+This is where we map our executable into memory:
+
+       mem = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+       if(mem == MAP_FAILED) {
+          perror(&quot;mmap&quot;);
+          exit(EXIT_FAILURE);
+       }
+
+The initial ELF Header starts at offset 0 of our mapped memory:
+
+       ehdr = (Elf32_Ehdr *)mem;
+       
+The shdr table and phdr table offsets are given by e_shoff and e_phoff members of the Elf32_Ehdr.
+
+       phdr = (Elf32_Phdr *)&amp;mem[ehdr-&gt;e_phoff];
+       shdr = (Elf32_Shdr *)&amp;mem[ehdr-&gt;e_shoff];
+       
+Check to see if the ELF magic (The first 4 bytes) match up as 0x7f E L F
+
+       if(mem[0] != 0x7f &amp;&amp; strcmp(&amp;mem[1], &quot;ELF&quot;)) {
+          fprintf(stderr, &quot;%s is not an ELF file\n&quot;, argv[1]);
+          exit(EXIT_FAILURE);
+       }
+       
+We are only parsing executables with this code so ET_EXEC marks an executable.
+
+       if(ehdr-&gt;e_type != ET_EXEC) {
+          fprintf(stderr, &quot;%s is not an executable\n&quot;, argv[1]);
+          exit(EXIT_FAILURE);
+       }
+
+Now that we have our program stored in mem, we can print its entry point address. Remember that the e_entry member holds the address of the entry point:
+
+    printf(&quot;Program Entry point: 0x%x\n&quot;, ehdr-&gt;e_entry);
+
+Now, we have to find the string table for the section headers names. The e_shstrndx member holds this data:
+
+    StringTable = &amp;mem[shdr[ehdr-&gt;e_shstrndx].sh_offset];
+
+Next, we print each section header name and address. Notice we get the index into the string table
+that contains each section header name with the shdr.sh_name member
+
+    printf(&quot;Section header list:\n\n&quot;);
+    for(i = 1; i &lt; ehdr-&gt;e_shnum; i++)
+      printf(&quot;%s: 0x%x\n&quot;, &amp;StringTable[shdr[i].sh_name], shdr[i].sh_addr);
+
+Finally, we print out each segment name, and address. Except for PT_INTERP we print the path to the dynamic linker.
+
+    printf(&quot;\nProgram header list\n\n&quot;);
+    for(i = 0; i &lt; ehdr-&gt;e_phnum; i++) {   
+      switch(phdr[i].p_type) {
+         case PT_LOAD:
+            /*
+             * We know that text segment starts
+             * at offset 0. And only one other
+             * possible loadable segment exists
+             * which is the data segment.
+             */
+            if(phdr[i].p_offset == 0)
+               printf(&quot;Text segment: 0x%x\n&quot;, phdr[i].p_vaddr);
+            else
+               printf(&quot;Data segment: 0x%x\n&quot;, phdr[i].p_vaddr);
+         break;
+         case PT_INTERP:
+            interp = strdup((char *)&amp;mem[phdr[i].p_offset]);
+            printf(&quot;Interpreter: %s\n&quot;, interp);
+            break;
+         case PT_NOTE:
+            printf(&quot;Note segment: 0x%x\n&quot;, phdr[i].p_vaddr);
+            break;
+         case PT_DYNAMIC:
+            printf(&quot;Dynamic segment: 0x%x\n&quot;, phdr[i].p_vaddr);
+            break;
+         case PT_PHDR:
+            printf(&quot;Phdr segment: 0x%x\n&quot;, phdr[i].p_vaddr);
+            break;
+      }
+   }
+
+Here is the entire program:
+
+    #include &lt;stdio.h&gt;
+    #include &lt;string.h&gt;
+    #include &lt;errno.h&gt;
+    #include &lt;elf.h&gt;
+    #include &lt;unistd.h&gt;
+    #include &lt;stdlib.h&gt;
+    #include &lt;sys/mman.h&gt;
+    #include &lt;stdint.h&gt;
+    #include &lt;sys/stat.h&gt;
+    #include &lt;fcntl.h&gt;
+
+    int main(int argc, char **argv) {
+       int fd, i;
+       uint8_t *mem;
+       struct stat st;
+       char *StringTable, *interp;
+       
+       Elf32_Ehdr *ehdr;
+       Elf32_Phdr *phdr;
+       Elf32_Shdr *shdr;
+
+       if(argc &lt; 2) {
+          printf(&quot;Usage: %s &lt;executable&gt;\n&quot;, argv[0]);
+          exit(0);
+       }
+
+       if((fd = open(argv[1], O_RDONLY)) &lt; 0) {
+          perror(&quot;open&quot;);
+          exit(EXIT_FAILURE);
+       }
+       
+       if(fstat(fd, &amp;st) &lt; 0) {
+          perror(&quot;fstat&quot;);
+          exit(EXIT_FAILURE);
+       }
+       
+       mem = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+       if(mem == MAP_FAILED) {
+          perror(&quot;mmap&quot;);
+          exit(EXIT_FAILURE);
+       }
+       
+       ehdr = (Elf32_Ehdr *)mem;
+       phdr = (Elf32_Phdr *)&amp;mem[ehdr-&gt;e_phoff];
+       shdr = (Elf32_Shdr *)&amp;mem[ehdr-&gt;e_shoff];
+       
+       if(mem[0] != 0x7f &amp;&amp; strcmp(&amp;mem[1], &quot;ELF&quot;)) {
+          fprintf(stderr, &quot;%s is not an ELF file\n&quot;, argv[1]);
+          exit(EXIT_FAILURE);
+       }
+       
+       if(ehdr-&gt;e_type != ET_EXEC) {
+          fprintf(stderr, &quot;%s is not an executable\n&quot;, argv[1]);
+          exit(EXIT_FAILURE);
+       }
+
+       printf(&quot;Program Entry point: 0x%x\n&quot;, ehdr-&gt;e_entry);
+       
+       StringTable = &amp;mem[shdr[ehdr-&gt;e_shstrndx].sh_offset];
+
+       printf(&quot;Section header list:\n\n&quot;);
+       for(i = 1; i &lt; ehdr-&gt;e_shnum; i++)
+          printf(&quot;%s: 0x%x\n&quot;, &amp;StringTable[shdr[i].sh_name], shdr[i].sh_addr);
+       
+       printf(&quot;\nProgram header list\n\n&quot;);
+       for(i = 0; i &lt; ehdr-&gt;e_phnum; i++) {   
+          switch(phdr[i].p_type) {
+             case PT_LOAD:
+                if (phdr[i].p_offset == 0)
+                   printf(&quot;Text segment: 0x%x\n&quot;, phdr[i].p_vaddr);
+                else
+                   printf(&quot;Data segment: 0x%x\n&quot;, phdr[i].p_vaddr);
+             break;
+             case PT_INTERP:
+                interp = strdup((char *)&amp;mem[phdr[i].p_offset]);
+                printf(&quot;Interpreter: %s\n&quot;, interp);
+                break;
+             case PT_NOTE:
+                printf(&quot;Note segment: 0x%x\n&quot;, phdr[i].p_vaddr);
+                break;
+             case PT_DYNAMIC:
+                printf(&quot;Dynamic segment: 0x%x\n&quot;, phdr[i].p_vaddr);
+                break;
+             case PT_PHDR:
+                printf(&quot;Phdr segment: 0x%x\n&quot;, phdr[i].p_vaddr);
+                break;
+          }
+       }
+
+       exit(0);
+    }
+
+# Conclusions
+As you can see, being able to code an ELF parser gives us a lot of insight into the ELF format and how it is stored in memory. It doesn&#39;t take that much C code to do it, either. 
+
+In my next article, we will be using the ptrace syscall to print the ARM registers of a program we trace. Here is a small sample:
+
+    /* The parent forks a child process to be traced */
+    if((pid = fork()) &lt; 0) {
+        perror(&quot;fork&quot;);
+        exit(EXIT_FAILURE);
+    }
+    /* Use ptrace to begin tracing the child process */
+    if(pid == 0) {
+        if(ptrace(PTRACE_TRACEME, pid, NULL, NULL) &lt; 0) {
+            perror(&quot;PTRACE_TRACEME&quot;);
+            exit(EXIT_FAILURE);
+        }
+        execve(exec, args, envp);
+        exit(EXIT_FAILURE);
+    }</description>
+    
+    <lastBuildDate>Fri, 04 Aug 2017 02:16:58 +0000</lastBuildDate>
+    <category>Programming</category>
+    <atom:link href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/10</link>
+        <pubDate>Sun, 21 Jan 2018 00:30:08 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3157-10</guid>
+        <source url="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157.rss">(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</source>
+      </item>
+      <item>
+        <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</title>
+        <dc:creator><![CDATA[dtm]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="oaktree" data-post="8" data-topic="3157">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/oaktree/48/4077_2.png" class="avatar"> oaktree:</div>
+<blockquote>
+<p>memory is finite – scarce on Windows</p>
+</blockquote>
+</aside>
+<p>Unused RAM is wasted RAM. <img src="https://d.clarkee.co.uk/images/emoji/twitter/wink.png?v=15" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/9</link>
+        <pubDate>Fri, 04 Aug 2017 02:16:58 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3157-9</guid>
+        <source url="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157.rss">(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</source>
+      </item>
+      <item>
+        <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>It was my understanding that memory is “freed” on exit when the process is taken out of memory.</p>
+<p>The whole point of <code>free</code> is to be able to reuse memory… After all, memory is finite – scarce on Windows.</p>
+          <p><a href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/8</link>
+        <pubDate>Fri, 04 Aug 2017 01:45:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3157-8</guid>
+        <source url="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157.rss">(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</source>
+      </item>
+      <item>
+        <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</title>
+        <dc:creator><![CDATA[neolex]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for your article, I learned a lot !</p>
+          <p><a href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/7</link>
+        <pubDate>Fri, 04 Aug 2017 01:43:37 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3157-7</guid>
+        <source url="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157.rss">(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</source>
+      </item>
+      <item>
+        <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</title>
+        <dc:creator><![CDATA[Bowlslaw]]></dc:creator>
+        <description><![CDATA[
+            <aside class="quote no-group" data-username="oaktree" data-post="4" data-topic="3157">
+<div class="title">
+<div class="quote-controls"></div>
+<img alt="" width="24" height="24" src="https://d.clarkee.co.uk/user_avatar/d.clarkee.co.uk/oaktree/48/4077_2.png" class="avatar"> oaktree:</div>
+<blockquote>
+<p>I believe you’re missing a free in the PT_INTERP case.</p>
+</blockquote>
+</aside>
+<p>Is it true that the exit library function frees memory as part of its functionality?</p>
+          <p><a href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/6</link>
+        <pubDate>Fri, 04 Aug 2017 00:37:01 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3157-6</guid>
+        <source url="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157.rss">(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</source>
+      </item>
+      <item>
+        <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</title>
+        <dc:creator><![CDATA[oaktree]]></dc:creator>
+        <description><![CDATA[
+            <p>Good writing.</p>
+<p>Also make note of <a class="mention" href="https://d.clarkee.co.uk/u/_py">@_py</a> 's comments…</p>
+<p>I look forward to the second instalment.</p>
+<hr>
+<p>I believe you’re missing a <code>free</code> in the <code>PT_INTERP</code> <code>case</code>.</p>
+          <p><a href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/4</link>
+        <pubDate>Thu, 03 Aug 2017 18:01:35 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3157-4</guid>
+        <source url="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157.rss">(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</source>
+      </item>
+      <item>
+        <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</title>
+        <dc:creator><![CDATA[Bowlslaw]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks a lot for the feedback. I will take it under consideration.</p>
+          <p><a href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/3</link>
+        <pubDate>Thu, 03 Aug 2017 11:36:50 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3157-3</guid>
+        <source url="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157.rss">(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</source>
+      </item>
+      <item>
+        <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</title>
+        <dc:creator><![CDATA[_py]]></dc:creator>
+        <description><![CDATA[
+            <p>Here’s some feedback:</p>
+<ol>
+<li>
+<p>ELF isn’t a format only for executable files. There are also shared libraries and object files.</p>
+</li>
+<li>
+<p>Quoting every section of the book regarding ELF shows me that either you don’t understand the material in depth, or you didn’t bother trying to simplify the terms. Some drawings on how sections and segments look like would be nice for the newbies since those two interject with each other and can be confusing.</p>
+</li>
+<li>
+<p>You referred to structs and didn’t elaborate on them, such as the string table section (though not a must).</p>
+</li>
+<li>
+<p>You mentioned that data is stored in sections. That’s partially true. What about segments? Which brings my point about the difference between sections vs segments.</p>
+</li>
+<li>
+<p>I’d highly recommend to write an entire article between what truly sections and segments are since they are the bread and butter of debuggers and the ELF’s format itself.</p>
+</li>
+</ol>
+<p>Consider the above points as tips in case you really want to go deep into the binary internals. If you just want to provide a high level view, you’re doing a great job.</p>
+          <p><a href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/2</link>
+        <pubDate>Thu, 03 Aug 2017 08:40:43 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3157-2</guid>
+        <source url="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157.rss">(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</source>
+      </item>
+      <item>
+        <title>(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</title>
+        <dc:creator><![CDATA[Bowlslaw]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello! Welcome to my first tutorial about the ELF format, the ARM processor, and how to code a debugger for it.</p>
+<p>Ever wondered how a debugger works? Ever wondered how a debugger works on an ARM processor?</p>
+<p>In this series of articles, I am going to go from start to finish on how to code a simple debugger for the ARM platform. There are many subtle, and some not-so-subtle, differences between x86 and ARM internals and the way they use the ptrace() syscall.</p>
+<p>In this first article, I am going to cover how to access and print the ELF section and program headers so you can take a closer look at what goes on under the hood. However, this is not an ELF or C programming tutorial. I will briefly cover the most important parts, but you should be prepared to use the man pages if you are interested in a more detailed understanding.</p>
+<p><strong>Consider this an introduction to the techniques that will be used in the debugger.</strong></p>
+<h4>Community Assigned Level:</h4>
+<p><a href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/1">Click to view the poll.</a></p>
+<h4>Required Skills</h4>
+<ul>
+<li>Linux</li>
+<li>Basics of the ELF format</li>
+<li>C programming</li>
+</ul>
+<h4>Disclaimer</h4>
+<p>This article heavily draws upon the book <a href="https://www.amazon.com/Learning-Binary-Analysis-elfmaster-ONeill/dp/1782167102?tag=0x00sec03-20" rel="nofollow noopener">Learning Linux Binary Analysis</a> by Ryan “elfmaster” O’Neill. I highly recommend this book for anyone interested in the ELF format.</p>
+<hr>
+<h1>Meat</h1>
+<p>The ELF format is linux’s chosen executable file format. In fact, it stands for Executable and Linkable Format.<br>
+Within the ELF format are defined several structures which store program data.<br>
+The three structures we will be looking at are the Elf32_Ehdr, Elf32_Phdr, and Elf32_Shdr struct, which are the Elf Header, Program Header, and Section Headers structures, defined as:</p>
+<p>This is the ELF header. It essentially marks this file as the ELF type, its architecture, and the entry point address where execution begins.</p>
+<pre><code>#define EI_NIDENT 16
+   typedef struct {
+       unsigned char e_ident[EI_NIDENT];
+       uint16_t      e_type;
+       uint16_t      e_machine;
+       uint32_t      e_version;
+       ElfN_Addr     e_entry;
+       ElfN_Off      e_phoff;
+       ElfN_Off      e_shoff;
+       uint32_t      e_flags;
+       uint16_t      e_ehsize;
+       uint16_t      e_phentsize;
+       uint16_t      e_phnum;
+       uint16_t      e_shentsize;
+       uint16_t      e_shnum;
+       uint16_t      e_shstrndx;
+   } Elf32_Ehdr;
+</code></pre>
+<p>According to “Learning Linux Binary Analysis”:<br>
+<em>“ELF program headers are what describe segments within a binary and are necessary for program loading. Segments are understood by the kernel during load time and describe the memory layout of an executable on disk and how it should translate to memory. The program header table can be accessed by referencing the offset found in the initial ELF header member called e__phoff”</em></p>
+<pre><code>typedef struct {
+    uint32_t   p_type;       //segment type
+    Elf32_Off  p_offset;     //segment offset
+    Elf32_Addr p_vaddr;      //segment virtual address
+    Elf32_Addr p_paddr;      //segment physical address
+    uint32_t   p_filesz;     //size of segment in the file
+    uint32_t   p_memsz;      //size of segment in memory
+    uint32_t   p_flags;      //segment flags, I.E execute|read|read
+    uint32_t   p_align;      //segment alignment in memory
+  } Elf32_Phdr;
+</code></pre>
+<p>According to “Learning Linux Binary Analysis”<br>
+<em>“A section header table exists to reference the location and size of these sections and is primarily for linking and debugging purposes. Section headers are not necessary for program execution, and a program will execute just fine without having a section header table. This is because the section header table doesn’t describe the program memory layout. That is the responsibility of the program header table. The section headers are really just complimentary to the program headers. The readelf –l command will show which sections are mapped to which segments, which helps to visualize the relationship between sections and segments.”</em></p>
+<pre><code>typedef struct {
+uint32_t   sh_name;        // offset into shdr string table for shdr name
+    uint32_t   sh_type;    // shdr type I.E SHT_PROGBITS
+    uint32_t   sh_flags;   // shdr flags I.E SHT_WRITE|SHT_ALLOC
+    Elf32_Addr sh_addr;    // address of where section begins
+    Elf32_Off  sh_offset;  // offset of shdr from beginning of file
+    uint32_t   sh_size;    // size that section takes up on disk
+    uint32_t   sh_link;    // points to another section
+    uint32_t   sh_info;    // interpretation depends on section type
+uint32_t   sh_addralign;   // alignment for address of section
+uint32_t   sh_entsize;     // size of each certain entries that may be in section
+} Elf32_Shdr;
+</code></pre>
+<p>This is where our data is stored. Now, we can use some C code to access the members of these structures and print out their values. First, some setup is required:</p>
+<pre><code>#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;elf.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;sys/mman.h&gt;
+#include &lt;stdint.h&gt;
+#include &lt;sys/stat.h&gt;
+#include &lt;fcntl.h&gt;
+
+int main(int argc, char **argv) {
+   int fd, i;                      // File descriptor and index
+   uint8_t *mem;                   // Variable we will use to mmap our executable
+   struct stat st;                 // Our usual stat structure
+   char *StringTable, *interp;
+   
+   // This is where we defined our ELF, program, and section header variables
+   Elf32_Ehdr *ehdr;
+   Elf32_Phdr *phdr;
+   Elf32_Shdr *shdr;
+
+   if(argc &lt; 2) {
+      printf("Usage: %s &lt;executable&gt;\n", argv[0]);
+      exit(0);
+   }
+
+   if((fd = open(argv[1], O_RDONLY)) &lt; 0) {
+      perror("open");
+      exit(EXIT_FAILURE);
+   }
+   
+   if(fstat(fd, &amp;st) &lt; 0) {
+      perror("fstat");
+      exit(EXIT_FAILURE);
+   }
+</code></pre>
+<p>Now that we have our variables set up, we can map our executable into memory and begin to read and print our values.</p>
+<p>This is where we map our executable into memory:</p>
+<pre><code>   mem = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+   if(mem == MAP_FAILED) {
+      perror("mmap");
+      exit(EXIT_FAILURE);
+   }
+</code></pre>
+<p>The initial ELF Header starts at offset 0 of our mapped memory:</p>
+<pre><code>   ehdr = (Elf32_Ehdr *)mem;
+</code></pre>
+<p>The shdr table and phdr table offsets are given by e_shoff and e_phoff members of the Elf32_Ehdr.</p>
+<pre><code>   phdr = (Elf32_Phdr *)&amp;mem[ehdr-&gt;e_phoff];
+   shdr = (Elf32_Shdr *)&amp;mem[ehdr-&gt;e_shoff];
+</code></pre>
+<p>Check to see if the ELF magic (The first 4 bytes) match up as 0x7f E L F</p>
+<pre><code>   if(mem[0] != 0x7f &amp;&amp; strcmp(&amp;mem[1], "ELF")) {
+      fprintf(stderr, "%s is not an ELF file\n", argv[1]);
+      exit(EXIT_FAILURE);
+   }
+</code></pre>
+<p>We are only parsing executables with this code so ET_EXEC marks an executable.</p>
+<pre><code>   if(ehdr-&gt;e_type != ET_EXEC) {
+      fprintf(stderr, "%s is not an executable\n", argv[1]);
+      exit(EXIT_FAILURE);
+   }
+</code></pre>
+<p>Now that we have our program stored in mem, we can print its entry point address. Remember that the e_entry member holds the address of the entry point:</p>
+<pre><code>printf("Program Entry point: 0x%x\n", ehdr-&gt;e_entry);
+</code></pre>
+<p>Now, we have to find the string table for the section headers names. The e_shstrndx member holds this data:</p>
+<pre><code>StringTable = &amp;mem[shdr[ehdr-&gt;e_shstrndx].sh_offset];
+</code></pre>
+<p>Next, we print each section header name and address. Notice we get the index into the string table<br>
+that contains each section header name with the shdr.sh_name member</p>
+<pre><code>printf("Section header list:\n\n");
+for(i = 1; i &lt; ehdr-&gt;e_shnum; i++)
+  printf("%s: 0x%x\n", &amp;StringTable[shdr[i].sh_name], shdr[i].sh_addr);
+</code></pre>
+<p>Finally, we print out each segment name, and address. Except for PT_INTERP we print the path to the dynamic linker.</p>
+<pre><code>printf("\nProgram header list\n\n");
+for(i = 0; i &lt; ehdr-&gt;e_phnum; i++) {   
+  switch(phdr[i].p_type) {
+     case PT_LOAD:
+        /*
+         * We know that text segment starts
+         * at offset 0. And only one other
+         * possible loadable segment exists
+         * which is the data segment.
+         */
+        if(phdr[i].p_offset == 0)
+           printf("Text segment: 0x%x\n", phdr[i].p_vaddr);
+        else
+           printf("Data segment: 0x%x\n", phdr[i].p_vaddr);
+     break;
+     case PT_INTERP:
+        interp = strdup((char *)&amp;mem[phdr[i].p_offset]);
+        printf("Interpreter: %s\n", interp);
+        break;
+     case PT_NOTE:
+        printf("Note segment: 0x%x\n", phdr[i].p_vaddr);
+        break;
+     case PT_DYNAMIC:
+        printf("Dynamic segment: 0x%x\n", phdr[i].p_vaddr);
+        break;
+     case PT_PHDR:
+        printf("Phdr segment: 0x%x\n", phdr[i].p_vaddr);
+        break;
+  }
+</code></pre>
+<p>}</p>
+<p>Here is the entire program:</p>
+<pre><code>#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;elf.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;sys/mman.h&gt;
+#include &lt;stdint.h&gt;
+#include &lt;sys/stat.h&gt;
+#include &lt;fcntl.h&gt;
+
+int main(int argc, char **argv) {
+   int fd, i;
+   uint8_t *mem;
+   struct stat st;
+   char *StringTable, *interp;
+   
+   Elf32_Ehdr *ehdr;
+   Elf32_Phdr *phdr;
+   Elf32_Shdr *shdr;
+
+   if(argc &lt; 2) {
+      printf("Usage: %s &lt;executable&gt;\n", argv[0]);
+      exit(0);
+   }
+
+   if((fd = open(argv[1], O_RDONLY)) &lt; 0) {
+      perror("open");
+      exit(EXIT_FAILURE);
+   }
+   
+   if(fstat(fd, &amp;st) &lt; 0) {
+      perror("fstat");
+      exit(EXIT_FAILURE);
+   }
+   
+   mem = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+   if(mem == MAP_FAILED) {
+      perror("mmap");
+      exit(EXIT_FAILURE);
+   }
+   
+   ehdr = (Elf32_Ehdr *)mem;
+   phdr = (Elf32_Phdr *)&amp;mem[ehdr-&gt;e_phoff];
+   shdr = (Elf32_Shdr *)&amp;mem[ehdr-&gt;e_shoff];
+   
+   if(mem[0] != 0x7f &amp;&amp; strcmp(&amp;mem[1], "ELF")) {
+      fprintf(stderr, "%s is not an ELF file\n", argv[1]);
+      exit(EXIT_FAILURE);
+   }
+   
+   if(ehdr-&gt;e_type != ET_EXEC) {
+      fprintf(stderr, "%s is not an executable\n", argv[1]);
+      exit(EXIT_FAILURE);
+   }
+
+   printf("Program Entry point: 0x%x\n", ehdr-&gt;e_entry);
+   
+   StringTable = &amp;mem[shdr[ehdr-&gt;e_shstrndx].sh_offset];
+
+   printf("Section header list:\n\n");
+   for(i = 1; i &lt; ehdr-&gt;e_shnum; i++)
+      printf("%s: 0x%x\n", &amp;StringTable[shdr[i].sh_name], shdr[i].sh_addr);
+   
+   printf("\nProgram header list\n\n");
+   for(i = 0; i &lt; ehdr-&gt;e_phnum; i++) {   
+      switch(phdr[i].p_type) {
+         case PT_LOAD:
+            if (phdr[i].p_offset == 0)
+               printf("Text segment: 0x%x\n", phdr[i].p_vaddr);
+            else
+               printf("Data segment: 0x%x\n", phdr[i].p_vaddr);
+         break;
+         case PT_INTERP:
+            interp = strdup((char *)&amp;mem[phdr[i].p_offset]);
+            printf("Interpreter: %s\n", interp);
+            break;
+         case PT_NOTE:
+            printf("Note segment: 0x%x\n", phdr[i].p_vaddr);
+            break;
+         case PT_DYNAMIC:
+            printf("Dynamic segment: 0x%x\n", phdr[i].p_vaddr);
+            break;
+         case PT_PHDR:
+            printf("Phdr segment: 0x%x\n", phdr[i].p_vaddr);
+            break;
+      }
+   }
+
+   exit(0);
+}
+</code></pre>
+<h1>Conclusions</h1>
+<p>As you can see, being able to code an ELF parser gives us a lot of insight into the ELF format and how it is stored in memory. It doesn’t take that much C code to do it, either.</p>
+<p>In my next article, we will be using the ptrace syscall to print the ARM registers of a program we trace. Here is a small sample:</p>
+<pre><code>/* The parent forks a child process to be traced */
+if((pid = fork()) &lt; 0) {
+    perror("fork");
+    exit(EXIT_FAILURE);
+}
+/* Use ptrace to begin tracing the child process */
+if(pid == 0) {
+    if(ptrace(PTRACE_TRACEME, pid, NULL, NULL) &lt; 0) {
+        perror("PTRACE_TRACEME");
+        exit(EXIT_FAILURE);
+    }
+    execve(exec, args, envp);
+    exit(EXIT_FAILURE);
+}</code></pre>
+          <p><a href="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157/1</link>
+        <pubDate>Thu, 03 Aug 2017 01:44:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-3157-1</guid>
+        <source url="https://d.clarkee.co.uk/t/part-1-elf-and-the-arm-processor-writing-a-simple-arm-debugger-in-c/3157.rss">(Part 1) ELF and the ARM processor: Writing a simple ARM debugger in C</source>
+      </item>
+  </channel>
+</rss>

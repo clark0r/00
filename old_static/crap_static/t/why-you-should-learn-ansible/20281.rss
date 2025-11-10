@@ -1,0 +1,586 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Why you should learn Ansible</title>
+    <link>https://0x00sec.org/t/why-you-should-learn-ansible/20281</link>
+    <description># Introduction 
+
+
+Hi everyone ! It&#39;s been a while since I have write something here.
+I think that my last post was in 2017 !
+
+So today, I wanted to write you a little article about **Ansible**
+
+**Ansible** is one of my favorite tool, I use it for automation in my current job but you can use **Ansible**  to automate a lot of things !
+
+![image|320x240](upload://y1LziWEYtBwJqXQczGrPzNodjjG.jpeg) 
+
+Here are some example of things you can automate with **Ansible** : 
+
+- Automate a new installation of Arch on your new laptop
+- Easily deploy a Web server on the cloud
+- Create reusable server for hacking
+- Create a Red teams infrastructure
+- etc ..
+
+# Install Ansible
+
+Ansible is a tool written in Python, to install ansible you will need to install Python and pip
+
+Debian : 
+`sudo apt install python3 python3-pip`
+
+Or Arch :
+`pacman -S python3 python3-pip` 
+
+If you have python and pip install you can install **Ansible** with the following command : 
+
+` pip3 install --user ansible`
+
+When the installation is done, you can test that ansible is correctly installed with the following commands : 
+
+```bash
+ansible -m ping 127.0.0.1
+```
+
+You should have the following output : 
+
+```bash
+ansible -m ping 127.0.0.1
+[WARNING]: No inventory was parsed, only implicit localhost is available
+127.0.0.1 | SUCCESS =&gt; {
+    &quot;changed&quot;: false,
+    &quot;ping&quot;: &quot;pong&quot;
+}
+```
+
+Great ! You run your first **Ansible** command.
+
+`ansible -m ping 127.0.0.1` will just do a ping to 127.0.0.1 
+
+*But I can run ping 127.0.0.1 to do that !* 
+
+Well, it&#39;s time to run more useful module
+
+# Ansible ad-hoc command
+
+**Ansible** have two &quot;mode&quot; : 
+- ad-hoc command
+- playbook
+
+**Ansible ad-hoc** command can run single module on multiple host
+
+**Ansible playbooks** are yaml files with multiple tasks that should be executed on a given host or group of hosts
+
+Let&#39;s look at how ansible ad-hoc command work first
+
+### Creating an Inventory file
+
+Let&#39;s pretend we want to install an nginx server on 4 Raspberry pi in our network : 
+
+We have 4 Raspberry pi 
+```
+raspberry1: 10.0.0.1
+raspberry2: 10.0.0.2
+raspberry3: 10.0.0.3
+raspberry4: 10.0.0.4
+```
+
+The user to log into our raspberry pi is `pi` and we have our ssh key in the authorize_hosts
+
+You can use : `ssh-copy-id -i ~/.ssh/id_rsa.pub pi@10.0.0.1` to copy your key in the authorized_keys
+
+So let&#39;s create a new file named inventory.ini with the following content : 
+
+```ini
+[Raspberry] # This line is the name we give to our group of host
+10.0.0.1 # This is one of our Raspberry Host ip
+10.0.0.2
+10.0.0.3
+10.0.0.4
+
+[Raspberry:vars] # We can assign variable to ansible
+ansible_user=pi # Here the username to connect to our raspberry
+```
+
+*PS: Inventory file can be written in .ini or .yml, to keep this tutorial simple I have decided to write the inventory in .ini*
+
+
+So now that we have our inventory file we can try to run the last command we used against our `Raspberry` group
+
+```bash
+ansible -m ping -i inventory.ini Raspberry
+```
+
+you will have the following output : 
+
+```
+ ansible -m ping -i inventory.ini Raspberry
+10.0.0.1 | SUCCESS =&gt; {
+  &quot;ansible_facts&quot;: {
+        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;
+    },
+    &quot;changed&quot;: false,
+    &quot;ping&quot;: &quot;pong&quot;
+}
+10.0.0.2 | SUCCESS =&gt;  {
+  &quot;ansible_facts&quot;: {
+        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;
+    },
+    &quot;changed&quot;: false,
+    &quot;ping&quot;: &quot;pong&quot;
+}
+10.0.0.3 | SUCCESS =&gt; {
+  &quot;ansible_facts&quot;: {
+        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;
+    },
+    &quot;changed&quot;: false,
+    &quot;ping&quot;: &quot;pong&quot;
+}
+10.0.0.4 | SUCCESS =&gt;  {
+  &quot;ansible_facts&quot;: {
+        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;
+    },
+    &quot;changed&quot;: false,
+    &quot;ping&quot;: &quot;pong&quot;
+}
+```
+
+Now, we know that we can reach all 4 Raspberry pi, let&#39;s install nginx : 
+
+`ansible -m apt -a &quot;name=nginx state=present&quot; -i inventory.ini Raspberry --become`
+
+So here we use the apt module : https://docs.ansible.com/ansible/latest/modules/apt_module.html 
+
+we give extra args to apt 
+
+**name**: is the name of the package we want to install here: *nginx*
+**state**: is the state of the package, here we want to have nginx present on our raspberry
+**--become**: is use to escalate to root to install nginx
+
+When you run the command for the first time, the output will be 
+
+```
+192.168.1.34 | CHANGED =&gt; {
+  ...
+}
+```
+
+If you run the command multiple time, the output will always be 
+
+```
+192.168.1.34 | SUCCESS =&gt; {
+    &quot;cache_update_time&quot;: 1586104797,
+    &quot;cache_updated&quot;: false,
+    &quot;changed&quot;: false
+}
+```
+
+Because nginx is already install, ansible will not try to reinstall nginx if the package is in the state you set before 
+
+if you want to uninstall nginx just replace present by absent.
+
+# Ansible playbook
+
+Now that we have run some easy command to install nginx on our raspberry let&#39;s make our first playbook
+
+An Ansible playbook is a set of action use to run automate task, you can use all the module you used before in the ad-hoc command
+
+let&#39;s make a new directory 
+
+```sh
+mkdir my-playbook
+```
+
+Create a new inventory file inside your new folder with the following content : 
+
+```
+[localhost]
+127.0.0.1
+```
+
+Now, let&#39;s write an ansible playbook to install useful tools for CTF or HackTheBox machine 
+
+create a new file : `install-hacker-tools.yml`
+
+```yaml
+---
+- hosts: localhost 
+  connection: local
+  tasks:
+    - name: Install hacker tools # Here is the name of our task 
+      apt: # We use Apt module here 
+        name: &quot;{{ item }}&quot; # Here we want to loop on multiple package
+        state: present # We want all our package present on our system
+      with_items: # Here is the block use to run loops
+        - nmap
+        - golang
+        - git
+    - name: Install Gobuster 
+      shell: go get github.com/OJ/gobuster # Here we use shell module to run inline command
+```
+
+This file will install nmap, golang, git and gobuster on your local machine
+
+you can run this playbook with : 
+
+`ansible-playbook install-hacker-tools.yml -i inventory.ini -b`
+
+Now all the tools are installed on your machine 
+
+With some modification on the playbook and on your inventory, you can run this playbook on a group of hosts 
+
+If we have the following inventory : 
+
+```
+[Raspberry]
+10.0.0.1
+10.0.0.2
+
+[WebServer]
+10.20.40.1
+10.20.40.5
+```
+And the following playbook 
+
+```yaml
+---
+- hosts: all
+  tasks:
+    - name: Install hacker tools
+      apt:
+        name: &quot;{{ item }}&quot;
+        state: present
+      with_items:
+        - nmap
+        - golang
+        - git
+    - name: Install Gobuster
+      shell: go get github.com/OJ/gobuster
+```
+We can run the playbook only on our Raspberry group with the following command: 
+
+`ansible-playbook install-hacker-tools.yml -i inventory.ini -b --limit Raspberry`
+
+Now you can play a little bit with ansible and automate cool things ! 
+
+If you have question about ansible tweet me at **L3akM3_0d4y** !</description>
+    
+    <lastBuildDate>Sat, 18 Apr 2020 17:47:09 +0000</lastBuildDate>
+    <category>Linux</category>
+    <atom:link href="https://0x00sec.org/t/why-you-should-learn-ansible/20281.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Why you should learn Ansible</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 121 days. New replies are no longer allowed.</p>
+          <p><a href="https://0x00sec.org/t/why-you-should-learn-ansible/20281/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/why-you-should-learn-ansible/20281/9</link>
+        <pubDate>Wed, 05 Aug 2020 09:29:08 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20281-9</guid>
+        <source url="https://0x00sec.org/t/why-you-should-learn-ansible/20281.rss">Why you should learn Ansible</source>
+      </item>
+      <item>
+        <title>Why you should learn Ansible</title>
+        <dc:creator><![CDATA[tbboy2008]]></dc:creator>
+        <description><![CDATA[
+            <p>That was a good introduction, thank you  .</p>
+          <p><a href="https://0x00sec.org/t/why-you-should-learn-ansible/20281/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/why-you-should-learn-ansible/20281/8</link>
+        <pubDate>Sat, 18 Apr 2020 17:47:09 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20281-8</guid>
+        <source url="https://0x00sec.org/t/why-you-should-learn-ansible/20281.rss">Why you should learn Ansible</source>
+      </item>
+      <item>
+        <title>Why you should learn Ansible</title>
+        <dc:creator><![CDATA[notKakarot]]></dc:creator>
+        <description><![CDATA[
+            <p>I have heard of Ansible here and there. I’m glad I came across this article.<br>
+Could you share the config files which you’ve actively used on your server in DigitalOcean?</p>
+          <p><a href="https://0x00sec.org/t/why-you-should-learn-ansible/20281/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/why-you-should-learn-ansible/20281/7</link>
+        <pubDate>Tue, 14 Apr 2020 03:51:25 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20281-7</guid>
+        <source url="https://0x00sec.org/t/why-you-should-learn-ansible/20281.rss">Why you should learn Ansible</source>
+      </item>
+      <item>
+        <title>Why you should learn Ansible</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>This is really cool - I’m actually working on a Packer image right now which does something very similar.</p>
+<p>I just use the shell-inline feature (so its basically just a bash script) and I find that works pretty well for me in terms of speed of builds, but you do miss that modularity that you do get with ansible.</p>
+<p>We should work together on my project, I call it “Axiom” <img src="https://0x00sec.org/images/emoji/twitter/stuck_out_tongue.png?v=9" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:"> Hit me up on Discord.</p>
+          <p><a href="https://0x00sec.org/t/why-you-should-learn-ansible/20281/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/why-you-should-learn-ansible/20281/6</link>
+        <pubDate>Tue, 07 Apr 2020 11:56:58 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20281-6</guid>
+        <source url="https://0x00sec.org/t/why-you-should-learn-ansible/20281.rss">Why you should learn Ansible</source>
+      </item>
+      <item>
+        <title>Why you should learn Ansible</title>
+        <dc:creator><![CDATA[L3akM3-0day]]></dc:creator>
+        <description><![CDATA[
+            <p>No problem ! I am here to share <img src="https://0x00sec.org/images/emoji/twitter/grin.png?v=9" title=":grin:" class="emoji" alt=":grin:"></p>
+          <p><a href="https://0x00sec.org/t/why-you-should-learn-ansible/20281/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/why-you-should-learn-ansible/20281/5</link>
+        <pubDate>Mon, 06 Apr 2020 13:20:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20281-5</guid>
+        <source url="https://0x00sec.org/t/why-you-should-learn-ansible/20281.rss">Why you should learn Ansible</source>
+      </item>
+      <item>
+        <title>Why you should learn Ansible</title>
+        <dc:creator><![CDATA[dd-c-bear]]></dc:creator>
+        <description><![CDATA[
+            <p>wow<br>
+it’s so cool ,thank you to share this useful things.</p>
+          <p><a href="https://0x00sec.org/t/why-you-should-learn-ansible/20281/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/why-you-should-learn-ansible/20281/4</link>
+        <pubDate>Mon, 06 Apr 2020 13:13:48 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20281-4</guid>
+        <source url="https://0x00sec.org/t/why-you-should-learn-ansible/20281.rss">Why you should learn Ansible</source>
+      </item>
+      <item>
+        <title>Why you should learn Ansible</title>
+        <dc:creator><![CDATA[L3akM3-0day]]></dc:creator>
+        <description><![CDATA[
+            <p>Everything I can do with Ansible can be done with a simple python script or bash script.</p>
+<p>If there is one thing I love about Ansible is it’s simplicity and the fact that you can write roles for different service.</p>
+<p>If you need to automate the installation of a Webserver and a Database</p>
+<p>you just need to write a playbooks like this :</p>
+<pre><code class="lang-auto">- hosts: all
+  roles:
+    - webserver
+    - Database
+</code></pre>
+<p>It’s easy to write and you can clearly see what this playbook will do.</p>
+<p>It will Install a Webserver and Database role on all hosts specified in an inventory.</p>
+<p>Another cool thing about Ansible is that you can run Ansible 1, 2 or 100 time and the result will always be the same.</p>
+<p>Of course you can do that in bash but you need a little bit more work.</p>
+<p>I think Ansible is somethings useful to learn for hacker, sysadmin and devs</p>
+<p>I like to use Ansible and Terraform to deploy quick infrastructure on Digital Ocean</p>
+<p>If I need to test a new Web Stack, I Can write a playbook to deploy the server on my Digital Ocean account, do all the test I need to do and stop it whenever I want so I can save a little bit of money when I don’t use the server</p>
+<p>Hope I was clear ! <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=9" title=":slight_smile:" class="emoji" alt=":slight_smile:"></p>
+          <p><a href="https://0x00sec.org/t/why-you-should-learn-ansible/20281/3">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/why-you-should-learn-ansible/20281/3</link>
+        <pubDate>Sun, 05 Apr 2020 22:41:34 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20281-3</guid>
+        <source url="https://0x00sec.org/t/why-you-should-learn-ansible/20281.rss">Why you should learn Ansible</source>
+      </item>
+      <item>
+        <title>Why you should learn Ansible</title>
+        <dc:creator><![CDATA[Deltaeus]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi L3akM3-0day,<br>
+That’s a good introduction to how to use ansible.<br>
+What would you say to people who might read this and think “yeah, I can do all of that with a shell script once ssh is properly set up”?<br>
+Is there a good use case where you look at it and say “that is something I’d like to do, and if I don’t use ansible I’ll have to do a lot more work”?<br>
+Cheers</p>
+          <p><a href="https://0x00sec.org/t/why-you-should-learn-ansible/20281/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/why-you-should-learn-ansible/20281/2</link>
+        <pubDate>Sun, 05 Apr 2020 22:18:15 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20281-2</guid>
+        <source url="https://0x00sec.org/t/why-you-should-learn-ansible/20281.rss">Why you should learn Ansible</source>
+      </item>
+      <item>
+        <title>Why you should learn Ansible</title>
+        <dc:creator><![CDATA[L3akM3-0day]]></dc:creator>
+        <description><![CDATA[
+            <h1>Introduction</h1>
+<p>Hi everyone ! It’s been a while since I have write something here.<br>
+I think that my last post was in 2017 !</p>
+<p>So today, I wanted to write you a little article about <strong>Ansible</strong></p>
+<p><strong>Ansible</strong> is one of my favorite tool, I use it for automation in my current job but you can use <strong>Ansible</strong>  to automate a lot of things !</p>
+<p><span alt="image" data-base62-sha1="y1LziWEYtBwJqXQczGrPzNodjjG" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+<p>Here are some example of things you can automate with <strong>Ansible</strong> :</p>
+<ul>
+<li>Automate a new installation of Arch on your new laptop</li>
+<li>Easily deploy a Web server on the cloud</li>
+<li>Create reusable server for hacking</li>
+<li>Create a Red teams infrastructure</li>
+<li>etc …</li>
+</ul>
+<h1>Install Ansible</h1>
+<p>Ansible is a tool written in Python, to install ansible you will need to install Python and pip</p>
+<p>Debian :<br>
+<code>sudo apt install python3 python3-pip</code></p>
+<p>Or Arch :<br>
+<code>pacman -S python3 python3-pip</code></p>
+<p>If you have python and pip install you can install <strong>Ansible</strong> with the following command :</p>
+<p><code> pip3 install --user ansible</code></p>
+<p>When the installation is done, you can test that ansible is correctly installed with the following commands :</p>
+<pre><code class="lang-bash">ansible -m ping 127.0.0.1
+</code></pre>
+<p>You should have the following output :</p>
+<pre><code class="lang-bash">ansible -m ping 127.0.0.1
+[WARNING]: No inventory was parsed, only implicit localhost is available
+127.0.0.1 | SUCCESS =&gt; {
+    "changed": false,
+    "ping": "pong"
+}
+</code></pre>
+<p>Great ! You run your first <strong>Ansible</strong> command.</p>
+<p><code>ansible -m ping 127.0.0.1</code> will just do a ping to 127.0.0.1</p>
+<p><em>But I can run ping 127.0.0.1 to do that !</em></p>
+<p>Well, it’s time to run more useful module</p>
+<h1>Ansible ad-hoc command</h1>
+<p><strong>Ansible</strong> have two “mode” :</p>
+<ul>
+<li>ad-hoc command</li>
+<li>playbook</li>
+</ul>
+<p><strong>Ansible ad-hoc</strong> command can run single module on multiple host</p>
+<p><strong>Ansible playbooks</strong> are yaml files with multiple tasks that should be executed on a given host or group of hosts</p>
+<p>Let’s look at how ansible ad-hoc command work first</p>
+<h3>Creating an Inventory file</h3>
+<p>Let’s pretend we want to install an nginx server on 4 Raspberry pi in our network :</p>
+<p>We have 4 Raspberry pi</p>
+<pre><code class="lang-auto">raspberry1: 10.0.0.1
+raspberry2: 10.0.0.2
+raspberry3: 10.0.0.3
+raspberry4: 10.0.0.4
+</code></pre>
+<p>The user to log into our raspberry pi is <code>pi</code> and we have our ssh key in the authorize_hosts</p>
+<p>You can use : <code>ssh-copy-id -i ~/.ssh/id_rsa.pub pi@10.0.0.1</code> to copy your key in the authorized_keys</p>
+<p>So let’s create a new file named inventory.ini with the following content :</p>
+<pre><code class="lang-ini">[Raspberry] # This line is the name we give to our group of host
+10.0.0.1 # This is one of our Raspberry Host ip
+10.0.0.2
+10.0.0.3
+10.0.0.4
+
+[Raspberry:vars] # We can assign variable to ansible
+ansible_user=pi # Here the username to connect to our raspberry
+</code></pre>
+<p><em>PS: Inventory file can be written in .ini or .yml, to keep this tutorial simple I have decided to write the inventory in .ini</em></p>
+<p>So now that we have our inventory file we can try to run the last command we used against our <code>Raspberry</code> group</p>
+<pre><code class="lang-bash">ansible -m ping -i inventory.ini Raspberry
+</code></pre>
+<p>you will have the following output :</p>
+<pre><code class="lang-auto"> ansible -m ping -i inventory.ini Raspberry
+10.0.0.1 | SUCCESS =&gt; {
+  "ansible_facts": {
+        "discovered_interpreter_python": "/usr/bin/python"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+10.0.0.2 | SUCCESS =&gt;  {
+  "ansible_facts": {
+        "discovered_interpreter_python": "/usr/bin/python"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+10.0.0.3 | SUCCESS =&gt; {
+  "ansible_facts": {
+        "discovered_interpreter_python": "/usr/bin/python"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+10.0.0.4 | SUCCESS =&gt;  {
+  "ansible_facts": {
+        "discovered_interpreter_python": "/usr/bin/python"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+</code></pre>
+<p>Now, we know that we can reach all 4 Raspberry pi, let’s install nginx :</p>
+<p><code>ansible -m apt -a "name=nginx state=present" -i inventory.ini Raspberry --become</code></p>
+<p>So here we use the apt module : <a href="https://docs.ansible.com/ansible/latest/modules/apt_module.html" rel="nofollow noopener">https://docs.ansible.com/ansible/latest/modules/apt_module.html</a></p>
+<p>we give extra args to apt</p>
+<p><strong>name</strong>: is the name of the package we want to install here: <em>nginx</em><br>
+<strong>state</strong>: is the state of the package, here we want to have nginx present on our raspberry<br>
+<strong>–become</strong>: is use to escalate to root to install nginx</p>
+<p>When you run the command for the first time, the output will be</p>
+<pre><code class="lang-auto">192.168.1.34 | CHANGED =&gt; {
+  ...
+}
+</code></pre>
+<p>If you run the command multiple time, the output will always be</p>
+<pre><code class="lang-auto">192.168.1.34 | SUCCESS =&gt; {
+    "cache_update_time": 1586104797,
+    "cache_updated": false,
+    "changed": false
+}
+</code></pre>
+<p>Because nginx is already install, ansible will not try to reinstall nginx if the package is in the state you set before</p>
+<p>if you want to uninstall nginx just replace present by absent.</p>
+<h1>Ansible playbook</h1>
+<p>Now that we have run some easy command to install nginx on our raspberry let’s make our first playbook</p>
+<p>An Ansible playbook is a set of action use to run automate task, you can use all the module you used before in the ad-hoc command</p>
+<p>let’s make a new directory</p>
+<pre><code class="lang-auto">mkdir my-playbook
+</code></pre>
+<p>Create a new inventory file inside your new folder with the following content :</p>
+<pre><code class="lang-auto">[localhost]
+127.0.0.1
+</code></pre>
+<p>Now, let’s write an ansible playbook to install useful tools for CTF or HackTheBox machine</p>
+<p>create a new file : <code>install-hacker-tools.yml</code></p>
+<pre><code class="lang-auto">---
+- hosts: localhost 
+  connection: local
+  tasks:
+    - name: Install hacker tools # Here is the name of our task 
+      apt: # We use Apt module here 
+        name: "{{ item }}" # Here we want to loop on multiple package
+        state: present # We want all our package present on our system
+      with_items: # Here is the block use to run loops
+        - nmap
+        - golang
+        - git
+    - name: Install Gobuster 
+      shell: go get github.com/OJ/gobuster # Here we use shell module to run inline command
+</code></pre>
+<p>This file will install nmap, golang, git and gobuster on your local machine</p>
+<p>you can run this playbook with :</p>
+<p><code>ansible-playbook install-hacker-tools.yml -i inventory.ini -b</code></p>
+<p>Now all the tools are installed on your machine</p>
+<p>With some modification on the playbook and on your inventory, you can run this playbook on a group of hosts</p>
+<p>If we have the following inventory :</p>
+<pre><code class="lang-auto">[Raspberry]
+10.0.0.1
+10.0.0.2
+
+[WebServer]
+10.20.40.1
+10.20.40.5
+</code></pre>
+<p>And the following playbook</p>
+<pre><code class="lang-auto">---
+- hosts: all
+  tasks:
+    - name: Install hacker tools
+      apt:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - nmap
+        - golang
+        - git
+    - name: Install Gobuster
+      shell: go get github.com/OJ/gobuster
+</code></pre>
+<p>We can run the playbook only on our Raspberry group with the following command:</p>
+<p><code>ansible-playbook install-hacker-tools.yml -i inventory.ini -b --limit Raspberry</code></p>
+<p>Now you can play a little bit with ansible and automate cool things !</p>
+<p>If you have question about ansible tweet me at <strong>L3akM3_0d4y</strong> !</p>
+          <p><a href="https://0x00sec.org/t/why-you-should-learn-ansible/20281/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/why-you-should-learn-ansible/20281/1</link>
+        <pubDate>Sun, 05 Apr 2020 17:29:05 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-20281-1</guid>
+        <source url="https://0x00sec.org/t/why-you-should-learn-ansible/20281.rss">Why you should learn Ansible</source>
+      </item>
+  </channel>
+</rss>

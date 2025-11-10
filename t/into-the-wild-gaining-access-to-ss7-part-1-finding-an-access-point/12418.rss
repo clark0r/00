@@ -1,0 +1,641 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+    <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418</link>
+    <description>&lt;h2&gt;„Writing a &#39;How to&#39; [sic] for the first time is a lot like having sex for the first time. You&#39;re excited but you don&#39;t really know what the hell you&#39;re doing. And some way, one way or another, it&#39;s over too fast.“ - Yuri Orlov &lt;/h2&gt;
+&lt;br&gt;&lt;br&gt;&lt;br&gt;
+Hello 0x00sec,
+
+Today I gonna try to write my very first „How To“, so… Never done that, never been there, show mercy!
+
+I decided to do that because I couldn’t find anything comparable on the internet so far and I thought maybe someone out there might be interested as well and might find some help in it to reduce his/her efforts by many hours.
+
+This will likely become a series of two or three „How To“-articles, which I hope to write in the coming weeks and which will cover basically my own discoveries and insights.
+&lt;br&gt;&lt;br&gt;
+**Preamble:**
+
+There are only two ways to practice working in and with SS7:
+
+1. You work for a telco company (thanks, I already have job)
+2. You go out and try out yourself in the wild (not recommended of course)
+
+So, since most of us are left with only **Option 2**, one has to probably read a lot and go for a path shattered with trial-and-error, which is what we’re going to do now. (Isn’t hacking always like that?)
+
+**_Since hacking/pentesting without consent is illegal, this whole article and the upcoming ones are written from a purely educational perspective and for that use only. What ever you do with the knowledge is your own problem and I’m neither responsible nor legally liable for anything you might do and/or destroy._**
+
+Said that, let’s start right away:
+
+&lt;h2&gt;0. Tools &amp; Services used today&lt;/h2&gt;
+
+    1. Browser of choice
+    2. nmap
+    3. Burp Community Edition
+    4. Website - http://ipv4info.com
+
+Part 1 might seem a bit trivial, however, we need to get that done first to do the more interesting stuff later on.
+
+&lt;h1&gt;1. What is SS7&lt;/h1&gt;
+
+I will keep that paragraph rather short as in terms of definitions there are a lot of resources online. 
+
+**So, what is SS7?**
+[SS7](https://en.wikipedia.org/wiki/Signalling_System_No._7) is a rather complex topic with (comparably) very little resources available that offer in-depth insights or knowledge. On top of that, there is literally no information about it from a security/pentesting perspective - which makes you wonder if that is on purpose.
+
+Anyway, what is it now?
+
+Maybe it helps you to imagine it the following way (who loved Super Mario back then, will inevitably think of it now :grinning: ):
+
+&lt;ul&gt;
+&lt;li&gt;Unless the regular internet, SS7 is a closed shop with limited access. It is like a network of tubes under earth, all interconnected. Above earth there are entry points/those vertical tubes to jump in.&lt;/li&gt;
+&lt;br&gt;
+&lt;li&gt;Each entry point has a distinct identifier, called &lt;b&gt;ISPC&lt;/b&gt; - &lt;b&gt;I&lt;/b&gt;nternational &lt;b&gt;S&lt;/b&gt;ignaling &lt;b&gt;P&lt;/b&gt;oint &lt;b&gt;C&lt;/b&gt;ode&lt;/li&gt;
+&lt;br&gt;
+&lt;li&gt;These entry points are managed by telco companies and we are now going to search for them to jump in and dive deep.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;br&gt;&lt;br&gt;
+
+The following image gives an idea about the basic structure of SS7, its different protocols and the connection between IP protocols (light blue) and the PSTN protocols (Public Switched Telephone Network - dark blue).
+
+![image|530x281](upload://3gZie5rdVAoHovY7cpADaRfIa7k.jpeg) 
+_I didn&#39;t get any money from Cisco for advertising them here._
+
+&lt;br&gt;&lt;br&gt;
+&lt;ul&gt;
+&lt;b&gt;Side note:&lt;/b&gt;&lt;br&gt;
+When I first started researching SS7 I found some scanners, like *sctpcanner* and the like which are designed to discover open SCTP ports (which is like finding the root password in an open ftp). However, I never came across any open port and I scanned a lot of hosts. This is why we&#39;re now going the hard way.
+&lt;/ul&gt;
+&lt;br&gt;&lt;br&gt;
+
+&lt;h1&gt;2. Setting a goal&lt;/h1&gt;
+Making use of SS7 usually comes with a grain of salt. If you wanted to set up a telco company you&#39;d probably not read this. Said that, in most cases your reasons might be a bit shady, such as intercepting calls, SMS or location tracking.
+&lt;br&gt;&lt;br&gt;
+Which protocol (and later on which software) you use is very dependent on what you want to achieve, which makes answering this question the first step:
+&lt;br&gt;&lt;br&gt;
+&lt;ul&gt;&lt;b&gt;Define the goal: What do you want to do/achieve?&lt;/b&gt;&lt;/ul&gt;
+
+In our case, let&#39;s take the following fictional story: 
+
+We got betrayed by a person who we thought would be a good friend and who owes us a lot of money. Since he disappeared there is no way for us to get a hold on him. Maybe we just want to scare him a bit by letting him know that wherever he is we know where he is. Make him feel a bit paranoid maybe.
+
+&lt;ul&gt;&lt;b&gt;Story : ✔︎&lt;/ul&gt;&lt;/b&gt;
+
+
+_„ So, how could SS7 help him with that?“_, you might wonder. After doing some research we find out that mobile phone tracking is possible through SS7, using the [**_MAP - Mobile Application Part_**](https://en.wikipedia.org/wiki/Mobile_Application_Part), one of the essential protocols of SS7 (as seen in the image above).  It&#39;s basically the protocol that enables mobile telephony.
+
+We might read that when working with **Wireshark** and **MAP** one could read a lot of information: in which country the subscriber is, what area and what cell tower he is connected to, when we fire off the command. And all that with a phone number. In most countries, especially in metropolitan areas, where there are a lot of cell towers, they give a very good indication about the location of the phone. Cell towers all have a unique ID, called **CellID**.
+
+Wireshark is even able to give a link to OpenStreetMaps, marking the CellID&#39;s location.
+
+![image|690x265](upload://th4YFONFrWEiAxMrK03bcDYQLuj.jpeg) 
+_Credits for this screenshot to [Tobias Engel](https://twitter.com/2b_as?ref_src=twsrc%5Egoogle%7Ctwcamp%5Eserp%7Ctwgr%5Eauthor), Chaos Computer Club, Germany._
+
+To learn a bit more about Wireshark&#39;s SS7 capabilities, see this pdf from a Wireshark employee [here.](https://sharkfestus.wireshark.org/sharkfest.08/T1-12_Tuexen_SCTP_SIGTRAN%20and%20SS7.pdf)
+
+Check out this website [https://www.opencellid.org](https://www.opencellid.org/) to get an idea of how many cell towers are around you!
+&lt;br&gt;
+&lt;ul&gt;&lt;b&gt;Goal set: ✔︎
+&lt;br&gt;
+(Somehow) getting access to SS7 to (somehow) use MAP.&lt;/ul&gt;&lt;/b&gt;
+&lt;br&gt;
+
+Right now we don’t really have a clue what all that is about. All we know is that we somehow need to figure out how to get that done. Fair enough.
+
+After researching a bit further, we come to the conclusion that SS7 is a globally interconnected net. Makes sense. Wherever on earth you are, most likely you can call someone on any place in the world (except maybe the poles). 
+
+    And that’s the beauty of SS7! 
+    Why?
+    Because we can choose the access point ourselves.
+
+Now let&#39;s imagine SS7 is a treasure that is totally locked down and chained and we obviously do not have the key for the lock.
+
+    &quot;Every chain is only as strong as its weakest link&quot;.
+
+So, obviously we’re going to look for a weak link. Speaking the language of communication networks, what would a weak link be?
+
+    A poorly configured server/router that allows us to get access to SS7.
+
+So, going by the Salami-tactic, we choose „Finding a weak link“ to be our first step on reaching our goal.
+
+How do we find such a weak link?
+
+The following _chain_ of questions and answers will lead us to potential assessment targets:
+
+    Q: What is a badly configured server/router?
+    A: One that offers a lot of attack surface.
+
+    Q: Why would anyone configure it that way?
+    A: By error or because of lacking knowledge - or both.
+
+    Q: From a global perspective, where would the possibility 
+       be the highest to find such?
+    A: In places where there is bad education and little money
+       (to pay for better educated staff).
+
+    Q: Where do we find them?
+    A: In poor countries.
+
+    Q: What’s the bonus?
+    A: No one cares about a small telco company from a poor country, 
+       so if we’d really be that sick and try to hack… eh pentest it - chances 
+       are little that anything would happen even if we’d mess it up. 
+       (From a purely professional perspective! 
+       That’s not necessarily my „emotional“ point of view!)
+
+
+By answering the questions, we now have a more specified goal.
+
+    Finding a poorly configured server in a poor country with access to SS7.
+
+First, we check out a list of the poorest countries in the world. Second, we choose a few and check if they have access to SS7. (Btw: you’d be surprised how many international telco companies are active e.g. in Africa, such as Vodafone or huge Indian ones)
+
+The following .pdf might help us figuring out if there are entry points in the respective country and which company is managing each of the entry points:
+
+https://www.itu.int/dms_pub/itu-t/opb/sp/T-SP-Q.708B-2012-PDF-E.pdf
+
+Although the document is 7 years old, most of the telco companies listed there still do exist.
+
+After we’ve checked if these companies still exist we choose our assessment targets.
+
+Now we need to find out the servers run by the respective company. One website that has proven valuable for this task is:
+
+http://ipv4info.com/
+
+At the upper right corner you can simply search for IPs or in our case keywords (e.g. company names) and the site prints out a table with all entries matching your keywords.
+
+This page not only allows for various kinds of lookups but gives many additional information about the blocks in a very structured way. The page looks a bit old fashioned but provides a lot of valuable information, as you can see in this example: 
+
+![image|482x109](upload://j71U3wX1fZY3sVPIhh9dU8CJhEW.png) 
+
+Although the „description“ is not mandatory, you often find information that might help you.
+&lt;br&gt;&lt;br&gt;
+&lt;h2&gt;3. Let’s go!&lt;/h2&gt;
+
+Now, since we did a bit of research let’s go and begin the real (hard) work.
+
+From here, we start like we always do and go for **nmap** to see how „open“ the network is.
+
+Depending on the size of the telcos there will be many, many hosts to scan. And that is where a quote comes to my mind that roughly goes like:
+
+    &quot;In SS7 it is less about security. It is more about finding the access.“ 
+    - by unknown.
+
+This is where the above mentioned additional information from http://ipv4info.com/ comes in handy and might shorten that period of scanning as you might find some blocks giving hints on the telco infrastructure etc.
+
+**Results:**
+After doing some trivial scanning we found two blocks (512 hosts) that are quite interesting as they offer a very solid (or not so solid?) attack surface: 
+
+* 512 hosts overall
+* 60 hosts with at least one open port
+* 274 open ports overall
+
+***And that’s TCP only!***
+
+On our first try to catch a glimps on the hosts we do a very rough nmap scan:
+
+    nmap XXX.XXX.XXX.0/24 -Pn
+
+We&#39;re not switching some -T4 or -T5 as we have seen before that shortening the interval might falsify the results (probably due to some firewall):
+
+![image|500x330](upload://eDLixJ0qTUQqDYsf1Uo0jxIWEOx.png) 
+
+Besides many http ports we find several open telnet ports. Testing those we get to some telnet logins for Huawei, ZTE routers and alike, but when we google them they seem to be more or less small scale office routers. Nothing of interest for now.
+
+![image|690x130](upload://jOVDavBSBsdK0OoDVwxZ1Oujsfc.png) 
+
+So, having open ports and hosts is good. However, we’re not looking for any server but **the one**.
+
+When scrolling through the nmap results, we see a lot of open „port 80“ so obviously we want to know what’s on there.
+
+Besides the website of the respective telco company we find again some login pages for different routers and some for web apps. On each checking the code doesn&#39;t reveal anything promising.
+
+Before burning our fingers on those logins, let’s do some more nmap scanning to find out the versions and OS of the (at a first glance) interesting hosts.
+
+After doing a lot of scanning, we take a look on the results.
+
+What immediately pops in our eye is a host running on Cisco IOS with 5 open ports, whereas we don’t see Cisco IOS on any other host. Most are run on VM with RHEL or some show [qemu user mode emulation](https://en.wikipedia.org/wiki/QEMU).
+
+Since Cisco is world leader in the router market let’s take a closer look:
+
+![image|482x172](upload://dvOF1CGBPG3fTa8M7DCYvmWyiLB.png) 
+
+Port 80 open, four other ports as well - 2001,4001, 6001, 9001 - with unknown services and versions. So let’s check that one out.
+
+When trying with a browser, a simple user/password prompt pops up. No greetings, information, no nothing.
+
+To get a human-readable and fully featured response on our GET request, _let’s Burp it up_.
+
+![image|373x221](upload://4uDjIgFRQtsseF9tn4E5e96EEdU.png) 
+
+**WWW-Authenticate: Basic realm=„level_15_access“.** 
+
+Doesn’t sound too bad, does it? Without knowing anything specific, let’s google the &quot;basic realm level 15 access&quot; and shortly after, we find out that „Level 15“ is the highest access level on any Cisco product.
+
+Alright buddy, now we&#39;re talking.
+
+Next, we need to find out what these four other ports are for since we can’t get no information from nmap.
+
+Using any other scanner doesn’t shed a light on these ports. They are shown up as open but without any indication about what they’re used for. Also, the X001 four times seems to be configured manually so these ports are there for purpose.
+
+Based on the open telnet ports on several other servers, we decide to give it a try and telnet those ports.
+
+And…. What’s that?
+
+![image|690x281](upload://4QEUkFggJtmezMuGU6ehSaonvNr.png) 
+
+
+That doesn’t give much information on the first sight, plus it sounds a bit scary. On all ports we&#39;re greeted with the same welcome screen.
+
+Under the red edited block there was the name of the telco and the city where the device is located. All that was known. But what is ITP1? No clue. Let’s ask Google.
+
+    &quot;Cisco&quot; &quot;ITP1&quot;
+
+And of course, Google knows what it is: 
+
+![image|690x204](upload://wP10xJyFOLsTe38l00PhehpnTgQ.png) 
+
+&lt;br&gt;
+&lt;h2&gt;Congrats, we just found our SS7 access point.&lt;/h2&gt;
+&lt;br&gt;&lt;br&gt;
+I hope someone of you might find it useful. I already did some more than what&#39;s written here but so far no real results to present. I&#39;m hoping to make progress in the coming days and weeks so it will be worth to write down Part 2 and maybe 3.
+
+
+If you have any questions, let me know. 
+
+Of course, ideas and (constructive) criticism are very welcome.</description>
+    
+    <lastBuildDate>Mon, 16 Nov 2020 06:14:13 +0000</lastBuildDate>
+    <category>Networking</category>
+    <atom:link href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[Blackraven677]]></dc:creator>
+        <description><![CDATA[
+            <p>yeah , i too droped my reserches about ss7 , and im working more on malwares now, its easier  , i use android malwares with telegram cnc servers ,its a varient of the herorat</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/36">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/36</link>
+        <pubDate>Mon, 16 Nov 2020 06:14:13 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-36</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[libery]]></dc:creator>
+        <description><![CDATA[
+            <p>boss please  tools1，2，3not found  and 4 blue  screen</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/35">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/35</link>
+        <pubDate>Wed, 04 Nov 2020 07:22:27 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-35</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[blahblah]]></dc:creator>
+        <description><![CDATA[
+            <p>100% scam. i managed to get the link of two of the pages from their video with slowmo lol. it’s crappp</p>
+<p><a href="http://phpstack-357187-1259762.cloudwaysapps.com/form-2.html" class="onebox" target="_blank" rel="nofollow noopener">http://phpstack-357187-1259762.cloudwaysapps.com/form-2.html</a><br>
+<a href="http://phpstack-357187-1259762.cloudwaysapps.com/form-3.html" class="onebox" target="_blank" rel="nofollow noopener">http://phpstack-357187-1259762.cloudwaysapps.com/form-3.html</a></p>
+<p><a class="mention" href="https://d.clarkee.co.uk/u/ghxt">@ghxt</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/33">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/33</link>
+        <pubDate>Sat, 25 Jul 2020 21:44:42 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-33</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[messede]]></dc:creator>
+        <description><![CDATA[
+            <p>Can’t agree more …</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/31">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/31</link>
+        <pubDate>Mon, 13 Jul 2020 13:19:56 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-31</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>TBH anybody selling something on telegram is probably a scam.</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/28">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/28</link>
+        <pubDate>Sun, 12 Jul 2020 11:07:21 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-28</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[zhihuiyuze]]></dc:creator>
+        <description><![CDATA[
+            <p>You bought from them and they blocked you?I think they are fake, because only one mobile phone number to get SMS should directly invade the operator’s server and the server coverage is very large. There is also a loophole in how much it takes to invade Instagram. But their video looks real?</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/27">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/27</link>
+        <pubDate>Sun, 12 Jul 2020 10:44:47 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-27</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[Futu]]></dc:creator>
+        <description><![CDATA[
+            <p>So what about part 2?<br>
+Is this article still relevant and we should try that direction?</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/26">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/26</link>
+        <pubDate>Sat, 11 Jul 2020 23:49:28 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-26</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[ghxt]]></dc:creator>
+        <description><![CDATA[
+            <p><a class="mention" href="https://d.clarkee.co.uk/u/kingroot">@kingroot</a><br>
+on a better note at least ss7 attack is actually possible <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=9" title=":sweat_smile:" class="emoji" alt=":sweat_smile:"> <img src="https://0x00sec.org/images/emoji/twitter/sweat_smile.png?v=9" title=":sweat_smile:" class="emoji" alt=":sweat_smile:"><br>
+in my ongoing research i have found a lot of same information interpreted in different ways, but meaning basc. the same thing…<br>
+you need access to the network.</p>
+<p>ss7 Access -<br>
+*Already work in Telcom<br>
+*Know or have a Contact in Telcom<br>
+*Hack equi. thats con to ss7 netw. “listed above”<br>
+*or Buy access from a teclom source “best/easiest/ only option in my opinion” refer here   <a href="https://www.thedailybeast.com/you-can-spy-like-the-nsa-for-a-few-thousand-bucks" rel="nofollow noopener">https://www.thedailybeast.com/you-can-spy-like-the-nsa-for-a-few-thousand-bucks</a></p>
+<p>This above post gives me some extremely great start points w/ out slapping it in your face lol.<br>
+and you need a GT to get any info back to you so buying access is really the only route.</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/25">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/25</link>
+        <pubDate>Fri, 10 Jul 2020 03:42:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-25</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[kingroot]]></dc:creator>
+        <description><![CDATA[
+            <p><a href="https://yadi.sk/i/sH0h52RF7hc8ig" rel="nofollow noopener">SS7-hacking-SMS.mp4</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/23">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/23</link>
+        <pubDate>Sun, 05 Jul 2020 16:35:15 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-23</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[kingroot]]></dc:creator>
+        <description><![CDATA[
+            <p>sorry the link is <a href="https://www.dsmhackers.net/product/bypass-2fa-sms-intercept/" rel="nofollow noopener">dsm hackers</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/22">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/22</link>
+        <pubDate>Sun, 05 Jul 2020 16:33:23 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-22</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[kingroot]]></dc:creator>
+        <description><![CDATA[
+            <p>have you guys checked <a href="http://dmshackers.net" rel="nofollow noopener">dmshackers.net</a>  they show off that they provide ss7 services , sms inturupt , and other stuff , they even has a vedio of a myterious webpage where they login , the vedio they are showing about ss7 is almost  real , but i dont know where its a stolen vedio posted by some scammers  check it out guys , if you have any ideas share plz , this place is almost dead and i dont see anybody repling , its almost 18 months im going for ss7  no valuable information till now , hope oneday ill find out , and i dont want that happen when its too late cuz with the improvemnts in  4g and 5g services  there are chaneces of ss7 attack being only  as a history <a href="http://dmshackers.net" rel="nofollow noopener">dmshackers.net</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/21">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/21</link>
+        <pubDate>Sun, 05 Jul 2020 16:31:13 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-21</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[zhihuiyuze]]></dc:creator>
+        <description><![CDATA[
+            <p>This was used as early as 2018, but now it is useless for operators to abolish 2G (not tried)<br>
+<a href="https://search.freebuf.com/search/?search=osmocombb#article" class="onebox" target="_blank" rel="nofollow noopener">https://search.freebuf.com/search/?search=osmocombb#article</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/20">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/20</link>
+        <pubDate>Thu, 25 Jun 2020 17:44:49 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-20</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[kingroot]]></dc:creator>
+        <description><![CDATA[
+            <p>he,s using osmocombb  that allows only to intercept 2g device  and thw device needs to be arround</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/18">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/18</link>
+        <pubDate>Tue, 16 Jun 2020 10:19:12 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-18</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[Blackraven677]]></dc:creator>
+        <description><![CDATA[
+            <p>I had contacted him, he says we need only Hackrfone &amp; his 100$ software to acess ss7, ( im kigroot, different device)</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/17">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/17</link>
+        <pubDate>Mon, 15 Jun 2020 18:07:55 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-17</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[kingroot]]></dc:creator>
+        <description><![CDATA[
+            <p>have you guys chekked this vedio <a href="https://youtu.be/_JdKjhwgKB4" rel="noopener nofollow ugc">ss7</a></p>
+<p>            <iframe src="https://www.youtube.com/embed/_JdKjhwgKB4?feature=oembed&amp;wmode=opaque" width="480" height="360" frameborder="0" allowfullscreen="" class="youtube-onebox" seamless="seamless" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"></iframe>
+</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/16">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/16</link>
+        <pubDate>Mon, 15 Jun 2020 06:41:43 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-16</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[kingroot]]></dc:creator>
+        <description><![CDATA[
+            <p><span alt="ss7-sms" data-base62-sha1="3XvkgmBKtoTUkMwD5oo13c7D6sf" class="broken-image" title="This image is broken"><svg class="fa d-icon d-icon-unlink svg-icon" aria-hidden="true"><use xlink:href="#unlink"></use></svg></span></p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/15">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/15</link>
+        <pubDate>Mon, 15 Jun 2020 05:55:05 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-15</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[marindel]]></dc:creator>
+        <description><![CDATA[
+            <p><a href="https://ss7map.p1sec.com/" rel="nofollow noopener">https://ss7map.p1sec.com/</a> a ss7 map for network exposure<br>
+has anybody got any further than this?</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/14">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/14</link>
+        <pubDate>Sun, 26 Apr 2020 09:25:52 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-14</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[carlos314159]]></dc:creator>
+        <description><![CDATA[
+            <p>I see you ended up in accessing a SS7 end point. However, I am not sure CISCO routers are actually SS7 capable (CISCO does not make SS7 equipments).<br>
+Furthermore, the next step would be to inject a SS7 message. there are tools available to generate SS7 messages (<a href="https://github.com/ernw/ss7MAPer;" rel="nofollow noopener">https://github.com/ernw/ss7MAPer;</a> <a href="https://github.com/SigPloiter/SigPloit" rel="nofollow noopener">https://github.com/SigPloiter/SigPloit</a>).<br>
+the biggest challenge would be to, once sending a SS7 message, get the response.<br>
+This would mean have a legit GT (pointless) or if a message is sent from an access point, know the address of that access point (it’s GT) and have a way to intercept the answer</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/13">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/13</link>
+        <pubDate>Mon, 06 Apr 2020 16:44:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-13</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[Gump]]></dc:creator>
+        <description><![CDATA[
+            <p>Also: <a href="https://berlin.ccc.de/~tobias/25c3-locating-mobile-phones.pdf" rel="nofollow noopener">https://berlin.ccc.de/~tobias/25c3-locating-mobile-phones.pdf</a></p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/11</link>
+        <pubDate>Wed, 11 Mar 2020 23:25:39 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-11</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[Gump]]></dc:creator>
+        <description><![CDATA[
+            <p>What I’ve gathered from my hour-long research is that smpp (short message p2p) servers are typically used to send a large amount of sms’s to people, usually for marketing. They vary a lot, but are usually fully functional as an smsc (short message service centers). This further implies that they are interconnected with other smsc’s and should be vulnerable to the same attacks but take everything I say with a large grain of salt <img src="https://0x00sec.org/images/emoji/twitter/wink.png?v=9" title=":wink:" class="emoji" alt=":wink:"></p>
+<p>References;<br>
+<a href="https://www.smslane.com/smpp-client-vs-smpp-server/" class="onebox" target="_blank" rel="nofollow noopener">https://www.smslane.com/smpp-client-vs-smpp-server/</a><br>
+</p><aside class="onebox wikipedia">
+  <header class="source">
+      <a href="https://en.m.wikipedia.org/wiki/Short_Message_service_center" target="_blank" rel="nofollow noopener">en.m.wikipedia.org</a>
+  </header>
+  <article class="onebox-body">
+    
+
+<h3><a href="https://en.m.wikipedia.org/wiki/Short_Message_service_center" target="_blank" rel="nofollow noopener">Short Message service center</a></h3>
+
+<p>A Short Message Service Center (SMSC) is a network element in the mobile telephone network. Its purpose is to store, forward, convert and deliver Short Message Service (SMS) messages.
+ The full designation of an SMSC according to 3GPP is Short Message Service - Service Center (SMS-SC).
+ SMS can be directed in several ways:
+ The tasks of an SMSC can be described as
+</p>
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<br>
+<aside class="onebox wikipedia">
+  <header class="source">
+      <a href="https://en.m.wikipedia.org/wiki/Short_Message_Peer-to-Peer" target="_blank" rel="nofollow noopener">en.m.wikipedia.org</a>
+  </header>
+  <article class="onebox-body">
+    
+
+<h3><a href="https://en.m.wikipedia.org/wiki/Short_Message_Peer-to-Peer" target="_blank" rel="nofollow noopener">Short Message Peer-to-Peer</a></h3>
+
+<p>Short Message Peer-to-Peer (SMPP) in the telecommunications industry is an open, industry standard protocol designed to provide a flexible data communication interface for the transfer of short message data between External Short Messaging Entities (ESMEs), Routing Entities (REs) and SMSC.
+ SMPP is often used to allow third parties (e.g. value-added service providers like news organizations) to submit messages, often in bulk, but it may be used for SMS peering as well. SMPP is able to carry short...</p>
+
+  </article>
+  <div class="onebox-metadata">
+    
+    
+  </div>
+  <div style="clear: both"></div>
+</aside>
+<p></p>
+<ul>
+<li>talks on <a href="http://media.ccc.de" rel="nofollow noopener">media.ccc.de</a>
+</li>
+</ul>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/10</link>
+        <pubDate>Wed, 11 Mar 2020 22:50:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-10</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            <p>Opening thread for new comments.</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/8</link>
+        <pubDate>Wed, 11 Mar 2020 13:32:57 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-8</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[pry0cc]]></dc:creator>
+        <description><![CDATA[
+            
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/7</link>
+        <pubDate>Wed, 11 Mar 2020 13:32:44 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-7</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[system]]></dc:creator>
+        <description><![CDATA[
+            <p>This topic was automatically closed after 30 days. New replies are no longer allowed.</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/6</link>
+        <pubDate>Sat, 20 Apr 2019 00:24:10 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-6</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[zifor]]></dc:creator>
+        <description><![CDATA[
+            <p>it’s cool… waiting next part</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/5</link>
+        <pubDate>Tue, 26 Mar 2019 12:51:04 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-5</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+      <item>
+        <title>Into the wild: Gaining access to SS7 - Part 1: Finding an access point</title>
+        <dc:creator><![CDATA[kvmc]]></dc:creator>
+        <description><![CDATA[
+            <p>Thanks for the writeup!</p>
+          <p><a href="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418/4</link>
+        <pubDate>Sun, 24 Mar 2019 02:56:47 +0000</pubDate>
+        <guid isPermaLink="false">d.clarkee.co.uk-post-12418-4</guid>
+        <source url="https://d.clarkee.co.uk/t/into-the-wild-gaining-access-to-ss7-part-1-finding-an-access-point/12418.rss">Into the wild: Gaining access to SS7 - Part 1: Finding an access point</source>
+      </item>
+  </channel>
+</rss>

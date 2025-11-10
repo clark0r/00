@@ -1,0 +1,383 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Hunting for Rootkit in Linux</title>
+    <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310</link>
+    <description># Introduction
+In this article, I’ll describe how to hunt for rootkits in linux, Rootkits are extremely advanced pieces of code, not any one can write it,  However there&#39;s a lot of Proof of concept code demonstrating rootkit techniques and how to build one from scratch, In the article I will present a technique based on instructions in some system calls, which can be used to detect  rootkits.
+# Overview 
+This article I&#39;ll explain techniques not only how to detect rootkits but also how to conduct a forensics and hunt down malware,  I&#39;ll focus only to cover the basics at first and understand the nature of the malicious behavior.  For those interested in learning about kernel rootkits, I have a separate post titled &quot;Writing a Simple Rootkit for Linux&quot; and &quot;The linux kernel modules programming&quot; which I recommend reading before delving into this topic. 
+
+##  Kernel-mode Rootkits
+The kernel is responsible for handling a lot of the user’s system’s functionality whether that be browsing local files or using a web browser to browse the Internet. This is done through the implementation of system calls - low-level functions that run in a kernel context.
+
+Rootkits can either be in user-land or kernel-land, User-land refers to privilege ring 3, while kernel-land refers to privilege ring 0, In simple term &quot;In order to stay invisible backdoors modify kernel structures and code, causing that nobody can trust the kernel. Nobody&quot;
+```css
+levels:
+ring0(the most powerful privilege level)
+ring1
+ring2
+ring3(the least powerful privilege level)
+```
+
+### Dynamic Kernel
+Dynamic Kernel load kernel modules to give admin the ability to load drivers and other code at runtime, and to remove the need to recompile the kernel and reboot. Kernel`` rootkits`` typically leverage this to run code directly in kernel space. 
+
+Usually what happen is that the code is designed to be loaded as a kernel module. This enables the ``rootkit`` to exploit the dynamic kernel module loading feature, which allows it to inject its malicious code directly into the running kernel without the need to recompile the entire kernel or reboot the system, Let&#39;s take a look at  **Linux Kernel Module (LKM) Rootkit**. 
+
+Many rootkits modifies syscall table in order to redirect some useful system calls like sys_read(), sys_write(), sys_getdents(), etc..., Let&#39;s say we have `rootkit.ko`  to be able to grants the rootkit access to the kernel&#39;s functions and data structures, first we must Locate the `sys_call_table`,
+
+```
+/* Code snippet from hijack_execve() function */
+syscall_table = (void *)kallsyms_lookup_name(&quot;sys_call_table&quot;);
+real_execve = (void *)syscall_table[__NR_execve];
+syscall_table[__NR_execve] = &amp;new_execve;
+```
+
+in this function we uses `kallsyms_lookup_name()` to locate the address of the `sys_call_table`. Next After locating the `sys_call_table`, the ``rootkit`` replaces the address of the original `execve()` system call with the address of its own `new_execve()` function. This effectively hooks the `execve()` system call, and whenever any process calls `execve()`, the rootkit&#39;s `new_execve()` function will be executed instead.
+
+Finally the ``rootkit`` is compiled, it can be loaded into the kernel, Once the ``rootkit`` module is loaded, its code is executed directly in the kernel space with full privileges ``(ring 0)``.
+
+### Establishing Persistence 
+In this example, the ``rootkit`` sets up a kernel thread in the `start_cmd_thread()` function, which repeatedly executes the shell script (`/tmp/rootkit.sh`) every 10 seconds.
+
+```
+/* Code snippet from start_cmd_thread() function */
+my_kthread = kthread_create(threadfn, &amp;cpu, &quot;rootkit&quot;);
+kthread_bind(my_kthread, cpu);
+wake_up_process(my_kthread);
+```
+
+The newly created kernel thread is then bound to a specific CPU core using `kthread_bind()` to ensure that it runs on a specific processor.
+
+```
+call_usermodehelper(CMD, NULL, NULL, UMH_NO_WAIT);
+msleep(10000);
+```
+
+Since the kernel thread is running in kernel space and has been started during module initialization, it will continue executing after the ``rootkit`` is loaded, even if the system is rebooted. This ensures the ``rootkit&#39;s`` persistence across system reboots.
+
+Now That we have some understanding into how kernel ``rootkits`` Work&#39;s, Let&#39;s Move on to the next phase. 
+
+## File System Analysis
+
+So, How to detect kernel based rootkits, The main problem is we can not trust the kernel, However we can get some reliable information form it.  meaning we want to use kernel to help us detect malicious code which has the full control of our kernel. The question is which kernel functions should we check?
+
+Let&#39;s back up a little bit,  what is the main task of every ``rootkit``? Well, its job is to hide presence of attacker&#39;s
+``process,files,connections`` in the system. And those things should be hidden from such tools like ``ls``, ``ps``, ``netstat`` etc. These programs collect the system information through some well known system calls.
+
+Even if the malware does not touch ``syscall`` directly it modifies some kernel functions which are activated by one of the system call. The problem lies in the fact, that these modified functions does not have to be executed during every system call.  For example if we modify only some pointer to reading functions in ``procfs``, then attacker&#39;s code will be executed only when ``read()`` is called in order to read some specific file, like ``/proc/net/``
+
+This is what make rootkit challenging to detect, one of the old method in fact not old it&#39;s just modern rootkits are more advanced using  techniques like ``hooking``,  `evasion`, I&#39;ll get in to this later,  The heuristic approach basically we have to measure execution time of particular system call with different arguments. For example we test `sys_read()` by reading ``&quot;/etc/passwd&quot;`` and ``&quot;/proc/net/&quot;`` (i.e. reading regular file, device and pseudo proc-file). 
+
+These measurements are intended to identify anomalies that may indicate the presence of a ``rootkit``, Instead of testing all 230 system calls the method focuses on a subset of system calls that are commonly used by rootkits to perform specific tasks. For example, they mention testing the `sys_read()` call with different file paths
+
+This method is based on the assumption that typical ``rootkit`` tasks, such as hiding processes or files, may involve only a limited set of system calls, and ``Rootkits`` may manipulate or hide information in the ``procfs`` to conceal their activities, The ``&quot;/proc&quot;`` directory provides a pseudo-file system that exposes various kernel data structures and system information. 
+
+How this approach work&#39;s? 
+
+First we define the subset of sys, next we measure the execution time of each system call with its chosen arguments, In a normal, non-compromised system, the execution time for the same system call with different arguments should not vary significantly. However, if a ``rootkit`` is present and actively manipulating the system, there may be inconsistencies or delays in the execution time of certain system calls. 
+
+Let&#39;s take a look at this  snippet:
+
+```c
+/* Measure sys_read() execution time  */
+    time1 = measure_sys_read(FILE_1); // etc/passwd
+    time2 = measure_sys_read(FILE_2); // proc/net/*
+```
+
+we opens the file, reads some data, and then calculates the execution time. After measuring the execution times for the two files, we compare them to detect any significant differences, However, There&#39;s one problem with this method which is false positives. Linux kernel is a complex program, and most of the system calls have many if-then clauses which means different patch are executed depending on many factors. it can be anything so this approach often requires a good knowledge of the system and experiences to be able to preform more analysis and this goes on all the tools out there like `rkhunter`, `chkrootkit` While they implement more advanced techniques than simple execution time measurement, they are not immune to false positives or false negatives. The effectiveness of these tools depends on various factors, including the accuracy of the heuristics used, the timeliness of their signature databases, and the expertise of the user. 
+
+## Memory Analysis 
+
+Next, I will show a case forensic analysis using the Volatility memory analysis framework to investigate a Linux
+rootkit for simulating malicious activities. After a system has been compromised, it becomes crucial to extract forensically-relevant information. RAM, being volatile, clears its memory each time the computer is restarted. meaning, if a hacked computer is restarted, a significant amount of information that could reveal how the system was initially compromised will be lost. To address this issue, Volatility comes into play as a valuable tool capable of analyzing the volatile memory of a system.
+
+Typically, one would commence by extracting system information and gathering data about the operating system (OS) and its base configuration. However, it is important to note that this is not a Volatility tutorial, and the rootkit does not leave any traces for identifying the infection in this memory image. Therefore, we must conduct a more extensive investigation, beginning with scrutinizing process listings and conducting in-depth analysis.
+
+Check which processes were running on the system when you took the memory dump using the **linux_psaux** plugin, you can find plugins by 
+
+```
+$ python3 vol.py --info  | grep linux_
+```
+
+This plugin is used to provide a full process listing of the system. Its output is approximately the same as would be obtained running the ``ps -aux`` command via a terminal, The resulting output shown Everything in this list of processes appeared to be normal, with the exception of one process, specifically the very last process in the list. Its name of _F00_ is not a known standard Linux :)  
+
+Next we use **linux_pslist** This plugin prints the list of active processes starting from the `init_task` symbol and walking the `task_struct-&gt;tasks` linked list. It does not display the swapper process. If the DTB column is blank, the item is likely a kernel thread. Result the same numbers of processes were found using this plugin as with the previous plugin. Again,
+the only process that did not appear to belong was _F00_, Next is dump the files for further analysis we utilize **linux_lsof** plugin which mimics the `lsof` command on a live system. It prints the list of open file descriptors and their paths for each running process 
+
+```
+Pid      FD       Path
+-------- -------- ----
+       1        0 /dev/null
+       1        1 /dev/null
+       1        2 /dev/null
+```
+
+After we list the files and detect what we looking for by tracking down the suspicious process it&#39;s time prints details of process memory, including heaps, stacks, and shared libraries **linux_proc_maps** This very powerful plugin can be used to learn important information about the underlying system as a whole
+
+```
+0x8050000-0x8051000 r-x    2777 /usr/F_00/F_00
+0x8051000-0x8052000 rw-      4096  2777 /usr/F_00/F_00
+0xb75d7000-0xb75d8000 rw-         0       0
+```
+
+What this plugin reveals about this process is the actual location of the files associated with
+suspicious process **F_00** specifically its actual location, ``/usr/`` also it is revealed by its permission of r-x. Interestingly, this process only relies on two libraries, whereas most system processes rely on many additional libraries, Finally it&#39;s time time dump this process directly from the memory image, to do that let&#39;s call **linux_find_file** This particular plugin can be used to not only dump pre-identified files from the memory image (using information obtained from other plugins) but it can also list all filesystem objects with an open handle in memory we can simply dump any target file with the argument `` -F``  for example:
+
+```
+$ python3 vol.py ...  linux_find_file -F “/usr/F_00/F_00”
+Inode Number Inode
+-------------------- ---------------
+0161170 0xf
+
+$ python3 vol.py ...  linux_find_file -i 0xf -O mal.elf
+```
+
+The &quot;Inode&quot; represents the location in memory where this specific &quot;inode&quot; is stored. With this information, the file &quot;mal.elf&quot; was generated and dumped from the memory image. The next step is to verify the hash of the file and check if there is a match in any malware database or perform further analysis on the binary.
+
+Of course, In the real world situation it won&#39;t be this easy but hopefully you learned something about Volatility memory plugins and the tool itself and the possibility to not only identify it but also dump a suspect file, Additionally, it&#39;s important to note that rootkits may create concealed network connections, a topic we can explore in a separate post focused on Analyzing Network Traffic.
+
+# End 
+Forensics is a fascinating field that delves into malware analysis and operating system internals. In this explanation, I aimed to simplify complex concepts and keep the post brief. However, certain aspects may still be unclear, so I provided reference links to various articles covering the fundamentals and tutorials on tools used in this context. Remember, this is just the 101 stuff there&#39;s more to learn and I encourage to do more research.
+## References 
+[Linux memory forensics](https://opensource.com/article/21/4/linux-memory-forensics)
+[Volatility Linux Command Reference](https://github.com/volatilityfoundation/volatility/wiki/Linux-Command-Reference)</description>
+    
+    <lastBuildDate>Wed, 24 Jan 2024 20:39:20 +0000</lastBuildDate>
+    <category>Forensics</category>
+    <atom:link href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss" rel="self" type="application/rss+xml" />
+      <item>
+        <title>Hunting for Rootkit in Linux</title>
+        <dc:creator><![CDATA[bootlegwifi]]></dc:creator>
+        <description><![CDATA[
+            <p>-1 = hypervisor<br>
+-2 = system management mode<br>
+-3 = vendor specific mangement systems.</p>
+<p>It was more of a joke mentioning them, but they do exist.</p>
+          <p><a href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/11">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/11</link>
+        <pubDate>Wed, 24 Jan 2024 20:39:20 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36310-11</guid>
+        <source url="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss">Hunting for Rootkit in Linux</source>
+      </item>
+      <item>
+        <title>Hunting for Rootkit in Linux</title>
+        <dc:creator><![CDATA[initfs]]></dc:creator>
+        <description><![CDATA[
+            <p>WTF is that?? it’s like discover that Lilith was the woman of Adan before Eva!</p>
+          <p><a href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/10">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/10</link>
+        <pubDate>Mon, 22 Jan 2024 06:47:32 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36310-10</guid>
+        <source url="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss">Hunting for Rootkit in Linux</source>
+      </item>
+      <item>
+        <title>Hunting for Rootkit in Linux</title>
+        <dc:creator><![CDATA[initfs]]></dc:creator>
+        <description><![CDATA[
+            <p>Ohhhh yeah I get it! this technique sound very optimistic but at the same time very interesting, is like detaching a process from the kernel! and attaching it with the CPU, awesome! I will keep trying it on other versions of the kernel, I already test on a VM and in my machine directly, but no one works.</p>
+<p>And talking about rootkit persistence, I think one good enought technique is registering a service and hide that service with the rootkit in order to not over-complicate thing, because we know that when a rootkit is installed all hopes are lost! XD</p>
+          <p><a href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/9">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/9</link>
+        <pubDate>Mon, 22 Jan 2024 06:46:20 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36310-9</guid>
+        <source url="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss">Hunting for Rootkit in Linux</source>
+      </item>
+      <item>
+        <title>Hunting for Rootkit in Linux</title>
+        <dc:creator><![CDATA[0xf00I]]></dc:creator>
+        <description><![CDATA[
+            <p>So, the basic idea was to link up the kernel thread with a specific CPU core using <code>kthread_create</code> and <code>kthread_bind</code>. The hope was that it could stick around even after reboots or system restarts. Like, the thread would chill on that particular core post-reboot. But, I get it, these tricks aren’t a sure bet for all systems. I kinda just threw it in, thinking it’d be a neat addition without diving too deep into it. Turns out, not as reliable as I thought. Usually, persistence setups are more at home in user space. Sure, let’s work on something for persistence, maybe in the next post.</p>
+          <p><a href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/8">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/8</link>
+        <pubDate>Sun, 21 Jan 2024 19:59:50 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36310-8</guid>
+        <source url="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss">Hunting for Rootkit in Linux</source>
+      </item>
+      <item>
+        <title>Hunting for Rootkit in Linux</title>
+        <dc:creator><![CDATA[bootlegwifi]]></dc:creator>
+        <description><![CDATA[
+            <p>Nice writeup!<br>
+Why no mention of the negative rings? <img src="https://0x00sec.org/images/emoji/twitter/upside_down_face.png?v=12" title=":upside_down_face:" class="emoji" alt=":upside_down_face:" loading="lazy" width="20" height="20"></p>
+          <p><a href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/7">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/7</link>
+        <pubDate>Sun, 21 Jan 2024 06:56:49 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36310-7</guid>
+        <source url="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss">Hunting for Rootkit in Linux</source>
+      </item>
+      <item>
+        <title>Hunting for Rootkit in Linux</title>
+        <dc:creator><![CDATA[initfs]]></dc:creator>
+        <description><![CDATA[
+            <p>Hello <a href="https://0x00sec.org/u/0xf00I">0xf00I</a>! thank you for reply.</p>
+<p>I know well the rootkit based on ftrace, anyway thanks for the code you supplied.</p>
+<p>My questions was about the persistence part, because in this part of the code of your post:</p>
+<pre><code class="lang-auto">/* Code snippet from start_cmd_thread() function */
+my_kthread = kthread_create(threadfn, &amp;cpu, "rootkit");
+kthread_bind(my_kthread, cpu);
+wake_up_process(my_kthread);
+</code></pre>
+<p>The code will execute with call_usermodehelper a bash script “/tmp/rootkit.sh” but where is that script? I suppose by the next paragraph that this code just is there to attach one core of the CPU and with this (for some reason) have a persistence across reboots, but why? why execute something attached to some cpu core from kernel space will make the module persistent?</p>
+<p>I really like your content about linux kernel, maybe in the future I’ll like to do kernel challenges with you.</p>
+          <p><a href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/6">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/6</link>
+        <pubDate>Sun, 21 Jan 2024 05:16:04 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36310-6</guid>
+        <source url="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss">Hunting for Rootkit in Linux</source>
+      </item>
+      <item>
+        <title>Hunting for Rootkit in Linux</title>
+        <dc:creator><![CDATA[0xf00I]]></dc:creator>
+        <description><![CDATA[
+            <p>This rootkit code is kinda old school and doesn’t really vibe with the newer kernel versions. I’m pretty sure it was tested on kernel 4.15.0, The classic move used here is messing directly with the <code>sys_call_table</code> structure in the kernel’s memory. However, the cooler, more modern way is to use ftrace. <a href="https://github.com/m0nad/Diamorphine" rel="noopener nofollow ugc">See</a></p>
+<p>If your kernel module is throwing traceback errors or causing crashes, that’s not the norm. The issue might be the kernel version you’re working with. Keep in mind that kernel stuff evolves, and what worked back in the day might not play nice with the latest and greatest. So, it’s likely the kernel version that’s giving you a hard time.<br>
+see <code>dmesg</code> on the error.  Here’s a simple example, This designed and tested for earlier kernel versions, aiding in grasping of ftrace for function hooking.</p>
+          <p><a href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/5">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/5</link>
+        <pubDate>Sat, 20 Jan 2024 18:31:16 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36310-5</guid>
+        <source url="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss">Hunting for Rootkit in Linux</source>
+      </item>
+      <item>
+        <title>Hunting for Rootkit in Linux</title>
+        <dc:creator><![CDATA[initfs]]></dc:creator>
+        <description><![CDATA[
+            <p>Hi 0xf00! your posts about rootkits are awesome, but most of the time lacks of some info for example you have a code snippet for the parts of a rootkit but never said where you extract that code. I found in a git-hub repo for anyone interested in: <a href="https://github.com/rootfoo/rootkit/blob/master/rootkit.c" rel="noopener nofollow ugc">rootkit source code</a></p>
+<p>And also I have a question about the persistence section, because I tried it to replicate it without success, I just write a module to test that part of the rootkit  it loads and in the first execution of the kthread (/tmp/rootkit.sh) it shows a trace-back error in the console, the kernel thread is still running after this message, but when I reboot the kernel does not appears anymore.</p>
+<p>So…</p>
+<ol>
+<li>This technique works for recent kernel versions &gt;6.0?</li>
+<li>Is that trace-back error normal for the technique?</li>
+</ol>
+<p>Thank you for write this great posts!</p>
+          <p><a href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/4">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/4</link>
+        <pubDate>Thu, 18 Jan 2024 02:08:44 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36310-4</guid>
+        <source url="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss">Hunting for Rootkit in Linux</source>
+      </item>
+      <item>
+        <title>Hunting for Rootkit in Linux</title>
+        <dc:creator><![CDATA[9xN]]></dc:creator>
+        <description><![CDATA[
+            <p>Amazing post as always! good read, thank you</p>
+          <p><a href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/2">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/2</link>
+        <pubDate>Fri, 11 Aug 2023 00:00:47 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36310-2</guid>
+        <source url="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss">Hunting for Rootkit in Linux</source>
+      </item>
+      <item>
+        <title>Hunting for Rootkit in Linux</title>
+        <dc:creator><![CDATA[0xf00]]></dc:creator>
+        <description><![CDATA[
+            <h1><a name="introduction-1" class="anchor" href="https://0x00sec.org#introduction-1"></a>Introduction</h1>
+<p>In this article, I’ll describe how to hunt for rootkits in linux, Rootkits are extremely advanced pieces of code, not any one can write it,  However there’s a lot of Proof of concept code demonstrating rootkit techniques and how to build one from scratch, In the article I will present a technique based on instructions in some system calls, which can be used to detect  rootkits.</p>
+<h1><a name="overview-2" class="anchor" href="https://0x00sec.org#overview-2"></a>Overview</h1>
+<p>This article I’ll explain techniques not only how to detect rootkits but also how to conduct a forensics and hunt down malware,  I’ll focus only to cover the basics at first and understand the nature of the malicious behavior.  For those interested in learning about kernel rootkits, I have a separate post titled “Writing a Simple Rootkit for Linux” and “The linux kernel modules programming” which I recommend reading before delving into this topic.</p>
+<h2><a name="kernel-mode-rootkits-3" class="anchor" href="https://0x00sec.org#kernel-mode-rootkits-3"></a>Kernel-mode Rootkits</h2>
+<p>The kernel is responsible for handling a lot of the user’s system’s functionality whether that be browsing local files or using a web browser to browse the Internet. This is done through the implementation of system calls - low-level functions that run in a kernel context.</p>
+<p>Rootkits can either be in user-land or kernel-land, User-land refers to privilege ring 3, while kernel-land refers to privilege ring 0, In simple term “In order to stay invisible backdoors modify kernel structures and code, causing that nobody can trust the kernel. Nobody”</p>
+<pre><code class="lang-css">levels:
+ring0(the most powerful privilege level)
+ring1
+ring2
+ring3(the least powerful privilege level)
+</code></pre>
+<h3><a name="dynamic-kernel-4" class="anchor" href="https://0x00sec.org#dynamic-kernel-4"></a>Dynamic Kernel</h3>
+<p>Dynamic Kernel load kernel modules to give admin the ability to load drivers and other code at runtime, and to remove the need to recompile the kernel and reboot. Kernel<code> rootkits</code> typically leverage this to run code directly in kernel space.</p>
+<p>Usually what happen is that the code is designed to be loaded as a kernel module. This enables the <code>rootkit</code> to exploit the dynamic kernel module loading feature, which allows it to inject its malicious code directly into the running kernel without the need to recompile the entire kernel or reboot the system, Let’s take a look at  <strong>Linux Kernel Module (LKM) Rootkit</strong>.</p>
+<p>Many rootkits modifies syscall table in order to redirect some useful system calls like sys_read(), sys_write(), sys_getdents(), etc…, Let’s say we have <code>rootkit.ko</code>  to be able to grants the rootkit access to the kernel’s functions and data structures, first we must Locate the <code>sys_call_table</code>,</p>
+<pre><code class="lang-auto">/* Code snippet from hijack_execve() function */
+syscall_table = (void *)kallsyms_lookup_name("sys_call_table");
+real_execve = (void *)syscall_table[__NR_execve];
+syscall_table[__NR_execve] = &amp;new_execve;
+</code></pre>
+<p>in this function we uses <code>kallsyms_lookup_name()</code> to locate the address of the <code>sys_call_table</code>. Next After locating the <code>sys_call_table</code>, the <code>rootkit</code> replaces the address of the original <code>execve()</code> system call with the address of its own <code>new_execve()</code> function. This effectively hooks the <code>execve()</code> system call, and whenever any process calls <code>execve()</code>, the rootkit’s <code>new_execve()</code> function will be executed instead.</p>
+<p>Finally the <code>rootkit</code> is compiled, it can be loaded into the kernel, Once the <code>rootkit</code> module is loaded, its code is executed directly in the kernel space with full privileges <code>(ring 0)</code>.</p>
+<h3><a name="establishing-persistence-5" class="anchor" href="https://0x00sec.org#establishing-persistence-5"></a>Establishing Persistence</h3>
+<p>In this example, the <code>rootkit</code> sets up a kernel thread in the <code>start_cmd_thread()</code> function, which repeatedly executes the shell script (<code>/tmp/rootkit.sh</code>) every 10 seconds.</p>
+<pre><code class="lang-auto">/* Code snippet from start_cmd_thread() function */
+my_kthread = kthread_create(threadfn, &amp;cpu, "rootkit");
+kthread_bind(my_kthread, cpu);
+wake_up_process(my_kthread);
+</code></pre>
+<p>The newly created kernel thread is then bound to a specific CPU core using <code>kthread_bind()</code> to ensure that it runs on a specific processor.</p>
+<pre><code class="lang-auto">call_usermodehelper(CMD, NULL, NULL, UMH_NO_WAIT);
+msleep(10000);
+</code></pre>
+<p>Since the kernel thread is running in kernel space and has been started during module initialization, it will continue executing after the <code>rootkit</code> is loaded, even if the system is rebooted. This ensures the <code>rootkit's</code> persistence across system reboots.</p>
+<p>Now That we have some understanding into how kernel <code>rootkits</code> Work’s, Let’s Move on to the next phase.</p>
+<h2><a name="file-system-analysis-6" class="anchor" href="https://0x00sec.org#file-system-analysis-6"></a>File System Analysis</h2>
+<p>So, How to detect kernel based rootkits, The main problem is we can not trust the kernel, However we can get some reliable information form it.  meaning we want to use kernel to help us detect malicious code which has the full control of our kernel. The question is which kernel functions should we check?</p>
+<p>Let’s back up a little bit,  what is the main task of every <code>rootkit</code>? Well, its job is to hide presence of attacker’s<br>
+<code>process,files,connections</code> in the system. And those things should be hidden from such tools like <code>ls</code>, <code>ps</code>, <code>netstat</code> etc. These programs collect the system information through some well known system calls.</p>
+<p>Even if the malware does not touch <code>syscall</code> directly it modifies some kernel functions which are activated by one of the system call. The problem lies in the fact, that these modified functions does not have to be executed during every system call.  For example if we modify only some pointer to reading functions in <code>procfs</code>, then attacker’s code will be executed only when <code>read()</code> is called in order to read some specific file, like <code>/proc/net/</code></p>
+<p>This is what make rootkit challenging to detect, one of the old method in fact not old it’s just modern rootkits are more advanced using  techniques like <code>hooking</code>,  <code>evasion</code>, I’ll get in to this later,  The heuristic approach basically we have to measure execution time of particular system call with different arguments. For example we test <code>sys_read()</code> by reading <code>"/etc/passwd"</code> and <code>"/proc/net/"</code> (i.e. reading regular file, device and pseudo proc-file).</p>
+<p>These measurements are intended to identify anomalies that may indicate the presence of a <code>rootkit</code>, Instead of testing all 230 system calls the method focuses on a subset of system calls that are commonly used by rootkits to perform specific tasks. For example, they mention testing the <code>sys_read()</code> call with different file paths</p>
+<p>This method is based on the assumption that typical <code>rootkit</code> tasks, such as hiding processes or files, may involve only a limited set of system calls, and <code>Rootkits</code> may manipulate or hide information in the <code>procfs</code> to conceal their activities, The <code>"/proc"</code> directory provides a pseudo-file system that exposes various kernel data structures and system information.</p>
+<p>How this approach work’s?</p>
+<p>First we define the subset of sys, next we measure the execution time of each system call with its chosen arguments, In a normal, non-compromised system, the execution time for the same system call with different arguments should not vary significantly. However, if a <code>rootkit</code> is present and actively manipulating the system, there may be inconsistencies or delays in the execution time of certain system calls.</p>
+<p>Let’s take a look at this  snippet:</p>
+<pre><code class="lang-c">/* Measure sys_read() execution time  */
+    time1 = measure_sys_read(FILE_1); // etc/passwd
+    time2 = measure_sys_read(FILE_2); // proc/net/*
+</code></pre>
+<p>we opens the file, reads some data, and then calculates the execution time. After measuring the execution times for the two files, we compare them to detect any significant differences, However, There’s one problem with this method which is false positives. Linux kernel is a complex program, and most of the system calls have many if-then clauses which means different patch are executed depending on many factors. it can be anything so this approach often requires a good knowledge of the system and experiences to be able to preform more analysis and this goes on all the tools out there like <code>rkhunter</code>, <code>chkrootkit</code> While they implement more advanced techniques than simple execution time measurement, they are not immune to false positives or false negatives. The effectiveness of these tools depends on various factors, including the accuracy of the heuristics used, the timeliness of their signature databases, and the expertise of the user.</p>
+<h2><a name="memory-analysis-7" class="anchor" href="https://0x00sec.org#memory-analysis-7"></a>Memory Analysis</h2>
+<p>Next, I will show a case forensic analysis using the Volatility memory analysis framework to investigate a Linux<br>
+rootkit for simulating malicious activities. After a system has been compromised, it becomes crucial to extract forensically-relevant information. RAM, being volatile, clears its memory each time the computer is restarted. meaning, if a hacked computer is restarted, a significant amount of information that could reveal how the system was initially compromised will be lost. To address this issue, Volatility comes into play as a valuable tool capable of analyzing the volatile memory of a system.</p>
+<p>Typically, one would commence by extracting system information and gathering data about the operating system (OS) and its base configuration. However, it is important to note that this is not a Volatility tutorial, and the rootkit does not leave any traces for identifying the infection in this memory image. Therefore, we must conduct a more extensive investigation, beginning with scrutinizing process listings and conducting in-depth analysis.</p>
+<p>Check which processes were running on the system when you took the memory dump using the <strong>linux_psaux</strong> plugin, you can find plugins by</p>
+<pre><code class="lang-auto">$ python3 vol.py --info  | grep linux_
+</code></pre>
+<p>This plugin is used to provide a full process listing of the system. Its output is approximately the same as would be obtained running the <code>ps -aux</code> command via a terminal, The resulting output shown Everything in this list of processes appeared to be normal, with the exception of one process, specifically the very last process in the list. Its name of <em>F00</em> is not a known standard Linux <img src="https://0x00sec.org/images/emoji/twitter/slight_smile.png?v=12" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
+<p>Next we use <strong>linux_pslist</strong> This plugin prints the list of active processes starting from the <code>init_task</code> symbol and walking the <code>task_struct-&gt;tasks</code> linked list. It does not display the swapper process. If the DTB column is blank, the item is likely a kernel thread. Result the same numbers of processes were found using this plugin as with the previous plugin. Again,<br>
+the only process that did not appear to belong was <em>F00</em>, Next is dump the files for further analysis we utilize <strong>linux_lsof</strong> plugin which mimics the <code>lsof</code> command on a live system. It prints the list of open file descriptors and their paths for each running process</p>
+<pre><code class="lang-auto">Pid      FD       Path
+-------- -------- ----
+       1        0 /dev/null
+       1        1 /dev/null
+       1        2 /dev/null
+</code></pre>
+<p>After we list the files and detect what we looking for by tracking down the suspicious process it’s time prints details of process memory, including heaps, stacks, and shared libraries <strong>linux_proc_maps</strong> This very powerful plugin can be used to learn important information about the underlying system as a whole</p>
+<pre><code class="lang-auto">0x8050000-0x8051000 r-x    2777 /usr/F_00/F_00
+0x8051000-0x8052000 rw-      4096  2777 /usr/F_00/F_00
+0xb75d7000-0xb75d8000 rw-         0       0
+</code></pre>
+<p>What this plugin reveals about this process is the actual location of the files associated with<br>
+suspicious process <strong>F_00</strong> specifically its actual location, <code>/usr/</code> also it is revealed by its permission of r-x. Interestingly, this process only relies on two libraries, whereas most system processes rely on many additional libraries, Finally it’s time time dump this process directly from the memory image, to do that let’s call <strong>linux_find_file</strong> This particular plugin can be used to not only dump pre-identified files from the memory image (using information obtained from other plugins) but it can also list all filesystem objects with an open handle in memory we can simply dump any target file with the argument <code> -F</code>  for example:</p>
+<pre><code class="lang-auto">$ python3 vol.py ...  linux_find_file -F “/usr/F_00/F_00”
+Inode Number Inode
+-------------------- ---------------
+0161170 0xf
+
+$ python3 vol.py ...  linux_find_file -i 0xf -O mal.elf
+</code></pre>
+<p>The “Inode” represents the location in memory where this specific “inode” is stored. With this information, the file “mal.elf” was generated and dumped from the memory image. The next step is to verify the hash of the file and check if there is a match in any malware database or perform further analysis on the binary.</p>
+<p>Of course, In the real world situation it won’t be this easy but hopefully you learned something about Volatility memory plugins and the tool itself and the possibility to not only identify it but also dump a suspect file, Additionally, it’s important to note that rootkits may create concealed network connections, a topic we can explore in a separate post focused on Analyzing Network Traffic.</p>
+<h1><a name="end-8" class="anchor" href="https://0x00sec.org#end-8"></a>End</h1>
+<p>Forensics is a fascinating field that delves into malware analysis and operating system internals. In this explanation, I aimed to simplify complex concepts and keep the post brief. However, certain aspects may still be unclear, so I provided reference links to various articles covering the fundamentals and tutorials on tools used in this context. Remember, this is just the 101 stuff there’s more to learn and I encourage to do more research.</p>
+<h2><a name="references-9" class="anchor" href="https://0x00sec.org#references-9"></a>References</h2>
+<p><a href="https://opensource.com/article/21/4/linux-memory-forensics" rel="noopener nofollow ugc">Linux memory forensics</a><br>
+<a href="https://github.com/volatilityfoundation/volatility/wiki/Linux-Command-Reference" rel="noopener nofollow ugc">Volatility Linux Command Reference</a></p>
+          <p><a href="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/1">Read full topic</a></p>
+        ]]></description>
+        <link>https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310/1</link>
+        <pubDate>Sun, 06 Aug 2023 23:35:13 +0000</pubDate>
+        <guid isPermaLink="false">0x00sec.org-post-36310-1</guid>
+        <source url="https://0x00sec.org/t/hunting-for-rootkit-in-linux/36310.rss">Hunting for Rootkit in Linux</source>
+      </item>
+  </channel>
+</rss>
